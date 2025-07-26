@@ -8,6 +8,7 @@
 import SwiftUI
 import AVFoundation
 import Speech // Added for speech recognition
+import CoreLocation
 
 enum AudioQuality: String, CaseIterable {
     case low = "Low Quality"
@@ -75,6 +76,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     @Published var isPlaying = false
     @Published var playbackProgress: TimeInterval = 0
     
+    // Location management
+    @Published var locationManager = LocationManager()
+    @Published var recordingLocation: LocationData?
+    
     private var audioRecorder: AVAudioRecorder?
     private var audioPlayer: AVAudioPlayer?
     private let session = AVAudioSession.sharedInstance()
@@ -91,14 +96,17 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             selectedQuality = quality
         }
         
+        // Initialize location manager
+        locationManager.requestLocationPermission()
+        
         // Create test recordings if they don't exist
         createTestRecordingsIfNeeded()
     }
     
     private func createTestRecordingsIfNeeded() {
         let documentsPath = getDocumentsDirectory()
-        let testRecording1URL = documentsPath.appendingPathComponent("Test_Recording_1.m4a")
-        let testRecording2URL = documentsPath.appendingPathComponent("Test_Recording_2.m4a")
+        let testRecording1URL = documentsPath.appendingPathComponent("John_Doe_NYC_Times_Square.m4a")
+        let testRecording2URL = documentsPath.appendingPathComponent("John_Doe_NYC_Empire_State.m4a")
         
         // Check if test recordings already exist
         let fileManager = FileManager.default
@@ -112,13 +120,19 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     
     func recreateTestRecordings() {
         let documentsPath = getDocumentsDirectory()
-        let testRecording1URL = documentsPath.appendingPathComponent("Test_Recording_1.m4a")
-        let testRecording2URL = documentsPath.appendingPathComponent("Test_Recording_2.m4a")
+        let testRecording1URL = documentsPath.appendingPathComponent("John_Doe_NYC_Times_Square.m4a")
+        let testRecording2URL = documentsPath.appendingPathComponent("John_Doe_NYC_Empire_State.m4a")
         
         // Remove existing test recordings
         let fileManager = FileManager.default
         try? fileManager.removeItem(at: testRecording1URL)
         try? fileManager.removeItem(at: testRecording2URL)
+        
+        // Also remove associated location files
+        let location1URL = testRecording1URL.deletingPathExtension().appendingPathExtension("location")
+        let location2URL = testRecording2URL.deletingPathExtension().appendingPathExtension("location")
+        try? fileManager.removeItem(at: location1URL)
+        try? fileManager.removeItem(at: location2URL)
         
         // Create new test recordings
         createTestRecording1(at: testRecording1URL)
@@ -126,47 +140,74 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     }
     
     private func createTestRecording1(at url: URL) {
-        // Create a simple test audio file with a beep sound
+        // Create a longer test audio file with speech-like content
         let sampleRate: Double = 44100
-        let duration: Double = 3.0 // 3 seconds
-        let frequency: Double = 440.0 // A4 note
+        let duration: Double = 8.0 // 8 seconds
+        let frequency: Double = 220.0 // Lower frequency for more speech-like sound
         
         let audioFormat = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
         let audioFile = try! AVAudioFile(forWriting: url, settings: audioFormat.settings)
         
         let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(sampleRate * duration))!
         
-        // Generate a simple sine wave
+        // Generate a more complex waveform to simulate speech
         for frame in 0..<Int(sampleRate * duration) {
-            let sample = sin(2.0 * Double.pi * frequency * Double(frame) / sampleRate) * 0.3
+            let time = Double(frame) / sampleRate
+            let baseFreq = frequency + 50.0 * sin(2.0 * Double.pi * 0.5 * time) // Varying frequency
+            let sample = sin(2.0 * Double.pi * baseFreq * time) * 0.25 * (1.0 - 0.5 * sin(2.0 * Double.pi * 2.0 * time))
             buffer.floatChannelData![0][frame] = Float(sample)
         }
         
         buffer.frameLength = AVAudioFrameCount(sampleRate * duration)
         
         try! audioFile.write(from: buffer)
+        
+        // Create location data for downtown NYC
+        let nycLocation = CLLocation(latitude: 40.7589, longitude: -73.9851) // Times Square area
+        let locationData = LocationData(location: nycLocation)
+        saveLocationDataForRecording(url: url, locationData: locationData)
     }
     
     private func createTestRecording2(at url: URL) {
-        // Create another test audio file with a different frequency
+        // Create another longer test audio file with different speech-like content
         let sampleRate: Double = 44100
-        let duration: Double = 2.0 // 2 seconds
-        let frequency: Double = 880.0 // A5 note
+        let duration: Double = 10.0 // 10 seconds
+        let frequency: Double = 200.0 // Different base frequency
         
         let audioFormat = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
         let audioFile = try! AVAudioFile(forWriting: url, settings: audioFormat.settings)
         
         let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(sampleRate * duration))!
         
-        // Generate a simple sine wave
+        // Generate a more complex waveform with pauses to simulate speech
         for frame in 0..<Int(sampleRate * duration) {
-            let sample = sin(2.0 * Double.pi * frequency * Double(frame) / sampleRate) * 0.3
+            let time = Double(frame) / sampleRate
+            let baseFreq = frequency + 60.0 * sin(2.0 * Double.pi * 0.3 * time) // Different variation
+            let amplitude = 0.3 * (1.0 - 0.6 * sin(2.0 * Double.pi * 1.5 * time))
+            let sample = sin(2.0 * Double.pi * baseFreq * time) * amplitude
             buffer.floatChannelData![0][frame] = Float(sample)
         }
         
         buffer.frameLength = AVAudioFrameCount(sampleRate * duration)
         
         try! audioFile.write(from: buffer)
+        
+        // Create location data for downtown NYC (different location)
+        let nycLocation = CLLocation(latitude: 40.7484, longitude: -73.9857) // Empire State Building area
+        let locationData = LocationData(location: nycLocation)
+        saveLocationDataForRecording(url: url, locationData: locationData)
+    }
+    
+    private func saveLocationDataForRecording(url: URL, locationData: LocationData) {
+        let locationURL = url.deletingPathExtension().appendingPathExtension("location")
+        
+        do {
+            let data = try JSONEncoder().encode(locationData)
+            try data.write(to: locationURL)
+            print("Test recording location data saved to: \(locationURL.path)")
+        } catch {
+            print("Failed to save test recording location data: \(error)")
+        }
     }
 
     func fetchInputs() {
@@ -194,6 +235,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if granted {
+                    // Capture current location before starting recording
+                    self.captureLocationForRecording()
+                    
                     self.setPreferredInput()
                     let filename = self.generateFileName()
                     let url = self.getDocumentsDirectory().appendingPathComponent(filename)
@@ -217,9 +261,16 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
     func stopRecording() {
         audioRecorder?.stop()
+        
+        // Save location data if available
+        if let locationData = recordingLocation {
+            saveLocationDataForCurrentRecording(locationData: locationData)
+        }
+        
         isRecording = false
         recordingDuration = 0
         stopRecordingTimer()
+        recordingLocation = nil
     }
     
     private func startRecordingTimer() {
@@ -262,6 +313,35 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
     private func getDocumentsDirectory() -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+    
+    private func captureLocationForRecording() {
+        // Start location updates if not already running
+        if !locationManager.isLocationEnabled {
+            locationManager.startLocationUpdates()
+        }
+        
+        // Capture current location
+        if let location = locationManager.getCurrentLocation() {
+            recordingLocation = LocationData(location: location)
+            print("Location captured for recording: \(recordingLocation?.coordinateString ?? "Unknown")")
+        } else {
+            print("No location available for recording")
+            recordingLocation = nil
+        }
+    }
+    
+    private func saveLocationDataForCurrentRecording(locationData: LocationData) {
+        guard let recorder = audioRecorder else { return }
+        let locationURL = recorder.url.deletingPathExtension().appendingPathExtension("location")
+        
+        do {
+            let data = try JSONEncoder().encode(locationData)
+            try data.write(to: locationURL)
+            print("Location data saved to: \(locationURL.path)")
+        } catch {
+            print("Failed to save location data: \(error)")
+        }
     }
 
     func playRecording(url: URL) {
@@ -389,7 +469,7 @@ struct RecordingsView: View {
                         .frame(maxWidth: .infinity)
                         .shadow(color: .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
                     
-                    Text("Audio Journal")
+                    Text("BisonNotes AI")
                         .font(.largeTitle)
                         .fontWeight(.bold)
                         .foregroundColor(.primary)
@@ -455,15 +535,37 @@ struct RecordingsView: View {
                     }
                     
                     if recorderVM.isRecording {
-                        HStack {
-                            Circle()
-                                .fill(Color.red)
-                                .frame(width: 12, height: 12)
-                                .scaleEffect(recorderVM.isRecording ? 1.2 : 1.0)
-                                .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: recorderVM.isRecording)
-                            Text("Recording...")
-                                .foregroundColor(.secondary)
-                                .font(.subheadline)
+                        VStack(spacing: 8) {
+                            HStack {
+                                Circle()
+                                    .fill(Color.red)
+                                    .frame(width: 12, height: 12)
+                                    .scaleEffect(recorderVM.isRecording ? 1.2 : 1.0)
+                                    .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: recorderVM.isRecording)
+                                Text("Recording...")
+                                    .foregroundColor(.secondary)
+                                    .font(.subheadline)
+                            }
+                            
+                            if let locationData = recorderVM.recordingLocation {
+                                HStack {
+                                    Image(systemName: "location.fill")
+                                        .font(.caption)
+                                        .foregroundColor(.accentColor)
+                                    Text("Location captured: \(locationData.coordinateString)")
+                                        .font(.caption)
+                                        .foregroundColor(.accentColor)
+                                }
+                            } else if recorderVM.locationManager.locationError != nil {
+                                HStack {
+                                    Image(systemName: "location.slash")
+                                        .font(.caption)
+                                        .foregroundColor(.orange)
+                                    Text("Location unavailable")
+                                        .font(.caption)
+                                        .foregroundColor(.orange)
+                                }
+                            }
                         }
                     }
                 }
@@ -483,6 +585,7 @@ struct RecordingsListView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @State private var recordings: [RecordingFile] = []
+    @State private var selectedLocationData: LocationData?
     
     var body: some View {
         NavigationView {
@@ -524,6 +627,22 @@ struct RecordingsListView: View {
                                             Text(recording.durationString)
                                                 .font(.caption)
                                                 .foregroundColor(.secondary)
+                                        }
+                                        if let locationData = recording.locationData {
+                                            Button(action: {
+                                                // Show location details
+                                                showLocationDetails(locationData)
+                                            }) {
+                                                HStack {
+                                                    Image(systemName: "location.fill")
+                                                        .font(.caption2)
+                                                        .foregroundColor(.accentColor)
+                                                    Text(locationData.coordinateString)
+                                                        .font(.caption2)
+                                                        .foregroundColor(.accentColor)
+                                                }
+                                            }
+                                            .buttonStyle(PlainButtonStyle())
                                         }
                                     }
                                     Spacer()
@@ -569,6 +688,9 @@ struct RecordingsListView: View {
                     }
                 }
             }
+            .sheet(item: $selectedLocationData) { locationData in
+                LocationDetailView(locationData: locationData)
+            }
         }
         .onAppear {
             loadRecordings()
@@ -584,12 +706,26 @@ struct RecordingsListView: View {
                 .compactMap { url -> RecordingFile? in
                     guard let creationDate = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate else { return nil }
                     let duration = recorderVM.getRecordingDuration(url: url)
-                    return RecordingFile(url: url, name: url.deletingPathExtension().lastPathComponent, date: creationDate, duration: duration)
+                    let locationData = loadLocationDataForRecording(url: url)
+                    return RecordingFile(url: url, name: url.deletingPathExtension().lastPathComponent, date: creationDate, duration: duration, locationData: locationData)
                 }
                 .sorted { $0.date > $1.date }
         } catch {
             print("Error loading recordings: \(error)")
         }
+    }
+    
+    private func loadLocationDataForRecording(url: URL) -> LocationData? {
+        let locationURL = url.deletingPathExtension().appendingPathExtension("location")
+        guard let data = try? Data(contentsOf: locationURL),
+              let locationData = try? JSONDecoder().decode(LocationData.self, from: data) else {
+            return nil
+        }
+        return locationData
+    }
+    
+    private func showLocationDetails(_ locationData: LocationData) {
+        selectedLocationData = locationData
     }
     
     private func deleteRecording(_ recording: RecordingFile) {
@@ -599,7 +735,15 @@ struct RecordingsListView: View {
         }
         
         do {
+            // Delete the audio file
             try FileManager.default.removeItem(at: recording.url)
+            
+            // Delete the associated location file if it exists
+            let locationURL = recording.url.deletingPathExtension().appendingPathExtension("location")
+            if FileManager.default.fileExists(atPath: locationURL.path) {
+                try FileManager.default.removeItem(at: locationURL)
+            }
+            
             loadRecordings() // Reload the list
         } catch {
             print("Error deleting recording: \(error)")
@@ -744,6 +888,63 @@ struct SettingsView: View {
                         }
                     }
                     
+                    Text("Location Services")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                        .padding(.top, 40)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 16)
+                    
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Location Access")
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                Text("Capture location when recording")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            if recorderVM.locationManager.isLocationEnabled {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.title2)
+                            } else {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.red)
+                                    .font(.title2)
+                            }
+                        }
+                        
+                        if let error = recorderVM.locationManager.locationError {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .padding(.top, 4)
+                        }
+                        
+                        if recorderVM.locationManager.locationStatus == .denied || recorderVM.locationManager.locationStatus == .restricted {
+                            Button(action: {
+                                if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
+                                    UIApplication.shared.open(settingsUrl)
+                                }
+                            }) {
+                                Text("Open Settings")
+                                    .font(.caption)
+                                    .foregroundColor(.accentColor)
+                            }
+                            .padding(.top, 4)
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(
+                        Rectangle()
+                            .fill(Color(.systemGray6))
+                            .opacity(0.3)
+                    )
+                    
                     Text("Test Recordings")
                         .font(.headline)
                         .foregroundColor(.primary)
@@ -799,6 +1000,8 @@ struct TranscriptsView: View {
     @State private var selectedRecording: RecordingFile?
     @State private var isGeneratingTranscript = false
     @State private var transcriptText = ""
+    @State private var selectedLocationData: LocationData?
+    @State private var locationAddresses: [URL: String] = [:]
     
     var body: some View {
         NavigationView {
@@ -832,6 +1035,21 @@ struct TranscriptsView: View {
                                     Text(recording.dateString)
                                         .font(.caption)
                                         .foregroundColor(.secondary)
+                                    if let locationData = recording.locationData {
+                                        Button(action: {
+                                            selectedLocationData = locationData
+                                        }) {
+                                            HStack {
+                                                Image(systemName: "location.fill")
+                                                    .font(.caption2)
+                                                    .foregroundColor(.accentColor)
+                                                Text(locationAddresses[recording.url] ?? locationData.coordinateString)
+                                                    .font(.caption2)
+                                                    .foregroundColor(.accentColor)
+                                            }
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                    }
                                 }
                                 Spacer()
                                 Button(action: {
@@ -869,6 +1087,9 @@ struct TranscriptsView: View {
         .sheet(item: $selectedRecording) { recording in
             TranscriptDetailView(recording: recording, transcriptText: transcriptText)
         }
+        .sheet(item: $selectedLocationData) { locationData in
+            LocationDetailView(locationData: locationData)
+        }
     }
     
     private func loadRecordings() {
@@ -880,11 +1101,37 @@ struct TranscriptsView: View {
                 .compactMap { url -> RecordingFile? in
                     guard let creationDate = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate else { return nil }
                     let duration = getRecordingDuration(url: url)
-                    return RecordingFile(url: url, name: url.deletingPathExtension().lastPathComponent, date: creationDate, duration: duration)
+                    let locationData = loadLocationDataForRecording(url: url)
+                    return RecordingFile(url: url, name: url.deletingPathExtension().lastPathComponent, date: creationDate, duration: duration, locationData: locationData)
                 }
                 .sorted { $0.date > $1.date }
+            
+            // Geocode locations for all recordings
+            for recording in recordings {
+                geocodeLocationForRecording(recording)
+            }
         } catch {
             print("Error loading recordings: \(error)")
+        }
+    }
+    
+    private func loadLocationDataForRecording(url: URL) -> LocationData? {
+        let locationURL = url.deletingPathExtension().appendingPathExtension("location")
+        guard let data = try? Data(contentsOf: locationURL),
+              let locationData = try? JSONDecoder().decode(LocationData.self, from: data) else {
+            return nil
+        }
+        return locationData
+    }
+    
+    private func geocodeLocationForRecording(_ recording: RecordingFile) {
+        guard let locationData = recording.locationData else { return }
+        
+        let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
+        recorderVM.locationManager.reverseGeocodeLocation(location) { address in
+            if let address = address {
+                locationAddresses[recording.url] = address
+            }
         }
     }
     
@@ -983,6 +1230,7 @@ struct RecordingFile: Identifiable {
     let name: String
     let date: Date
     let duration: TimeInterval
+    let locationData: LocationData?
     
     var dateString: String {
         let formatter = DateFormatter()
@@ -1032,6 +1280,17 @@ struct TranscriptDetailView: View {
                             Text(recording.dateString)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                            
+                            if let locationData = recording.locationData {
+                                HStack {
+                                    Image(systemName: "location.fill")
+                                        .font(.caption)
+                                        .foregroundColor(.accentColor)
+                                    Text(locationData.coordinateString)
+                                        .font(.caption)
+                                        .foregroundColor(.accentColor)
+                                }
+                            }
                             
                             Divider()
                             
