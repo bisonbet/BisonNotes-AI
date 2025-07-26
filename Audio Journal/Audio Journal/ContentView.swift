@@ -266,17 +266,20 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     }
     
     private func captureLocationForRecording() {
-        // Start location updates if not already running
+        // Request a fresh location for this recording
+        locationManager.requestOneTimeLocation()
+        
+        // Also start continuous updates if not already running
         if !locationManager.isLocationEnabled {
             locationManager.startLocationUpdates()
         }
         
-        // Capture current location
+        // Capture current location if available
         if let location = locationManager.getCurrentLocation() {
             recordingLocation = LocationData(location: location)
             print("Location captured for recording: \(recordingLocation?.coordinateString ?? "Unknown")")
         } else {
-            print("No location available for recording")
+            print("No location available for recording, will try to capture during recording")
             recordingLocation = nil
         }
     }

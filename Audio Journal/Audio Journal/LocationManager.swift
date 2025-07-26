@@ -20,8 +20,11 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     override init() {
         super.init()
         locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters // Less demanding than Best
         locationManager.distanceFilter = 10 // Update location when user moves 10 meters
+        
+        // Check initial authorization status
+        locationStatus = locationManager.authorizationStatus
     }
     
     func requestLocationPermission() {
@@ -30,12 +33,14 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     
     func startLocationUpdates() {
         guard CLLocationManager.locationServicesEnabled() else {
-            locationError = "Location services are disabled"
+            locationError = "Location services are disabled on this device"
             return
         }
         
         switch locationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
+            // Try to get a one-time location first, then start continuous updates
+            locationManager.requestLocation()
             locationManager.startUpdatingLocation()
             isLocationEnabled = true
             locationError = nil
@@ -55,6 +60,25 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     
     func getCurrentLocation() -> CLLocation? {
         return currentLocation
+    }
+    
+    func requestOneTimeLocation() {
+        guard CLLocationManager.locationServicesEnabled() else {
+            locationError = "Location services are disabled on this device"
+            return
+        }
+        
+        switch locationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationManager.requestLocation()
+            locationError = nil
+        case .denied, .restricted:
+            locationError = "Location access denied. Please enable in Settings."
+        case .notDetermined:
+            requestLocationPermission()
+        @unknown default:
+            locationError = "Unknown location authorization status"
+        }
     }
     
     func reverseGeocodeLocation(_ location: CLLocation, completion: @escaping (String?) -> Void) {
@@ -105,8 +129,27 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        locationError = "Location error: \(error.localizedDescription)"
+        let clError = error as? CLError
+        
+        switch clError?.code {
+        case .locationUnknown:
+            locationError = "Unable to determine location. Try moving to an area with better GPS signal."
+        case .denied:
+            locationError = "Location access denied. Please enable in Settings."
+        case .network:
+            locationError = "Network error while getting location. Check your connection."
+        case .headingFailure:
+            locationError = "Compass error. Try calibrating your device."
+        case .regionMonitoringDenied, .regionMonitoringFailure:
+            locationError = "Region monitoring not available."
+        case .regionMonitoringSetupDelayed:
+            locationError = "Location setup delayed. Please wait."
+        default:
+            locationError = "Location error: \(error.localizedDescription)"
+        }
+        
         isLocationEnabled = false
+        print("Location error details: \(error)")
     }
     
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
