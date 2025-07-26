@@ -84,6 +84,32 @@ enum SummaryMethod: String, CaseIterable {
     }
 }
 
+enum DiarizationMethod: String, CaseIterable {
+    case basicPause = "Basic Pause Detection"
+    case awsTranscription = "External AWS Transcription"
+    case whisperBased = "Whisper-Based"
+    
+    var description: String {
+        switch self {
+        case .basicPause:
+            return "Uses longer pause thresholds and substantial text requirements to identify speaker changes"
+        case .awsTranscription:
+            return "Advanced speaker diarization using AWS Transcribe service (Coming Soon)"
+        case .whisperBased:
+            return "AI-powered speaker identification using Whisper models (Coming Soon)"
+        }
+    }
+    
+    var isAvailable: Bool {
+        switch self {
+        case .basicPause:
+            return true
+        case .awsTranscription, .whisperBased:
+            return false
+        }
+    }
+}
+
 class AudioRecorderViewModel: NSObject, ObservableObject {
     @Published var isRecording = false
     @Published var availableInputs: [AVAudioSessionPortDescription] = []
@@ -102,6 +128,31 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     @Published var selectedSummaryMethod: SummaryMethod = .appleIntelligence {
         didSet {
             UserDefaults.standard.set(selectedSummaryMethod.rawValue, forKey: "SelectedSummaryMethod")
+        }
+    }
+    @Published var isLocationTrackingEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(isLocationTrackingEnabled, forKey: "LocationTrackingEnabled")
+            if isLocationTrackingEnabled {
+                locationManager.requestLocationPermission()
+            } else {
+                locationManager.stopLocationUpdates()
+            }
+        }
+    }
+    @Published var isDiarizationEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(isDiarizationEnabled, forKey: "DiarizationEnabled")
+        }
+    }
+    @Published var selectedDiarizationMethod: DiarizationMethod = .basicPause {
+        didSet {
+            UserDefaults.standard.set(selectedDiarizationMethod.rawValue, forKey: "SelectedDiarizationMethod")
+        }
+    }
+    @Published var selectedAIEngine: String = "Enhanced Apple Intelligence" {
+        didSet {
+            UserDefaults.standard.set(selectedAIEngine, forKey: "SelectedAIEngine")
         }
     }
     @Published var recordingDuration: TimeInterval = 0
@@ -133,29 +184,95 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             selectedSummaryMethod = summaryMethod
         }
         
-        // Initialize location manager
-        locationManager.requestLocationPermission()
+        // Load location tracking preference (default to true)
+        isLocationTrackingEnabled = UserDefaults.standard.object(forKey: "LocationTrackingEnabled") as? Bool ?? true
+        
+        // Load diarization preferences (default to false)
+        isDiarizationEnabled = UserDefaults.standard.object(forKey: "DiarizationEnabled") as? Bool ?? false
+        if let diarizationMethodString = UserDefaults.standard.string(forKey: "SelectedDiarizationMethod"),
+           let diarizationMethod = DiarizationMethod(rawValue: diarizationMethodString) {
+            selectedDiarizationMethod = diarizationMethod
+        }
+        
+        // Load AI engine preference (default to Enhanced Apple Intelligence)
+        selectedAIEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+        
+        // Initialize location manager only if location tracking is enabled
+        if isLocationTrackingEnabled {
+            locationManager.requestLocationPermission()
+        }
     }
     
 
 
     func fetchInputs() {
         do {
-            try session.setCategory(.playAndRecord, mode: .default)
+            // Configure session to detect all available inputs including Bluetooth
+            try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .allowBluetoothA2DP])
             try session.setActive(true)
-            availableInputs = session.availableInputs ?? []
+            
+            // Get all available inputs
+            let inputs = session.availableInputs ?? []
+            
+            // Filter and sort inputs to prioritize built-in mic and common types
+            availableInputs = inputs.sorted { input1, input2 in
+                let priority1 = inputPriority(for: input1.portType)
+                let priority2 = inputPriority(for: input2.portType)
+                return priority1 < priority2
+            }
+            
+            // If no input is selected, default to the first available (usually built-in mic)
+            if selectedInputUID == nil && !availableInputs.isEmpty {
+                selectedInputUID = availableInputs.first?.uid
+            }
+            
+            print("Available audio inputs:")
+            for input in availableInputs {
+                print("- \(input.portName) (\(input.portType.rawValue))")
+            }
+            
         } catch {
             print("Failed to fetch audio inputs: \(error)")
+        }
+    }
+    
+    private func inputPriority(for portType: AVAudioSession.Port) -> Int {
+        switch portType {
+        case .builtInMic:
+            return 1 // Highest priority - built-in mic
+        case .headsetMic:
+            return 2 // Wired headset
+        case .bluetoothHFP:
+            return 3 // Bluetooth hands-free
+        case .bluetoothA2DP:
+            return 4 // Bluetooth audio
+        case .bluetoothLE:
+            return 5 // Bluetooth LE
+        case .usbAudio:
+            return 6 // USB audio
+        case .carAudio:
+            return 7 // Car audio
+        case .airPlay:
+            return 8 // AirPlay
+        case .lineIn:
+            return 9 // Line input
+        default:
+            return 10 // Other types
         }
     }
 
     func setPreferredInput() {
         guard let uid = selectedInputUID,
-              let input = availableInputs.first(where: { $0.uid == uid }) else { return }
+              let input = availableInputs.first(where: { $0.uid == uid }) else { 
+            print("No valid input selected")
+            return 
+        }
+        
         do {
             try session.setPreferredInput(input)
+            print("Successfully set preferred input to: \(input.portName) (\(input.portType.rawValue))")
         } catch {
-            print("Failed to set preferred input: \(error)")
+            print("Failed to set preferred input to \(input.portName): \(error)")
         }
     }
     
@@ -266,6 +383,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     }
     
     private func captureLocationForRecording() {
+        // Only capture location if user has enabled location tracking
+        guard isLocationTrackingEnabled else {
+            print("Location tracking is disabled by user")
+            recordingLocation = nil
+            return
+        }
+        
         // Request a fresh location for this recording
         locationManager.requestOneTimeLocation()
         
@@ -732,6 +856,83 @@ struct RecordingsView: View {
 
 struct SettingsView: View {
         @EnvironmentObject var recorderVM: AudioRecorderViewModel
+        @StateObject private var summaryManager = SummaryManager()
+        @StateObject private var transcriptManager = TranscriptManager()
+        @StateObject private var regenerationManager: SummaryRegenerationManager
+        @State private var showingEngineChangePrompt = false
+        @State private var previousEngine = ""
+        
+        init() {
+            let summaryMgr = SummaryManager()
+            let transcriptMgr = TranscriptManager()
+            self._summaryManager = StateObject(wrappedValue: summaryMgr)
+            self._transcriptManager = StateObject(wrappedValue: transcriptMgr)
+            self._regenerationManager = StateObject(wrappedValue: SummaryRegenerationManager(summaryManager: summaryMgr, transcriptManager: transcriptMgr))
+        }
+        
+        private func microphoneTypeDescription(for portType: AVAudioSession.Port) -> String {
+            switch portType {
+            case .builtInMic:
+                return "Built-in Microphone"
+            case .headsetMic:
+                return "Headset Microphone"
+            case .bluetoothHFP:
+                return "Bluetooth Hands-Free"
+            case .bluetoothA2DP:
+                return "Bluetooth Audio"
+            case .bluetoothLE:
+                return "Bluetooth Low Energy"
+            case .usbAudio:
+                return "USB Audio Device"
+            case .carAudio:
+                return "Car Audio System"
+            case .airPlay:
+                return "AirPlay Device"
+            case .lineIn:
+                return "Line Input"
+            default:
+                return portType.rawValue.capitalized
+            }
+        }
+        
+        private func locationStatusDescription() -> String {
+            switch recorderVM.locationManager.locationStatus {
+            case .notDetermined:
+                return "Permission not requested"
+            case .denied:
+                return "Permission denied"
+            case .restricted:
+                return "Location restricted"
+            case .authorizedWhenInUse:
+                return "Authorized when app is in use"
+            case .authorizedAlways:
+                return "Always authorized"
+            @unknown default:
+                return "Unknown status"
+            }
+        }
+        
+        private func locationStatusIcon() -> some View {
+            switch recorderVM.locationManager.locationStatus {
+            case .authorizedWhenInUse, .authorizedAlways:
+                return Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                    .font(.title2)
+            case .denied, .restricted:
+                return Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.red)
+                    .font(.title2)
+            case .notDetermined:
+                return Image(systemName: "questionmark.circle.fill")
+                    .foregroundColor(.orange)
+                    .font(.title2)
+            @unknown default:
+                return Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundColor(.orange)
+                    .font(.title2)
+            }
+        }
+        
         var body: some View {
             NavigationView {
                 ScrollView {
@@ -744,52 +945,73 @@ struct SettingsView: View {
                             .padding(.horizontal, 24)
                         
                         VStack(alignment: .leading, spacing: 0) {
-                            Text("Microphone Selection")
-                                .font(.headline)
-                                .foregroundColor(.primary)
-                                .padding(.top, 40)
-                                .padding(.horizontal, 24)
-                                .padding(.bottom, 16)
-                            
-                            if recorderVM.availableInputs.isEmpty {
-                                HStack {
-                                    Image(systemName: "exclamationmark.triangle")
-                                        .foregroundColor(.orange)
-                                    Text("No microphones found.")
-                                        .foregroundColor(.secondary)
+                            HStack {
+                                Text("Microphone Selection")
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Button(action: {
+                                    recorderVM.fetchInputs()
+                                }) {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.title3)
+                                        .foregroundColor(.accentColor)
                                 }
-                                .padding(.horizontal, 24)
-                            } else {
-                                ForEach(recorderVM.availableInputs, id: \.uid) { input in
+                            }
+                            .padding(.top, 40)
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, 16)
+                            
+                            VStack(alignment: .leading, spacing: 8) {
+                                if recorderVM.availableInputs.isEmpty {
                                     HStack {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(input.portName)
-                                                .font(.body)
-                                                .foregroundColor(.primary)
-                                            Text(input.portType.rawValue)
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
+                                        Image(systemName: "exclamationmark.triangle")
+                                            .foregroundColor(.orange)
+                                        Text("No microphones found.")
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.horizontal, 24)
+                                } else {
+                                    Picker("Select Microphone", selection: Binding(
+                                        get: { recorderVM.selectedInputUID ?? "" },
+                                        set: { newValue in
+                                            recorderVM.selectedInputUID = newValue.isEmpty ? nil : newValue
+                                            recorderVM.setPreferredInput()
                                         }
-                                        Spacer()
-                                        if recorderVM.selectedInputUID == input.uid {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .foregroundColor(.accentColor)
-                                                .font(.title2)
+                                    )) {
+                                        ForEach(recorderVM.availableInputs, id: \.uid) { input in
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(input.portName)
+                                                    .font(.body)
+                                                Text(microphoneTypeDescription(for: input.portType))
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            .tag(input.uid)
                                         }
                                     }
+                                    .pickerStyle(MenuPickerStyle())
                                     .padding(.horizontal, 24)
                                     .padding(.vertical, 12)
                                     .background(
-                                        Rectangle()
+                                        RoundedRectangle(cornerRadius: 8)
                                             .fill(Color(.systemGray6))
-                                            .opacity(recorderVM.selectedInputUID == input.uid ? 0.3 : 0.1)
                                     )
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            recorderVM.selectedInputUID = input.uid
-                                            recorderVM.setPreferredInput()
+                                    .padding(.horizontal, 24)
+                                    
+                                    // Show current selection details
+                                    if let selectedUID = recorderVM.selectedInputUID,
+                                       let selectedInput = recorderVM.availableInputs.first(where: { $0.uid == selectedUID }) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("Current: \(selectedInput.portName)")
+                                                .font(.caption)
+                                                .foregroundColor(.primary)
+                                            Text("Type: \(microphoneTypeDescription(for: selectedInput.portType))")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
                                         }
+                                        .padding(.horizontal, 24)
+                                        .padding(.top, 8)
                                     }
                                 }
                             }
@@ -843,71 +1065,90 @@ struct SettingsView: View {
                                 .padding(.bottom, 16)
                             
                             VStack(alignment: .leading, spacing: 12) {
+                                // Location tracking toggle
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text("Location Access")
+                                        Text("Enable Location Tracking")
                                             .font(.body)
                                             .foregroundColor(.primary)
-                                        Text("Capture location when recording")
+                                        Text("Capture location data with recordings")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                     }
                                     Spacer()
-                                    if recorderVM.locationManager.isLocationEnabled {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundColor(.green)
-                                            .font(.title2)
-                                    } else {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.red)
-                                            .font(.title2)
-                                    }
+                                    Toggle("", isOn: $recorderVM.isLocationTrackingEnabled)
+                                        .labelsHidden()
                                 }
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                                .background(
+                                    Rectangle()
+                                        .fill(Color(.systemGray6))
+                                        .opacity(0.3)
+                                )
                                 
-                                if let error = recorderVM.locationManager.locationError {
-                                    Text(error)
-                                        .font(.caption)
-                                        .foregroundColor(.red)
-                                        .padding(.top, 4)
-                                }
-                                
-                                if recorderVM.locationManager.locationStatus == .denied || recorderVM.locationManager.locationStatus == .restricted {
-                                    Button(action: {
-                                        if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
-                                            UIApplication.shared.open(settingsUrl)
+                                // Location permission status (only show if location tracking is enabled)
+                                if recorderVM.isLocationTrackingEnabled {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text("Location Permission")
+                                                    .font(.body)
+                                                    .foregroundColor(.primary)
+                                                Text(locationStatusDescription())
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            Spacer()
+                                            locationStatusIcon()
                                         }
-                                    }) {
-                                        Text("Open Settings")
-                                            .font(.caption)
-                                            .foregroundColor(.accentColor)
+                                        
+                                        if let error = recorderVM.locationManager.locationError {
+                                            Text(error)
+                                                .font(.caption)
+                                                .foregroundColor(.red)
+                                                .padding(.top, 4)
+                                        }
+                                        
+                                        if recorderVM.locationManager.locationStatus == .denied || recorderVM.locationManager.locationStatus == .restricted {
+                                            Button(action: {
+                                                if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
+                                                    UIApplication.shared.open(settingsUrl)
+                                                }
+                                            }) {
+                                                Text("Open Settings")
+                                                    .font(.caption)
+                                                    .foregroundColor(.accentColor)
+                                            }
+                                            .padding(.top, 4)
+                                        }
                                     }
-                                    .padding(.top, 4)
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 12)
+                                    .background(
+                                        Rectangle()
+                                            .fill(Color(.systemGray6))
+                                            .opacity(0.2)
+                                    )
                                 }
                             }
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 12)
-                            .background(
-                                Rectangle()
-                                    .fill(Color(.systemGray6))
-                                    .opacity(0.3)
-                            )
                             
-                            Text("Summary Method")
+                            Text("AI Summarization Engine")
                                 .font(.headline)
                                 .foregroundColor(.primary)
                                 .padding(.top, 40)
                                 .padding(.horizontal, 24)
                                 .padding(.bottom, 16)
                             
-                            ForEach(SummaryMethod.allCases, id: \.self) { method in
+                            ForEach(AIEngineType.allCases, id: \.self) { engineType in
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
                                         VStack(alignment: .leading, spacing: 4) {
                                             HStack {
-                                                Text(method.rawValue)
+                                                Text(engineType.rawValue)
                                                     .font(.body)
                                                     .foregroundColor(.primary)
-                                                if !method.isAvailable {
+                                                if engineType.isComingSoon {
                                                     Text("(Coming Soon)")
                                                         .font(.caption)
                                                         .foregroundColor(.orange)
@@ -917,12 +1158,12 @@ struct SettingsView: View {
                                                         .cornerRadius(4)
                                                 }
                                             }
-                                            Text(method.description)
+                                            Text(engineType.description)
                                                 .font(.caption)
                                                 .foregroundColor(.secondary)
                                         }
                                         Spacer()
-                                        if recorderVM.selectedSummaryMethod == method {
+                                        if recorderVM.selectedAIEngine == engineType.rawValue {
                                             Image(systemName: "checkmark.circle.fill")
                                                 .foregroundColor(.accentColor)
                                                 .font(.title2)
@@ -934,17 +1175,167 @@ struct SettingsView: View {
                                 .background(
                                     Rectangle()
                                         .fill(Color(.systemGray6))
-                                        .opacity(recorderVM.selectedSummaryMethod == method ? 0.3 : 0.1)
+                                        .opacity(recorderVM.selectedAIEngine == engineType.rawValue ? 0.3 : 0.1)
                                 )
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    if method.isAvailable {
+                                    if !engineType.isComingSoon {
+                                        let oldEngine = recorderVM.selectedAIEngine
                                         withAnimation(.easeInOut(duration: 0.2)) {
-                                            recorderVM.selectedSummaryMethod = method
+                                            recorderVM.selectedAIEngine = engineType.rawValue
+                                            summaryManager.setEngine(engineType.rawValue)
+                                        }
+                                        
+                                        // Check if we should prompt for regeneration
+                                        if regenerationManager.shouldPromptForRegeneration(oldEngine: oldEngine, newEngine: engineType.rawValue) {
+                                            previousEngine = oldEngine
+                                            showingEngineChangePrompt = true
                                         }
                                     }
                                 }
-                                .opacity(method.isAvailable ? 1.0 : 0.6)
+                                .opacity(!engineType.isComingSoon ? 1.0 : 0.6)
+                            }
+                            
+                            // Regeneration section
+                            if summaryManager.enhancedSummaries.count > 0 {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("Regenerate Summaries")
+                                                .font(.body)
+                                                .foregroundColor(.primary)
+                                            Text("Update all existing summaries with current AI engine")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        Spacer()
+                                        Button(action: {
+                                            Task {
+                                                await regenerationManager.regenerateAllSummaries()
+                                            }
+                                        }) {
+                                            HStack {
+                                                if regenerationManager.isRegenerating {
+                                                    ProgressView()
+                                                        .scaleEffect(0.8)
+                                                } else {
+                                                    Image(systemName: "arrow.clockwise")
+                                                }
+                                                Text(regenerationManager.isRegenerating ? "Processing..." : "Regenerate All")
+                                            }
+                                            .font(.caption)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 6)
+                                            .background(regenerationManager.canRegenerate ? Color.accentColor : Color.gray)
+                                            .foregroundColor(.white)
+                                            .cornerRadius(8)
+                                        }
+                                        .disabled(!regenerationManager.canRegenerate)
+                                    }
+                                    
+                                    // Progress view
+                                    RegenerationProgressView(regenerationManager: regenerationManager)
+                                }
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                                .background(
+                                    Rectangle()
+                                        .fill(Color(.systemGray6))
+                                        .opacity(0.2)
+                                )
+                                .padding(.top, 8)
+                            }
+                            
+                            Text("Speaker Diarization")
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                                .padding(.top, 40)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, 16)
+                            
+                            VStack(alignment: .leading, spacing: 12) {
+                                // Diarization toggle
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Enable Speaker Diarization")
+                                            .font(.body)
+                                            .foregroundColor(.primary)
+                                        Text("Attempt to identify different speakers in transcripts")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    Toggle("", isOn: $recorderVM.isDiarizationEnabled)
+                                        .labelsHidden()
+                                }
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                                .background(
+                                    Rectangle()
+                                        .fill(Color(.systemGray6))
+                                        .opacity(0.3)
+                                )
+                                
+                                // Diarization method selection (only show if diarization is enabled)
+                                if recorderVM.isDiarizationEnabled {
+                                    VStack(alignment: .leading, spacing: 0) {
+                                        Text("Diarization Method")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.primary)
+                                            .padding(.horizontal, 24)
+                                            .padding(.bottom, 8)
+                                        
+                                        ForEach(DiarizationMethod.allCases, id: \.self) { method in
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                HStack {
+                                                    VStack(alignment: .leading, spacing: 4) {
+                                                        HStack {
+                                                            Text(method.rawValue)
+                                                                .font(.body)
+                                                                .foregroundColor(.primary)
+                                                            if !method.isAvailable {
+                                                                Text("(Coming Soon)")
+                                                                    .font(.caption)
+                                                                    .foregroundColor(.orange)
+                                                                    .padding(.horizontal, 6)
+                                                                    .padding(.vertical, 2)
+                                                                    .background(Color.orange.opacity(0.2))
+                                                                    .cornerRadius(4)
+                                                            }
+                                                        }
+                                                        Text(method.description)
+                                                            .font(.caption)
+                                                            .foregroundColor(.secondary)
+                                                    }
+                                                    Spacer()
+                                                    if recorderVM.selectedDiarizationMethod == method {
+                                                        Image(systemName: "checkmark.circle.fill")
+                                                            .foregroundColor(.accentColor)
+                                                            .font(.title2)
+                                                    }
+                                                }
+                                            }
+                                            .padding(.horizontal, 24)
+                                            .padding(.vertical, 12)
+                                            .background(
+                                                Rectangle()
+                                                    .fill(Color(.systemGray6))
+                                                    .opacity(recorderVM.selectedDiarizationMethod == method ? 0.3 : 0.1)
+                                            )
+                                            .contentShape(Rectangle())
+                                            .onTapGesture {
+                                                if method.isAvailable {
+                                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                                        recorderVM.selectedDiarizationMethod = method
+                                                    }
+                                                }
+                                            }
+                                            .opacity(method.isAvailable ? 1.0 : 0.6)
+                                        }
+                                    }
+                                    .padding(.top, 8)
+                                }
                             }
                             
                             
@@ -957,6 +1348,28 @@ struct SettingsView: View {
             }
             .onAppear {
                 recorderVM.fetchInputs()
+                summaryManager.setEngine(recorderVM.selectedAIEngine)
+            }
+            .alert("Engine Change", isPresented: $showingEngineChangePrompt) {
+                Button("Skip") {
+                    // Do nothing, just dismiss
+                }
+                Button("Regenerate") {
+                    Task {
+                        await regenerationManager.regenerateAllSummaries()
+                    }
+                }
+            } message: {
+                Text("You've switched from \(previousEngine) to \(recorderVM.selectedAIEngine). Would you like to regenerate your \(summaryManager.enhancedSummaries.count) existing summaries with the new AI engine?")
+            }
+            .alert("Regeneration Complete", isPresented: $regenerationManager.showingRegenerationAlert) {
+                Button("OK") {
+                    regenerationManager.regenerationResults = nil
+                }
+            } message: {
+                if let results = regenerationManager.regenerationResults {
+                    Text(results.summary)
+                }
             }
         }
     }
@@ -1201,42 +1614,85 @@ struct TranscriptsView: View {
         }
         
         private func createDiarizedSegments(from transcription: SFTranscription) -> [TranscriptSegment] {
+            let fullText = transcription.formattedString
+            
+            if fullText.isEmpty {
+                return []
+            }
+            
+            // Check if diarization is enabled and use the selected method
+            guard recorderVM.isDiarizationEnabled else {
+                // Simple single-speaker transcript (no diarization)
+                return [TranscriptSegment(
+                    speaker: "Speaker",
+                    text: fullText,
+                    startTime: 0,
+                    endTime: transcription.segments.last?.timestamp ?? 0
+                )]
+            }
+            
+            // Apply diarization based on selected method
+            switch recorderVM.selectedDiarizationMethod {
+            case .basicPause:
+                return createBasicPauseDiarization(from: transcription)
+            case .awsTranscription:
+                // Placeholder for future AWS implementation
+                return [TranscriptSegment(
+                    speaker: "Speaker",
+                    text: fullText + "\n\n[AWS Transcription coming soon]",
+                    startTime: 0,
+                    endTime: transcription.segments.last?.timestamp ?? 0
+                )]
+            case .whisperBased:
+                // Placeholder for future Whisper implementation
+                return [TranscriptSegment(
+                    speaker: "Speaker",
+                    text: fullText + "\n\n[Whisper-based diarization coming soon]",
+                    startTime: 0,
+                    endTime: transcription.segments.last?.timestamp ?? 0
+                )]
+            }
+        }
+        
+        private func createBasicPauseDiarization(from transcription: SFTranscription) -> [TranscriptSegment] {
             var segments: [TranscriptSegment] = []
             var currentSpeaker = "Speaker 1"
             var currentText = ""
             var currentStartTime: TimeInterval = 0
             var speakerCount = 1
+            var lastSegmentEndTime: TimeInterval = 0
             
             for segment in transcription.segments {
-                // Simple diarization logic - change speaker when there's a significant pause
-                let shouldChangeSpeaker = segment.timestamp - currentStartTime > 2.0 && !currentText.isEmpty
+                let pauseDuration = segment.timestamp - lastSegmentEndTime
+                
+                // Conservative diarization logic - only change speaker on very long pauses
+                let shouldChangeSpeaker = pauseDuration > 8.0 && // Very long pause threshold
+                                        !currentText.isEmpty && 
+                                        currentText.count > 100 && // Substantial text before switching
+                                        speakerCount < 3 // Limit to maximum 3 speakers
                 
                 if shouldChangeSpeaker {
-                    // Save current segment
-                    if !currentText.isEmpty {
-                        segments.append(TranscriptSegment(
-                            speaker: currentSpeaker,
-                            text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
-                            startTime: currentStartTime,
-                            endTime: segment.timestamp
-                        ))
-                    }
+                    segments.append(TranscriptSegment(
+                        speaker: currentSpeaker,
+                        text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
+                        startTime: currentStartTime,
+                        endTime: segment.timestamp
+                    ))
                     
-                    // Start new speaker
                     speakerCount += 1
                     currentSpeaker = "Speaker \(speakerCount)"
                     currentText = segment.substring
                     currentStartTime = segment.timestamp
                 } else {
-                    // Continue with current speaker
                     if currentText.isEmpty {
                         currentStartTime = segment.timestamp
                     }
                     currentText += " " + segment.substring
                 }
+                
+                lastSegmentEndTime = segment.timestamp + segment.duration
             }
             
-            // Add the last segment
             if !currentText.isEmpty {
                 segments.append(TranscriptSegment(
                     speaker: currentSpeaker,
