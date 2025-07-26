@@ -26,8 +26,9 @@ struct LocationDetailView: View {
         NavigationView {
             VStack(spacing: 0) {
                 // Map view
-                Map(coordinateRegion: $region, annotationItems: [locationData]) { location in
-                    MapMarker(coordinate: CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude), tint: .accentColor)
+                Map(position: .constant(.region(region))) {
+                    Marker("Recording Location", coordinate: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude))
+                        .foregroundStyle(.blue)
                 }
                 .frame(height: 300)
                 

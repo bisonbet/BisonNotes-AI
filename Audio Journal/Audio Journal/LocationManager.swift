@@ -131,7 +131,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 // MARK: - Location Data Structure
 
 struct LocationData: Codable, Identifiable {
-    let id = UUID()
+    let id: UUID
     let latitude: Double
     let longitude: Double
     let timestamp: Date
@@ -139,6 +139,7 @@ struct LocationData: Codable, Identifiable {
     let address: String?
     
     init(location: CLLocation) {
+        self.id = UUID()
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude
         self.timestamp = location.timestamp
