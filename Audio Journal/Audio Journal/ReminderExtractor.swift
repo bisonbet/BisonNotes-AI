@@ -88,21 +88,18 @@ class ReminderExtractor {
     private func extractExplicitReminder(_ sentence: String) -> ReminderItem? {
         let lowercased = sentence.lowercased()
         
+        // Very conservative reminder patterns - only extract explicit reminders
         let reminderIndicators: [(pattern: String, confidenceBoost: Double)] = [
-            ("remind me to", 0.9),
-            ("remind me about", 0.9),
-            ("don't forget to", 0.9),
-            ("don't forget about", 0.9),
-            ("remember to", 0.8),
-            ("remember about", 0.8),
-            ("make sure to", 0.8),
-            ("make sure i", 0.8),
-            ("note to self", 0.7),
-            ("mental note", 0.7),
-            ("i need to remember", 0.8),
-            ("i should remember", 0.7),
-            ("set reminder", 0.9),
-            ("remind", 0.6)
+            ("remind me to", 0.95),
+            ("remind me about", 0.95),
+            ("don't forget to", 0.95),
+            ("don't forget about", 0.95),
+            ("i need to remember to", 0.9),
+            ("i need to remember about", 0.9),
+            ("set reminder for", 0.95),
+            ("set reminder to", 0.95),
+            ("note to self:", 0.9),
+            ("mental note:", 0.9)
         ]
         
         for (pattern, confidenceBoost) in reminderIndicators {

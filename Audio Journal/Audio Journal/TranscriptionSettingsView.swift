@@ -7,18 +7,235 @@
 
 import SwiftUI
 
+// Note: TranscriptionEngine enum is defined in ContentView.swift
+
 struct TranscriptionSettingsView: View {
+    @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @AppStorage("maxChunkDuration") private var maxChunkDuration: Double = 300 // 5 minutes
     @AppStorage("maxTranscriptionTime") private var maxTranscriptionTime: Double = 600 // 10 minutes
     @AppStorage("chunkOverlap") private var chunkOverlap: Double = 2.0 // 2 seconds
     @AppStorage("enableEnhancedTranscription") private var enableEnhancedTranscription: Bool = true
     @AppStorage("showTranscriptionProgress") private var showTranscriptionProgress: Bool = true
     
+    @State private var showingAWSSettings = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         NavigationView {
             Form {
+                Section(header: Text("Transcription Engine")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Choose your preferred transcription service")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .padding(.bottom, 8)
+                        
+                        ForEach(TranscriptionEngine.allCases, id: \.self) { engine in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack {
+                                            Text(engine.rawValue)
+                                                .font(.subheadline)
+                                                .fontWeight(.medium)
+                                            
+                                            if !engine.isAvailable {
+                                                Text("Coming Soon")
+                                                    .font(.caption)
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(Color.orange.opacity(0.2))
+                                                    .foregroundColor(.orange)
+                                                    .cornerRadius(4)
+                                            }
+                                            
+                                            if engine.requiresConfiguration && engine.isAvailable {
+                                                Text("Requires Setup")
+                                                    .font(.caption)
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(Color.blue.opacity(0.2))
+                                                    .foregroundColor(.blue)
+                                                    .cornerRadius(4)
+                                            }
+                                        }
+                                        
+                                        // Show configuration button for AWS Transcribe when selected
+                                        if engine == .awsTranscribe && recorderVM.selectedTranscriptionEngine == engine {
+                                            Button(action: {
+                                                showingAWSSettings = true
+                                            }) {
+                                                HStack {
+                                                    Image(systemName: "gear")
+                                                        .font(.caption)
+                                                    Text("Configure")
+                                                        .font(.caption)
+                                                }
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(Color.blue.opacity(0.1))
+                                                .foregroundColor(.blue)
+                                                .cornerRadius(6)
+                                            }
+                                            .padding(.top, 4)
+                                        }
+                                        
+                                        Text(engine.description)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    Spacer()
+                                    if recorderVM.selectedTranscriptionEngine == engine {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.accentColor)
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 12)
+                            .background(
+                                Rectangle()
+                                    .fill(Color(.systemGray6))
+                                    .opacity(recorderVM.selectedTranscriptionEngine == engine ? 0.3 : 0.1)
+                            )
+                            .cornerRadius(8)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if engine.isAvailable {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        recorderVM.selectedTranscriptionEngine = engine
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // AWS Transcribe specific settings
+                if recorderVM.selectedTranscriptionEngine == .awsTranscribe {
+                    Section(header: Text("AWS Transcribe Configuration")) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Image(systemName: "cloud")
+                                    .foregroundColor(.blue)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Cloud-based transcription service")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                    Text("Supports long audio files, multiple languages, and advanced speaker diarization")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            
+                            Button(action: {
+                                showingAWSSettings = true
+                            }) {
+                                HStack {
+                                    Image(systemName: "gear")
+                                    Text("Configure AWS Credentials")
+                                    Spacer()
+                                    Image(systemName: "arrow.right")
+                                }
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 12)
+                                .background(Color.blue.opacity(0.1))
+                                .foregroundColor(.blue)
+                                .cornerRadius(8)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Requirements:")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.secondary)
+                                Text("• AWS Account with Transcribe service access")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text("• S3 bucket for temporary file storage")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text("• IAM credentials with appropriate permissions")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+                
+                Section(header: Text("Speaker Diarization")) {
+                    Toggle("Enable Speaker Diarization", isOn: $recorderVM.isDiarizationEnabled)
+                    
+                    if recorderVM.isDiarizationEnabled {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Attempt to identify different speakers in transcripts. This helps organize conversations and meetings by speaker.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                        
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Diarization Method")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.primary)
+                                .padding(.bottom, 8)
+                            
+                            ForEach(DiarizationMethod.allCases, id: \.self) { method in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            HStack {
+                                                Text(method.rawValue)
+                                                    .font(.subheadline)
+                                                    .fontWeight(.medium)
+                                                
+                                                if !method.isAvailable {
+                                                    Text("Coming Soon")
+                                                        .font(.caption)
+                                                        .padding(.horizontal, 6)
+                                                        .padding(.vertical, 2)
+                                                        .background(Color.orange.opacity(0.2))
+                                                        .foregroundColor(.orange)
+                                                        .cornerRadius(4)
+                                                }
+                                            }
+                                            
+                                            Text(method.description)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                        Spacer()
+                                        if recorderVM.selectedDiarizationMethod == method {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundColor(.accentColor)
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 12)
+                                .background(
+                                    Rectangle()
+                                        .fill(Color(.systemGray6))
+                                        .opacity(recorderVM.selectedDiarizationMethod == method ? 0.3 : 0.1)
+                                )
+                                .cornerRadius(8)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    if method.isAvailable {
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            recorderVM.selectedDiarizationMethod = method
+                                        }
+                                    }
+                                }
+                                .opacity(method.isAvailable ? 1.0 : 0.6)
+                            }
+                        }
+                    }
+                }
+                
                 Section(header: Text("Enhanced Transcription")) {
                     Toggle("Enable Enhanced Transcription", isOn: $enableEnhancedTranscription)
                     
@@ -158,6 +375,9 @@ struct TranscriptionSettingsView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showingAWSSettings) {
+                AWSSettingsView()
+            }
         }
     }
     
@@ -180,6 +400,9 @@ struct TranscriptionSettingsView: View {
         chunkOverlap = 2.0
         enableEnhancedTranscription = true
         showTranscriptionProgress = true
+        recorderVM.selectedTranscriptionEngine = .appleIntelligence
+        recorderVM.isDiarizationEnabled = false
+        recorderVM.selectedDiarizationMethod = .basicPause
     }
 }
 

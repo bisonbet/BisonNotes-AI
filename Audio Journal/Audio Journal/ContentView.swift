@@ -110,6 +110,44 @@ enum DiarizationMethod: String, CaseIterable {
     }
 }
 
+enum TranscriptionEngine: String, CaseIterable {
+    case appleIntelligence = "Apple Intelligence (Limited)"
+    case awsTranscribe = "AWS Transcribe"
+    case openAIChatGPT = "OpenAI (ChatGPT)"
+    case openAIAPICompatible = "OpenAI API Compatible"
+    
+    var description: String {
+        switch self {
+        case .appleIntelligence:
+            return "Uses Apple's built-in Speech framework for local transcription with 1-minute limit per request"
+        case .awsTranscribe:
+            return "Cloud-based transcription service with support for long audio files and speaker diarization"
+        case .openAIChatGPT:
+            return "Advanced AI transcription using OpenAI's Whisper model via ChatGPT API (Coming Soon)"
+        case .openAIAPICompatible:
+            return "Connect to OpenAI-compatible API endpoints for flexible transcription options (Coming Soon)"
+        }
+    }
+    
+    var isAvailable: Bool {
+        switch self {
+        case .appleIntelligence, .awsTranscribe:
+            return true
+        case .openAIChatGPT, .openAIAPICompatible:
+            return false
+        }
+    }
+    
+    var requiresConfiguration: Bool {
+        switch self {
+        case .appleIntelligence:
+            return false
+        case .awsTranscribe, .openAIChatGPT, .openAIAPICompatible:
+            return true
+        }
+    }
+}
+
 class AudioRecorderViewModel: NSObject, ObservableObject {
     @Published var isRecording = false
     @Published var availableInputs: [AVAudioSessionPortDescription] = []
@@ -155,6 +193,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             UserDefaults.standard.set(selectedAIEngine, forKey: "SelectedAIEngine")
         }
     }
+    @Published var selectedTranscriptionEngine: TranscriptionEngine = .appleIntelligence {
+        didSet {
+            UserDefaults.standard.set(selectedTranscriptionEngine.rawValue, forKey: "SelectedTranscriptionEngine")
+        }
+    }
     @Published var recordingDuration: TimeInterval = 0
     @Published var currentlyPlayingURL: URL?
     @Published var isPlaying = false
@@ -196,6 +239,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         
         // Load AI engine preference (default to Enhanced Apple Intelligence)
         selectedAIEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+        
+        // Load transcription engine preference (default to Apple Intelligence)
+        if let transcriptionEngineString = UserDefaults.standard.string(forKey: "SelectedTranscriptionEngine"),
+           let transcriptionEngine = TranscriptionEngine(rawValue: transcriptionEngineString) {
+            selectedTranscriptionEngine = transcriptionEngine
+        }
         
         // Initialize location manager only if location tracking is enabled
         if isLocationTrackingEnabled {
@@ -940,7 +989,9 @@ struct SettingsView: View {
         @StateObject private var regenerationManager: SummaryRegenerationManager
         @State private var showingEngineChangePrompt = false
         @State private var previousEngine = ""
-        @State private var showingAWSSettings = false
+        @State private var showingTranscriptionSettings = false
+        @State private var showingAISettings = false
+        @State private var showingClearSummariesAlert = false
         
         init() {
             let summaryMgr = SummaryManager()
@@ -1213,226 +1264,13 @@ struct SettingsView: View {
                                 }
                             }
                             
-                            Text("AI Summarization Engine")
-                                .font(.headline)
-                                .foregroundColor(.primary)
-                                .padding(.top, 40)
-                                .padding(.horizontal, 24)
-                                .padding(.bottom, 16)
-                            
-                            ForEach(AIEngineType.allCases, id: \.self) { engineType in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            HStack {
-                                                Text(engineType.rawValue)
-                                                    .font(.body)
-                                                    .foregroundColor(.primary)
-                                                if engineType.isComingSoon {
-                                                    Text("(Coming Soon)")
-                                                        .font(.caption)
-                                                        .foregroundColor(.orange)
-                                                        .padding(.horizontal, 6)
-                                                        .padding(.vertical, 2)
-                                                        .background(Color.orange.opacity(0.2))
-                                                        .cornerRadius(4)
-                                                }
-                                            }
-                                            Text(engineType.description)
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        Spacer()
-                                        if recorderVM.selectedAIEngine == engineType.rawValue {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .foregroundColor(.accentColor)
-                                                .font(.title2)
-                                        }
-                                    }
-                                }
-                                .padding(.horizontal, 24)
-                                .padding(.vertical, 12)
-                                .background(
-                                    Rectangle()
-                                        .fill(Color(.systemGray6))
-                                        .opacity(recorderVM.selectedAIEngine == engineType.rawValue ? 0.3 : 0.1)
-                                )
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    if !engineType.isComingSoon {
-                                        let oldEngine = recorderVM.selectedAIEngine
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            recorderVM.selectedAIEngine = engineType.rawValue
-                                            summaryManager.setEngine(engineType.rawValue)
-                                            regenerationManager.setEngine(engineType.rawValue)
-                                        }
-                                        
-                                        // Check if we should prompt for regeneration
-                                        if regenerationManager.shouldPromptForRegeneration(oldEngine: oldEngine, newEngine: engineType.rawValue) {
-                                            previousEngine = oldEngine
-                                            showingEngineChangePrompt = true
-                                        }
-                                    }
-                                }
-                                .opacity(!engineType.isComingSoon ? 1.0 : 0.6)
-                            }
-                            
-                            // Regeneration section
-                            if summaryManager.enhancedSummaries.count > 0 {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text("Regenerate Summaries")
-                                                .font(.body)
-                                                .foregroundColor(.primary)
-                                            Text("Update all existing summaries with current AI engine")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        Spacer()
-                                        Button(action: {
-                                            Task {
-                                                await regenerationManager.regenerateAllSummaries()
-                                            }
-                                        }) {
-                                            HStack {
-                                                if regenerationManager.isRegenerating {
-                                                    ProgressView()
-                                                        .scaleEffect(0.8)
-                                                } else {
-                                                    Image(systemName: "arrow.clockwise")
-                                                }
-                                                Text(regenerationManager.isRegenerating ? "Processing..." : "Regenerate All")
-                                            }
-                                            .font(.caption)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 6)
-                                            .background(regenerationManager.canRegenerate ? Color.accentColor : Color.gray)
-                                            .foregroundColor(.white)
-                                            .cornerRadius(8)
-                                        }
-                                        .disabled(!regenerationManager.canRegenerate)
-                                    }
-                                    
-                                    // Progress view
-                                    RegenerationProgressView(regenerationManager: regenerationManager)
-                                }
-                                .padding(.horizontal, 24)
-                                .padding(.vertical, 12)
-                                .background(
-                                    Rectangle()
-                                        .fill(Color(.systemGray6))
-                                        .opacity(0.2)
-                                )
-                                .padding(.top, 8)
-                            }
-                            
-                            Text("Speaker Diarization")
-                                .font(.headline)
-                                .foregroundColor(.primary)
-                                .padding(.top, 40)
-                                .padding(.horizontal, 24)
-                                .padding(.bottom, 16)
-                            
-                            VStack(alignment: .leading, spacing: 12) {
-                                // Diarization toggle
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("Enable Speaker Diarization")
-                                            .font(.body)
-                                            .foregroundColor(.primary)
-                                        Text("Attempt to identify different speakers in transcripts")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Spacer()
-                                    Toggle("", isOn: $recorderVM.isDiarizationEnabled)
-                                        .labelsHidden()
-                                }
-                                .padding(.horizontal, 24)
-                                .padding(.vertical, 12)
-                                .background(
-                                    Rectangle()
-                                        .fill(Color(.systemGray6))
-                                        .opacity(0.3)
-                                )
-                                
-                                // Diarization method selection (only show if diarization is enabled)
-                                if recorderVM.isDiarizationEnabled {
-                                    VStack(alignment: .leading, spacing: 0) {
-                                        Text("Diarization Method")
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-                                            .foregroundColor(.primary)
-                                            .padding(.horizontal, 24)
-                                            .padding(.bottom, 8)
-                                        
-                                        ForEach(DiarizationMethod.allCases, id: \.self) { method in
-                                            VStack(alignment: .leading, spacing: 4) {
-                                                HStack {
-                                                    VStack(alignment: .leading, spacing: 4) {
-                                                        HStack {
-                                                            Text(method.rawValue)
-                                                                .font(.body)
-                                                                .foregroundColor(.primary)
-                                                            if !method.isAvailable {
-                                                                Text("(Coming Soon)")
-                                                                    .font(.caption)
-                                                                    .foregroundColor(.orange)
-                                                                    .padding(.horizontal, 6)
-                                                                    .padding(.vertical, 2)
-                                                                    .background(Color.orange.opacity(0.2))
-                                                                    .cornerRadius(4)
-                                                            }
-                                                        }
-                                                        Text(method.description)
-                                                            .font(.caption)
-                                                            .foregroundColor(.secondary)
-                                                    }
-                                                    Spacer()
-                                                    if recorderVM.selectedDiarizationMethod == method {
-                                                        Image(systemName: "checkmark.circle.fill")
-                                                            .foregroundColor(.accentColor)
-                                                            .font(.title2)
-                                                    }
-                                                }
-                                            }
-                                            .padding(.horizontal, 24)
-                                            .padding(.vertical, 12)
-                                            .background(
-                                                Rectangle()
-                                                    .fill(Color(.systemGray6))
-                                                    .opacity(recorderVM.selectedDiarizationMethod == method ? 0.3 : 0.1)
-                                            )
-                                            .contentShape(Rectangle())
-                                            .onTapGesture {
-                                                if method.isAvailable {
-                                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                                        recorderVM.selectedDiarizationMethod = method
-                                                    }
-                                                }
-                                            }
-                                            .opacity(method.isAvailable ? 1.0 : 0.6)
-                                        }
-                                    }
-                                    .padding(.top, 8)
-                                }
-                            }
-                            
-                            // AWS Transcribe Settings
+                            // AI Summarization Settings
                             VStack(alignment: .leading, spacing: 16) {
                                 HStack {
-                                    Text("AWS Transcribe")
+                                    Text("AI Summarization Engine")
                                         .font(.headline)
                                         .foregroundColor(.primary)
                                     Spacer()
-                                    Button(action: {
-                                        showingAWSSettings = true
-                                    }) {
-                                        Image(systemName: "chevron.right")
-                                            .font(.title3)
-                                            .foregroundColor(.accentColor)
-                                    }
                                 }
                                 .padding(.top, 40)
                                 .padding(.horizontal, 24)
@@ -1440,19 +1278,55 @@ struct SettingsView: View {
                                 
                                 VStack(alignment: .leading, spacing: 8) {
                                     HStack {
-                                        Image(systemName: "cloud")
+                                        Image(systemName: "brain.head.profile")
                                             .foregroundColor(.blue)
-                                        Text("AWS Transcribe provides high-quality transcription for large audio files")
+                                        Text("Configure AI engines for generating summaries, extracting tasks, and identifying reminders")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                     }
                                     .padding(.horizontal, 24)
                                     
+                                    // Show current AI engine
+                                    HStack {
+                                        Text("Engine:")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        Text(recorderVM.selectedAIEngine)
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.primary)
+                                        
+                                        if AIEngineType.allCases.first(where: { $0.rawValue == recorderVM.selectedAIEngine })?.isComingSoon == true {
+                                            Text("(Coming Soon)")
+                                                .font(.caption)
+                                                .foregroundColor(.orange)
+                                                .padding(.horizontal, 4)
+                                                .padding(.vertical, 1)
+                                                .background(Color.orange.opacity(0.2))
+                                                .cornerRadius(3)
+                                        }
+                                    }
+                                    .padding(.horizontal, 24)
+                                    
+                                    // Show summary count
+                                    if summaryManager.enhancedSummaries.count > 0 {
+                                        HStack {
+                                            Text("Summaries:")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                            Text("\(summaryManager.enhancedSummaries.count)")
+                                                .font(.caption)
+                                                .fontWeight(.medium)
+                                                .foregroundColor(.primary)
+                                        }
+                                        .padding(.horizontal, 24)
+                                    }
+                                    
                                     Button(action: {
-                                        showingAWSSettings = true
+                                        showingAISettings = true
                                     }) {
                                         HStack {
-                                            Text("Configure AWS Transcribe")
+                                            Text("Configure AI Engine")
                                             Spacer()
                                             Image(systemName: "arrow.right")
                                         }
@@ -1463,6 +1337,163 @@ struct SettingsView: View {
                                                 .fill(Color.blue.opacity(0.1))
                                         )
                                         .foregroundColor(.blue)
+                                    }
+                                    .padding(.horizontal, 24)
+                                }
+                            }
+                            
+                            // Summary Management
+                            VStack(alignment: .leading, spacing: 16) {
+                                HStack {
+                                    Text("Summary Management")
+                                        .font(.headline)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                }
+                                .padding(.top, 40)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, 16)
+                                
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Image(systemName: "doc.text.magnifyingglass")
+                                            .foregroundColor(.green)
+                                        Text("Manage your existing summaries, transcripts, and extracted tasks/reminders")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.horizontal, 24)
+                                    
+                                    // Show current summary count
+                                    HStack {
+                                        Text("Summaries:")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        Text("\(summaryManager.enhancedSummaries.count)")
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.primary)
+                                    }
+                                    .padding(.horizontal, 24)
+                                    
+                                    // Show legacy summary count if any
+                                    if summaryManager.summaries.count > 0 {
+                                        HStack {
+                                            Text("Legacy Summaries:")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                            Text("\(summaryManager.summaries.count)")
+                                                .font(.caption)
+                                                .fontWeight(.medium)
+                                                .foregroundColor(.primary)
+                                        }
+                                        .padding(.horizontal, 24)
+                                    }
+                                    
+                                    // Clear all summaries button
+                                    if summaryManager.enhancedSummaries.count > 0 || summaryManager.summaries.count > 0 {
+                                        Button(action: {
+                                            showingClearSummariesAlert = true
+                                        }) {
+                                            HStack {
+                                                Image(systemName: "trash")
+                                                Text("Clear All Summaries")
+                                            }
+                                            .padding(.horizontal, 24)
+                                            .padding(.vertical, 12)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .fill(Color.red.opacity(0.1))
+                                            )
+                                            .foregroundColor(.red)
+                                        }
+                                        .padding(.horizontal, 24)
+                                    }
+                                }
+                            }
+
+                            
+                            // Transcription Settings
+                            VStack(alignment: .leading, spacing: 16) {
+                                HStack {
+                                    Text("Transcription Settings")
+                                        .font(.headline)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                }
+                                .padding(.top, 40)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, 16)
+                                
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Image(systemName: "waveform")
+                                            .foregroundColor(.purple)
+                                        Text("Configure transcription engines, speaker diarization, chunking, and processing options")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.horizontal, 24)
+                                    
+                                    // Show current transcription engine
+                                    HStack {
+                                        Text("Engine:")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        Text(recorderVM.selectedTranscriptionEngine.rawValue)
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.primary)
+                                        
+                                        if !recorderVM.selectedTranscriptionEngine.isAvailable {
+                                            Text("(Coming Soon)")
+                                                .font(.caption)
+                                                .foregroundColor(.orange)
+                                                .padding(.horizontal, 4)
+                                                .padding(.vertical, 1)
+                                                .background(Color.orange.opacity(0.2))
+                                                .cornerRadius(3)
+                                        }
+                                    }
+                                    .padding(.horizontal, 24)
+                                    
+                                    // Show current diarization status
+                                    HStack {
+                                        Text("Diarization:")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        Text(recorderVM.isDiarizationEnabled ? recorderVM.selectedDiarizationMethod.rawValue : "Disabled")
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.primary)
+                                        
+                                        if recorderVM.isDiarizationEnabled && !recorderVM.selectedDiarizationMethod.isAvailable {
+                                            Text("(Coming Soon)")
+                                                .font(.caption)
+                                                .foregroundColor(.orange)
+                                                .padding(.horizontal, 4)
+                                                .padding(.vertical, 1)
+                                                .background(Color.orange.opacity(0.2))
+                                                .cornerRadius(3)
+                                        }
+                                    }
+                                    .padding(.horizontal, 24)
+                                    
+                                    Button(action: {
+                                        showingTranscriptionSettings = true
+                                    }) {
+                                        HStack {
+                                            Text("Configure Transcription")
+                                            Spacer()
+                                            Image(systemName: "arrow.right")
+                                        }
+                                        .padding(.horizontal, 24)
+                                        .padding(.vertical, 12)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(Color.purple.opacity(0.1))
+                                        )
+                                        .foregroundColor(.purple)
                                     }
                                     .padding(.horizontal, 24)
                                 }
@@ -1503,9 +1534,37 @@ struct SettingsView: View {
                     Text(results.summary)
                 }
             }
-            .sheet(isPresented: $showingAWSSettings) {
-                AWSSettingsView()
+            .alert("Clear All Summaries", isPresented: $showingClearSummariesAlert) {
+                Button("Cancel", role: .cancel) {
+                    // Do nothing, just dismiss
+                }
+                Button("Clear All", role: .destructive) {
+                    clearAllSummaries()
+                }
+            } message: {
+                let totalSummaries = summaryManager.enhancedSummaries.count + summaryManager.summaries.count
+                Text("This will permanently delete all \(totalSummaries) summaries, transcripts, and extracted tasks/reminders. This action cannot be undone.")
             }
+            .sheet(isPresented: $showingTranscriptionSettings) {
+                TranscriptionSettingsView()
+                    .environmentObject(recorderVM)
+            }
+            .sheet(isPresented: $showingAISettings) {
+                AISettingsView()
+                    .environmentObject(recorderVM)
+            }
+        }
+        
+        private func clearAllSummaries() {
+            print("🧹 Clearing all summaries and related data...")
+            
+            // Clear all summaries
+            summaryManager.clearAllSummaries()
+            
+            // Clear all transcripts
+            transcriptManager.clearAllTranscripts()
+            
+            print("✅ All summaries, transcripts, and related data cleared")
         }
     }
     
@@ -1660,6 +1719,7 @@ struct TranscriptsView: View {
                     loadRecordings()
                     setupTranscriptionCompletionCallback()
                 }
+
             }
             .sheet(item: $selectedRecording) { recording in
                 if let transcript = transcriptManager.getTranscript(for: recording.url) {
@@ -1758,7 +1818,7 @@ struct TranscriptsView: View {
             print("🚀 Starting enhanced transcription for: \(recording.name)")
             Task {
                 do {
-                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url)
+                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url, using: recorderVM.selectedTranscriptionEngine)
                     
                     print("📊 Transcription result: success=\(result.success), textLength=\(result.fullText.count)")
                     
@@ -1794,17 +1854,47 @@ struct TranscriptsView: View {
         }
         
         private func setupTranscriptionCompletionCallback() {
+            // Capture the transcription manager for the notification handler
+            let transcriptionManager = enhancedTranscriptionManager
+            
+            // Set up notification listener for updating pending jobs when recordings are renamed
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name("UpdatePendingTranscriptionJobs"),
+                object: nil,
+                queue: .main
+            ) { notification in
+                guard let userInfo = notification.userInfo,
+                      let oldURL = userInfo["oldURL"] as? URL,
+                      let newURL = userInfo["newURL"] as? URL,
+                      let newName = userInfo["newName"] as? String else {
+                    return
+                }
+                
+                Task { @MainActor in
+                    transcriptionManager.updatePendingJobsForRenamedRecording(
+                        from: oldURL,
+                        to: newURL,
+                        newName: newName
+                    )
+                }
+            }
+            
             enhancedTranscriptionManager.onTranscriptionCompleted = { result, jobInfo in
                 Task { @MainActor in
                     
                     print("🎉 Background transcription completed for: \(jobInfo.recordingName)")
+                    print("🔍 Looking for recording with URL: \(jobInfo.recordingURL)")
+                    print("📋 Available recordings: \(recordings.count)")
+                    for (index, recording) in recordings.enumerated() {
+                        print("📋 Recording \(index): \(recording.name) - \(recording.url)")
+                    }
                     
                     // Find the recording that matches this transcription
                     if let recording = recordings.first(where: { recording in
                         return recording.url == jobInfo.recordingURL
                     }) {
                         // Create transcript data and save it
-                        let segments = createDiarizedSegments(from: result.segments)
+                        let segments = self.createDiarizedSegments(from: result.segments)
                         let transcriptData = TranscriptData(
                             recordingURL: recording.url,
                             recordingName: recording.name,
@@ -1812,14 +1902,19 @@ struct TranscriptsView: View {
                             segments: segments
                         )
                         
-                        transcriptManager.saveTranscript(transcriptData)
+                        self.transcriptManager.saveTranscript(transcriptData)
                         print("💾 Background transcript saved for: \(recording.name)")
                         
                         // Show completion alert
-                        completedTranscriptionText = "Transcription completed for: \(recording.name)"
-                        showingTranscriptionCompletionAlert = true
+                        self.completedTranscriptionText = "Transcription completed for: \(recording.name)"
+                        self.showingTranscriptionCompletionAlert = true
                     } else {
-                        print("⚠️ Could not find recording for completed transcription: \(jobInfo.recordingName)")
+                        print("❌ No matching recording found for job: \(jobInfo.recordingName)")
+                        print("❌ Job URL: \(jobInfo.recordingURL)")
+                        print("❌ Available recording URLs:")
+                        for recording in self.recordings {
+                            print("❌   - \(recording.url)")
+                        }
                     }
                 }
             }
@@ -1936,48 +2031,53 @@ struct TranscriptsView: View {
         var body: some View {
             NavigationView {
                 VStack(spacing: 0) {
-                    // Speaker Management Section
-                    VStack(alignment: .leading, spacing: 12) {
+                    // Speaker Management Section - Compact
+                    VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("Speaker Management")
-                                .font(.headline)
+                            Text("Speakers")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
                                 .foregroundColor(.primary)
+                            
+                            // Show speaker count
+                            Text("(\(speakerMappings.keys.count))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            
                             Spacer()
-                            Button("Edit Speakers") {
+                            
+                            Button("Edit") {
                                 showingSpeakerEditor = true
                             }
                             .font(.caption)
                             .foregroundColor(.accentColor)
                         }
                         
-                        // Show current speaker mappings
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                            ForEach(Array(speakerMappings.keys.sorted()), id: \.self) { speakerKey in
-                                HStack {
-                                    Text(speakerKey)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    Text("→")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    Text(speakerMappings[speakerKey] ?? speakerKey)
-                                        .font(.caption)
-                                        .foregroundColor(.primary)
-                                        .fontWeight(.medium)
+                        // Compact speaker display
+                        if !speakerMappings.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(Array(speakerMappings.keys.sorted()), id: \.self) { speakerKey in
+                                        Text(speakerMappings[speakerKey] ?? speakerKey)
+                                            .font(.caption)
+                                            .foregroundColor(.primary)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(Color.accentColor.opacity(0.2))
+                                            .cornerRadius(6)
+                                    }
                                 }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color(.systemGray6))
-                                .cornerRadius(6)
+                                .padding(.horizontal, 1)
                             }
                         }
                     }
-                    .padding()
-                    .background(Color(.systemGray6).opacity(0.3))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color(.systemGray6).opacity(0.5))
                     
                     // Transcript Content
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
+                        LazyVStack(alignment: .leading, spacing: 16) {
                             ForEach(editedSegments.indices, id: \.self) { index in
                                 TranscriptSegmentView(
                                     segment: $editedSegments[index],
@@ -1985,9 +2085,12 @@ struct TranscriptsView: View {
                                 )
                             }
                         }
-                        .padding()
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .navigationTitle("Edit Transcript")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -2008,6 +2111,7 @@ struct TranscriptsView: View {
                     SpeakerEditorView(speakerMappings: $speakerMappings)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         
         private func saveTranscript() {
@@ -2024,22 +2128,26 @@ struct TranscriptsView: View {
         let speakerName: String
         
         var body: some View {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text(speakerName)
-                        .font(.caption)
+                        .font(.subheadline)
                         .fontWeight(.semibold)
-                        .foregroundColor(.accentColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.accentColor.opacity(0.2))
-                        .cornerRadius(4)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.accentColor)
+                        .cornerRadius(8)
                     
                     Spacer()
                     
                     Text(formatTime(segment.startTime))
-                        .font(.caption2)
+                        .font(.caption)
                         .foregroundColor(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color(.systemGray5))
+                        .cornerRadius(6)
                 }
                 
                 TextEditor(text: Binding(
@@ -2047,17 +2155,46 @@ struct TranscriptsView: View {
                     set: { segment = TranscriptSegment(speaker: segment.speaker, text: $0, startTime: segment.startTime, endTime: segment.endTime) }
                 ))
                 .font(.body)
-                .frame(minHeight: 60)
-                .padding(8)
-                .background(Color(.systemGray6))
-                .cornerRadius(8)
+                .frame(minHeight: max(120, calculateTextHeight(for: segment.text)))
+                .padding(12)
+                .background(Color(.systemBackground))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color(.systemGray4), lineWidth: 1)
+                )
+                .cornerRadius(10)
             }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 4)
+            .background(Color(.systemGray6).opacity(0.3))
+            .cornerRadius(12)
         }
         
         private func formatTime(_ time: TimeInterval) -> String {
             let minutes = Int(time) / 60
             let seconds = Int(time) % 60
             return String(format: "%d:%02d", minutes, seconds)
+        }
+        
+        private func calculateTextHeight(for text: String) -> CGFloat {
+            // More accurate height calculation
+            let lineHeight: CGFloat = 22 // Body font line height
+            let charactersPerLine: CGFloat = 60 // Characters per line (adjusted for wider view)
+            
+            // Count explicit line breaks
+            let explicitLines = CGFloat(text.components(separatedBy: "\n").count)
+            
+            // Estimate wrapped lines
+            let wrappedLines = max(1, ceil(CGFloat(text.count) / charactersPerLine))
+            
+            // Use the larger of the two estimates
+            let totalLines = max(explicitLines, wrappedLines)
+            
+            // Calculate height with padding
+            let calculatedHeight = totalLines * lineHeight + 24 // 24pt for padding
+            
+            // Ensure reasonable bounds
+            return max(120, min(calculatedHeight, 400))
         }
     }
     

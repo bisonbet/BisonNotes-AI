@@ -79,45 +79,35 @@ class TaskExtractor {
     private func extractTaskUsingPatterns(_ sentence: String) -> TaskItem? {
         let lowercased = sentence.lowercased()
         
-        // Enhanced task patterns with more specific matching
+        // Very conservative task patterns - only extract clear, explicit tasks
         let taskPatterns: [(pattern: String, category: TaskItem.TaskCategory, basePriority: TaskItem.Priority, confidenceBoost: Double)] = [
-            // Communication tasks
-            ("need to call", .call, .medium, 0.8),
-            ("have to call", .call, .high, 0.9),
-            ("must call", .call, .high, 0.9),
-            ("should call", .call, .medium, 0.7),
-            ("call back", .call, .medium, 0.8),
-            ("phone", .call, .medium, 0.6),
-            ("reach out to", .call, .medium, 0.7),
+            // Only the most explicit communication tasks
+            ("need to call", .call, .medium, 0.9),
+            ("have to call", .call, .high, 0.95),
+            ("must call", .call, .high, 0.95),
+            ("i need to call", .call, .medium, 0.9),
+            ("i have to call", .call, .high, 0.95),
             
-            // Email tasks
-            ("need to email", .email, .medium, 0.8),
-            ("have to email", .email, .medium, 0.8),
-            ("send email", .email, .medium, 0.8),
-            ("email", .email, .low, 0.5),
-            ("send message", .email, .medium, 0.7),
-            ("message", .email, .low, 0.4),
-            ("reply to", .email, .medium, 0.7),
-            ("respond to", .email, .medium, 0.7),
+            // Only explicit email tasks
+            ("need to email", .email, .medium, 0.9),
+            ("have to email", .email, .medium, 0.9),
+            ("must email", .email, .high, 0.95),
+            ("send email to", .email, .medium, 0.9),
+            ("i need to email", .email, .medium, 0.9),
             
-            // Meeting tasks
-            ("need to meet", .meeting, .medium, 0.8),
-            ("have to meet", .meeting, .medium, 0.8),
-            ("schedule meeting", .meeting, .medium, 0.9),
-            ("set up meeting", .meeting, .medium, 0.9),
-            ("meeting with", .meeting, .medium, 0.7),
-            ("appointment with", .meeting, .medium, 0.8),
-            ("book appointment", .meeting, .medium, 0.8),
-            ("arrange meeting", .meeting, .medium, 0.8),
+            // Only explicit meeting tasks
+            ("need to schedule", .meeting, .medium, 0.9),
+            ("have to schedule", .meeting, .medium, 0.9),
+            ("schedule meeting with", .meeting, .medium, 0.95),
+            ("book appointment with", .meeting, .medium, 0.9),
+            ("set up meeting with", .meeting, .medium, 0.9),
             
-            // Purchase tasks
-            ("need to buy", .purchase, .medium, 0.8),
-            ("have to buy", .purchase, .medium, 0.8),
-            ("must buy", .purchase, .high, 0.9),
-            ("should buy", .purchase, .medium, 0.7),
-            ("purchase", .purchase, .medium, 0.7),
-            ("order", .purchase, .medium, 0.6),
-            ("get", .purchase, .low, 0.4),
+            // Only explicit purchase tasks
+            ("need to buy", .purchase, .medium, 0.9),
+            ("have to buy", .purchase, .medium, 0.9),
+            ("must buy", .purchase, .high, 0.95),
+            ("i need to buy", .purchase, .medium, 0.9),
+            ("i have to buy", .purchase, .medium, 0.9),
             ("pick up", .purchase, .medium, 0.6),
             
             // Research tasks

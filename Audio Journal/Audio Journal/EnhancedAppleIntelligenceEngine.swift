@@ -67,218 +67,370 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     }
     
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
-        let contentType = try await classifyContent(text)
-        
-        if config.enableParallelProcessing {
-            // Process all components in parallel
-            async let summaryTask = generateSummary(from: text, contentType: contentType)
-            async let tasksTask = extractTasks(from: text)
-            async let remindersTask = extractReminders(from: text)
-            
-            let summary = try await summaryTask
-            let tasks = try await tasksTask
-            let reminders = try await remindersTask
-            
-            return (summary, tasks, reminders, contentType)
-        } else {
-            // Process sequentially
-            let summary = try await generateSummary(from: text, contentType: contentType)
-            let tasks = try await extractTasks(from: text)
-            let reminders = try await extractReminders(from: text)
-            
-            return (summary, tasks, reminders, contentType)
+        // Validate transcript content first
+        guard isValidTranscriptContent(text) else {
+            throw SummarizationError.invalidInput
         }
+        
+        print("🤖 Enhanced AI processing complete transcript...")
+        print("📝 Input text length: \(text.count) characters")
+        
+        let contentType = try await classifyContent(text)
+        print("🏷️ Content classified as: \(contentType.rawValue)")
+        
+        // Always process sequentially: Summary first, then extract tasks/reminders
+        // This ensures the AI has full context when generating the summary
+        print("📊 Step 1: Generating contextual summary...")
+        let summary = try await generateSummary(from: text, contentType: contentType)
+        print("✅ Summary generated: \(summary.count) characters")
+        
+        print("📋 Step 2: Extracting tasks from full transcript...")
+        let tasks = try await extractTasks(from: text)
+        print("✅ Found \(tasks.count) tasks")
+        
+        print("🔔 Step 3: Extracting reminders from full transcript...")
+        let reminders = try await extractReminders(from: text)
+        print("✅ Found \(reminders.count) reminders")
+        
+        return (summary, tasks, reminders, contentType)
+    }
+    
+    private func isValidTranscriptContent(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Check minimum length
+        guard trimmed.count >= 50 else {
+            print("⚠️ Transcript too short: \(trimmed.count) characters")
+            return false
+        }
+        
+        // Check for placeholder patterns
+        let lowercased = trimmed.lowercased()
+        let placeholderPatterns = [
+            "transcription in progress",
+            "processing audio",
+            "please wait",
+            "transcribing",
+            "loading",
+            "error",
+            "failed to transcribe",
+            "no audio detected",
+            "silence detected",
+            "aws transcription coming soon",
+            "whisper-based diarization coming soon"
+        ]
+        
+        for pattern in placeholderPatterns {
+            if lowercased.contains(pattern) {
+                print("⚠️ Transcript contains placeholder: \(pattern)")
+                return false
+            }
+        }
+        
+        // Check word count
+        let words = trimmed.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty && $0.count > 1 }
+        
+        guard words.count >= 10 else {
+            print("⚠️ Insufficient word count: \(words.count) words")
+            return false
+        }
+        
+        print("✅ Transcript validated: \(words.count) words")
+        return true
     }
     
     // MARK: - Advanced Summarization
     
     private func performAdvancedSummarization(text: String, contentType: ContentType) async throws -> String {
-        let preprocessedText = ContentAnalyzer.preprocessText(text)
-        let sentences = ContentAnalyzer.extractSentences(from: preprocessedText)
+        print("🧠 Starting advanced summarization with full context analysis...")
+        print("📝 Full transcript length: \(text.count) characters")
         
-        guard !sentences.isEmpty else {
-            throw SummarizationError.insufficientContent
-        }
+        // Work directly with the full transcript for better context
+        let cleanedText = ContentAnalyzer.preprocessText(text)
+        let wordCount = cleanedText.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
         
-        // Score sentences based on importance
-        let scoredSentences = sentences.map { sentence in
-            (sentence: sentence, score: ContentAnalyzer.calculateSentenceImportance(sentence, in: preprocessedText))
-        }
+        print("📊 Word count: \(wordCount) words")
+        print("🏷️ Content type: \(contentType.rawValue)")
         
-        // Cluster related sentences
-        let clusters = ContentAnalyzer.clusterRelatedSentences(sentences)
+        // Create a comprehensive summary based on the full transcript
+        let summary = createFullContextSummary(fullText: cleanedText, contentType: contentType, wordCount: wordCount)
         
-        // Select best sentences from each cluster
-        var selectedSentences: [String] = []
-        let targetSentenceCount = min(max(sentences.count / 4, 2), 6) // 25% of sentences, min 2, max 6
+        print("✅ Advanced summary generated: \(summary.count) characters")
+        print("📄 Summary preview: \(summary.prefix(100))...")
         
-        for cluster in clusters {
-            if selectedSentences.count >= targetSentenceCount { break }
-            
-            // Find the best sentence in this cluster
-            let clusterScores = cluster.map { sentence in
-                (sentence: sentence, score: ContentAnalyzer.calculateSentenceImportance(sentence, in: preprocessedText))
-            }
-            
-            if let bestInCluster = clusterScores.max(by: { $0.score < $1.score }) {
-                selectedSentences.append(bestInCluster.sentence)
-            }
-        }
-        
-        // If we don't have enough sentences, add more from the highest scored
-        if selectedSentences.count < targetSentenceCount {
-            let remainingNeeded = targetSentenceCount - selectedSentences.count
-            let additionalSentences = scoredSentences
-                .filter { !selectedSentences.contains($0.sentence) }
-                .sorted { $0.score > $1.score }
-                .prefix(remainingNeeded)
-                .map { $0.sentence }
-            
-            selectedSentences.append(contentsOf: additionalSentences)
-        }
-        
-        // Create context-aware summary based on content type
-        return createContextAwareSummary(sentences: selectedSentences, contentType: contentType, originalText: text)
+        return summary
     }
     
-    private func createContextAwareSummary(sentences: [String], contentType: ContentType, originalText: String) -> String {
-        let keyPhrases = ContentAnalyzer.extractKeyPhrases(from: originalText, maxPhrases: 5)
+    private func createFullContextSummary(fullText: String, contentType: ContentType, wordCount: Int) -> String {
+        // Extract meaningful sentences from the full text
+        let sentences = fullText.components(separatedBy: CharacterSet(charactersIn: ".!?"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.count > 20 } // Only meaningful sentences
         
-        var summary = ""
+        print("📝 Found \(sentences.count) meaningful sentences")
+        
+        // Check if the first few sentences are ads and skip them
+        let adStartPatterns = [
+            "this message comes from", "sponsored by", "brought to you by", 
+            "advertisement", "commercial", "capital one", "earn unlimited"
+        ]
+        
+        var startIndex = 0
+        for (index, sentence) in sentences.prefix(3).enumerated() {
+            let lowercased = sentence.lowercased()
+            if adStartPatterns.contains(where: { lowercased.contains($0) }) {
+                startIndex = index + 1
+                print("🚫 Skipping ad content at beginning, starting from sentence \(startIndex + 1)")
+            }
+        }
+        
+        let relevantSentences = Array(sentences.dropFirst(startIndex))
+        print("📝 Using \(relevantSentences.count) sentences after filtering ads")
+        
+        // Determine summary approach based on content length and type
+        if wordCount < 100 {
+            return createVeryShortSummary(sentences: relevantSentences, fullText: fullText)
+        } else if wordCount < 500 {
+            return createShortSummary(sentences: relevantSentences, fullText: fullText, contentType: contentType)
+        } else if wordCount < 2000 {
+            return createMediumSummary(sentences: relevantSentences, fullText: fullText, contentType: contentType)
+        } else {
+            return createLongSummary(sentences: relevantSentences, fullText: fullText, contentType: contentType)
+        }
+    }
+    
+    private func createVeryShortSummary(sentences: [String], fullText: String) -> String {
+        // For very short content, just clean up and present the main point
+        if let firstSentence = sentences.first {
+            return "Summary: \(firstSentence)."
+        } else {
+            // Fallback: take first 100 characters
+            let preview = String(fullText.prefix(100)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return "Summary: \(preview)..."
+        }
+    }
+    
+    private func createShortSummary(sentences: [String], fullText: String, contentType: ContentType) -> String {
+        let topSentences = sentences.prefix(2)
+        let summaryText = topSentences.joined(separator: " ")
         
         switch contentType {
         case .meeting:
-            summary = createMeetingSummary(sentences: sentences, keyPhrases: keyPhrases)
+            return "Meeting Summary: \(summaryText)"
         case .personalJournal:
-            summary = createJournalSummary(sentences: sentences, keyPhrases: keyPhrases)
+            return "Personal Reflection: \(summaryText)"
         case .technical:
-            summary = createTechnicalSummary(sentences: sentences, keyPhrases: keyPhrases)
+            return "Technical Discussion: \(summaryText)"
         case .general:
-            summary = createGeneralSummary(sentences: sentences, keyPhrases: keyPhrases)
+            return "Summary: \(summaryText)"
+        }
+    }
+    
+    private func createMediumSummary(sentences: [String], fullText: String, contentType: ContentType) -> String {
+        print("🎯 Creating medium summary from \(sentences.count) sentences")
+        
+        // Filter out likely ads, intros, and irrelevant content first
+        let filteredSentences = filterRelevantSentences(sentences)
+        print("📝 After filtering: \(filteredSentences.count) relevant sentences")
+        
+        guard !filteredSentences.isEmpty else {
+            print("⚠️ No relevant sentences found after filtering")
+            return "Summary: Unable to extract meaningful content from the transcript."
         }
         
-        // Ensure summary doesn't exceed max length
-        if summary.count > config.maxSummaryLength {
-            let truncated = String(summary.prefix(config.maxSummaryLength))
-            if let lastSentenceEnd = truncated.lastIndex(of: ".") {
-                summary = String(truncated[...lastSentenceEnd])
-            } else {
-                summary = truncated + "..."
+        // Score sentences based on content relevance, not position
+        let scoredSentences = filteredSentences.enumerated().map { index, sentence in
+            var score = 1.0
+            let lowercased = sentence.lowercased()
+            
+            // Boost sentences with substantive content indicators
+            let substantiveWords = ["explains", "discusses", "describes", "analyzes", "explores", "examines", "reveals", "shows", "demonstrates", "argues", "suggests", "proposes", "concludes", "finds", "discovers"]
+            for word in substantiveWords {
+                if lowercased.contains(word) {
+                    score += 2.0
+                }
             }
+            
+            // Boost sentences with technical/content-specific terms
+            let technicalWords = ["research", "study", "data", "analysis", "system", "process", "method", "approach", "technology", "development", "innovation", "solution"]
+            for word in technicalWords {
+                if lowercased.contains(word) {
+                    score += 1.5
+                }
+            }
+            
+            // Boost sentences with key transition words that indicate important content
+            let transitionWords = ["however", "therefore", "furthermore", "moreover", "additionally", "consequently", "meanwhile", "nevertheless"]
+            for word in transitionWords {
+                if lowercased.contains(word) {
+                    score += 1.0
+                }
+            }
+            
+            // Penalize very short sentences (likely fragments)
+            if sentence.components(separatedBy: .whitespaces).count < 8 {
+                score *= 0.5
+            }
+            
+            // Boost sentences from the middle portion (skip intro/outro)
+            let totalSentences = filteredSentences.count
+            let position = Double(index) / Double(totalSentences)
+            if position > 0.2 && position < 0.8 {
+                score += 1.0 // Middle content is often more substantive
+            }
+            
+            return (sentence: sentence, score: score)
         }
         
-        return summary
+        // Select top sentences based on score
+        let targetCount = min(4, max(2, filteredSentences.count / 3))
+        let topSentences = scoredSentences
+            .sorted { $0.score > $1.score }
+            .prefix(targetCount)
+            .map { $0.sentence }
+        
+        print("🎯 Selected \(topSentences.count) sentences for summary")
+        for (index, sentence) in topSentences.enumerated() {
+            print("📄 Sentence \(index + 1): \(sentence.prefix(100))...")
+        }
+        
+        let summaryText = topSentences.joined(separator: " ")
+        
+        switch contentType {
+        case .meeting:
+            return "Meeting Summary: \(summaryText)"
+        case .personalJournal:
+            return "Personal Reflection: \(summaryText)"
+        case .technical:
+            return "Technical Discussion: \(summaryText)"
+        case .general:
+            return "Summary: \(summaryText)"
+        }
     }
     
-    // MARK: - Content-Type Specific Summaries
-    
-    private func createMeetingSummary(sentences: [String], keyPhrases: [String]) -> String {
-        var summary = "Meeting Summary: "
-        
-        // Look for key meeting elements
-        let decisionSentences = sentences.filter { sentence in
-            let lower = sentence.lowercased()
-            return lower.contains("decided") || lower.contains("agreed") || lower.contains("concluded")
+    private func filterRelevantSentences(_ sentences: [String]) -> [String] {
+        return sentences.filter { sentence in
+            let lowercased = sentence.lowercased()
+            
+            // Filter out obvious ads and promotional content with more comprehensive patterns
+            let adKeywords = [
+                "capital one", "saver card", "earn unlimited", "cash back", "credit card", 
+                "sponsored by", "brought to you by", "advertisement", "commercial", 
+                "promo code", "discount", "offer expires", "terms and conditions", 
+                "visit our website", "apply now", "limited time", "special offer",
+                "call now", "act now", "don't miss out", "exclusive offer",
+                "free trial", "no obligation", "money back guarantee", "satisfaction guaranteed",
+                "best rates", "lowest prices", "save money", "earn rewards",
+                "this message comes from", "this is a paid advertisement"
+            ]
+            
+            for keyword in adKeywords {
+                if lowercased.contains(keyword) {
+                    print("🚫 Filtering out ad content: \(sentence.prefix(80))...")
+                    return false
+                }
+            }
+            
+            // Filter out common intro/outro phrases with more patterns
+            let introOutroKeywords = [
+                "this is npr", "i'm your host", "thanks for listening", "that's all for today", 
+                "coming up next", "stay tuned", "we'll be right back", "this program was made possible",
+                "welcome to", "good morning", "good afternoon", "good evening",
+                "today we're talking about", "in this episode", "on today's show",
+                "that concludes", "thanks for joining us", "see you next time",
+                "tune in next time", "don't forget to subscribe", "follow us on"
+            ]
+            
+            for keyword in introOutroKeywords {
+                if lowercased.contains(keyword) {
+                    print("🚫 Filtering out intro/outro: \(sentence.prefix(80))...")
+                    return false
+                }
+            }
+            
+            // Filter out very short sentences (likely fragments)
+            if sentence.components(separatedBy: .whitespaces).count < 5 {
+                print("🚫 Filtering out short sentence: \(sentence)")
+                return false
+            }
+            
+            // Filter out sentences that are mostly punctuation or numbers
+            let meaningfulWords = sentence.components(separatedBy: .whitespaces)
+                .filter { word in
+                    let cleaned = word.trimmingCharacters(in: .punctuationCharacters)
+                    return cleaned.count > 2 && !cleaned.isEmpty
+                }
+            
+            if meaningfulWords.count < 3 {
+                print("🚫 Filtering out low-content sentence: \(sentence)")
+                return false
+            }
+            
+            return true
         }
-        
-        let actionSentences = sentences.filter { sentence in
-            let lower = sentence.lowercased()
-            return lower.contains("action") || lower.contains("next step") || lower.contains("follow up")
-        }
-        
-        // Prioritize decisions and actions
-        var prioritizedSentences: [String] = []
-        prioritizedSentences.append(contentsOf: decisionSentences.prefix(2))
-        prioritizedSentences.append(contentsOf: actionSentences.prefix(2))
-        
-        // Add remaining sentences
-        let remainingSentences = sentences.filter { !prioritizedSentences.contains($0) }
-        prioritizedSentences.append(contentsOf: remainingSentences.prefix(3))
-        
-        summary += prioritizedSentences.joined(separator: " ")
-        
-        if !keyPhrases.isEmpty {
-            summary += " Key topics discussed: " + keyPhrases.prefix(3).joined(separator: ", ") + "."
-        }
-        
-        return summary
     }
     
-    private func createJournalSummary(sentences: [String], keyPhrases: [String]) -> String {
-        var summary = "Personal Reflection: "
+    private func createLongSummary(sentences: [String], fullText: String, contentType: ContentType) -> String {
+        // For long content, create a more structured summary
+        let totalSentences = sentences.count
+        let summaryLength = min(6, max(3, totalSentences / 5)) // 20% of sentences, min 3, max 6
         
-        // Look for emotional and reflective content
-        let emotionalSentences = sentences.filter { sentence in
-            let lower = sentence.lowercased()
-            return lower.contains("feel") || lower.contains("think") || lower.contains("realize") || 
-                   lower.contains("grateful") || lower.contains("happy") || lower.contains("sad")
+        // Score sentences more comprehensively
+        let scoredSentences = sentences.enumerated().map { index, sentence in
+            var score = 1.0
+            let position = Double(index) / Double(totalSentences)
+            
+            // Position scoring (beginning and end are important)
+            if position < 0.2 || position > 0.8 {
+                score += 2.0
+            } else if position > 0.4 && position < 0.6 {
+                score += 1.0 // Middle content
+            }
+            
+            // Content scoring
+            let lowercased = sentence.lowercased()
+            let keyWords = ["important", "key", "main", "significant", "decided", "concluded", "learned", "realized", "summary", "overall", "finally", "in conclusion"]
+            for word in keyWords {
+                if lowercased.contains(word) {
+                    score += 1.5
+                }
+            }
+            
+            // Length scoring (prefer medium-length sentences)
+            let wordCount = sentence.components(separatedBy: .whitespaces).count
+            if wordCount >= 8 && wordCount <= 25 {
+                score += 1.0
+            }
+            
+            return (sentence: sentence, score: score)
         }
         
-        let insightSentences = sentences.filter { sentence in
-            let lower = sentence.lowercased()
-            return lower.contains("learned") || lower.contains("discovered") || lower.contains("understand")
+        // Select top sentences
+        let topSentences = scoredSentences
+            .sorted { $0.score > $1.score }
+            .prefix(summaryLength)
+            .map { $0.sentence }
+        
+        let summaryText = topSentences.joined(separator: " ")
+        
+        switch contentType {
+        case .meeting:
+            return "Meeting Summary: \(summaryText)"
+        case .personalJournal:
+            return "Personal Reflection: \(summaryText)"
+        case .technical:
+            return "Technical Discussion: \(summaryText)"
+        case .general:
+            return "Summary: \(summaryText)"
         }
-        
-        // Prioritize emotional and insight content
-        var prioritizedSentences: [String] = []
-        prioritizedSentences.append(contentsOf: emotionalSentences.prefix(2))
-        prioritizedSentences.append(contentsOf: insightSentences.prefix(2))
-        
-        // Add remaining sentences
-        let remainingSentences = sentences.filter { !prioritizedSentences.contains($0) }
-        prioritizedSentences.append(contentsOf: remainingSentences.prefix(2))
-        
-        summary += prioritizedSentences.joined(separator: " ")
-        
-        return summary
     }
     
-    private func createTechnicalSummary(sentences: [String], keyPhrases: [String]) -> String {
-        var summary = "Technical Discussion: "
-        
-        // Look for technical concepts and solutions
-        let conceptSentences = sentences.filter { sentence in
-            let lower = sentence.lowercased()
-            return lower.contains("system") || lower.contains("algorithm") || lower.contains("method") ||
-                   lower.contains("implementation") || lower.contains("architecture")
-        }
-        
-        let problemSolutionSentences = sentences.filter { sentence in
-            let lower = sentence.lowercased()
-            return lower.contains("problem") || lower.contains("solution") || lower.contains("fix") ||
-                   lower.contains("issue") || lower.contains("resolve")
-        }
-        
-        // Prioritize concepts and solutions
-        var prioritizedSentences: [String] = []
-        prioritizedSentences.append(contentsOf: conceptSentences.prefix(2))
-        prioritizedSentences.append(contentsOf: problemSolutionSentences.prefix(2))
-        
-        // Add remaining sentences
-        let remainingSentences = sentences.filter { !prioritizedSentences.contains($0) }
-        prioritizedSentences.append(contentsOf: remainingSentences.prefix(2))
-        
-        summary += prioritizedSentences.joined(separator: " ")
-        
-        if !keyPhrases.isEmpty {
-            summary += " Key technical terms: " + keyPhrases.prefix(4).joined(separator: ", ") + "."
-        }
-        
-        return summary
-    }
+
     
-    private func createGeneralSummary(sentences: [String], keyPhrases: [String]) -> String {
-        var summary = "Summary: "
-        
-        // Use the highest-scored sentences
-        summary += sentences.prefix(4).joined(separator: " ")
-        
-        if !keyPhrases.isEmpty {
-            summary += " Main topics: " + keyPhrases.prefix(3).joined(separator: ", ") + "."
-        }
-        
-        return summary
-    }
+
+    
+
     
     // MARK: - Advanced Task Extraction
     
@@ -289,8 +441,11 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         var tasks: [TaskItem] = []
         let sentences = ContentAnalyzer.extractSentences(from: text)
         
+        print("🔍 Analyzing \(sentences.count) sentences for tasks...")
+        
         for sentence in sentences {
             if let task = extractTaskFromSentence(sentence, using: tagger) {
+                print("✅ Found task \(tasks.count + 1): \(task.text.prefix(80))... (confidence: \(String(format: "%.2f", task.confidence)))")
                 tasks.append(task)
             }
         }
@@ -298,55 +453,97 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         // Deduplicate and sort by priority
         let uniqueTasks = Array(Set(tasks)).sorted { $0.priority.sortOrder < $1.priority.sortOrder }
         
+        print("📋 Final task count: \(uniqueTasks.count)")
+        
         return Array(uniqueTasks.prefix(config.maxTasks))
     }
     
     private func extractTaskFromSentence(_ sentence: String, using tagger: NLTagger) -> TaskItem? {
         let lowercased = sentence.lowercased()
         
-        // Task indicators with their patterns
-        let taskPatterns: [(pattern: String, category: TaskItem.TaskCategory, priority: TaskItem.Priority)] = [
-            ("need to call", .call, .medium),
-            ("have to call", .call, .high),
-            ("must call", .call, .high),
-            ("call", .call, .medium),
-            ("phone", .call, .medium),
-            
-            ("need to meet", .meeting, .medium),
-            ("schedule meeting", .meeting, .medium),
-            ("meeting with", .meeting, .medium),
-            ("appointment", .meeting, .medium),
-            
-            ("need to buy", .purchase, .medium),
-            ("have to buy", .purchase, .medium),
-            ("purchase", .purchase, .medium),
-            ("order", .purchase, .low),
-            
-            ("need to email", .email, .medium),
-            ("send email", .email, .medium),
-            ("email", .email, .low),
-            ("message", .email, .low),
-            
-            ("need to research", .research, .low),
-            ("look into", .research, .low),
-            ("investigate", .research, .medium),
-            ("find out", .research, .low),
-            
-            ("need to go", .travel, .medium),
-            ("have to go", .travel, .medium),
-            ("visit", .travel, .medium),
-            ("travel to", .travel, .medium),
-            
-            ("doctor", .health, .medium),
-            ("appointment", .health, .medium),
-            ("medical", .health, .high),
-            ("health", .health, .medium)
+        // First, filter out sentences that are clearly not task-related
+        let nonTaskIndicators = [
+            "this is", "that was", "we discussed", "we talked about", "the topic was",
+            "according to", "research shows", "studies indicate", "experts say",
+            "it's important to note", "it's worth mentioning", "interestingly",
+            "this message comes from", "sponsored by", "advertisement"
         ]
         
-        for (pattern, category, basePriority) in taskPatterns {
+        for indicator in nonTaskIndicators {
+            if lowercased.contains(indicator) {
+                return nil
+            }
+        }
+        
+        // Task indicators with their patterns - more specific and contextual
+        let taskPatterns: [(pattern: String, category: TaskItem.TaskCategory, priority: TaskItem.Priority, confidence: Double)] = [
+            // High confidence patterns
+            ("need to call", .call, .medium, 0.9),
+            ("have to call", .call, .high, 0.9),
+            ("must call", .call, .high, 0.9),
+            ("should call", .call, .medium, 0.8),
+            ("will call", .call, .medium, 0.8),
+            
+            ("need to meet", .meeting, .medium, 0.9),
+            ("have to meet", .meeting, .high, 0.9),
+            ("schedule meeting", .meeting, .medium, 0.9),
+            ("meeting with", .meeting, .medium, 0.8),
+            ("appointment with", .meeting, .medium, 0.8),
+            
+            ("need to buy", .purchase, .medium, 0.9),
+            ("have to buy", .purchase, .high, 0.9),
+            ("must purchase", .purchase, .high, 0.9),
+            ("should order", .purchase, .medium, 0.8),
+            
+            ("need to email", .email, .medium, 0.9),
+            ("have to email", .email, .high, 0.9),
+            ("send email", .email, .medium, 0.9),
+            ("email to", .email, .medium, 0.8),
+            ("message to", .email, .low, 0.7),
+            
+            ("need to research", .research, .medium, 0.9),
+            ("have to investigate", .research, .high, 0.9),
+            ("look into", .research, .medium, 0.8),
+            ("find out about", .research, .medium, 0.8),
+            ("study", .research, .low, 0.7),
+            
+            ("need to go", .travel, .medium, 0.9),
+            ("have to visit", .travel, .medium, 0.9),
+            ("travel to", .travel, .medium, 0.8),
+            ("visit", .travel, .medium, 0.8),
+            
+            ("doctor appointment", .health, .high, 0.9),
+            ("medical appointment", .health, .high, 0.9),
+            ("see the doctor", .health, .high, 0.9),
+            ("health check", .health, .medium, 0.8),
+            
+            // Medium confidence patterns
+            ("call", .call, .medium, 0.6),
+            ("phone", .call, .medium, 0.6),
+            ("meeting", .meeting, .medium, 0.6),
+            ("appointment", .meeting, .medium, 0.6),
+            ("purchase", .purchase, .medium, 0.6),
+            ("order", .purchase, .low, 0.6),
+            ("email", .email, .low, 0.6),
+            ("message", .email, .low, 0.6),
+            ("research", .research, .low, 0.6),
+            ("investigate", .research, .medium, 0.6),
+            ("travel", .travel, .medium, 0.6),
+            ("visit", .travel, .medium, 0.6),
+            ("health", .health, .medium, 0.6)
+        ]
+        
+        var bestTask: (task: TaskItem, confidence: Double)? = nil
+        
+        for (pattern, category, basePriority, baseConfidence) in taskPatterns {
             if lowercased.contains(pattern) {
                 // Extract the task text
                 let taskText = cleanTaskText(sentence, pattern: pattern)
+                
+                // Skip if task text is too short or generic
+                if taskText.count < 10 || taskText.lowercased().contains("this") || taskText.lowercased().contains("that") {
+                    continue
+                }
                 
                 // Extract time reference
                 let timeReference = extractTimeReference(from: sentence)
@@ -355,21 +552,27 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
                 let priority = adjustPriorityForUrgency(basePriority, in: sentence)
                 
                 // Calculate confidence based on pattern strength and context
-                let confidence = calculateTaskConfidence(sentence: sentence, pattern: pattern)
+                let confidence = calculateTaskConfidence(sentence: sentence, pattern: pattern, baseConfidence: baseConfidence)
                 
-                guard confidence >= config.minConfidenceThreshold else { continue }
+                // Only consider tasks with reasonable confidence
+                guard confidence >= 0.7 else { continue }
                 
-                return TaskItem(
+                let task = TaskItem(
                     text: taskText,
                     priority: priority,
                     timeReference: timeReference,
                     category: category,
                     confidence: confidence
                 )
+                
+                // Keep the task with highest confidence
+                if bestTask == nil || confidence > bestTask!.confidence {
+                    bestTask = (task, confidence)
+                }
             }
         }
         
-        return nil
+        return bestTask?.task
     }
     
     private func cleanTaskText(_ sentence: String, pattern: String) -> String {
@@ -415,28 +618,62 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         return basePriority
     }
     
-    private func calculateTaskConfidence(sentence: String, pattern: String) -> Double {
-        var confidence = 0.5 // Base confidence
-        
+    private func calculateTaskConfidence(sentence: String, pattern: String, baseConfidence: Double) -> Double {
+        var confidence = baseConfidence
         let lowercased = sentence.lowercased()
         
         // Boost confidence for strong action verbs
-        let strongVerbs = ["must", "need", "have to", "should", "will"]
-        if strongVerbs.contains(where: { lowercased.contains($0) }) {
-            confidence += 0.2
+        let strongVerbs = ["must", "need", "have to", "should", "will", "going to"]
+        for verb in strongVerbs {
+            if lowercased.contains(verb) {
+                confidence += 0.1
+                break // Only count the strongest verb once
+            }
         }
         
         // Boost confidence for specific objects/targets
-        if lowercased.contains("with") || lowercased.contains("about") || lowercased.contains("for") {
-            confidence += 0.1
+        let specificIndicators = ["with", "about", "for", "to", "regarding", "concerning"]
+        for indicator in specificIndicators {
+            if lowercased.contains(indicator) {
+                confidence += 0.05
+                break
+            }
         }
         
         // Boost confidence for time references
         if extractTimeReference(from: sentence) != nil {
-            confidence += 0.2
+            confidence += 0.1
         }
         
-        return min(confidence, 1.0)
+        // Boost confidence for specific names or entities
+        let namePatterns = ["mr.", "mrs.", "dr.", "professor", "director", "manager", "ceo"]
+        for pattern in namePatterns {
+            if lowercased.contains(pattern) {
+                confidence += 0.1
+                break
+            }
+        }
+        
+        // Penalize for generic or vague content
+        let vagueWords = ["something", "anything", "everything", "nothing", "this", "that", "it", "thing"]
+        for word in vagueWords {
+            if lowercased.contains(word) {
+                confidence -= 0.1
+                break
+            }
+        }
+        
+        // Penalize for very short task descriptions
+        if sentence.components(separatedBy: .whitespaces).count < 8 {
+            confidence -= 0.2
+        }
+        
+        // Penalize for sentences that are too long (likely not actionable)
+        if sentence.components(separatedBy: .whitespaces).count > 30 {
+            confidence -= 0.2
+        }
+        
+        return max(0.0, min(confidence, 1.0))
     }
     
     // MARK: - Advanced Reminder Extraction
@@ -445,8 +682,11 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         var reminders: [ReminderItem] = []
         let sentences = ContentAnalyzer.extractSentences(from: text)
         
+        print("🔍 Analyzing \(sentences.count) sentences for reminders...")
+        
         for sentence in sentences {
             if let reminder = extractReminderFromSentence(sentence) {
+                print("✅ Found reminder \(reminders.count + 1): \(reminder.text.prefix(80))... (confidence: \(String(format: "%.2f", reminder.confidence)))")
                 reminders.append(reminder)
             }
         }
@@ -454,22 +694,41 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         // Deduplicate and sort by urgency
         let uniqueReminders = Array(Set(reminders)).sorted { $0.urgency.sortOrder < $1.urgency.sortOrder }
         
+        print("🔔 Final reminder count: \(uniqueReminders.count)")
+        
         return Array(uniqueReminders.prefix(config.maxReminders))
     }
     
     private func extractReminderFromSentence(_ sentence: String) -> ReminderItem? {
         let lowercased = sentence.lowercased()
         
+        // First, filter out sentences that are clearly not reminder-related
+        let nonReminderIndicators = [
+            "this is", "that was", "we discussed", "we talked about", "the topic was",
+            "according to", "research shows", "studies indicate", "experts say",
+            "it's important to note", "it's worth mentioning", "interestingly",
+            "this message comes from", "sponsored by", "advertisement"
+        ]
+        
+        for indicator in nonReminderIndicators {
+            if lowercased.contains(indicator) {
+                return nil
+            }
+        }
+        
         let reminderIndicators = [
             "remind me", "don't forget", "remember to", "make sure to",
-            "deadline", "due", "appointment", "meeting at", "call at"
+            "deadline", "due", "appointment", "meeting at", "call at",
+            "schedule", "book", "reserve", "set up", "arrange"
         ]
         
         let hasReminderIndicator = reminderIndicators.contains { lowercased.contains($0) }
         let timeRef = extractTimeReference(from: sentence)
         
-        // Must have either a reminder indicator or a time reference
-        guard hasReminderIndicator || timeRef != nil else { return nil }
+        // Must have either a reminder indicator or a specific time reference
+        guard hasReminderIndicator || (timeRef != nil && timeRef != "No specific time") else { 
+            return nil 
+        }
         
         let timeReference = timeRef != nil ? 
             ReminderItem.TimeReference(originalText: timeRef!) : 
@@ -477,9 +736,15 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         let urgency = determineUrgency(from: sentence, timeReference: timeReference)
         let confidence = calculateReminderConfidence(sentence: sentence, hasIndicator: hasReminderIndicator, hasTime: timeRef != nil)
         
-        guard confidence >= config.minConfidenceThreshold else { return nil }
+        // Only return reminders with good confidence
+        guard confidence >= 0.7 else { return nil }
         
         let cleanedText = cleanReminderText(sentence)
+        
+        // Skip if reminder text is too short or generic
+        if cleanedText.count < 10 || cleanedText.lowercased().contains("this") || cleanedText.lowercased().contains("that") {
+            return nil
+        }
         
         return ReminderItem(
             text: cleanedText,
@@ -556,17 +821,58 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         }
         
         if hasTime {
-            confidence += 0.4
+            confidence += 0.3
         }
+        
+        let lowercased = sentence.lowercased()
         
         // Boost for specific reminder words
-        let lowercased = sentence.lowercased()
-        let strongIndicators = ["deadline", "due", "appointment", "meeting", "call"]
-        if strongIndicators.contains(where: { lowercased.contains($0) }) {
-            confidence += 0.2
+        let strongIndicators = ["deadline", "due", "appointment", "meeting", "call", "schedule", "book"]
+        for indicator in strongIndicators {
+            if lowercased.contains(indicator) {
+                confidence += 0.2
+                break
+            }
         }
         
-        return min(confidence, 1.0)
+        // Boost for specific time references
+        let specificTimeWords = ["today", "tomorrow", "tonight", "this morning", "this afternoon", "this evening", "next week"]
+        for timeWord in specificTimeWords {
+            if lowercased.contains(timeWord) {
+                confidence += 0.1
+                break
+            }
+        }
+        
+        // Boost for specific names or entities
+        let namePatterns = ["mr.", "mrs.", "dr.", "professor", "director", "manager", "ceo"]
+        for pattern in namePatterns {
+            if lowercased.contains(pattern) {
+                confidence += 0.1
+                break
+            }
+        }
+        
+        // Penalize for generic or vague content
+        let vagueWords = ["something", "anything", "everything", "nothing", "this", "that", "it", "thing"]
+        for word in vagueWords {
+            if lowercased.contains(word) {
+                confidence -= 0.1
+                break
+            }
+        }
+        
+        // Penalize for very short descriptions
+        if sentence.components(separatedBy: .whitespaces).count < 8 {
+            confidence -= 0.2
+        }
+        
+        // Penalize for sentences that are too long (likely not actionable)
+        if sentence.components(separatedBy: .whitespaces).count > 30 {
+            confidence -= 0.2
+        }
+        
+        return max(0.0, min(confidence, 1.0))
     }
     
     // MARK: - Time Reference Extraction

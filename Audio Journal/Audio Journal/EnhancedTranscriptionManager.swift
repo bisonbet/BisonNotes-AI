@@ -66,10 +66,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     // MARK: - Private Properties
     
     private var speechRecognizer: SFSpeechRecognizer?
-    private var audioEngine: AVAudioEngine?
-    private var audioPlayer: AVAudioPlayer?
     private var currentTask: SFSpeechRecognitionTask?
-    private var currentRequest: SFSpeechAudioBufferRecognitionRequest?
     
     // Configuration
     private var enableEnhancedTranscription: Bool {
@@ -139,18 +136,26 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         // Load pending jobs from UserDefaults
         loadPendingJobs()
         
-        // Start background checking for completed transcriptions
-        startBackgroundChecking()
+        // Don't start background checking on init - let it be controlled by the selected engine
+        print("ℹ️ Transcription manager initialized, background checks will be managed by engine selection")
     }
     
     private func setupSpeechRecognizer() {
+        print("🔧 Setting up speech recognizer...")
         speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         speechRecognizer?.delegate = self
+        
+        if speechRecognizer == nil {
+            print("❌ Failed to create speech recognizer")
+        } else {
+            print("✅ Speech recognizer created successfully")
+            print("🔍 Speech recognizer available: \(speechRecognizer?.isAvailable ?? false)")
+        }
     }
     
     // MARK: - Public Methods
     
-    func transcribeAudioFile(at url: URL) async throws -> TranscriptionResult {
+    func transcribeAudioFile(at url: URL, using engine: TranscriptionEngine? = nil) async throws -> TranscriptionResult {
         print("🎯 Starting transcription for: \(url.lastPathComponent)")
         
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -158,17 +163,54 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             throw TranscriptionError.fileNotFound
         }
         
+        // Validate audio file before transcription
+        do {
+            let testPlayer = try AVAudioPlayer(contentsOf: url)
+            print("📊 Audio file validation - Duration: \(testPlayer.duration)s, Channels: \(testPlayer.numberOfChannels)")
+            guard testPlayer.duration > 0 else {
+                print("❌ Audio file has no content")
+                throw TranscriptionError.noSpeechDetected
+            }
+        } catch {
+            print("❌ Audio file validation failed: \(error)")
+            throw TranscriptionError.audioExtractionFailed
+        }
+        
         // Check file duration
         let duration = try await getAudioDuration(url: url)
         print("📏 File duration: \(duration) seconds (\(duration/60) minutes)")
         
-        // Try AWS Transcribe first if enabled and configured
-        if let config = awsConfig {
-            print("☁️ Using AWS Transcribe for transcription")
-            return try await transcribeWithAWS(url: url, config: config)
-        }
+        // Determine transcription engine to use
+        let selectedEngine = engine ?? .appleIntelligence // Default fallback
+        print("🔧 Using transcription engine: \(selectedEngine.rawValue)")
         
-        // Fall back to local transcription
+        // Manage background checking based on selected engine
+        switch selectedEngine {
+        case .awsTranscribe:
+            switchToAWSTranscription()
+            if let config = awsConfig {
+                print("☁️ Using AWS Transcribe for transcription")
+                return try await transcribeWithAWS(url: url, config: config)
+            } else {
+                print("⚠️ AWS Transcribe selected but not configured, falling back to Apple Intelligence")
+                switchToAppleTranscription()
+                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+            }
+            
+        case .appleIntelligence:
+            switchToAppleTranscription()
+            return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+            
+        case .openAIChatGPT, .openAIAPICompatible:
+            // These are not implemented yet, fall back to Apple Intelligence
+            print("⚠️ \(selectedEngine.rawValue) not yet implemented, falling back to Apple Intelligence")
+            switchToAppleTranscription()
+            return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+        }
+    }
+    
+    private func transcribeWithAppleIntelligence(url: URL, duration: TimeInterval) async throws -> TranscriptionResult {
+        // Use the existing logic for Apple Intelligence transcription
         if !enableEnhancedTranscription || duration <= maxChunkDuration {
             print("🔄 Using single chunk transcription (duration: \(duration)s, maxChunk: \(maxChunkDuration)s, enhanced: \(enableEnhancedTranscription))")
             return try await transcribeSingleChunk(url: url)
@@ -180,8 +222,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     
     func cancelTranscription() {
         currentTask?.cancel()
-        audioEngine?.stop()
-        audioPlayer?.stop()
         isTranscribing = false
         progress = nil
         currentStatus = "Transcription cancelled"
@@ -189,6 +229,12 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     
     /// Manually check for completed transcriptions
     func checkForCompletedTranscriptions() async {
+        // Only check if AWS is enabled and configured
+        guard enableAWSTranscribe else {
+            print("ℹ️ Manual check: AWS transcription not enabled, skipping check")
+            return
+        }
+        
         guard let config = awsConfig else { 
             print("❌ Manual check: No AWS config available")
             return 
@@ -213,12 +259,21 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                     print("✅ Manual check: Found completed job: \(jobName)")
                     let result = try await retrieveTranscription(jobName: jobName, config: config)
                     
+                    // Get job info before removing it
+                    let jobInfo = getPendingJobInfo(for: jobName)
+                    
                     // Remove from pending jobs
                     removePendingJob(jobName)
                     
                     // Notify completion
-                    if let jobInfo = getPendingJobInfo(for: jobName) {
+                    if let jobInfo = jobInfo {
+                        print("🔔 Manual check: Calling onTranscriptionCompleted callback for job: \(jobName)")
+                        print("🔔 Manual check: Job info: \(jobInfo.recordingName) - \(jobInfo.recordingURL)")
+                        print("🔔 Manual check: Result text length: \(result.fullText.count)")
                         onTranscriptionCompleted?(result, jobInfo)
+                        print("🔔 Manual check: Callback completed")
+                    } else {
+                        print("❌ Manual check: No job info found for completed job: \(jobName)")
                     }
                     
                 } else if status.isFailed {
@@ -262,61 +317,95 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         isTranscribing = true
         currentStatus = "Transcribing audio..."
         
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let recognizer = speechRecognizer else {
-                print("❌ Speech recognizer is nil")
-                continuation.resume(throwing: TranscriptionError.speechRecognizerUnavailable)
-                return
-            }
-            
-            print("✅ Speech recognizer available, starting recognition...")
-            
-            let request = SFSpeechURLRecognitionRequest(url: url)
-            request.shouldReportPartialResults = false
-            
-            currentTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-                guard let self = self else { return }
-                
-                DispatchQueue.main.async {
-                    if let error = error {
-                        print("❌ Speech recognition error: \(error)")
-                        self.isTranscribing = false
-                        self.currentStatus = "Transcription failed"
-                        continuation.resume(throwing: TranscriptionError.recognitionFailed(error))
-                    } else if let result = result {
-                        print("📝 Recognition result received, isFinal: \(result.isFinal)")
-                        if result.isFinal {
-                            let processingTime = Date().timeIntervalSince(startTime)
-                            let transcriptText = result.bestTranscription.formattedString
-                            print("📄 Transcript text length: \(transcriptText.count) characters")
-                            
-                            if transcriptText.isEmpty {
-                                print("❌ No speech detected in audio file")
+        // Add timeout to prevent infinite CPU usage
+        return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
+            // Main transcription task
+            group.addTask { @MainActor in
+                try await withCheckedThrowingContinuation { continuation in
+                    guard let recognizer = self.speechRecognizer else {
+                        print("❌ Speech recognizer is nil")
+                        continuation.resume(throwing: TranscriptionError.speechRecognizerUnavailable)
+                        return
+                    }
+                    
+                    print("✅ Speech recognizer available, starting recognition...")
+                    
+                    let request = SFSpeechURLRecognitionRequest(url: url)
+                    request.shouldReportPartialResults = false
+                    
+                    // Add additional request configuration to minimize audio issues
+                    if #available(iOS 16.0, *) {
+                        request.addsPunctuation = true
+                    }
+                    
+                    print("📝 Creating recognition task with request for: \(url.lastPathComponent)")
+                    
+                    self.currentTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+                        guard let self = self else { return }
+                        
+                        DispatchQueue.main.async {
+                            if let error = error {
+                                print("❌ Speech recognition error: \(error)")
                                 self.isTranscribing = false
-                                self.currentStatus = "No speech detected"
-                                continuation.resume(throwing: TranscriptionError.noSpeechDetected)
-                            } else {
-                                print("✅ Transcription successful!")
-                                let segments = self.createSegments(from: result.bestTranscription)
-                                let transcriptionResult = TranscriptionResult(
-                                    fullText: transcriptText,
-                                    segments: segments,
-                                    processingTime: processingTime,
-                                    chunkCount: 1,
-                                    success: true,
-                                    error: nil
-                                )
-                                
-                                self.isTranscribing = false
-                                self.currentStatus = "Transcription complete"
-                                continuation.resume(returning: transcriptionResult)
+                                self.currentStatus = "Transcription failed"
+                                continuation.resume(throwing: TranscriptionError.recognitionFailed(error))
+                            } else if let result = result {
+                                print("📝 Recognition result received, isFinal: \(result.isFinal)")
+                                if result.isFinal {
+                                    let processingTime = Date().timeIntervalSince(startTime)
+                                    let transcriptText = result.bestTranscription.formattedString
+                                    print("📄 Transcript text length: \(transcriptText.count) characters")
+                                    
+                                    if transcriptText.isEmpty {
+                                        print("❌ No speech detected in audio file")
+                                        self.isTranscribing = false
+                                        self.currentStatus = "No speech detected"
+                                        continuation.resume(throwing: TranscriptionError.noSpeechDetected)
+                                    } else {
+                                        print("✅ Transcription successful!")
+                                        let segments = self.createSegments(from: result.bestTranscription)
+                                        let transcriptionResult = TranscriptionResult(
+                                            fullText: transcriptText,
+                                            segments: segments,
+                                            processingTime: processingTime,
+                                            chunkCount: 1,
+                                            success: true,
+                                            error: nil
+                                        )
+                                        
+                                        self.isTranscribing = false
+                                        self.currentStatus = "Transcription complete"
+                                        continuation.resume(returning: transcriptionResult)
+                                    }
+                                } else {
+                                    print("⏳ Recognition in progress...")
+                                }
                             }
-                        } else {
-                            print("⏳ Recognition in progress...")
                         }
                     }
                 }
             }
+            
+            // Timeout task
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(300 * 1_000_000_000)) // 5 minute timeout
+                print("⏰ Transcription timeout reached, cancelling...")
+                await MainActor.run {
+                    self.currentTask?.cancel()
+                    self.isTranscribing = false
+                    self.currentStatus = "Transcription timed out"
+                }
+                throw TranscriptionError.timeout
+            }
+            
+            // Return the first completed task (either success or timeout)
+            guard let result = try await group.next() else {
+                throw TranscriptionError.timeout
+            }
+            
+            // Cancel remaining tasks
+            group.cancelAll()
+            return result
         }
     }
     
@@ -492,32 +581,21 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             return []
         }
         
-        // Create segments from transcription
-        var segments: [TranscriptSegment] = []
-        var currentText = ""
-        var currentStartTime: TimeInterval = 0
-        
-        for segment in transcription.segments {
-            if currentText.isEmpty {
-                currentStartTime = segment.timestamp
-            }
-            
-            currentText += " " + segment.substring
-            
-            // Create a segment every 30 seconds or when there's a significant pause
-            let segmentDuration = segment.timestamp + segment.duration - currentStartTime
-            if segmentDuration >= 30.0 || segment == transcription.segments.last {
-                segments.append(TranscriptSegment(
-                    speaker: "Speaker",
-                    text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
-                    startTime: currentStartTime,
-                    endTime: segment.timestamp + segment.duration
-                ))
-                currentText = ""
-            }
+        // For single-file transcription, create one continuous segment
+        // This prevents the UI from showing multiple 30-second blocks
+        guard let firstSegment = transcription.segments.first,
+              let lastSegment = transcription.segments.last else {
+            return []
         }
         
-        return segments
+        let singleSegment = TranscriptSegment(
+            speaker: "Speaker",
+            text: fullText,
+            startTime: firstSegment.timestamp,
+            endTime: lastSegment.timestamp + lastSegment.duration
+        )
+        
+        return [singleSegment]
     }
     
     // MARK: - AWS Transcription
@@ -630,6 +708,10 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         let awsResult = try await awsService.retrieveTranscript(jobName: jobName)
         
         // Convert AWS result to our TranscriptionResult format
+        print("🔄 Converting AWS result to TranscriptionResult")
+        print("🔄 AWS transcript text length: \(awsResult.transcriptText.count)")
+        print("🔄 AWS segments count: \(awsResult.segments.count)")
+        
         let transcriptionResult = TranscriptionResult(
             fullText: awsResult.transcriptText,
             segments: awsResult.segments,
@@ -639,6 +721,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             error: awsResult.error
         )
         
+        print("🔄 Final TranscriptionResult text length: \(transcriptionResult.fullText.count)")
         return transcriptionResult
     }
     
@@ -678,6 +761,41 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     
     // MARK: - Job Tracking Helpers
     
+    /// Update pending jobs when recording files are renamed
+    func updatePendingJobsForRenamedRecording(from oldURL: URL, to newURL: URL, newName: String) {
+        print("🔄 Updating pending transcription jobs for renamed recording")
+        print("🔄 Old URL: \(oldURL)")
+        print("🔄 New URL: \(newURL)")
+        print("🔄 New name: \(newName)")
+        
+        var updatedJobs: [TranscriptionJobInfo] = []
+        var updated = false
+        
+        for job in pendingJobs {
+            if job.recordingURL == oldURL {
+                print("🔄 Updating job: \(job.jobName)")
+                let updatedJob = TranscriptionJobInfo(
+                    jobName: job.jobName,
+                    recordingURL: newURL,
+                    recordingName: newName,
+                    startDate: job.startDate
+                )
+                updatedJobs.append(updatedJob)
+                updated = true
+            } else {
+                updatedJobs.append(job)
+            }
+        }
+        
+        if updated {
+            pendingJobs = updatedJobs
+            savePendingJobs()
+            print("✅ Updated pending transcription jobs for renamed recording")
+        } else {
+            print("ℹ️ No pending jobs found for the renamed recording")
+        }
+    }
+    
     private func addPendingJob(_ jobName: String, recordingURL: URL, recordingName: String) {
         let jobInfo = TranscriptionJobInfo(
             jobName: jobName,
@@ -690,6 +808,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             pendingJobs.append(jobInfo)
             savePendingJobs()
             print("📝 Added pending job: \(jobName) for recording: \(recordingName)")
+            print("📝 Job URL: \(recordingURL)")
         }
     }
     
@@ -756,9 +875,68 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         print("⏹️ Stopped background transcription checking")
     }
     
+    // MARK: - Engine Management
+    
+    func switchToAppleTranscription() {
+        print("🔄 Switching to Apple transcription, stopping AWS background checks...")
+        stopBackgroundChecking()
+        
+        // Clear any pending AWS jobs since we're not using AWS anymore
+        let pendingCount = getPendingJobNames().count
+        if pendingCount > 0 {
+            print("🧹 Clearing \(pendingCount) pending AWS transcription jobs")
+            clearAllPendingJobs()
+        }
+        
+        // Also disable AWS transcription in settings to prevent future background checks
+        UserDefaults.standard.set(false, forKey: "enableAWSTranscribe")
+        print("🔧 Disabled AWS transcription in settings")
+    }
+    
+    func switchToAWSTranscription() {
+        print("🔄 Switching to AWS transcription...")
+        if awsConfig != nil {
+            if !isBackgroundChecking {
+                startBackgroundChecking()
+                print("✅ Started AWS background checking")
+            }
+        } else {
+            print("⚠️ AWS transcription selected but not configured")
+        }
+    }
+    
+    /// Public method to update transcription engine and manage background processes
+    func updateTranscriptionEngine(_ engine: TranscriptionEngine) {
+        print("🔧 Updating transcription engine to: \(engine.rawValue)")
+        
+        switch engine {
+        case .awsTranscribe:
+            switchToAWSTranscription()
+        case .appleIntelligence, .openAIChatGPT, .openAIAPICompatible:
+            switchToAppleTranscription()
+        }
+    }
+    
+    private func clearAllPendingJobs() {
+        pendingJobs.removeAll()
+        pendingJobNames = ""
+        UserDefaults.standard.set("", forKey: "pendingTranscriptionJobs")
+        savePendingJobs()
+        print("🧹 All pending AWS jobs cleared")
+    }
+    
     private func checkForCompletedTranscriptionsInBackground() async {
+        // Only check if AWS is enabled, configured, AND we have pending jobs
+        guard enableAWSTranscribe else {
+            print("ℹ️ Background check: AWS transcription not enabled, stopping background checks")
+            stopBackgroundChecking()
+            clearAllPendingJobs()
+            return
+        }
+        
         guard let config = awsConfig else { 
-            print("❌ Background check: No AWS config available")
+            print("❌ Background check: No AWS config available, stopping background checks")
+            stopBackgroundChecking()
             return 
         }
         
@@ -781,12 +959,21 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                     print("✅ Background check: Found completed job: \(jobName)")
                     let result = try await retrieveTranscription(jobName: jobName, config: config)
                     
+                    // Get job info before removing it
+                    let jobInfo = getPendingJobInfo(for: jobName)
+                    
                     // Remove from pending jobs
                     removePendingJob(jobName)
                     
                     // Notify completion
-                    if let jobInfo = getPendingJobInfo(for: jobName) {
+                    if let jobInfo = jobInfo {
+                        print("🔔 Calling onTranscriptionCompleted callback for job: \(jobName)")
+                        print("🔔 Job info: \(jobInfo.recordingName) - \(jobInfo.recordingURL)")
+                        print("🔔 Result text length: \(result.fullText.count)")
                         onTranscriptionCompleted?(result, jobInfo)
+                        print("🔔 Callback completed")
+                    } else {
+                        print("❌ No job info found for completed job: \(jobName)")
                     }
                     
                 } else if status.isFailed {

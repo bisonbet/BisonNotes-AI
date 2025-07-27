@@ -101,12 +101,19 @@ class TranscriptManager: ObservableObject {
     }
     
     func saveTranscript(_ transcript: TranscriptData) {
+        print("💾 Saving transcript for: \(transcript.recordingName)")
+        print("💾 Recording URL: \(transcript.recordingURL)")
+        print("💾 Transcript text length: \(transcript.segments.map { $0.text }.joined().count)")
+        
         if let index = transcripts.firstIndex(where: { $0.recordingURL == transcript.recordingURL }) {
+            print("💾 Updating existing transcript at index \(index)")
             transcripts[index] = transcript
         } else {
+            print("💾 Adding new transcript (total: \(transcripts.count + 1))")
             transcripts.append(transcript)
         }
         saveTranscriptsToDisk()
+        print("💾 Transcript saved to disk")
     }
     
     func updateTranscript(_ transcript: TranscriptData) {
@@ -168,6 +175,14 @@ class TranscriptManager: ObservableObject {
         } catch {
             print("Failed to load transcripts: \(error)")
         }
+    }
+    
+    func clearAllTranscripts() {
+        print("🧹 TranscriptManager: Clearing all transcripts...")
+        let count = transcripts.count
+        transcripts.removeAll()
+        saveTranscriptsToDisk()
+        print("✅ TranscriptManager: Cleared \(count) transcripts")
     }
 }
 
@@ -231,14 +246,18 @@ class SummaryManager: ObservableObject {
     // MARK: - Legacy Summary Methods (for backward compatibility)
     
     func saveSummary(_ summary: SummaryData) {
-        summaries.append(summary)
-        saveSummariesToDisk()
+        DispatchQueue.main.async {
+            self.summaries.append(summary)
+            self.saveSummariesToDisk()
+        }
     }
     
     func updateSummary(_ summary: SummaryData) {
-        if let index = summaries.firstIndex(where: { $0.recordingURL == summary.recordingURL }) {
-            summaries[index] = summary
-            saveSummariesToDisk()
+        DispatchQueue.main.async {
+            if let index = self.summaries.firstIndex(where: { $0.recordingURL == summary.recordingURL }) {
+                self.summaries[index] = summary
+                self.saveSummariesToDisk()
+            }
         }
     }
     
@@ -256,11 +275,13 @@ class SummaryManager: ObservableObject {
     }
     
     func updateEnhancedSummary(_ summary: EnhancedSummaryData) {
-        if let index = enhancedSummaries.firstIndex(where: { $0.recordingURL == summary.recordingURL }) {
-            enhancedSummaries[index] = summary
-            saveEnhancedSummariesToDisk()
-        } else {
-            saveEnhancedSummary(summary)
+        DispatchQueue.main.async {
+            if let index = self.enhancedSummaries.firstIndex(where: { $0.recordingURL == summary.recordingURL }) {
+                self.enhancedSummaries[index] = summary
+                self.saveEnhancedSummariesToDisk()
+            } else {
+                self.saveEnhancedSummary(summary)
+            }
         }
     }
     
@@ -306,7 +327,9 @@ class SummaryManager: ObservableObject {
               !hasEnhancedSummary(for: recordingURL) else { return }
         
         let enhanced = legacy.toEnhanced(contentType: contentType, aiMethod: aiMethod, originalLength: originalLength)
-        saveEnhancedSummary(enhanced)
+        DispatchQueue.main.async {
+            self.saveEnhancedSummary(enhanced)
+        }
     }
     
     func migrateAllLegacySummaries() {
@@ -315,6 +338,23 @@ class SummaryManager: ObservableObject {
                 migrateLegacySummary(for: legacy.recordingURL)
             }
         }
+    }
+    
+    // MARK: - Clear All Data
+    
+    func clearAllSummaries() {
+        print("🧹 SummaryManager: Clearing all summaries...")
+        
+        let enhancedCount = enhancedSummaries.count
+        let legacyCount = summaries.count
+        
+        enhancedSummaries.removeAll()
+        summaries.removeAll()
+        
+        saveEnhancedSummariesToDisk()
+        saveSummariesToDisk()
+        
+        print("✅ SummaryManager: Cleared \(enhancedCount) enhanced summaries and \(legacyCount) legacy summaries")
     }
     
     // MARK: - Enhanced Summarization Integration
@@ -389,7 +429,9 @@ class SummaryManager: ObservableObject {
             
             // Update the recording file name if it's different
             if generatedName != recordingName {
+                print("🏷️ Renaming recording from '\(recordingName)' to '\(generatedName)'")
                 try await updateRecordingName(from: recordingName, to: generatedName, recordingURL: recordingURL)
+                print("✅ Recording renamed successfully")
             }
             
             let enhancedSummary = EnhancedSummaryData(
@@ -405,8 +447,10 @@ class SummaryManager: ObservableObject {
                 processingTime: processingTime
             )
             
-            // Save the enhanced summary
-            saveEnhancedSummary(enhancedSummary)
+            // Save the enhanced summary on the main thread
+            await MainActor.run {
+                saveEnhancedSummary(enhancedSummary)
+            }
             
             return enhancedSummary
             
@@ -430,7 +474,9 @@ class SummaryManager: ObservableObject {
         
         // Update the recording file name if it's different
         if generatedName != recordingName {
+            print("🏷️ Fallback: Renaming recording from '\(recordingName)' to '\(generatedName)'")
             try await updateRecordingName(from: recordingName, to: generatedName, recordingURL: recordingURL)
+            print("✅ Fallback: Recording renamed successfully")
         }
         
         let enhancedSummary = EnhancedSummaryData(
@@ -445,7 +491,9 @@ class SummaryManager: ObservableObject {
             originalLength: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
         )
         
-        saveEnhancedSummary(enhancedSummary)
+        await MainActor.run {
+            saveEnhancedSummary(enhancedSummary)
+        }
         return enhancedSummary
     }
     
@@ -723,6 +771,11 @@ class SummaryManager: ObservableObject {
     }
     
     private func updateRecordingName(from oldName: String, to newName: String, recordingURL: URL) async throws {
+        print("📁 Starting file rename process:")
+        print("📁 Old name: \(oldName)")
+        print("📁 New name: \(newName)")
+        print("📁 Recording URL: \(recordingURL)")
+        
         let fileManager = FileManager.default
         let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         
@@ -741,7 +794,9 @@ class SummaryManager: ObservableObject {
         }
         
         if let oldURL = oldRecordingURL, let newURL = newRecordingURL, fileManager.fileExists(atPath: oldURL.path) {
+            print("📁 Renaming audio file: \(oldURL.lastPathComponent) → \(newURL.lastPathComponent)")
             try fileManager.moveItem(at: oldURL, to: newURL)
+            print("✅ Audio file renamed successfully")
         }
         
         // Update location file if it exists
@@ -771,12 +826,31 @@ class SummaryManager: ObservableObject {
         // Update transcript manager if needed
         if let newURL = newRecordingURL {
             await updateTranscriptManagerURL(from: recordingURL, to: newURL)
+            // Also update pending transcription jobs
+            await updatePendingTranscriptionJobs(from: recordingURL, to: newURL, newName: newName)
         }
     }
     
     private func updateTranscriptManagerURL(from oldURL: URL, to newURL: URL) async {
         // Update transcript manager with new URL
         transcriptManager.updateRecordingURL(from: oldURL, to: newURL)
+    }
+    
+    private func updatePendingTranscriptionJobs(from oldURL: URL, to newURL: URL, newName: String) async {
+        // Update any pending transcription jobs with the new URL and name
+        // For now, we'll use a notification approach, but this could be improved
+        // by injecting the transcription manager as a dependency
+        await MainActor.run {
+            NotificationCenter.default.post(
+                name: NSNotification.Name("UpdatePendingTranscriptionJobs"),
+                object: nil,
+                userInfo: [
+                    "oldURL": oldURL,
+                    "newURL": newURL,
+                    "newName": newName
+                ]
+            )
+        }
     }
     
     // MARK: - Error Handling and Recovery
@@ -1192,9 +1266,9 @@ struct SummarizationConfig {
     
     static let `default` = SummarizationConfig(
         maxSummaryLength: 500,
-        maxTasks: 10,
-        maxReminders: 10,
-        minConfidenceThreshold: 0.3,
+        maxTasks: 5,
+        maxReminders: 5,
+        minConfidenceThreshold: 0.7,
         timeoutInterval: 30.0,
         enableParallelProcessing: true
     )

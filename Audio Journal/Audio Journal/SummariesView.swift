@@ -125,6 +125,9 @@ struct SummariesView: View {
             loadRecordings()
             // Configure the summary manager with the selected AI engine
             summaryManager.setEngine(recorderVM.selectedAIEngine)
+            
+            // Ensure transcription manager is using the correct engine and stop unnecessary AWS checks
+            enhancedTranscriptionManager.updateTranscriptionEngine(recorderVM.selectedTranscriptionEngine)
         }
         }
         .sheet(isPresented: $showSummary) {
@@ -196,24 +199,41 @@ struct SummariesView: View {
     }
     
     private func generateTranscriptAndSummary(for recording: RecordingFile) {
+        print("🎬 Starting generateTranscriptAndSummary for: \(recording.name)")
         isGeneratingSummary = true
         
         // Check if transcript already exists
         if let existingTranscript = transcriptManager.getTranscript(for: recording.url) {
-            // Use existing transcript for summary
-            generateSummaryFromTranscript(for: recording, transcriptText: existingTranscript.plainText)
+            print("📄 Found existing transcript, checking validity...")
+            // Validate that we have actual transcript content, not a placeholder
+            let transcriptText = existingTranscript.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // Check for placeholder text or insufficient content
+            if isValidTranscriptForSummarization(transcriptText) {
+                print("✅ Transcript is valid, generating summary...")
+                generateSummaryFromTranscript(for: recording, transcriptText: transcriptText)
+            } else {
+                print("⚠️ Transcript exists but is not suitable for summarization: \(transcriptText.prefix(100))")
+                isGeneratingSummary = false
+            }
         } else {
+            print("🎤 No existing transcript found, requesting speech recognition authorization...")
             // Generate new transcript first
             SFSpeechRecognizer.requestAuthorization { authStatus in
+                print("🔐 Speech recognition authorization status: \(authStatus.rawValue)")
                 DispatchQueue.main.async {
                     switch authStatus {
                     case .authorized:
+                        print("✅ Speech recognition authorized, starting transcription...")
                         self.performSpeechRecognition(for: recording)
                     case .denied, .restricted:
+                        print("❌ Speech recognition denied/restricted")
                         self.isGeneratingSummary = false
                     case .notDetermined:
+                        print("❌ Speech recognition not determined")
                         self.isGeneratingSummary = false
                     @unknown default:
+                        print("❌ Speech recognition unknown status")
                         self.isGeneratingSummary = false
                     }
                 }
@@ -222,36 +242,84 @@ struct SummariesView: View {
     }
     
     private func performSpeechRecognition(for recording: RecordingFile) {
+        print("🎙️ Starting speech recognition for: \(recording.name)")
+        print("🔧 Using transcription engine: \(recorderVM.selectedTranscriptionEngine.rawValue)")
+        
         Task {
             do {
-                let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url)
+                // Add timeout to prevent infinite CPU usage
+                let result = try await withTimeout(seconds: 300) { // 5 minute timeout
+                    try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url, using: recorderVM.selectedTranscriptionEngine)
+                }
+                
+                print("📊 Transcription completed - Success: \(result.success), Text length: \(result.fullText.count)")
                 
                 if result.success && !result.fullText.isEmpty {
-                    // Create diarized transcript segments
-                    let segments = self.createDiarizedSegments(from: result.segments)
-                    let transcriptData = TranscriptData(
-                        recordingURL: recording.url,
-                        recordingName: recording.name,
-                        recordingDate: recording.date,
-                        segments: segments
-                    )
+                    // Validate transcript quality before proceeding
+                    let transcriptText = result.fullText.trimmingCharacters(in: .whitespacesAndNewlines)
                     
-                    // Save the transcript
-                    self.transcriptManager.saveTranscript(transcriptData)
-                    
-                    // Generate summary from transcript
-                    self.generateSummaryFromTranscript(for: recording, transcriptText: result.fullText)
+                    if isValidTranscriptForSummarization(transcriptText) {
+                        print("✅ Transcript validation passed, saving and generating summary...")
+                        // Create diarized transcript segments
+                        let segments = self.createDiarizedSegments(from: result.segments)
+                        let transcriptData = TranscriptData(
+                            recordingURL: recording.url,
+                            recordingName: recording.name,
+                            recordingDate: recording.date,
+                            segments: segments
+                        )
+                        
+                        // Save the transcript
+                        self.transcriptManager.saveTranscript(transcriptData)
+                        print("💾 Transcript saved successfully")
+                        
+                        // Generate summary from validated transcript
+                        self.generateSummaryFromTranscript(for: recording, transcriptText: transcriptText)
+                    } else {
+                        print("⚠️ Transcription completed but content is not suitable for summarization")
+                        await MainActor.run {
+                            self.isGeneratingSummary = false
+                        }
+                    }
                 } else {
+                    print("⚠️ Transcription failed or returned empty content - Success: \(result.success), Error: \(result.error?.localizedDescription ?? "None")")
                     await MainActor.run {
                         self.isGeneratingSummary = false
                     }
                 }
             } catch {
-                print("Enhanced transcription error: \(error)")
+                print("❌ Enhanced transcription error: \(error)")
                 await MainActor.run {
                     self.isGeneratingSummary = false
                 }
             }
+        }
+    }
+    
+    // Helper function to add timeout to async operations
+    private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+            
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw TimeoutError()
+            }
+            
+            guard let result = try await group.next() else {
+                throw TimeoutError()
+            }
+            
+            group.cancelAll()
+            return result
+        }
+    }
+    
+    struct TimeoutError: Error {
+        var localizedDescription: String {
+            return "Operation timed out"
         }
     }
     
@@ -344,16 +412,75 @@ struct SummariesView: View {
         return diarizedSegments
     }
     
+    private func isValidTranscriptForSummarization(_ transcriptText: String) -> Bool {
+        // Check minimum length (at least 50 characters of meaningful content)
+        guard transcriptText.count >= 50 else {
+            print("📝 Transcript too short for summarization: \(transcriptText.count) characters")
+            return false
+        }
+        
+        // Check for placeholder text patterns
+        let lowercased = transcriptText.lowercased()
+        let placeholderPatterns = [
+            "transcription in progress",
+            "processing audio",
+            "please wait",
+            "transcribing",
+            "loading",
+            "error",
+            "failed to transcribe",
+            "no audio detected",
+            "silence detected",
+            "aws transcription coming soon",
+            "whisper-based diarization coming soon"
+        ]
+        
+        for pattern in placeholderPatterns {
+            if lowercased.contains(pattern) {
+                print("📝 Transcript contains placeholder text: \(pattern)")
+                return false
+            }
+        }
+        
+        // Check for meaningful word count (at least 10 actual words)
+        let words = transcriptText.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty && $0.count > 1 }
+        
+        guard words.count >= 10 else {
+            print("📝 Transcript has insufficient word count: \(words.count) words")
+            return false
+        }
+        
+        // Check for repetitive content (might indicate transcription errors)
+        let uniqueWords = Set(words.map { $0.lowercased() })
+        let uniqueRatio = Double(uniqueWords.count) / Double(words.count)
+        
+        guard uniqueRatio > 0.3 else {
+            print("📝 Transcript appears too repetitive: \(String(format: "%.1f", uniqueRatio * 100))% unique words")
+            return false
+        }
+        
+        print("✅ Transcript validated for summarization: \(words.count) words, \(String(format: "%.1f", uniqueRatio * 100))% unique")
+        return true
+    }
+    
     private func generateSummaryFromTranscript(for recording: RecordingFile, transcriptText: String) {
+        print("📋 Starting summary generation for: \(recording.name)")
+        print("📝 Transcript length: \(transcriptText.count) characters")
+        print("🤖 Selected AI engine: \(recorderVM.selectedAIEngine)")
+        
         Task {
             do {
                 // Ensure the correct AI engine is set before generating summary
                 await MainActor.run {
                     summaryManager.setEngine(recorderVM.selectedAIEngine)
+                    print("🔧 AI engine set to: \(recorderVM.selectedAIEngine)")
                 }
                 
+                print("🤖 Starting enhanced summarization...")
+                
                 // Use the enhanced AI engine for better summarization
-                _ = try await summaryManager.generateEnhancedSummary(
+                let enhancedSummary = try await summaryManager.generateEnhancedSummary(
                     from: transcriptText,
                     for: recording.url,
                     recordingName: recording.name,
@@ -361,19 +488,32 @@ struct SummariesView: View {
                 )
                 
                 await MainActor.run {
+                    print("✅ Enhanced summarization completed successfully")
+                    print("📄 Summary length: \(enhancedSummary.summary.count) characters")
+                    print("📋 Tasks found: \(enhancedSummary.tasks.count)")
+                    print("🔔 Reminders found: \(enhancedSummary.reminders.count)")
+                    
                     // Reload recordings to reflect any name changes
                     self.loadRecordings()
                     self.isGeneratingSummary = false
                     self.showSummary = true
                 }
             } catch {
-                print("Enhanced summary generation failed: \(error)")
+                print("❌ Enhanced summary generation failed: \(error)")
                 
-                // Fallback to basic summarization
+                // Fallback to improved basic summarization
                 await MainActor.run {
-                    let summaryResult = generateSummaryFromText(transcriptText)
+                    print("🔄 Falling back to improved basic summarization")
+                    
+                    // Generate summary first with full context
+                    let summaryResult = generateImprovedSummaryFromText(transcriptText)
+                    print("📄 Basic summary generated: \(summaryResult.count) characters")
+                    
+                    // Then extract tasks and reminders from the full transcript
                     let tasksResult = extractTasksFromText(transcriptText)
                     let remindersResult = extractRemindersFromText(transcriptText)
+                    
+                    print("📋 Basic extraction - Tasks: \(tasksResult.count), Reminders: \(remindersResult.count)")
                     
                     // Create and save summary data
                     let summaryData = SummaryData(
@@ -388,10 +528,13 @@ struct SummariesView: View {
                     // Update or save the summary
                     if self.summaryManager.hasSummary(for: recording.url) {
                         self.summaryManager.updateSummary(summaryData)
+                        print("🔄 Updated existing summary")
                     } else {
                         self.summaryManager.saveSummary(summaryData)
+                        print("💾 Saved new summary")
                     }
                     
+                    print("✅ Basic summarization completed successfully")
                     // Reload recordings to reflect any name changes
                     self.loadRecordings()
                     self.isGeneratingSummary = false
@@ -401,74 +544,266 @@ struct SummariesView: View {
         }
     }
     
-    // Summary generation functions (same as in SummaryView)
-    private func generateSummaryFromText(_ text: String) -> String {
-        // Use the ContentAnalyzer for better summarization
+    // Improved summary generation with full context analysis
+    private func generateImprovedSummaryFromText(_ text: String) -> String {
+        print("📊 Starting improved summary generation...")
+        
+        // Preprocess and validate the text
         let preprocessedText = ContentAnalyzer.preprocessText(text)
         let sentences = ContentAnalyzer.extractSentences(from: preprocessedText)
         
-        guard !sentences.isEmpty else { return "No content to summarize." }
+        guard !sentences.isEmpty else { 
+            print("⚠️ No sentences found for summarization")
+            return "No content to summarize." 
+        }
         
-        // Score sentences based on importance
+        print("📝 Processing \(sentences.count) sentences")
+        
+        // Classify content type for context-aware summarization
+        let contentType = ContentAnalyzer.classifyContent(preprocessedText)
+        print("🏷️ Content classified as: \(contentType.rawValue)")
+        
+        // Extract key themes and topics from the full text
+        let keyPhrases = ContentAnalyzer.extractKeyPhrases(from: preprocessedText, maxPhrases: 8)
+        print("🔑 Key phrases identified: \(keyPhrases.joined(separator: ", "))")
+        
+        // Score sentences with enhanced importance calculation
         let scoredSentences = sentences.map { sentence in
-            (sentence: sentence, score: ContentAnalyzer.calculateSentenceImportance(sentence, in: preprocessedText))
+            let baseScore = ContentAnalyzer.calculateSentenceImportance(sentence, in: preprocessedText)
+            let contextScore = calculateContextualImportance(sentence, contentType: contentType, keyPhrases: keyPhrases)
+            let finalScore = (baseScore * 0.7) + (contextScore * 0.3) // Weighted combination
+            
+            return (sentence: sentence, score: finalScore, baseScore: baseScore, contextScore: contextScore)
         }
         
-        // Cluster related sentences to avoid redundancy
-        let clusters = ContentAnalyzer.clusterRelatedSentences(sentences)
+        // Sort by final score
+        let sortedSentences = scoredSentences.sorted { $0.score > $1.score }
         
-        // Select best sentences from each cluster
-        var selectedSentences: [String] = []
-        let targetSentenceCount = min(max(sentences.count / 4, 2), 4) // 25% of sentences, min 2, max 4
+        // Determine optimal summary length based on content
+        let targetSentenceCount = calculateOptimalSummaryLength(
+            totalSentences: sentences.count,
+            contentType: contentType,
+            averageSentenceLength: sentences.map { $0.count }.reduce(0, +) / sentences.count
+        )
         
-        for cluster in clusters {
-            if selectedSentences.count >= targetSentenceCount { break }
-            
-            // Find the best sentence in this cluster
-            let clusterScores = cluster.map { sentence in
-                (sentence: sentence, score: ContentAnalyzer.calculateSentenceImportance(sentence, in: preprocessedText))
+        print("🎯 Target summary length: \(targetSentenceCount) sentences")
+        
+        // Select sentences ensuring diversity and coherence
+        let selectedSentences = selectDiverseSentences(
+            from: sortedSentences,
+            targetCount: targetSentenceCount,
+            originalText: preprocessedText
+        )
+        
+        // Create context-aware summary based on content type
+        let summary = createContextualSummary(
+            sentences: selectedSentences.map { $0.sentence },
+            contentType: contentType,
+            keyPhrases: keyPhrases,
+            originalText: preprocessedText
+        )
+        
+        print("✅ Summary generated: \(summary.count) characters")
+        return summary
+    }
+    
+    private func calculateContextualImportance(_ sentence: String, contentType: ContentType, keyPhrases: [String]) -> Double {
+        var score: Double = 0.0
+        let lowercased = sentence.lowercased()
+        
+        // Boost sentences containing key phrases
+        for phrase in keyPhrases {
+            if lowercased.contains(phrase.lowercased()) {
+                score += 1.0
+            }
+        }
+        
+        // Content-type specific scoring
+        switch contentType {
+        case .meeting:
+            let meetingKeywords = ["decided", "agreed", "action", "next step", "follow up", "deadline", "assigned", "responsible"]
+            for keyword in meetingKeywords {
+                if lowercased.contains(keyword) {
+                    score += 1.5
+                }
             }
             
-            if let bestInCluster = clusterScores.max(by: { $0.score < $1.score }) {
-                selectedSentences.append(bestInCluster.sentence)
+        case .personalJournal:
+            let journalKeywords = ["feel", "think", "realize", "learn", "discover", "grateful", "important", "significant"]
+            for keyword in journalKeywords {
+                if lowercased.contains(keyword) {
+                    score += 1.2
+                }
+            }
+            
+        case .technical:
+            let techKeywords = ["problem", "solution", "implement", "system", "process", "result", "conclusion", "recommend"]
+            for keyword in techKeywords {
+                if lowercased.contains(keyword) {
+                    score += 1.3
+                }
+            }
+            
+        case .general:
+            let generalKeywords = ["important", "main", "key", "significant", "conclusion", "summary", "overall"]
+            for keyword in generalKeywords {
+                if lowercased.contains(keyword) {
+                    score += 1.0
+                }
             }
         }
         
-        // If we don't have enough sentences, add more from the highest scored
-        if selectedSentences.count < targetSentenceCount {
-            let remainingNeeded = targetSentenceCount - selectedSentences.count
-            let additionalSentences = scoredSentences
-                .filter { !selectedSentences.contains($0.sentence) }
-                .sorted { $0.score > $1.score }
-                .prefix(remainingNeeded)
-                .map { $0.sentence }
+        return score
+    }
+    
+    private func calculateOptimalSummaryLength(totalSentences: Int, contentType: ContentType, averageSentenceLength: Int) -> Int {
+        let baseRatio: Double
+        
+        switch contentType {
+        case .meeting:
+            baseRatio = 0.3 // Meetings need more detail for action items
+        case .technical:
+            baseRatio = 0.35 // Technical content needs precision
+        case .personalJournal:
+            baseRatio = 0.25 // Personal content can be more concise
+        case .general:
+            baseRatio = 0.25 // General content standard ratio
+        }
+        
+        let calculatedCount = Int(Double(totalSentences) * baseRatio)
+        
+        // Ensure reasonable bounds
+        let minSentences = 2
+        let maxSentences = min(8, totalSentences)
+        
+        return max(minSentences, min(maxSentences, calculatedCount))
+    }
+    
+    private func selectDiverseSentences(from scoredSentences: [(sentence: String, score: Double, baseScore: Double, contextScore: Double)], targetCount: Int, originalText: String) -> [(sentence: String, score: Double, baseScore: Double, contextScore: Double)] {
+        var selectedSentences: [(sentence: String, score: Double, baseScore: Double, contextScore: Double)] = []
+        var remainingCandidates = scoredSentences
+        
+        // Always include the highest scoring sentence
+        if let topSentence = remainingCandidates.first {
+            selectedSentences.append(topSentence)
+            remainingCandidates.removeFirst()
+        }
+        
+        // Select remaining sentences ensuring diversity
+        while selectedSentences.count < targetCount && !remainingCandidates.isEmpty {
+            var bestCandidate: (sentence: String, score: Double, baseScore: Double, contextScore: Double)?
+            var bestDiversityScore: Double = -1
+            var bestIndex: Int = 0
             
-            selectedSentences.append(contentsOf: additionalSentences)
+            for (index, candidate) in remainingCandidates.enumerated() {
+                // Calculate diversity score (how different this sentence is from already selected ones)
+                let diversityScore = calculateDiversityScore(
+                    candidate: candidate.sentence,
+                    selected: selectedSentences.map { $0.sentence }
+                )
+                
+                // Combine importance and diversity
+                let combinedScore = (candidate.score * 0.7) + (diversityScore * 0.3)
+                
+                if combinedScore > bestDiversityScore {
+                    bestDiversityScore = combinedScore
+                    bestCandidate = candidate
+                    bestIndex = index
+                }
+            }
+            
+            if let best = bestCandidate {
+                selectedSentences.append(best)
+                remainingCandidates.remove(at: bestIndex)
+            } else {
+                break
+            }
         }
         
-        // Create a coherent summary
-        let summaryText = selectedSentences.joined(separator: " ")
+        return selectedSentences
+    }
+    
+    private func calculateDiversityScore(candidate: String, selected: [String]) -> Double {
+        guard !selected.isEmpty else { return 1.0 }
         
-        // Add key phrases if available
-        let keyPhrases = ContentAnalyzer.extractKeyPhrases(from: text, maxPhrases: 3)
-        if !keyPhrases.isEmpty {
-            return "Summary: \(summaryText). Key topics: \(keyPhrases.joined(separator: ", "))."
+        let candidateWords = Set(candidate.lowercased().components(separatedBy: .whitespacesAndNewlines))
+        
+        var totalSimilarity: Double = 0
+        for selectedSentence in selected {
+            let selectedWords = Set(selectedSentence.lowercased().components(separatedBy: .whitespacesAndNewlines))
+            let intersection = candidateWords.intersection(selectedWords)
+            let union = candidateWords.union(selectedWords)
+            let similarity = union.isEmpty ? 0 : Double(intersection.count) / Double(union.count)
+            totalSimilarity += similarity
         }
         
-        return "Summary: \(summaryText)."
+        let averageSimilarity = totalSimilarity / Double(selected.count)
+        return 1.0 - averageSimilarity // Higher score for more diverse content
+    }
+    
+    private func createContextualSummary(sentences: [String], contentType: ContentType, keyPhrases: [String], originalText: String) -> String {
+        let summaryPrefix: String
+        
+        switch contentType {
+        case .meeting:
+            summaryPrefix = "Meeting Summary: "
+        case .personalJournal:
+            summaryPrefix = "Personal Reflection: "
+        case .technical:
+            summaryPrefix = "Technical Discussion: "
+        case .general:
+            summaryPrefix = "Summary: "
+        }
+        
+        // Join sentences with proper flow
+        let mainSummary = sentences.joined(separator: " ")
+        
+        // Add key topics if they provide additional value
+        let topKeyPhrases = Array(keyPhrases.prefix(3))
+        let keyTopicsText = topKeyPhrases.isEmpty ? "" : " Key topics discussed: \(topKeyPhrases.joined(separator: ", "))."
+        
+        let fullSummary = summaryPrefix + mainSummary + keyTopicsText
+        
+        // Ensure summary doesn't exceed reasonable length
+        if fullSummary.count > 500 {
+            let truncated = String(fullSummary.prefix(500))
+            if let lastSentenceEnd = truncated.lastIndex(of: ".") {
+                return String(truncated[...lastSentenceEnd])
+            } else {
+                return truncated + "..."
+            }
+        }
+        
+        return fullSummary
     }
     
     private func extractTasksFromText(_ text: String) -> [String] {
-        // Use the TaskExtractor for better task extraction
+        print("📋 Extracting tasks from full transcript context...")
+        
+        // Use the TaskExtractor with full transcript context
         let taskExtractor = TaskExtractor()
         let taskItems = taskExtractor.extractTasks(from: text)
+        
+        print("📋 Found \(taskItems.count) tasks")
+        for (index, task) in taskItems.enumerated() {
+            print("📋 Task \(index + 1): \(task.text) (Priority: \(task.priority.rawValue), Confidence: \(String(format: "%.2f", task.confidence)))")
+        }
+        
         return taskItems.map { $0.text }
     }
     
     private func extractRemindersFromText(_ text: String) -> [String] {
-        // Use the ReminderExtractor for better reminder extraction
+        print("🔔 Extracting reminders from full transcript context...")
+        
+        // Use the ReminderExtractor with full transcript context
         let reminderExtractor = ReminderExtractor()
         let reminderItems = reminderExtractor.extractReminders(from: text)
+        
+        print("🔔 Found \(reminderItems.count) reminders")
+        for (index, reminder) in reminderItems.enumerated() {
+            print("🔔 Reminder \(index + 1): \(reminder.text) (Urgency: \(reminder.urgency.rawValue), Confidence: \(String(format: "%.2f", reminder.confidence)))")
+        }
+        
         return reminderItems.map { $0.text }
     }
 } 
