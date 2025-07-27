@@ -12,6 +12,13 @@ build/
 xcuserdata/
 *.xcscmblueprint
 
+# Xcode User Data (more comprehensive)
+*.xcuserstate
+*.xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
 # SwiftPM
 .build/
 
