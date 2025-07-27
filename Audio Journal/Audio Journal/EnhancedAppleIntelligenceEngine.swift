@@ -555,7 +555,7 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
                 let confidence = calculateTaskConfidence(sentence: sentence, pattern: pattern, baseConfidence: baseConfidence)
                 
                 // Only consider tasks with reasonable confidence
-                guard confidence >= 0.7 else { continue }
+                guard confidence >= 0.8 else { continue }
                 
                 let task = TaskItem(
                     text: taskText,
@@ -737,7 +737,7 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         let confidence = calculateReminderConfidence(sentence: sentence, hasIndicator: hasReminderIndicator, hasTime: timeRef != nil)
         
         // Only return reminders with good confidence
-        guard confidence >= 0.7 else { return nil }
+        guard confidence >= 0.8 else { return nil }
         
         let cleanedText = cleanReminderText(sentence)
         

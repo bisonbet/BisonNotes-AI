@@ -17,7 +17,7 @@ struct AISettingsView: View {
     
     init() {
         let summaryManager = SummaryManager()
-        let transcriptManager = TranscriptManager()
+        let transcriptManager = TranscriptManager.shared
         _regenerationManager = StateObject(wrappedValue: SummaryRegenerationManager(summaryManager: summaryManager, transcriptManager: transcriptManager))
     }
     

@@ -985,7 +985,7 @@ struct RecordingsView: View {
 struct SettingsView: View {
         @EnvironmentObject var recorderVM: AudioRecorderViewModel
         @StateObject private var summaryManager = SummaryManager()
-        @StateObject private var transcriptManager = TranscriptManager()
+        @StateObject private var transcriptManager = TranscriptManager.shared
         @StateObject private var regenerationManager: SummaryRegenerationManager
         @State private var showingEngineChangePrompt = false
         @State private var previousEngine = ""
@@ -995,7 +995,7 @@ struct SettingsView: View {
         
         init() {
             let summaryMgr = SummaryManager()
-            let transcriptMgr = TranscriptManager()
+            let transcriptMgr = TranscriptManager.shared
             self._summaryManager = StateObject(wrappedValue: summaryMgr)
             self._transcriptManager = StateObject(wrappedValue: transcriptMgr)
             self._regenerationManager = StateObject(wrappedValue: SummaryRegenerationManager(summaryManager: summaryMgr, transcriptManager: transcriptMgr))
@@ -1581,7 +1581,7 @@ struct SettingsView: View {
 
 struct TranscriptsView: View {
         @EnvironmentObject var recorderVM: AudioRecorderViewModel
-        @StateObject private var transcriptManager = TranscriptManager()
+        @StateObject private var transcriptManager = TranscriptManager.shared
         @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
         @State private var recordings: [RecordingFile] = []
         @State private var selectedRecording: RecordingFile?

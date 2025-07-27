@@ -345,7 +345,13 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                         
                         DispatchQueue.main.async {
                             if let error = error {
-                                print("❌ Speech recognition error: \(error)")
+                                // Check if this is a non-critical error that can be safely ignored
+                                if self.handleSpeechRecognitionError(error) {
+                                    // Non-critical error, continue processing
+                                    return
+                                }
+                                
+                                // Critical error, stop processing
                                 self.isTranscribing = false
                                 self.currentStatus = "Transcription failed"
                                 continuation.resume(throwing: TranscriptionError.recognitionFailed(error))
@@ -995,6 +1001,38 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         if stillPendingJobs != jobNames {
             updatePendingJobNames(stillPendingJobs)
         }
+    }
+    
+    // MARK: - Error Handling
+    
+    private func isNonCriticalSpeechRecognitionError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        
+        // Known non-critical errors that can be safely ignored
+        let nonCriticalErrors: [(domain: String, code: Int)] = [
+            ("kAFAssistantErrorDomain", 1101), // Local speech recognition service error
+            ("kAFAssistantErrorDomain", 1100), // Another common local speech recognition error
+            ("com.apple.speech.recognition.error", 203), // Recognition service temporarily unavailable
+            ("com.apple.speech.recognition.error", 204)  // Recognition service busy
+        ]
+        
+        for (domain, code) in nonCriticalErrors {
+            if nsError.domain == domain && nsError.code == code {
+                return true
+            }
+        }
+        
+        return false
+    }
+    
+    private func handleSpeechRecognitionError(_ error: Error) -> Bool {
+        if isNonCriticalSpeechRecognitionError(error) {
+            print("⚠️ Non-critical speech recognition error (safe to ignore): \(error.localizedDescription)")
+            return true // Error was handled
+        }
+        
+        print("❌ Critical speech recognition error: \(error)")
+        return false // Error was not handled, should be treated as critical
     }
 }
 

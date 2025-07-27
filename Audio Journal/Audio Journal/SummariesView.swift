@@ -7,7 +7,7 @@ import NaturalLanguage
 struct SummariesView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @StateObject private var summaryManager = SummaryManager()
-    @StateObject private var transcriptManager = TranscriptManager()
+    @StateObject private var transcriptManager = TranscriptManager.shared
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @State private var recordings: [RecordingFile] = []
     @State private var selectedRecording: RecordingFile?
@@ -200,11 +200,21 @@ struct SummariesView: View {
     
     private func generateTranscriptAndSummary(for recording: RecordingFile) {
         print("🎬 Starting generateTranscriptAndSummary for: \(recording.name)")
+        print("🔍 Looking for transcript with URL: \(recording.url)")
+        print("📋 Total transcripts in manager: \(transcriptManager.transcripts.count)")
+        
+        // Debug: Print all stored transcript URLs
+        for (index, transcript) in transcriptManager.transcripts.enumerated() {
+            print("📄 Transcript \(index): \(transcript.recordingName) - \(transcript.recordingURL)")
+        }
+        
         isGeneratingSummary = true
         
         // Check if transcript already exists
         if let existingTranscript = transcriptManager.getTranscript(for: recording.url) {
             print("📄 Found existing transcript, checking validity...")
+            print("📄 Existing transcript name: \(existingTranscript.recordingName)")
+            print("📄 Existing transcript URL: \(existingTranscript.recordingURL)")
             // Validate that we have actual transcript content, not a placeholder
             let transcriptText = existingTranscript.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
             
@@ -218,6 +228,7 @@ struct SummariesView: View {
             }
         } else {
             print("🎤 No existing transcript found, requesting speech recognition authorization...")
+            print("🔍 Searched for URL: \(recording.url)")
             // Generate new transcript first
             SFSpeechRecognizer.requestAuthorization { authStatus in
                 print("🔐 Speech recognition authorization status: \(authStatus.rawValue)")

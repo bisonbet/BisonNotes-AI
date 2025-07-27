@@ -96,6 +96,9 @@ class TranscriptManager: ObservableObject {
     @Published var transcripts: [TranscriptData] = []
     private let transcriptsKey = "SavedTranscripts"
     
+    // Singleton instance
+    static let shared = TranscriptManager()
+    
     init() {
         loadTranscripts()
     }
@@ -137,7 +140,45 @@ class TranscriptManager: ObservableObject {
     }
     
     func getTranscript(for recordingURL: URL) -> TranscriptData? {
-        return transcripts.first { $0.recordingURL == recordingURL }
+        print("🔍 TranscriptManager: Looking for transcript with URL: \(recordingURL)")
+        print("🔍 TranscriptManager: Total transcripts: \(transcripts.count)")
+        
+        let targetFilename = recordingURL.lastPathComponent
+        let targetName = recordingURL.deletingPathExtension().lastPathComponent
+        
+        print("🔍 TranscriptManager: Looking for filename: \(targetFilename)")
+        print("🔍 TranscriptManager: Looking for name: \(targetName)")
+        
+        for (index, transcript) in transcripts.enumerated() {
+            let transcriptFilename = transcript.recordingURL.lastPathComponent
+            let transcriptName = transcript.recordingURL.deletingPathExtension().lastPathComponent
+            
+            print("🔍 TranscriptManager: Checking transcript \(index): \(transcript.recordingName)")
+            print("🔍 TranscriptManager: Stored filename: \(transcriptFilename)")
+            print("🔍 TranscriptManager: Stored name: \(transcriptName)")
+            
+            // Try multiple comparison methods
+            let exactMatch = transcript.recordingURL == recordingURL
+            let pathMatch = transcript.recordingURL.path == recordingURL.path
+            let filenameMatch = transcriptFilename == targetFilename
+            let nameMatch = transcriptName == targetName
+            let recordingNameMatch = transcript.recordingName == targetName
+            
+            print("🔍 TranscriptManager: Exact match: \(exactMatch)")
+            print("🔍 TranscriptManager: Path match: \(pathMatch)")
+            print("🔍 TranscriptManager: Filename match: \(filenameMatch)")
+            print("🔍 TranscriptManager: Name match: \(nameMatch)")
+            print("🔍 TranscriptManager: Recording name match: \(recordingNameMatch)")
+            
+            // Match if any of these conditions are true
+            if exactMatch || pathMatch || filenameMatch || nameMatch || recordingNameMatch {
+                print("✅ TranscriptManager: Found matching transcript!")
+                return transcript
+            }
+        }
+        
+        print("❌ TranscriptManager: No matching transcript found")
+        return nil
     }
     
     func hasTranscript(for recordingURL: URL) -> Bool {
@@ -363,7 +404,7 @@ class SummaryManager: ObservableObject {
     private var availableEngines: [String: SummarizationEngine] = [:]
     private let taskExtractor = TaskExtractor()
     private let reminderExtractor = ReminderExtractor()
-    private let transcriptManager = TranscriptManager()
+    private let transcriptManager = TranscriptManager.shared
     
     func initializeEngines() {
         // Initialize all engines using the factory
@@ -833,7 +874,7 @@ class SummaryManager: ObservableObject {
     
     private func updateTranscriptManagerURL(from oldURL: URL, to newURL: URL) async {
         // Update transcript manager with new URL
-        transcriptManager.updateRecordingURL(from: oldURL, to: newURL)
+        TranscriptManager.shared.updateRecordingURL(from: oldURL, to: newURL)
     }
     
     private func updatePendingTranscriptionJobs(from oldURL: URL, to newURL: URL, newName: String) async {
@@ -934,7 +975,7 @@ class SummaryManager: ObservableObject {
             print("Failed to load enhanced summaries: \(error)")
         }
     }
-} 
+}
 
 // MARK: - Enhanced Summarization Models (from SummarizationModels.swift)
 
@@ -1268,7 +1309,7 @@ struct SummarizationConfig {
         maxSummaryLength: 500,
         maxTasks: 5,
         maxReminders: 5,
-        minConfidenceThreshold: 0.7,
+        minConfidenceThreshold: 0.8,
         timeoutInterval: 30.0,
         enableParallelProcessing: true
     )
