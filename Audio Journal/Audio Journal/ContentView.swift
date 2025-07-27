@@ -68,7 +68,7 @@ enum SummaryMethod: String, CaseIterable {
         case .appleIntelligence:
             return "Uses Apple's built-in Natural Language framework for basic summarization"
         case .localServer:
-            return "Connect to local Ollama server for enhanced AI processing (Coming Soon)"
+            return "Connect to local Ollama server for enhanced AI processing"
         case .awsBedrock:
             return "Use AWS Bedrock for advanced AI-powered summaries (Coming Soon)"
         }
@@ -76,9 +76,9 @@ enum SummaryMethod: String, CaseIterable {
     
     var isAvailable: Bool {
         switch self {
-        case .appleIntelligence:
+        case .appleIntelligence, .localServer:
             return true
-        case .localServer, .awsBedrock:
+        case .awsBedrock:
             return false
         }
     }

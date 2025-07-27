@@ -15,6 +15,8 @@ struct SummariesView: View {
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
     @State private var showSummary = false
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
     
     var body: some View {
         NavigationView {
@@ -74,7 +76,9 @@ struct SummariesView: View {
                                         showSummary = true
                                     } else {
                                         // Generate new summary
-                                        generateTranscriptAndSummary(for: recording)
+                                        Task {
+                                            await generateTranscriptAndSummary(for: recording)
+                                        }
                                     }
                                 }) {
                                     HStack {
@@ -82,7 +86,7 @@ struct SummariesView: View {
                                             ProgressView()
                                                 .scaleEffect(0.8)
                                         } else {
-                                            Image(systemName: summaryManager.hasSummary(for: recording.url) ? "doc.text.magnifyingglass.fill" : "doc.text.magnifyingglass")
+                                            Image(systemName: summaryManager.hasSummary(for: recording.url) ? "doc.text.magnifyingglass" : "doc.text.magnifyingglass")
                                         }
                                         Text(summaryManager.hasSummary(for: recording.url) ? "View Summary" : "Generate Summary")
                                     }
@@ -99,7 +103,9 @@ struct SummariesView: View {
                                 if summaryManager.hasSummary(for: recording.url) {
                                     Button(action: {
                                         selectedRecording = recording
-                                        generateTranscriptAndSummary(for: recording)
+                                        Task {
+                                            await generateTranscriptAndSummary(for: recording)
+                                        }
                                     }) {
                                         HStack {
                                             Image(systemName: "arrow.clockwise")
@@ -142,6 +148,13 @@ struct SummariesView: View {
         }
         .sheet(item: $selectedLocationData) { locationData in
             LocationDetailView(locationData: locationData)
+        }
+        .alert("Summary Generation Error", isPresented: $showErrorAlert) {
+            Button("OK") {
+                showErrorAlert = false
+            }
+        } message: {
+            Text(errorMessage)
         }
     }
     
@@ -198,7 +211,7 @@ struct SummariesView: View {
         }
     }
     
-    private func generateTranscriptAndSummary(for recording: RecordingFile) {
+    private func generateTranscriptAndSummary(for recording: RecordingFile) async {
         print("🎬 Starting generateTranscriptAndSummary for: \(recording.name)")
         print("🔍 Looking for transcript with URL: \(recording.url)")
         print("📋 Total transcripts in manager: \(transcriptManager.transcripts.count)")
@@ -224,31 +237,128 @@ struct SummariesView: View {
                 generateSummaryFromTranscript(for: recording, transcriptText: transcriptText)
             } else {
                 print("⚠️ Transcript exists but is not suitable for summarization: \(transcriptText.prefix(100))")
-                isGeneratingSummary = false
-            }
-        } else {
-            print("🎤 No existing transcript found, requesting speech recognition authorization...")
-            print("🔍 Searched for URL: \(recording.url)")
-            // Generate new transcript first
-            SFSpeechRecognizer.requestAuthorization { authStatus in
-                print("🔐 Speech recognition authorization status: \(authStatus.rawValue)")
-                DispatchQueue.main.async {
-                    switch authStatus {
-                    case .authorized:
-                        print("✅ Speech recognition authorized, starting transcription...")
-                        self.performSpeechRecognition(for: recording)
-                    case .denied, .restricted:
-                        print("❌ Speech recognition denied/restricted")
+                
+                // Check if this is a pending AWS transcription
+                if isPendingAWSTranscription(transcriptText) {
+                    print("⏳ Detected pending AWS transcription, waiting for completion...")
+                    await waitForTranscriptionCompletion(for: recording)
+                } else {
+                    await MainActor.run {
                         self.isGeneratingSummary = false
-                    case .notDetermined:
-                        print("❌ Speech recognition not determined")
-                        self.isGeneratingSummary = false
-                    @unknown default:
-                        print("❌ Speech recognition unknown status")
-                        self.isGeneratingSummary = false
+                        self.showErrorAlert = true
+                        self.errorMessage = "No valid transcript found. Please generate a transcript first by clicking 'Generate Transcript' in the Recordings tab."
                     }
                 }
             }
+        } else {
+            print("📄 No existing transcript found, starting transcription...")
+            performSpeechRecognition(for: recording)
+        }
+    }
+    
+    // MARK: - Pending Transcription Handling
+    
+    private func isPendingAWSTranscription(_ transcriptText: String) -> Bool {
+        let lowercased = transcriptText.lowercased()
+        let pendingPatterns = [
+            "transcription job started:",
+            "job is running in background",
+            "check status later to retrieve results",
+            "transcription job",
+            "is running in background"
+        ]
+        
+        for pattern in pendingPatterns {
+            if lowercased.contains(pattern) {
+                print("🔍 Detected pending AWS transcription pattern: \(pattern)")
+                return true
+            }
+        }
+        return false
+    }
+    
+    private func waitForTranscriptionCompletion(for recording: RecordingFile) async {
+        print("⏳ Waiting for transcription completion for: \(recording.name)")
+        
+        // Set up a completion handler for when transcription finishes
+        enhancedTranscriptionManager.onTranscriptionCompleted = { result, jobInfo in
+            Task { @MainActor in
+                
+                print("🎉 Transcription completed for: \(jobInfo.recordingName)")
+                print("🔍 Checking if this matches our recording: \(recording.name)")
+                
+                // Check if this completed transcription matches our recording
+                if jobInfo.recordingURL == recording.url {
+                    print("✅ Matched transcription completion with our recording")
+                    
+                    // Validate the completed transcript
+                    let transcriptText = result.fullText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    
+                    if self.isValidTranscriptForSummarization(transcriptText) {
+                        print("✅ Completed transcript is valid, generating summary...")
+                        
+                        // Create transcript data and save it
+                        let segments = self.createDiarizedSegments(from: result.segments)
+                        let transcriptData = TranscriptData(
+                            recordingURL: recording.url,
+                            recordingName: recording.name,
+                            recordingDate: recording.date,
+                            segments: segments
+                        )
+                        
+                        self.transcriptManager.saveTranscript(transcriptData)
+                        print("💾 Completed transcript saved successfully")
+                        
+                        // Generate summary from the completed transcript
+                        self.generateSummaryFromTranscript(for: recording, transcriptText: transcriptText)
+                    } else {
+                        print("❌ Completed transcript is not valid for summarization")
+                        self.isGeneratingSummary = false
+                        self.showErrorAlert = true
+                        self.errorMessage = "Transcription completed but the content is not suitable for summarization. Please try again or check your audio quality."
+                    }
+                } else {
+                    print("❌ Completed transcription doesn't match our recording")
+                    print("❌ Expected: \(recording.url)")
+                    print("❌ Got: \(jobInfo.recordingURL)")
+                }
+            }
+        }
+        
+        // Start background checking for completed transcriptions
+        print("🔍 Starting background check for completed transcriptions...")
+        await enhancedTranscriptionManager.checkForCompletedTranscriptions()
+        
+        // Set up a timer to periodically check for completion
+        let maxWaitTime: TimeInterval = 3600 // 1 hour max wait
+        let checkInterval: TimeInterval = 10 // Check every 10 seconds
+        let startTime = Date()
+        
+        while Date().timeIntervalSince(startTime) < maxWaitTime {
+            // Check if we now have a valid transcript
+            if let updatedTranscript = transcriptManager.getTranscript(for: recording.url) {
+                let transcriptText = updatedTranscript.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                if isValidTranscriptForSummarization(transcriptText) && !isPendingAWSTranscription(transcriptText) {
+                    print("✅ Found valid completed transcript, generating summary...")
+                    generateSummaryFromTranscript(for: recording, transcriptText: transcriptText)
+                    return
+                }
+            }
+            
+            // Wait before checking again
+            try? await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
+            
+            // Also trigger a manual check for completed transcriptions
+            await enhancedTranscriptionManager.checkForCompletedTranscriptions()
+        }
+        
+        // If we reach here, the transcription timed out
+        print("⏰ Transcription wait timed out")
+        await MainActor.run {
+            self.isGeneratingSummary = false
+            self.showErrorAlert = true
+            self.errorMessage = "Transcription is taking longer than expected. Please check the status in the Transcripts tab or try again later."
         }
     }
     
@@ -269,7 +379,25 @@ struct SummariesView: View {
                     // Validate transcript quality before proceeding
                     let transcriptText = result.fullText.trimmingCharacters(in: .whitespacesAndNewlines)
                     
-                    if isValidTranscriptForSummarization(transcriptText) {
+                    // Check if this is a pending AWS transcription
+                    if isPendingAWSTranscription(transcriptText) {
+                        print("⏳ Detected pending AWS transcription, waiting for completion...")
+                        
+                        // Save the placeholder transcript so we can track it
+                        let segments = self.createDiarizedSegments(from: result.segments)
+                        let transcriptData = TranscriptData(
+                            recordingURL: recording.url,
+                            recordingName: recording.name,
+                            recordingDate: recording.date,
+                            segments: segments
+                        )
+                        
+                        self.transcriptManager.saveTranscript(transcriptData)
+                        print("💾 Placeholder transcript saved for tracking")
+                        
+                        // Wait for the actual transcription to complete
+                        await waitForTranscriptionCompletion(for: recording)
+                    } else if isValidTranscriptForSummarization(transcriptText) {
                         print("✅ Transcript validation passed, saving and generating summary...")
                         // Create diarized transcript segments
                         let segments = self.createDiarizedSegments(from: result.segments)
@@ -290,18 +418,24 @@ struct SummariesView: View {
                         print("⚠️ Transcription completed but content is not suitable for summarization")
                         await MainActor.run {
                             self.isGeneratingSummary = false
+                            self.showErrorAlert = true
+                            self.errorMessage = "No valid transcript could be generated. Please try generating a transcript first in the Recordings tab, or check that your audio contains clear speech."
                         }
                     }
                 } else {
                     print("⚠️ Transcription failed or returned empty content - Success: \(result.success), Error: \(result.error?.localizedDescription ?? "None")")
                     await MainActor.run {
                         self.isGeneratingSummary = false
+                        self.showErrorAlert = true
+                        self.errorMessage = "Transcription failed. Please try generating a transcript first in the Recordings tab, or check that your audio contains clear speech."
                     }
                 }
             } catch {
                 print("❌ Enhanced transcription error: \(error)")
                 await MainActor.run {
                     self.isGeneratingSummary = false
+                    self.showErrorAlert = true
+                    self.errorMessage = "Transcription error: \(error.localizedDescription). Please try generating a transcript first in the Recordings tab."
                 }
             }
         }
@@ -430,7 +564,7 @@ struct SummariesView: View {
             return false
         }
         
-        // Check for placeholder text patterns
+        // Check for placeholder text patterns (including AWS transcription placeholders)
         let lowercased = transcriptText.lowercased()
         let placeholderPatterns = [
             "transcription in progress",
@@ -443,7 +577,12 @@ struct SummariesView: View {
             "no audio detected",
             "silence detected",
             "aws transcription coming soon",
-            "whisper-based diarization coming soon"
+            "whisper-based diarization coming soon",
+            "transcription job started:",
+            "job is running in background",
+            "check status later to retrieve results",
+            "transcription job",
+            "is running in background"
         ]
         
         for pattern in placeholderPatterns {
@@ -512,44 +651,57 @@ struct SummariesView: View {
             } catch {
                 print("❌ Enhanced summary generation failed: \(error)")
                 
-                // Fallback to improved basic summarization
                 await MainActor.run {
-                    print("🔄 Falling back to improved basic summarization")
-                    
-                    // Generate summary first with full context
-                    let summaryResult = generateImprovedSummaryFromText(transcriptText)
-                    print("📄 Basic summary generated: \(summaryResult.count) characters")
-                    
-                    // Then extract tasks and reminders from the full transcript
-                    let tasksResult = extractTasksFromText(transcriptText)
-                    let remindersResult = extractRemindersFromText(transcriptText)
-                    
-                    print("📋 Basic extraction - Tasks: \(tasksResult.count), Reminders: \(remindersResult.count)")
-                    
-                    // Create and save summary data
-                    let summaryData = SummaryData(
-                        recordingURL: recording.url,
-                        recordingName: recording.name,
-                        recordingDate: recording.date,
-                        summary: summaryResult,
-                        tasks: tasksResult,
-                        reminders: remindersResult
-                    )
-                    
-                    // Update or save the summary
-                    if self.summaryManager.hasSummary(for: recording.url) {
-                        self.summaryManager.updateSummary(summaryData)
-                        print("🔄 Updated existing summary")
-                    } else {
-                        self.summaryManager.saveSummary(summaryData)
-                        print("💾 Saved new summary")
-                    }
-                    
-                    print("✅ Basic summarization completed successfully")
-                    // Reload recordings to reflect any name changes
-                    self.loadRecordings()
+                    // Show error to user instead of falling back
                     self.isGeneratingSummary = false
-                    self.showSummary = true
+                    
+                    // Create an alert to show the error
+                    if let summarizationError = error as? SummarizationError {
+                        self.showErrorAlert = true
+                        self.errorMessage = summarizationError.localizedDescription
+                    } else {
+                        self.showErrorAlert = true
+                        self.errorMessage = error.localizedDescription
+                    }
+                }
+                
+                // Fallback to basic summarization if enhanced summary fails
+                print("🔄 Falling back to basic summarization")
+                
+                // Generate summary first with full context
+                let summaryResult = generateImprovedSummaryFromText(transcriptText)
+                print("📄 Basic summary generated: \(summaryResult.count) characters")
+                
+                // Then extract tasks and reminders from the full transcript
+                let tasksResult = extractTasksFromText(transcriptText)
+                let remindersResult = extractRemindersFromText(transcriptText)
+                
+                print("📋 Basic extraction - Tasks: \(tasksResult.count), Reminders: \(remindersResult.count)")
+                
+                // Create and save summary data
+                let summaryData = SummaryData(
+                    recordingURL: recording.url,
+                    recordingName: recording.name,
+                    recordingDate: recording.date,
+                    summary: summaryResult,
+                    tasks: tasksResult,
+                    reminders: remindersResult
+                )
+                
+                // Update or save the summary
+                if self.summaryManager.hasSummary(for: recording.url) {
+                    self.summaryManager.updateSummary(summaryData)
+                    print("🔄 Updated existing summary")
+                } else {
+                    self.summaryManager.saveSummary(summaryData)
+                    print("💾 Saved new summary")
+                }
+                
+                print("✅ Basic summarization completed successfully")
+                // Reload recordings to reflect any name changes
+                self.loadRecordings()
+                self.isGeneratingSummary = false
+                self.showSummary = true
                 }
             }
         }
@@ -816,5 +968,4 @@ struct SummariesView: View {
         }
         
         return reminderItems.map { $0.text }
-    }
-} 
+}

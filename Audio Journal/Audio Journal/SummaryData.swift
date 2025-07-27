@@ -108,35 +108,41 @@ class TranscriptManager: ObservableObject {
         print("💾 Recording URL: \(transcript.recordingURL)")
         print("💾 Transcript text length: \(transcript.segments.map { $0.text }.joined().count)")
         
-        if let index = transcripts.firstIndex(where: { $0.recordingURL == transcript.recordingURL }) {
-            print("💾 Updating existing transcript at index \(index)")
-            transcripts[index] = transcript
-        } else {
-            print("💾 Adding new transcript (total: \(transcripts.count + 1))")
-            transcripts.append(transcript)
+        DispatchQueue.main.async {
+            if let index = self.transcripts.firstIndex(where: { $0.recordingURL == transcript.recordingURL }) {
+                print("💾 Updating existing transcript at index \(index)")
+                self.transcripts[index] = transcript
+            } else {
+                print("💾 Adding new transcript (total: \(self.transcripts.count + 1))")
+                self.transcripts.append(transcript)
+            }
+            self.saveTranscriptsToDisk()
+            print("💾 Transcript saved to disk")
         }
-        saveTranscriptsToDisk()
-        print("💾 Transcript saved to disk")
     }
     
     func updateTranscript(_ transcript: TranscriptData) {
-        if let index = transcripts.firstIndex(where: { $0.recordingURL == transcript.recordingURL }) {
-            var updatedTranscript = transcript
-            updatedTranscript = TranscriptData(
-                recordingURL: transcript.recordingURL,
-                recordingName: transcript.recordingName,
-                recordingDate: transcript.recordingDate,
-                segments: transcript.segments,
-                speakerMappings: transcript.speakerMappings
-            )
-            transcripts[index] = updatedTranscript
-            saveTranscriptsToDisk()
+        DispatchQueue.main.async {
+            if let index = self.transcripts.firstIndex(where: { $0.recordingURL == transcript.recordingURL }) {
+                var updatedTranscript = transcript
+                updatedTranscript = TranscriptData(
+                    recordingURL: transcript.recordingURL,
+                    recordingName: transcript.recordingName,
+                    recordingDate: transcript.recordingDate,
+                    segments: transcript.segments,
+                    speakerMappings: transcript.speakerMappings
+                )
+                self.transcripts[index] = updatedTranscript
+                self.saveTranscriptsToDisk()
+            }
         }
     }
     
     func deleteTranscript(for recordingURL: URL) {
-        transcripts.removeAll { $0.recordingURL == recordingURL }
-        saveTranscriptsToDisk()
+        DispatchQueue.main.async {
+            self.transcripts.removeAll { $0.recordingURL == recordingURL }
+            self.saveTranscriptsToDisk()
+        }
     }
     
     func getTranscript(for recordingURL: URL) -> TranscriptData? {
@@ -186,17 +192,19 @@ class TranscriptManager: ObservableObject {
     }
     
     func updateRecordingURL(from oldURL: URL, to newURL: URL) {
-        if let index = transcripts.firstIndex(where: { $0.recordingURL == oldURL }) {
-            var updatedTranscript = transcripts[index]
-            updatedTranscript = TranscriptData(
-                recordingURL: newURL,
-                recordingName: updatedTranscript.recordingName,
-                recordingDate: updatedTranscript.recordingDate,
-                segments: updatedTranscript.segments,
-                speakerMappings: updatedTranscript.speakerMappings
-            )
-            transcripts[index] = updatedTranscript
-            saveTranscriptsToDisk()
+        DispatchQueue.main.async {
+            if let index = self.transcripts.firstIndex(where: { $0.recordingURL == oldURL }) {
+                var updatedTranscript = self.transcripts[index]
+                updatedTranscript = TranscriptData(
+                    recordingURL: newURL,
+                    recordingName: updatedTranscript.recordingName,
+                    recordingDate: updatedTranscript.recordingDate,
+                    segments: updatedTranscript.segments,
+                    speakerMappings: updatedTranscript.speakerMappings
+                )
+                self.transcripts[index] = updatedTranscript
+                self.saveTranscriptsToDisk()
+            }
         }
     }
     
@@ -221,9 +229,11 @@ class TranscriptManager: ObservableObject {
     func clearAllTranscripts() {
         print("🧹 TranscriptManager: Clearing all transcripts...")
         let count = transcripts.count
-        transcripts.removeAll()
-        saveTranscriptsToDisk()
-        print("✅ TranscriptManager: Cleared \(count) transcripts")
+        DispatchQueue.main.async {
+            self.transcripts.removeAll()
+            self.saveTranscriptsToDisk()
+            print("✅ TranscriptManager: Cleared \(count) transcripts")
+        }
     }
 }
 
@@ -309,10 +319,12 @@ class SummaryManager: ObservableObject {
     // MARK: - Enhanced Summary Methods
     
     func saveEnhancedSummary(_ summary: EnhancedSummaryData) {
-        // Remove any existing enhanced summary for this recording
-        enhancedSummaries.removeAll { $0.recordingURL == summary.recordingURL }
-        enhancedSummaries.append(summary)
-        saveEnhancedSummariesToDisk()
+        DispatchQueue.main.async {
+            // Remove any existing enhanced summary for this recording
+            self.enhancedSummaries.removeAll { $0.recordingURL == summary.recordingURL }
+            self.enhancedSummaries.append(summary)
+            self.saveEnhancedSummariesToDisk()
+        }
     }
     
     func updateEnhancedSummary(_ summary: EnhancedSummaryData) {
@@ -331,20 +343,45 @@ class SummaryManager: ObservableObject {
     }
     
     func hasEnhancedSummary(for recordingURL: URL) -> Bool {
-        return enhancedSummaries.contains { $0.recordingURL == recordingURL }
+        let result = enhancedSummaries.contains { $0.recordingURL == recordingURL }
+        print("🔍 SummaryManager: hasEnhancedSummary for \(recordingURL) = \(result)")
+        return result
     }
     
     // MARK: - Unified Methods (prefer enhanced, fallback to legacy)
     
     func hasSummary(for recordingURL: URL) -> Bool {
-        return hasEnhancedSummary(for: recordingURL) || summaries.contains { $0.recordingURL == recordingURL }
+        let hasEnhanced = hasEnhancedSummary(for: recordingURL)
+        let hasLegacy = summaries.contains { $0.recordingURL == recordingURL }
+        
+        print("🔍 SummaryManager: Checking for summary with URL: \(recordingURL)")
+        print("🔍 SummaryManager: Enhanced summaries count: \(enhancedSummaries.count)")
+        print("🔍 SummaryManager: Legacy summaries count: \(summaries.count)")
+        print("🔍 SummaryManager: Has enhanced summary: \(hasEnhanced)")
+        print("🔍 SummaryManager: Has legacy summary: \(hasLegacy)")
+        
+        // Debug: Print all enhanced summary URLs
+        for (index, summary) in enhancedSummaries.enumerated() {
+            print("🔍 SummaryManager: Enhanced summary \(index): \(summary.recordingURL)")
+        }
+        
+        // Debug: Print all legacy summary URLs
+        for (index, summary) in summaries.enumerated() {
+            print("🔍 SummaryManager: Legacy summary \(index): \(summary.recordingURL)")
+        }
+        
+        let result = hasEnhanced || hasLegacy
+        print("🔍 SummaryManager: Final result: \(result)")
+        return result
     }
     
     func deleteSummary(for recordingURL: URL) {
-        summaries.removeAll { $0.recordingURL == recordingURL }
-        enhancedSummaries.removeAll { $0.recordingURL == recordingURL }
-        saveSummariesToDisk()
-        saveEnhancedSummariesToDisk()
+        DispatchQueue.main.async {
+            self.summaries.removeAll { $0.recordingURL == recordingURL }
+            self.enhancedSummaries.removeAll { $0.recordingURL == recordingURL }
+            self.saveSummariesToDisk()
+            self.saveEnhancedSummariesToDisk()
+        }
     }
     
     func getBestAvailableSummary(for recordingURL: URL) -> EnhancedSummaryData? {
@@ -389,13 +426,15 @@ class SummaryManager: ObservableObject {
         let enhancedCount = enhancedSummaries.count
         let legacyCount = summaries.count
         
-        enhancedSummaries.removeAll()
-        summaries.removeAll()
-        
-        saveEnhancedSummariesToDisk()
-        saveSummariesToDisk()
-        
-        print("✅ SummaryManager: Cleared \(enhancedCount) enhanced summaries and \(legacyCount) legacy summaries")
+        DispatchQueue.main.async {
+            self.enhancedSummaries.removeAll()
+            self.summaries.removeAll()
+            
+            self.saveEnhancedSummariesToDisk()
+            self.saveSummariesToDisk()
+            
+            print("✅ SummaryManager: Cleared \(enhancedCount) enhanced summaries and \(legacyCount) legacy summaries")
+        }
     }
     
     // MARK: - Enhanced Summarization Integration
@@ -407,19 +446,34 @@ class SummaryManager: ObservableObject {
     private let transcriptManager = TranscriptManager.shared
     
     func initializeEngines() {
+        print("🔧 SummaryManager: Initializing engines...")
+        
         // Initialize all engines using the factory
         for engineType in AIEngineType.allCases {
             let engine = AIEngineFactory.createEngine(type: engineType)
             availableEngines[engine.name] = engine
+            print("✅ SummaryManager: Added engine '\(engine.name)' (available: \(engine.isAvailable))")
         }
         
         // Set default engine to Enhanced Apple Intelligence
         currentEngine = availableEngines["Enhanced Apple Intelligence"]
+        print("🔧 SummaryManager: Default engine set to '\(currentEngine?.name ?? "None")'")
     }
     
     func setEngine(_ engineName: String) {
+        print("🔧 SummaryManager: Setting engine to '\(engineName)'")
         if let engine = availableEngines[engineName] {
             currentEngine = engine
+            print("✅ SummaryManager: Engine set successfully to '\(engine.name)'")
+        } else {
+            print("❌ SummaryManager: Engine '\(engineName)' not found in available engines")
+            print("📋 Available engines: \(Array(availableEngines.keys))")
+        }
+    }
+    
+    func updateEngineConfiguration(_ engineName: String) {
+        if let engine = availableEngines[engineName] as? LocalLLMEngine {
+            engine.updateConfiguration()
         }
     }
     
@@ -456,6 +510,8 @@ class SummaryManager: ObservableObject {
         guard let engine = currentEngine else {
             throw SummarizationError.aiServiceUnavailable(service: "No engine selected")
         }
+        
+        print("🤖 SummaryManager: Using engine '\(engine.name)' for summarization")
         
         let startTime = Date()
         
@@ -496,7 +552,13 @@ class SummaryManager: ObservableObject {
             return enhancedSummary
             
         } catch {
-            // Fallback to basic processing if engine fails
+            // For Local LLM engine, don't fallback - show the error
+            if engine.name == "Local LLM (Ollama)" {
+                print("❌ Local LLM engine failed: \(error)")
+                throw error
+            }
+            
+            // Fallback to basic processing if other engines fail
             return try await generateFallbackSummary(from: text, for: recordingURL, recordingName: recordingName, recordingDate: recordingDate, originalError: error)
         }
     }

@@ -80,10 +80,9 @@ struct SummaryView: View {
                                             .fontWeight(.semibold)
                                     }
                                     
-                                    Text(summary)
-                                        .font(.body)
-                                        .foregroundColor(.primary)
-                                        .lineSpacing(4)
+                                                                markdownText(summary)
+                                .font(.body)
+                                .lineSpacing(4)
                                 }
                                 .padding(.horizontal)
                             }

@@ -249,74 +249,188 @@ struct VoiceCharacteristics {
 // MARK: - Local LLM Engine (Future Implementation)
 
 class LocalLLMEngine: SummarizationEngine {
-    let name: String = "Local LLM"
-    let description: String = "Privacy-focused local language model processing using Ollama or similar"
-    let isAvailable: Bool = false
-    let version: String = "1.0-preview"
+    let name: String = "Local LLM (Ollama)"
+    let description: String = "Privacy-focused local language model processing using Ollama"
+    let isAvailable: Bool = true
+    let version: String = "1.0"
     
-    struct LocalLLMConfig {
-        let modelName: String
-        let serverURL: String
-        let maxTokens: Int
-        let temperature: Double
-        let topP: Double
-        let enableStreaming: Bool
+    private var ollamaService: OllamaService?
+    
+    init() {
+        // Initialize with saved configuration
+        let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
+        let port = UserDefaults.standard.integer(forKey: "ollamaPort")
+        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+        let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
+        let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
         
-        static let `default` = LocalLLMConfig(
-            modelName: "llama2:7b",
-            serverURL: "http://localhost:11434",
-            maxTokens: 2048,
-            temperature: 0.1,
-            topP: 0.9,
-            enableStreaming: false
+        let config = OllamaConfig(
+            serverURL: serverURL,
+            port: port > 0 ? port : 11434,
+            modelName: modelName,
+            maxTokens: maxTokens > 0 ? maxTokens : 2048,
+            temperature: temperature > 0 ? temperature : 0.1
         )
-    }
-    
-    private let config: LocalLLMConfig
-    
-    init(config: LocalLLMConfig = .default) {
-        self.config = config
+        
+        self.ollamaService = OllamaService(config: config)
     }
     
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        print("🤖 LocalLLMEngine: Starting summary generation")
+        
+        // Update configuration with latest settings
+        updateConfiguration()
+        
+        guard let service = ollamaService else {
+            print("❌ LocalLLMEngine: Ollama service is nil")
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        // Check if Ollama is enabled
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableOllama")
+        print("🔧 LocalLLMEngine: Ollama enabled: \(isEnabled)")
+        
+        guard isEnabled else {
+            print("❌ LocalLLMEngine: Ollama is not enabled in settings")
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama is not enabled in settings")
+        }
+        
+        // Test connection before attempting to generate summary
+        print("🔧 LocalLLMEngine: Testing connection to Ollama server...")
+        let isConnected = await service.testConnection()
+        print("🔧 LocalLLMEngine: Connection test result: \(isConnected)")
+        
+        guard isConnected else {
+            print("❌ LocalLLMEngine: Cannot connect to Ollama server")
+            throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server. Please check your server URL and port settings.")
+        }
+        
+        print("✅ LocalLLMEngine: Calling Ollama service for summary")
+        return try await service.generateSummary(from: text)
     }
     
     func extractTasks(from text: String) async throws -> [TaskItem] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        // Update configuration with latest settings
+        updateConfiguration()
+        
+        guard let service = ollamaService else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        // Check if Ollama is enabled
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableOllama")
+        guard isEnabled else {
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama is not enabled in settings")
+        }
+        
+        // Test connection before attempting to extract tasks
+        let isConnected = await service.testConnection()
+        guard isConnected else {
+            throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server. Please check your server URL and port settings.")
+        }
+        
+        let result = try await service.extractTasksAndReminders(from: text)
+        return result.tasks
     }
     
     func extractReminders(from text: String) async throws -> [ReminderItem] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        // Update configuration with latest settings
+        updateConfiguration()
+        
+        guard let service = ollamaService else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        // Check if Ollama is enabled
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableOllama")
+        guard isEnabled else {
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama is not enabled in settings")
+        }
+        
+        // Test connection before attempting to extract reminders
+        let isConnected = await service.testConnection()
+        guard isConnected else {
+            throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server. Please check your server URL and port settings.")
+        }
+        
+        let result = try await service.extractTasksAndReminders(from: text)
+        return result.reminders
     }
     
     func classifyContent(_ text: String) async throws -> ContentType {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        // For now, return general content type
+        // Could be enhanced with specific classification prompts
+        return .general
     }
     
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        // Update configuration with latest settings
+        updateConfiguration()
+        
+        guard let service = ollamaService else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        // Check if Ollama is enabled
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableOllama")
+        guard isEnabled else {
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama is not enabled in settings")
+        }
+        
+        // Test connection before attempting to process
+        let isConnected = await service.testConnection()
+        guard isConnected else {
+            throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server. Please check your server URL and port settings.")
+        }
+        
+        async let summaryTask = service.generateSummary(from: text)
+        async let extractionTask = service.extractTasksAndReminders(from: text)
+        
+        let summary = try await summaryTask
+        let extraction = try await extractionTask
+        let contentType = try await classifyContent(text)
+        
+        return (summary, extraction.tasks, extraction.reminders, contentType)
     }
     
-    // MARK: - Future Implementation Methods
+    // MARK: - Configuration Management
     
-    private func checkOllamaConnection() async -> Bool {
-        // Future implementation: check if Ollama server is running
-        return false
+    func updateConfiguration() {
+        let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
+        let port = UserDefaults.standard.integer(forKey: "ollamaPort")
+        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+        let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
+        let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
+        
+        print("🔧 LocalLLMEngine: Updating configuration - Server: \(serverURL), Port: \(port), Model: \(modelName)")
+        
+        let config = OllamaConfig(
+            serverURL: serverURL,
+            port: port > 0 ? port : 11434,
+            modelName: modelName,
+            maxTokens: maxTokens > 0 ? maxTokens : 2048,
+            temperature: temperature > 0 ? temperature : 0.1
+        )
+        
+        self.ollamaService = OllamaService(config: config)
+        print("✅ LocalLLMEngine: Configuration updated successfully")
     }
     
-    private func listAvailableModels() async throws -> [String] {
-        // Future implementation: get list of available local models
-        throw SummarizationError.aiServiceUnavailable(service: name)
+    // MARK: - Connection Testing
+    
+    func testConnection() async -> Bool {
+        updateConfiguration()
+        return await ollamaService?.testConnection() ?? false
     }
     
-    private func callLocalLLM(prompt: String) async throws -> String {
-        // Future implementation:
-        // 1. Connect to local Ollama server
-        // 2. Send prompt to specified model
-        // 3. Handle streaming or batch response
-        // 4. Parse and return result
-        throw SummarizationError.aiServiceUnavailable(service: name)
+    func loadAvailableModels() async throws -> [String] {
+        updateConfiguration()
+        guard let service = ollamaService else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        let models = try await service.loadAvailableModels()
+        return models.map { $0.name }
     }
 }
 
@@ -352,7 +466,7 @@ enum AIEngineType: String, CaseIterable {
     case enhancedAppleIntelligence = "Enhanced Apple Intelligence"
     case awsBedrock = "AWS Bedrock"
     case whisperBased = "Whisper-Based"
-    case localLLM = "Local LLM"
+    case localLLM = "Local LLM (Ollama)"
     
     var description: String {
         switch self {
@@ -369,9 +483,9 @@ enum AIEngineType: String, CaseIterable {
     
     var isComingSoon: Bool {
         switch self {
-        case .enhancedAppleIntelligence:
+        case .enhancedAppleIntelligence, .localLLM:
             return false
-        case .awsBedrock, .whisperBased, .localLLM:
+        case .awsBedrock, .whisperBased:
             return true
         }
     }

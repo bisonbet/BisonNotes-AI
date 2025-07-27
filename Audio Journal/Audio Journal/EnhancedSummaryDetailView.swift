@@ -184,9 +184,8 @@ struct EnhancedSummaryDetailView: View {
             iconColor: .accentColor,
             isExpanded: expandedSections.contains("summary")
         ) {
-            Text(summaryData.summary)
+            markdownText(summaryData.summary)
                 .font(.body)
-                .foregroundColor(.primary)
                 .lineSpacing(4)
                 .padding(.top, 4)
         }

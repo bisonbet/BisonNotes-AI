@@ -37,13 +37,15 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
     
     func requestLocationPermission() {
-        // Use the cached status instead of accessing locationManager.authorizationStatus
-        // which can cause UI unresponsiveness on the main thread
-        switch locationStatus {
+        // Check current authorization status first
+        let currentStatus = locationManager.authorizationStatus
+        
+        switch currentStatus {
         case .notDetermined:
-            // Request authorization on a background queue
-            DispatchQueue.global(qos: .userInitiated).async {
-                DispatchQueue.main.async {
+            // Only request if we haven't already requested
+            if locationStatus == .notDetermined {
+                // Use a small delay to avoid UI unresponsiveness
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     self.locationManager.requestWhenInUseAuthorization()
                 }
             }
