@@ -24,6 +24,9 @@ BisonNotes AI is your personal AI assistant for capturing, transcribing, and ana
 
 ### 📝 **Intelligent Transcription**
 - **Real-Time Speech Recognition**: Powered by Apple's Speech framework
+- **Enhanced Large File Support**: Automatic chunking for files over 5 minutes
+- **Progress Tracking**: Real-time progress updates for long transcriptions
+- **Timeout Handling**: Configurable timeout settings to prevent hanging
 - **Speaker Diarization**: Identifies different speakers in conversations
 - **Editable Transcripts**: Full editing capabilities with speaker management
 - **Time-Stamped Segments**: Precise timing for each transcript segment
@@ -118,6 +121,13 @@ BisonNotes AI is your personal AI assistant for capturing, transcribing, and ana
 - **Engine Selection**: Enhanced Apple Intelligence (current), Local Server, AWS Bedrock (coming soon)
 - **Speaker Diarization**: Basic pause detection, AWS Transcription, Whisper-based (coming soon)
 - **Batch Regeneration**: Update all summaries with new AI engines
+
+### **Transcription Settings**
+- **Enhanced Transcription**: Automatic handling of large audio files (60+ minutes)
+- **Chunk Configuration**: Adjustable chunk size (1-10 minutes) and overlap settings
+- **Timeout Management**: Configurable processing time limits (5-30 minutes)
+- **Progress Display**: Real-time transcription progress tracking
+- **Cancel Support**: Ability to cancel long-running transcriptions
 
 ### **Content Analysis**
 - **Task Categories**: Call, Email, Meeting, Purchase, Research, Travel, Health, General

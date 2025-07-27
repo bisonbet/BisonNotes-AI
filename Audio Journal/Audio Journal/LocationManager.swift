@@ -28,7 +28,23 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
     
     func requestLocationPermission() {
-        locationManager.requestWhenInUseAuthorization()
+        // Check current authorization status first
+        let currentStatus = locationManager.authorizationStatus
+        
+        switch currentStatus {
+        case .notDetermined:
+            // Only request if not determined
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.locationManager.requestWhenInUseAuthorization()
+            }
+        case .denied, .restricted:
+            locationError = "Location access denied. Please enable in Settings."
+        case .authorizedWhenInUse, .authorizedAlways:
+            // Already authorized, start location updates
+            startLocationUpdates()
+        @unknown default:
+            locationError = "Unknown authorization status"
+        }
     }
     
     func startLocationUpdates() {
@@ -47,7 +63,8 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         case .denied, .restricted:
             locationError = "Location access denied. Please enable in Settings."
         case .notDetermined:
-            requestLocationPermission()
+            // Don't request permission here - let the authorization callback handle it
+            locationError = "Location permission not determined"
         @unknown default:
             locationError = "Unknown location authorization status"
         }
@@ -75,7 +92,8 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         case .denied, .restricted:
             locationError = "Location access denied. Please enable in Settings."
         case .notDetermined:
-            requestLocationPermission()
+            // Don't request permission here - let the authorization callback handle it
+            locationError = "Location permission not determined"
         @unknown default:
             locationError = "Unknown location authorization status"
         }
@@ -157,7 +175,10 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         
         switch status {
         case .authorizedWhenInUse, .authorizedAlways:
-            startLocationUpdates()
+            // Start location updates on main thread since we're already in a callback
+            DispatchQueue.main.async {
+                self.startLocationUpdates()
+            }
         case .denied, .restricted:
             locationError = "Location access denied"
             isLocationEnabled = false

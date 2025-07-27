@@ -940,6 +940,7 @@ struct SettingsView: View {
         @StateObject private var regenerationManager: SummaryRegenerationManager
         @State private var showingEngineChangePrompt = false
         @State private var previousEngine = ""
+        @State private var showingAWSSettings = false
         
         init() {
             let summaryMgr = SummaryManager()
@@ -1418,6 +1419,55 @@ struct SettingsView: View {
                                 }
                             }
                             
+                            // AWS Transcribe Settings
+                            VStack(alignment: .leading, spacing: 16) {
+                                HStack {
+                                    Text("AWS Transcribe")
+                                        .font(.headline)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    Button(action: {
+                                        showingAWSSettings = true
+                                    }) {
+                                        Image(systemName: "chevron.right")
+                                            .font(.title3)
+                                            .foregroundColor(.accentColor)
+                                    }
+                                }
+                                .padding(.top, 40)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, 16)
+                                
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Image(systemName: "cloud")
+                                            .foregroundColor(.blue)
+                                        Text("AWS Transcribe provides high-quality transcription for large audio files")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.horizontal, 24)
+                                    
+                                    Button(action: {
+                                        showingAWSSettings = true
+                                    }) {
+                                        HStack {
+                                            Text("Configure AWS Transcribe")
+                                            Spacer()
+                                            Image(systemName: "arrow.right")
+                                        }
+                                        .padding(.horizontal, 24)
+                                        .padding(.vertical, 12)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(Color.blue.opacity(0.1))
+                                        )
+                                        .foregroundColor(.blue)
+                                    }
+                                    .padding(.horizontal, 24)
+                                }
+                            }
+                            
                             
                         }
                         
@@ -1453,6 +1503,9 @@ struct SettingsView: View {
                     Text(results.summary)
                 }
             }
+            .sheet(isPresented: $showingAWSSettings) {
+                AWSSettingsView()
+            }
         }
     }
     
@@ -1470,11 +1523,15 @@ struct SettingsView: View {
 struct TranscriptsView: View {
         @EnvironmentObject var recorderVM: AudioRecorderViewModel
         @StateObject private var transcriptManager = TranscriptManager()
+        @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
         @State private var recordings: [RecordingFile] = []
         @State private var selectedRecording: RecordingFile?
         @State private var isGeneratingTranscript = false
         @State private var selectedLocationData: LocationData?
         @State private var locationAddresses: [URL: String] = [:]
+        @State private var showingTranscriptionCompletionAlert = false
+        @State private var completedTranscriptionText = ""
+        @State private var isCheckingForCompletions = false
         
         var body: some View {
             NavigationView {
@@ -1539,10 +1596,14 @@ struct TranscriptsView: View {
                                             if isGeneratingTranscript && selectedRecording?.url == recording.url {
                                                 ProgressView()
                                                     .scaleEffect(0.8)
+                                                if let progress = enhancedTranscriptionManager.progress {
+                                                    Text(progress.formattedProgress)
+                                                        .font(.caption2)
+                                                }
                                             } else {
                                                 Image(systemName: transcriptManager.hasTranscript(for: recording.url) ? "text.bubble.fill" : "text.bubble")
+                                                Text(transcriptManager.hasTranscript(for: recording.url) ? "Edit Transcript" : "Generate Transcript")
                                             }
-                                            Text(transcriptManager.hasTranscript(for: recording.url) ? "Edit Transcript" : "Generate Transcript")
                                         }
                                         .font(.caption)
                                         .padding(.horizontal, 12)
@@ -1559,8 +1620,45 @@ struct TranscriptsView: View {
                     }
                 }
                 .navigationTitle("Transcripts")
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: {
+                            Task {
+                                isCheckingForCompletions = true
+                                await enhancedTranscriptionManager.checkForCompletedTranscriptions()
+                                isCheckingForCompletions = false
+                            }
+                        }) {
+                            HStack {
+                                if isCheckingForCompletions {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                                Text("Check Status")
+                            }
+                        }
+                        .disabled(isCheckingForCompletions)
+                    }
+                    
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("Add Test Job") {
+                            // Add your specific job for testing
+                            if let recording = recordings.first {
+                                enhancedTranscriptionManager.addJobForTracking(
+                                    jobName: "transcription-7AF86DD3-083E-404C-9C4C-532A5C5213DC",
+                                    recordingURL: recording.url,
+                                    recordingName: recording.name
+                                )
+                            }
+                        }
+                        .font(.caption)
+                    }
+                }
                 .onAppear {
                     loadRecordings()
+                    setupTranscriptionCompletionCallback()
                 }
             }
             .sheet(item: $selectedRecording) { recording in
@@ -1572,6 +1670,13 @@ struct TranscriptsView: View {
             }
             .sheet(item: $selectedLocationData) { locationData in
                 LocationDetailView(locationData: locationData)
+            }
+            .alert("Transcription Complete", isPresented: $showingTranscriptionCompletionAlert) {
+                Button("OK") {
+                    showingTranscriptionCompletionAlert = false
+                }
+            } message: {
+                Text(completedTranscriptionText.isEmpty ? "A background transcription has completed. The transcript is now available for editing." : completedTranscriptionText)
             }
             
         }
@@ -1637,7 +1742,7 @@ struct TranscriptsView: View {
                 DispatchQueue.main.async {
                     switch authStatus {
                     case .authorized:
-                        self.performSpeechRecognition(for: recording)
+                        self.performEnhancedTranscription(for: recording)
                     case .denied, .restricted:
                         self.isGeneratingTranscript = false
                     case .notDetermined:
@@ -1649,103 +1754,125 @@ struct TranscriptsView: View {
             }
         }
         
-        private func performSpeechRecognition(for recording: RecordingFile) {
-            guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")) else {
-                isGeneratingTranscript = false
-                return
-            }
-            
-            // Ensure the file is accessible
-            guard FileManager.default.fileExists(atPath: recording.url.path) else {
-                isGeneratingTranscript = false
-                return
-            }
-            
-            let request = SFSpeechURLRecognitionRequest(url: recording.url)
-            request.shouldReportPartialResults = false
-            
-            recognizer.recognitionTask(with: request) { result, error in
-                DispatchQueue.main.async {
-                    if let error = error {
-                        print("Speech recognition error: \(error)")
-                        self.isGeneratingTranscript = false
-                    } else if let result = result {
-                        if result.isFinal {
-                            let transcriptText = result.bestTranscription.formattedString
-                            if !transcriptText.isEmpty {
-                                // Create diarized transcript segments
-                                let segments = self.createDiarizedSegments(from: result.bestTranscription)
-                                let transcriptData = TranscriptData(
-                                    recordingURL: recording.url,
-                                    recordingName: recording.name,
-                                    recordingDate: recording.date,
-                                    segments: segments
-                                )
-                                
-                                // Save the transcript
-                                self.transcriptManager.saveTranscript(transcriptData)
-                                
-                                // Update the selected recording to show the editable view
-                                self.selectedRecording = recording
-                            }
-                        }
+        private func performEnhancedTranscription(for recording: RecordingFile) {
+            print("🚀 Starting enhanced transcription for: \(recording.name)")
+            Task {
+                do {
+                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url)
+                    
+                    print("📊 Transcription result: success=\(result.success), textLength=\(result.fullText.count)")
+                    
+                    if result.success && !result.fullText.isEmpty {
+                        print("✅ Creating transcript data...")
+                        // Create diarized transcript segments
+                        let segments = self.createDiarizedSegments(from: result.segments)
+                        let transcriptData = TranscriptData(
+                            recordingURL: recording.url,
+                            recordingName: recording.name,
+                            recordingDate: recording.date,
+                            segments: segments
+                        )
+                        
+                        // Save the transcript
+                        self.transcriptManager.saveTranscript(transcriptData)
+                        print("💾 Transcript saved successfully")
+                        
+                        // Update the selected recording to show the editable view
+                        self.selectedRecording = recording
+                    } else {
+                        print("❌ Transcription failed or returned empty result")
                     }
+                } catch {
+                    print("❌ Enhanced transcription error: \(error)")
+                }
+                
+                await MainActor.run {
                     self.isGeneratingTranscript = false
+                    print("🏁 Transcription process completed")
                 }
             }
         }
         
-        private func createDiarizedSegments(from transcription: SFTranscription) -> [TranscriptSegment] {
-            let fullText = transcription.formattedString
-            
-            if fullText.isEmpty {
+        private func setupTranscriptionCompletionCallback() {
+            enhancedTranscriptionManager.onTranscriptionCompleted = { result, jobInfo in
+                Task { @MainActor in
+                    
+                    print("🎉 Background transcription completed for: \(jobInfo.recordingName)")
+                    
+                    // Find the recording that matches this transcription
+                    if let recording = recordings.first(where: { recording in
+                        return recording.url == jobInfo.recordingURL
+                    }) {
+                        // Create transcript data and save it
+                        let segments = createDiarizedSegments(from: result.segments)
+                        let transcriptData = TranscriptData(
+                            recordingURL: recording.url,
+                            recordingName: recording.name,
+                            recordingDate: recording.date,
+                            segments: segments
+                        )
+                        
+                        transcriptManager.saveTranscript(transcriptData)
+                        print("💾 Background transcript saved for: \(recording.name)")
+                        
+                        // Show completion alert
+                        completedTranscriptionText = "Transcription completed for: \(recording.name)"
+                        showingTranscriptionCompletionAlert = true
+                    } else {
+                        print("⚠️ Could not find recording for completed transcription: \(jobInfo.recordingName)")
+                    }
+                }
+            }
+        }
+        
+        private func createDiarizedSegments(from segments: [TranscriptSegment]) -> [TranscriptSegment] {
+            if segments.isEmpty {
                 return []
             }
             
             // Check if diarization is enabled and use the selected method
             guard recorderVM.isDiarizationEnabled else {
-                // Simple single-speaker transcript (no diarization)
-                return [TranscriptSegment(
-                    speaker: "Speaker",
-                    text: fullText,
-                    startTime: 0,
-                    endTime: transcription.segments.last?.timestamp ?? 0
-                )]
+                // Return segments as-is for single speaker
+                return segments
             }
             
             // Apply diarization based on selected method
             switch recorderVM.selectedDiarizationMethod {
             case .basicPause:
-                return createBasicPauseDiarization(from: transcription)
+                return createBasicPauseDiarization(from: segments)
             case .awsTranscription:
                 // Placeholder for future AWS implementation
-                return [TranscriptSegment(
-                    speaker: "Speaker",
-                    text: fullText + "\n\n[AWS Transcription coming soon]",
-                    startTime: 0,
-                    endTime: transcription.segments.last?.timestamp ?? 0
-                )]
+                return segments.map { segment in
+                    TranscriptSegment(
+                        speaker: segment.speaker,
+                        text: segment.text + "\n\n[AWS Transcription coming soon]",
+                        startTime: segment.startTime,
+                        endTime: segment.endTime
+                    )
+                }
             case .whisperBased:
                 // Placeholder for future Whisper implementation
-                return [TranscriptSegment(
-                    speaker: "Speaker",
-                    text: fullText + "\n\n[Whisper-based diarization coming soon]",
-                    startTime: 0,
-                    endTime: transcription.segments.last?.timestamp ?? 0
-                )]
+                return segments.map { segment in
+                    TranscriptSegment(
+                        speaker: segment.speaker,
+                        text: segment.text + "\n\n[Whisper-based diarization coming soon]",
+                        startTime: segment.startTime,
+                        endTime: segment.endTime
+                    )
+                }
             }
         }
         
-        private func createBasicPauseDiarization(from transcription: SFTranscription) -> [TranscriptSegment] {
-            var segments: [TranscriptSegment] = []
+        private func createBasicPauseDiarization(from segments: [TranscriptSegment]) -> [TranscriptSegment] {
+            var diarizedSegments: [TranscriptSegment] = []
             var currentSpeaker = "Speaker 1"
             var currentText = ""
             var currentStartTime: TimeInterval = 0
             var speakerCount = 1
             var lastSegmentEndTime: TimeInterval = 0
             
-            for segment in transcription.segments {
-                let pauseDuration = segment.timestamp - lastSegmentEndTime
+            for segment in segments {
+                let pauseDuration = segment.startTime - lastSegmentEndTime
                 
                 // Conservative diarization logic - only change speaker on very long pauses
                 let shouldChangeSpeaker = pauseDuration > 8.0 && // Very long pause threshold
@@ -1754,37 +1881,37 @@ struct TranscriptsView: View {
                                         speakerCount < 3 // Limit to maximum 3 speakers
                 
                 if shouldChangeSpeaker {
-                    segments.append(TranscriptSegment(
+                    diarizedSegments.append(TranscriptSegment(
                         speaker: currentSpeaker,
                         text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
                         startTime: currentStartTime,
-                        endTime: segment.timestamp
+                        endTime: segment.startTime
                     ))
                     
                     speakerCount += 1
                     currentSpeaker = "Speaker \(speakerCount)"
-                    currentText = segment.substring
-                    currentStartTime = segment.timestamp
+                    currentText = segment.text
+                    currentStartTime = segment.startTime
                 } else {
                     if currentText.isEmpty {
-                        currentStartTime = segment.timestamp
+                        currentStartTime = segment.startTime
                     }
-                    currentText += " " + segment.substring
+                    currentText += " " + segment.text
                 }
                 
-                lastSegmentEndTime = segment.timestamp + segment.duration
+                lastSegmentEndTime = segment.endTime
             }
             
             if !currentText.isEmpty {
-                segments.append(TranscriptSegment(
+                diarizedSegments.append(TranscriptSegment(
                     speaker: currentSpeaker,
                     text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
                     startTime: currentStartTime,
-                    endTime: transcription.segments.last?.timestamp ?? 0
+                    endTime: segments.last?.endTime ?? 0
                 ))
             }
             
-            return segments
+            return diarizedSegments
         }
     }
     

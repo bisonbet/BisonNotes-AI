@@ -8,6 +8,7 @@ struct SummariesView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @StateObject private var summaryManager = SummaryManager()
     @StateObject private var transcriptManager = TranscriptManager()
+    @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @State private var recordings: [RecordingFile] = []
     @State private var selectedRecording: RecordingFile?
     @State private var isGeneratingSummary = false
@@ -221,103 +222,87 @@ struct SummariesView: View {
     }
     
     private func performSpeechRecognition(for recording: RecordingFile) {
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")) else {
-            isGeneratingSummary = false
-            return
-        }
-        
-        // Ensure the file is accessible
-        guard FileManager.default.fileExists(atPath: recording.url.path) else {
-            isGeneratingSummary = false
-            return
-        }
-        
-        let request = SFSpeechURLRecognitionRequest(url: recording.url)
-        request.shouldReportPartialResults = false
-        
-        recognizer.recognitionTask(with: request) { result, error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    print("Speech recognition error: \(error)")
-                    self.isGeneratingSummary = false
-                } else if let result = result {
-                    if result.isFinal {
-                        let transcriptText = result.bestTranscription.formattedString
-                        if !transcriptText.isEmpty {
-                            // Create diarized transcript segments
-                            let segments = self.createDiarizedSegments(from: result.bestTranscription)
-                            let transcriptData = TranscriptData(
-                                recordingURL: recording.url,
-                                recordingName: recording.name,
-                                recordingDate: recording.date,
-                                segments: segments
-                            )
-                            
-                            // Save the transcript
-                            self.transcriptManager.saveTranscript(transcriptData)
-                            
-                            // Generate summary from transcript
-                            self.generateSummaryFromTranscript(for: recording, transcriptText: transcriptText)
-                        } else {
-                            self.isGeneratingSummary = false
-                        }
+        Task {
+            do {
+                let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url)
+                
+                if result.success && !result.fullText.isEmpty {
+                    // Create diarized transcript segments
+                    let segments = self.createDiarizedSegments(from: result.segments)
+                    let transcriptData = TranscriptData(
+                        recordingURL: recording.url,
+                        recordingName: recording.name,
+                        recordingDate: recording.date,
+                        segments: segments
+                    )
+                    
+                    // Save the transcript
+                    self.transcriptManager.saveTranscript(transcriptData)
+                    
+                    // Generate summary from transcript
+                    self.generateSummaryFromTranscript(for: recording, transcriptText: result.fullText)
+                } else {
+                    await MainActor.run {
+                        self.isGeneratingSummary = false
                     }
+                }
+            } catch {
+                print("Enhanced transcription error: \(error)")
+                await MainActor.run {
+                    self.isGeneratingSummary = false
                 }
             }
         }
     }
     
-    private func createDiarizedSegments(from transcription: SFTranscription) -> [TranscriptSegment] {
-        let fullText = transcription.formattedString
-        
-        if fullText.isEmpty {
+    private func createDiarizedSegments(from segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        if segments.isEmpty {
             return []
         }
         
         // Check if diarization is enabled
         guard recorderVM.isDiarizationEnabled else {
-            // Simple single-speaker transcript (no diarization)
-            return [TranscriptSegment(
-                speaker: "Speaker",
-                text: fullText,
-                startTime: 0,
-                endTime: transcription.segments.last?.timestamp ?? 0
-            )]
+            // Return segments as-is for single speaker
+            return segments
         }
         
         // Apply diarization based on selected method
         switch recorderVM.selectedDiarizationMethod {
         case .basicPause:
-            return createBasicPauseDiarization(from: transcription)
+            return createBasicPauseDiarization(from: segments)
         case .awsTranscription:
             // Placeholder for future AWS implementation
-            return [TranscriptSegment(
-                speaker: "Speaker",
-                text: fullText + "\n\n[AWS Transcription coming soon]",
-                startTime: 0,
-                endTime: transcription.segments.last?.timestamp ?? 0
-            )]
+            return segments.map { segment in
+                TranscriptSegment(
+                    speaker: segment.speaker,
+                    text: segment.text + "\n\n[AWS Transcription coming soon]",
+                    startTime: segment.startTime,
+                    endTime: segment.endTime
+                )
+            }
         case .whisperBased:
             // Placeholder for future Whisper implementation
-            return [TranscriptSegment(
-                speaker: "Speaker",
-                text: fullText + "\n\n[Whisper-based diarization coming soon]",
-                startTime: 0,
-                endTime: transcription.segments.last?.timestamp ?? 0
-            )]
+            return segments.map { segment in
+                TranscriptSegment(
+                    speaker: segment.speaker,
+                    text: segment.text + "\n\n[Whisper-based diarization coming soon]",
+                    startTime: segment.startTime,
+                    endTime: segment.endTime
+                )
+            }
         }
     }
     
-    private func createBasicPauseDiarization(from transcription: SFTranscription) -> [TranscriptSegment] {
-        var segments: [TranscriptSegment] = []
+    private func createBasicPauseDiarization(from segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        var diarizedSegments: [TranscriptSegment] = []
         var currentSpeaker = "Speaker 1"
         var currentText = ""
         var currentStartTime: TimeInterval = 0
         var speakerCount = 1
         var lastSegmentEndTime: TimeInterval = 0
         
-        for segment in transcription.segments {
-            let pauseDuration = segment.timestamp - lastSegmentEndTime
+        for segment in segments {
+            let pauseDuration = segment.startTime - lastSegmentEndTime
             
             // Conservative diarization logic - only change speaker on very long pauses
             let shouldChangeSpeaker = pauseDuration > 8.0 && // Very long pause threshold
@@ -326,37 +311,37 @@ struct SummariesView: View {
                                     speakerCount < 3 // Limit to maximum 3 speakers
             
             if shouldChangeSpeaker {
-                segments.append(TranscriptSegment(
+                diarizedSegments.append(TranscriptSegment(
                     speaker: currentSpeaker,
                     text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
                     startTime: currentStartTime,
-                    endTime: segment.timestamp
+                    endTime: segment.startTime
                 ))
                 
                 speakerCount += 1
                 currentSpeaker = "Speaker \(speakerCount)"
-                currentText = segment.substring
-                currentStartTime = segment.timestamp
+                currentText = segment.text
+                currentStartTime = segment.startTime
             } else {
                 if currentText.isEmpty {
-                    currentStartTime = segment.timestamp
+                    currentStartTime = segment.startTime
                 }
-                currentText += " " + segment.substring
+                currentText += " " + segment.text
             }
             
-            lastSegmentEndTime = segment.timestamp + segment.duration
+            lastSegmentEndTime = segment.endTime
         }
         
         if !currentText.isEmpty {
-            segments.append(TranscriptSegment(
+            diarizedSegments.append(TranscriptSegment(
                 speaker: currentSpeaker,
                 text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
                 startTime: currentStartTime,
-                endTime: transcription.segments.last?.timestamp ?? 0
+                endTime: segments.last?.endTime ?? 0
             ))
         }
         
-        return segments
+        return diarizedSegments
     }
     
     private func generateSummaryFromTranscript(for recording: RecordingFile, transcriptText: String) {
