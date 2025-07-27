@@ -2,17 +2,12 @@ import SwiftUI
 import MapKit
 import CoreLocation
 
-struct SummaryDetailView: View {
+struct EnhancedSummaryDetailView: View {
     let recording: RecordingFile
-    let summaryData: SummaryData
+    let summaryData: EnhancedSummaryData
     @Environment(\.dismiss) private var dismiss
     @State private var locationAddress: String?
     @State private var expandedSections: Set<String> = ["summary", "metadata"]
-    
-    // Convert legacy summary data to enhanced format for better display
-    private var enhancedData: EnhancedSummaryData {
-        return summaryData.toEnhanced()
-    }
     
     var body: some View {
         NavigationView {
@@ -64,7 +59,7 @@ struct SummaryDetailView: View {
                     .padding(.vertical)
                 }
             }
-            .navigationTitle("Summary")
+            .navigationTitle("Enhanced Summary")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -127,12 +122,14 @@ struct SummaryDetailView: View {
             isExpanded: expandedSections.contains("metadata")
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                metadataRow(title: "AI Method", value: "Enhanced Apple Intelligence", icon: "brain.head.profile")
-                metadataRow(title: "Generation Time", value: formatDate(summaryData.createdAt), icon: "clock.arrow.circlepath")
-                metadataRow(title: "Content Type", value: "General", icon: "doc.text")
-                metadataRow(title: "Word Count", value: "\(summaryData.summary.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count) words", icon: "text.word.spacing")
-                metadataRow(title: "Compression Ratio", value: "85%", icon: "chart.bar.fill")
-                metadataRow(title: "Quality", value: "High Quality", icon: "star.fill", valueColor: .green)
+                metadataRow(title: "AI Method", value: summaryData.aiMethod, icon: "brain.head.profile")
+                metadataRow(title: "Generation Time", value: formatDate(summaryData.generatedAt), icon: "clock.arrow.circlepath")
+                metadataRow(title: "Content Type", value: summaryData.contentType.rawValue, icon: "doc.text")
+                metadataRow(title: "Word Count", value: "\(summaryData.wordCount) words", icon: "text.word.spacing")
+                metadataRow(title: "Compression Ratio", value: summaryData.formattedCompressionRatio, icon: "chart.bar.fill")
+                metadataRow(title: "Processing Time", value: summaryData.formattedProcessingTime, icon: "timer")
+                metadataRow(title: "Quality", value: summaryData.qualityDescription, icon: "star.fill", valueColor: qualityColor)
+                metadataRow(title: "Confidence", value: "\(Int(summaryData.confidence * 100))%", icon: "checkmark.shield.fill", valueColor: confidenceColor)
             }
         }
         .onTapGesture {
@@ -157,6 +154,24 @@ struct SummaryDetailView: View {
                 .font(.caption)
                 .foregroundColor(valueColor)
                 .fontWeight(.medium)
+        }
+    }
+    
+    private var qualityColor: Color {
+        switch summaryData.qualityDescription {
+        case "High Quality": return .green
+        case "Good Quality": return .blue
+        case "Fair Quality": return .orange
+        default: return .red
+        }
+    }
+    
+    private var confidenceColor: Color {
+        switch summaryData.confidence {
+        case 0.8...1.0: return .green
+        case 0.6..<0.8: return .blue
+        case 0.4..<0.6: return .orange
+        default: return .red
         }
     }
     
@@ -188,14 +203,14 @@ struct SummaryDetailView: View {
             icon: "checklist",
             iconColor: .green,
             isExpanded: expandedSections.contains("tasks"),
-            count: enhancedData.tasks.count
+            count: summaryData.tasks.count
         ) {
-            if enhancedData.tasks.isEmpty {
+            if summaryData.tasks.isEmpty {
                 emptyStateView(message: "No tasks found", icon: "checkmark.circle")
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    ForEach(enhancedData.tasks, id: \.id) { task in
-                        EnhancedTaskRowView(task: task, recordingName: enhancedData.recordingName)
+                    ForEach(summaryData.tasks, id: \.id) { task in
+                        EnhancedTaskRowView(task: task, recordingName: summaryData.recordingName)
                     }
                 }
                 .padding(.top, 4)
@@ -214,14 +229,14 @@ struct SummaryDetailView: View {
             icon: "bell",
             iconColor: .orange,
             isExpanded: expandedSections.contains("reminders"),
-            count: enhancedData.reminders.count
+            count: summaryData.reminders.count
         ) {
-            if enhancedData.reminders.isEmpty {
+            if summaryData.reminders.isEmpty {
                 emptyStateView(message: "No reminders found", icon: "bell.slash")
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    ForEach(enhancedData.reminders, id: \.id) { reminder in
-                        EnhancedReminderRowView(reminder: reminder, recordingName: enhancedData.recordingName)
+                    ForEach(summaryData.reminders, id: \.id) { reminder in
+                        EnhancedReminderRowView(reminder: reminder, recordingName: summaryData.recordingName)
                     }
                 }
                 .padding(.top, 4)
@@ -264,81 +279,15 @@ struct SummaryDetailView: View {
     }
 }
 
+// MARK: - Enhanced Task Row Component
 
-
-// MARK: - Expandable Section Component
-
-struct ExpandableSection<Content: View>: View {
-    let title: String
-    let icon: String
-    let iconColor: Color
-    let isExpanded: Bool
-    let count: Int?
-    let content: Content
-    
-    init(
-        title: String,
-        icon: String,
-        iconColor: Color,
-        isExpanded: Bool,
-        count: Int? = nil,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.title = title
-        self.icon = icon
-        self.iconColor = iconColor
-        self.isExpanded = isExpanded
-        self.count = count
-        self.content = content()
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(iconColor)
-                    .font(.headline)
-                
-                Text(title)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                
-                if let count = count {
-                    Text("(\(count))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .fontWeight(.medium)
-                }
-                
-                Spacer()
-                
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .animation(.easeInOut(duration: 0.2), value: isExpanded)
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 12)
-            .background(Color(.systemGray6))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal)
-            
-            // Content
-            if isExpanded {
-                content
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-    }
-}
-
-// MARK: - Task Row Component
-
-struct TaskRowView: View {
-    let task: String
+struct EnhancedTaskRowView: View {
+    let task: TaskItem
+    let recordingName: String
+    @StateObject private var integrationManager = SystemIntegrationManager()
+    @State private var showingIntegrationSelection = false
+    @State private var showingSuccessAlert = false
+    @State private var showingErrorAlert = false
     
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -350,22 +299,22 @@ struct TaskRowView: View {
             
             // Task content
             VStack(alignment: .leading, spacing: 4) {
-                Text(task)
+                Text(task.text)
                     .font(.body)
                     .foregroundColor(.primary)
                     .lineLimit(nil)
                 
                 // Task metadata
                 HStack {
-                    Image(systemName: taskCategory.icon)
+                    Image(systemName: task.category.icon)
                         .font(.caption2)
-                        .foregroundColor(taskCategory.color)
+                        .foregroundColor(categoryColor)
                     
-                    Text(taskCategory.rawValue)
+                    Text(task.category.rawValue)
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     
-                    if let timeRef = extractTimeReference(from: task) {
+                    if let timeRef = task.timeReference {
                         Image(systemName: "clock")
                             .font(.caption2)
                             .foregroundColor(.secondary)
@@ -386,6 +335,29 @@ struct TaskRowView: View {
                         }
                     }
                 }
+                
+                // Integration button
+                HStack {
+                    Spacer()
+                    
+                    Button(action: {
+                        showingIntegrationSelection = true
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.circle")
+                                .font(.caption)
+                            Text("Add to System")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.accentColor.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .disabled(integrationManager.isProcessing)
+                }
             }
             
             Spacer()
@@ -394,107 +366,119 @@ struct TaskRowView: View {
         .padding(.horizontal, 12)
         .background(Color(.systemGray6).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .sheet(isPresented: $showingIntegrationSelection) {
+            IntegrationSelectionView(
+                title: "Add Task to System",
+                subtitle: "Choose where you'd like to add this task",
+                onRemindersSelected: {
+                    Task {
+                        let success = await integrationManager.addTaskToReminders(task, recordingName: recordingName)
+                        await MainActor.run {
+                            if success {
+                                showingSuccessAlert = true
+                            } else {
+                                showingErrorAlert = true
+                            }
+                        }
+                    }
+                },
+                onCalendarSelected: {
+                    Task {
+                        let success = await integrationManager.addTaskToCalendar(task, recordingName: recordingName)
+                        await MainActor.run {
+                            if success {
+                                showingSuccessAlert = true
+                            } else {
+                                showingErrorAlert = true
+                            }
+                        }
+                    }
+                }
+            )
+        }
+        .alert("Success", isPresented: $showingSuccessAlert) {
+            Button("OK") { }
+        } message: {
+            Text("Task successfully added to system.")
+        }
+        .alert("Error", isPresented: $showingErrorAlert) {
+            Button("OK") { }
+        } message: {
+            Text(integrationManager.lastError ?? "Failed to add task to system.")
+        }
+        .background(Color(.systemGray6).opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     private var priorityColor: Color {
-        let lowercased = task.lowercased()
-        if lowercased.contains("urgent") || lowercased.contains("asap") || lowercased.contains("critical") {
-            return .red
-        } else if lowercased.contains("important") || lowercased.contains("must") || lowercased.contains("have to") {
-            return .orange
-        } else {
-            return .green
+        switch task.priority {
+        case .high: return .red
+        case .medium: return .orange
+        case .low: return .green
         }
     }
     
-    private var taskCategory: (rawValue: String, icon: String, color: Color) {
-        let lowercased = task.lowercased()
-        
-        if lowercased.contains("call") || lowercased.contains("phone") {
-            return ("Call", "phone", .blue)
-        } else if lowercased.contains("email") || lowercased.contains("message") {
-            return ("Email", "envelope", .purple)
-        } else if lowercased.contains("meeting") || lowercased.contains("appointment") {
-            return ("Meeting", "calendar", .orange)
-        } else if lowercased.contains("buy") || lowercased.contains("purchase") || lowercased.contains("order") {
-            return ("Purchase", "cart", .green)
-        } else if lowercased.contains("research") || lowercased.contains("investigate") || lowercased.contains("look into") {
-            return ("Research", "magnifyingglass", .indigo)
-        } else if lowercased.contains("travel") || lowercased.contains("go") || lowercased.contains("visit") {
-            return ("Travel", "airplane", .cyan)
-        } else if lowercased.contains("doctor") || lowercased.contains("medical") || lowercased.contains("health") {
-            return ("Health", "heart", .red)
-        } else {
-            return ("General", "checkmark.circle", .gray)
+    private var categoryColor: Color {
+        switch task.category {
+        case .call: return .blue
+        case .meeting: return .orange
+        case .purchase: return .green
+        case .research: return .indigo
+        case .email: return .purple
+        case .travel: return .cyan
+        case .health: return .red
+        case .general: return .gray
         }
     }
     
     private var confidenceLevel: Int {
-        // Simple confidence calculation based on task clarity
-        let lowercased = task.lowercased()
-        if lowercased.contains("need to") || lowercased.contains("must") || lowercased.contains("have to") {
-            return 3
-        } else if lowercased.contains("should") || lowercased.contains("might") {
-            return 2
-        } else {
-            return 1
+        switch task.confidence {
+        case 0.8...1.0: return 3
+        case 0.6..<0.8: return 2
+        default: return 1
         }
-    }
-    
-    private func extractTimeReference(from task: String) -> String? {
-        let lowercased = task.lowercased()
-        
-        let timePatterns = [
-            "today", "tomorrow", "tonight", "this morning", "this afternoon", "this evening",
-            "next week", "next month", "later today", "later this week"
-        ]
-        
-        for pattern in timePatterns {
-            if lowercased.contains(pattern) {
-                return pattern.capitalized
-            }
-        }
-        
-        return nil
     }
 }
 
-// MARK: - Reminder Row Component
+// MARK: - Enhanced Reminder Row Component
 
-struct ReminderRowView: View {
-    let reminder: String
+struct EnhancedReminderRowView: View {
+    let reminder: ReminderItem
+    let recordingName: String
+    @StateObject private var integrationManager = SystemIntegrationManager()
+    @State private var showingIntegrationSelection = false
+    @State private var showingSuccessAlert = false
+    @State private var showingErrorAlert = false
     
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // Urgency indicator
-            Image(systemName: urgencyIcon)
+            Image(systemName: reminder.urgency.icon)
                 .foregroundColor(urgencyColor)
                 .font(.caption)
                 .padding(.top, 2)
             
             // Reminder content
             VStack(alignment: .leading, spacing: 4) {
-                Text(reminder)
+                Text(reminder.text)
                     .font(.body)
                     .foregroundColor(.primary)
                     .lineLimit(nil)
                 
                 // Reminder metadata
                 HStack {
-                    Text(urgencyLevel.rawValue)
+                    Text(reminder.urgency.rawValue)
                         .font(.caption2)
                         .foregroundColor(urgencyColor)
                         .fontWeight(.medium)
                     
-                    if let timeRef = extractTimeReference(from: reminder) {
-                        Image(systemName: "clock")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        
-                        Text(timeRef)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
+                    Image(systemName: "clock")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    Text(reminder.timeReference.displayText)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                     
                     Spacer()
                     
@@ -507,6 +491,29 @@ struct ReminderRowView: View {
                         }
                     }
                 }
+                
+                // Integration button
+                HStack {
+                    Spacer()
+                    
+                    Button(action: {
+                        showingIntegrationSelection = true
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.circle")
+                                .font(.caption)
+                            Text("Add to System")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.accentColor.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .disabled(integrationManager.isProcessing)
+                }
             }
             
             Spacer()
@@ -515,84 +522,62 @@ struct ReminderRowView: View {
         .padding(.horizontal, 12)
         .background(Color(.systemGray6).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-    
-    private var urgencyLevel: (rawValue: String, color: Color) {
-        let lowercased = reminder.lowercased()
-        
-        if lowercased.contains("urgent") || lowercased.contains("asap") || lowercased.contains("immediately") {
-            return ("Immediate", .red)
-        } else if lowercased.contains("today") || lowercased.contains("tonight") {
-            return ("Today", .orange)
-        } else if lowercased.contains("tomorrow") || lowercased.contains("this week") {
-            return ("This Week", .yellow)
-        } else {
-            return ("Later", .blue)
+        .sheet(isPresented: $showingIntegrationSelection) {
+            IntegrationSelectionView(
+                title: "Add Reminder to System",
+                subtitle: "Choose where you'd like to add this reminder",
+                onRemindersSelected: {
+                    Task {
+                        let success = await integrationManager.addReminderToReminders(reminder, recordingName: recordingName)
+                        await MainActor.run {
+                            if success {
+                                showingSuccessAlert = true
+                            } else {
+                                showingErrorAlert = true
+                            }
+                        }
+                    }
+                },
+                onCalendarSelected: {
+                    Task {
+                        let success = await integrationManager.addReminderToCalendar(reminder, recordingName: recordingName)
+                        await MainActor.run {
+                            if success {
+                                showingSuccessAlert = true
+                            } else {
+                                showingErrorAlert = true
+                            }
+                        }
+                    }
+                }
+            )
+        }
+        .alert("Success", isPresented: $showingSuccessAlert) {
+            Button("OK") { }
+        } message: {
+            Text("Reminder successfully added to system.")
+        }
+        .alert("Error", isPresented: $showingErrorAlert) {
+            Button("OK") { }
+        } message: {
+            Text(integrationManager.lastError ?? "Failed to add reminder to system.")
         }
     }
     
     private var urgencyColor: Color {
-        return urgencyLevel.color
-    }
-    
-    private var urgencyIcon: String {
-        let level = urgencyLevel.rawValue
-        switch level {
-        case "Immediate":
-            return "exclamationmark.triangle.fill"
-        case "Today":
-            return "clock.fill"
-        case "This Week":
-            return "calendar"
-        default:
-            return "clock"
+        switch reminder.urgency {
+        case .immediate: return .red
+        case .today: return .orange
+        case .thisWeek: return .yellow
+        case .later: return .blue
         }
     }
     
     private var confidenceLevel: Int {
-        // Simple confidence calculation based on reminder clarity
-        let lowercased = reminder.lowercased()
-        if lowercased.contains("remind") || lowercased.contains("don't forget") || lowercased.contains("remember") {
-            return 3
-        } else if lowercased.contains("appointment") || lowercased.contains("meeting") || lowercased.contains("deadline") {
-            return 3
-        } else if lowercased.contains("should") || lowercased.contains("might") {
-            return 2
-        } else {
-            return 1
+        switch reminder.confidence {
+        case 0.8...1.0: return 3
+        case 0.6..<0.8: return 2
+        default: return 1
         }
-    }
-    
-    private func extractTimeReference(from reminder: String) -> String? {
-        let lowercased = reminder.lowercased()
-        
-        let timePatterns = [
-            "today", "tomorrow", "tonight", "this morning", "this afternoon", "this evening",
-            "next week", "next month", "later today", "later this week",
-            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
-        ]
-        
-        for pattern in timePatterns {
-            if lowercased.contains(pattern) {
-                return pattern.capitalized
-            }
-        }
-        
-        // Look for time patterns like "at 3pm", "by 5:00", etc.
-        let timeRegexPatterns = [
-            "at \\d{1,2}(:\\d{2})?(am|pm)?",
-            "by \\d{1,2}(:\\d{2})?(am|pm)?",
-            "\\d{1,2}(:\\d{2})?(am|pm)"
-        ]
-        
-        for pattern in timeRegexPatterns {
-            let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)
-            if let match = regex?.firstMatch(in: reminder, options: [], range: NSRange(location: 0, length: reminder.count)) {
-                let matchedString = String(reminder[Range(match.range, in: reminder)!])
-                return matchedString
-            }
-        }
-        
-        return nil
     }
 } 

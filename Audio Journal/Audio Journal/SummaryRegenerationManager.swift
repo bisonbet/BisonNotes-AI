@@ -27,6 +27,10 @@ class SummaryRegenerationManager: ObservableObject {
         self.transcriptManager = transcriptManager
     }
     
+    func setEngine(_ engineName: String) {
+        summaryManager.setEngine(engineName)
+    }
+    
     // MARK: - Regeneration Methods
     
     func regenerateAllSummaries() async {

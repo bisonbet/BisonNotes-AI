@@ -618,6 +618,27 @@ struct RecordingsView: View {
                             .padding(.horizontal, 40)
                         }
                         
+                        Button(action: {
+                            showingRecordingsList = true
+                        }) {
+                            HStack {
+                                Image(systemName: "plus.circle")
+                                    .font(.title3)
+                                Text("Import Audio Files")
+                                    .font(.title3)
+                                    .fontWeight(.semibold)
+                            }
+                            .foregroundColor(.green)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.green, lineWidth: 2)
+                                    .background(Color.green.opacity(0.1))
+                            )
+                            .padding(.horizontal, 40)
+                        }
+                        
                         if recorderVM.isRecording {
                             VStack(spacing: 8) {
                                 HStack {
@@ -669,13 +690,59 @@ struct RecordingsView: View {
     struct RecordingsListView: View {
         @Environment(\.dismiss) private var dismiss
         @EnvironmentObject var recorderVM: AudioRecorderViewModel
+        @StateObject private var importManager = FileImportManager()
+        @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
         @State private var recordings: [RecordingFile] = []
         @State private var selectedLocationData: LocationData?
         @State private var locationAddresses: [URL: String] = [:]
+        @State private var showingDocumentPicker = false
         
         var body: some View {
             NavigationView {
                 VStack {
+                    // Import button
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            documentPickerCoordinator.selectAudioFiles { urls in
+                                if !urls.isEmpty {
+                                    Task {
+                                        await importManager.importAudioFiles(from: urls)
+                                        loadRecordings() // Reload recordings after import
+                                    }
+                                }
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "plus.circle.fill")
+                                Text("Import Audio Files")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.accentColor)
+                            .cornerRadius(8)
+                        }
+                        .disabled(importManager.isImporting)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+                    
+                    // Import progress
+                    if importManager.isImporting {
+                        VStack(spacing: 8) {
+                            ProgressView(value: importManager.importProgress)
+                                .progressViewStyle(LinearProgressViewStyle())
+                                .padding(.horizontal, 20)
+                            
+                            Text(importManager.progressText)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 10)
+                    }
+                    
                     if recordings.isEmpty {
                         VStack(spacing: 16) {
                             Image(systemName: "waveform")
@@ -687,7 +754,7 @@ struct RecordingsView: View {
                                 .fontWeight(.medium)
                                 .foregroundColor(.primary)
                             
-                            Text("Start recording to see your audio files here")
+                            Text("Start recording or import audio files to see them here")
                                 .font(.body)
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.center)
@@ -777,6 +844,18 @@ struct RecordingsView: View {
                 .sheet(item: $selectedLocationData) { locationData in
                     LocationDetailView(locationData: locationData)
                 }
+                .sheet(isPresented: $documentPickerCoordinator.isShowingPicker) {
+                    AudioDocumentPicker(isPresented: $documentPickerCoordinator.isShowingPicker, coordinator: documentPickerCoordinator)
+                }
+                .alert("Import Complete", isPresented: $importManager.showingImportAlert) {
+                    Button("OK") {
+                        importManager.importResults = nil
+                    }
+                } message: {
+                    if let results = importManager.importResults {
+                        Text(results.summary)
+                    }
+                }
             }
             .onAppear {
                 loadRecordings()
@@ -788,7 +867,7 @@ struct RecordingsView: View {
             do {
                 let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
                 recordings = fileURLs
-                    .filter { $0.pathExtension == "m4a" }
+                    .filter { ["m4a", "mp3", "wav"].contains($0.pathExtension.lowercased()) }
                     .compactMap { url -> RecordingFile? in
                         guard let creationDate = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate else { return nil }
                         let duration = recorderVM.getRecordingDuration(url: url)
@@ -1184,6 +1263,7 @@ struct SettingsView: View {
                                         withAnimation(.easeInOut(duration: 0.2)) {
                                             recorderVM.selectedAIEngine = engineType.rawValue
                                             summaryManager.setEngine(engineType.rawValue)
+                                            regenerationManager.setEngine(engineType.rawValue)
                                         }
                                         
                                         // Check if we should prompt for regeneration
@@ -1345,10 +1425,12 @@ struct SettingsView: View {
                     }
                     .background(Color(.systemBackground))
                 }
-            }
-            .onAppear {
-                recorderVM.fetchInputs()
-                summaryManager.setEngine(recorderVM.selectedAIEngine)
+                .navigationTitle("Settings")
+                .onAppear {
+                    // Configure the managers with the selected AI engine
+                    summaryManager.setEngine(recorderVM.selectedAIEngine)
+                    regenerationManager.setEngine(recorderVM.selectedAIEngine)
+                }
             }
             .alert("Engine Change", isPresented: $showingEngineChangePrompt) {
                 Button("Skip") {
@@ -1499,7 +1581,7 @@ struct TranscriptsView: View {
             do {
                 let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
                 recordings = fileURLs
-                    .filter { $0.pathExtension == "m4a" }
+                    .filter { ["m4a", "mp3", "wav"].contains($0.pathExtension.lowercased()) }
                     .compactMap { url -> RecordingFile? in
                         guard let creationDate = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate else { return nil }
                         let duration = getRecordingDuration(url: url)

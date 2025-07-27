@@ -118,16 +118,22 @@ struct SummariesView: View {
                         .padding(.vertical, 4)
                     }
                 }
-            }
-            .navigationTitle("Summaries")
-            .onAppear {
-                loadRecordings()
-            }
+                    }
+        .navigationTitle("Summaries")
+        .onAppear {
+            loadRecordings()
+            // Configure the summary manager with the selected AI engine
+            summaryManager.setEngine(recorderVM.selectedAIEngine)
+        }
         }
         .sheet(isPresented: $showSummary) {
-            if let recording = selectedRecording,
-               let summaryData = summaryManager.getSummary(for: recording.url) {
-                SummaryDetailView(recording: recording, summaryData: summaryData)
+            if let recording = selectedRecording {
+                // Try to get enhanced summary first, fallback to legacy
+                if let enhancedSummary = summaryManager.getBestAvailableSummary(for: recording.url) {
+                    EnhancedSummaryDetailView(recording: recording, summaryData: enhancedSummary)
+                } else if let summaryData = summaryManager.getSummary(for: recording.url) {
+                    SummaryDetailView(recording: recording, summaryData: summaryData)
+                }
             }
         }
         .sheet(item: $selectedLocationData) { locationData in
@@ -140,7 +146,7 @@ struct SummariesView: View {
         do {
             let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
             recordings = fileURLs
-                .filter { $0.pathExtension == "m4a" }
+                .filter { ["m4a", "mp3", "wav"].contains($0.pathExtension.lowercased()) }
                 .compactMap { url -> RecordingFile? in
                     guard let creationDate = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate else { return nil }
                     let duration = getRecordingDuration(url: url)
@@ -262,42 +268,85 @@ struct SummariesView: View {
     }
     
     private func createDiarizedSegments(from transcription: SFTranscription) -> [TranscriptSegment] {
+        let fullText = transcription.formattedString
+        
+        if fullText.isEmpty {
+            return []
+        }
+        
+        // Check if diarization is enabled
+        guard recorderVM.isDiarizationEnabled else {
+            // Simple single-speaker transcript (no diarization)
+            return [TranscriptSegment(
+                speaker: "Speaker",
+                text: fullText,
+                startTime: 0,
+                endTime: transcription.segments.last?.timestamp ?? 0
+            )]
+        }
+        
+        // Apply diarization based on selected method
+        switch recorderVM.selectedDiarizationMethod {
+        case .basicPause:
+            return createBasicPauseDiarization(from: transcription)
+        case .awsTranscription:
+            // Placeholder for future AWS implementation
+            return [TranscriptSegment(
+                speaker: "Speaker",
+                text: fullText + "\n\n[AWS Transcription coming soon]",
+                startTime: 0,
+                endTime: transcription.segments.last?.timestamp ?? 0
+            )]
+        case .whisperBased:
+            // Placeholder for future Whisper implementation
+            return [TranscriptSegment(
+                speaker: "Speaker",
+                text: fullText + "\n\n[Whisper-based diarization coming soon]",
+                startTime: 0,
+                endTime: transcription.segments.last?.timestamp ?? 0
+            )]
+        }
+    }
+    
+    private func createBasicPauseDiarization(from transcription: SFTranscription) -> [TranscriptSegment] {
         var segments: [TranscriptSegment] = []
         var currentSpeaker = "Speaker 1"
         var currentText = ""
         var currentStartTime: TimeInterval = 0
         var speakerCount = 1
+        var lastSegmentEndTime: TimeInterval = 0
         
         for segment in transcription.segments {
-            // Simple diarization logic - change speaker when there's a significant pause
-            let shouldChangeSpeaker = segment.timestamp - currentStartTime > 2.0 && !currentText.isEmpty
+            let pauseDuration = segment.timestamp - lastSegmentEndTime
+            
+            // Conservative diarization logic - only change speaker on very long pauses
+            let shouldChangeSpeaker = pauseDuration > 8.0 && // Very long pause threshold
+                                    !currentText.isEmpty && 
+                                    currentText.count > 100 && // Substantial text before switching
+                                    speakerCount < 3 // Limit to maximum 3 speakers
             
             if shouldChangeSpeaker {
-                // Save current segment
-                if !currentText.isEmpty {
-                    segments.append(TranscriptSegment(
-                        speaker: currentSpeaker,
-                        text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
-                        startTime: currentStartTime,
-                        endTime: segment.timestamp
-                    ))
-                }
+                segments.append(TranscriptSegment(
+                    speaker: currentSpeaker,
+                    text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
+                    startTime: currentStartTime,
+                    endTime: segment.timestamp
+                ))
                 
-                // Start new speaker
                 speakerCount += 1
                 currentSpeaker = "Speaker \(speakerCount)"
                 currentText = segment.substring
                 currentStartTime = segment.timestamp
             } else {
-                // Continue with current speaker
                 if currentText.isEmpty {
                     currentStartTime = segment.timestamp
                 }
                 currentText += " " + segment.substring
             }
+            
+            lastSegmentEndTime = segment.timestamp + segment.duration
         }
         
-        // Add the last segment
         if !currentText.isEmpty {
             segments.append(TranscriptSegment(
                 speaker: currentSpeaker,
@@ -311,165 +360,130 @@ struct SummariesView: View {
     }
     
     private func generateSummaryFromTranscript(for recording: RecordingFile, transcriptText: String) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let summaryResult = generateSummaryFromText(transcriptText)
-            let tasksResult = extractTasksFromText(transcriptText)
-            let remindersResult = extractRemindersFromText(transcriptText)
-            
-            DispatchQueue.main.async {
-                // Create and save summary data
-                let summaryData = SummaryData(
-                    recordingURL: recording.url,
-                    recordingName: recording.name,
-                    recordingDate: recording.date,
-                    summary: summaryResult,
-                    tasks: tasksResult,
-                    reminders: remindersResult
-                )
-                
-                // Update or save the summary
-                if self.summaryManager.hasSummary(for: recording.url) {
-                    self.summaryManager.updateSummary(summaryData)
-                } else {
-                    self.summaryManager.saveSummary(summaryData)
+        Task {
+            do {
+                // Ensure the correct AI engine is set before generating summary
+                await MainActor.run {
+                    summaryManager.setEngine(recorderVM.selectedAIEngine)
                 }
                 
-                self.isGeneratingSummary = false
-                self.showSummary = true
+                // Use the enhanced AI engine for better summarization
+                _ = try await summaryManager.generateEnhancedSummary(
+                    from: transcriptText,
+                    for: recording.url,
+                    recordingName: recording.name,
+                    recordingDate: recording.date
+                )
+                
+                await MainActor.run {
+                    // Reload recordings to reflect any name changes
+                    self.loadRecordings()
+                    self.isGeneratingSummary = false
+                    self.showSummary = true
+                }
+            } catch {
+                print("Enhanced summary generation failed: \(error)")
+                
+                // Fallback to basic summarization
+                await MainActor.run {
+                    let summaryResult = generateSummaryFromText(transcriptText)
+                    let tasksResult = extractTasksFromText(transcriptText)
+                    let remindersResult = extractRemindersFromText(transcriptText)
+                    
+                    // Create and save summary data
+                    let summaryData = SummaryData(
+                        recordingURL: recording.url,
+                        recordingName: recording.name,
+                        recordingDate: recording.date,
+                        summary: summaryResult,
+                        tasks: tasksResult,
+                        reminders: remindersResult
+                    )
+                    
+                    // Update or save the summary
+                    if self.summaryManager.hasSummary(for: recording.url) {
+                        self.summaryManager.updateSummary(summaryData)
+                    } else {
+                        self.summaryManager.saveSummary(summaryData)
+                    }
+                    
+                    // Reload recordings to reflect any name changes
+                    self.loadRecordings()
+                    self.isGeneratingSummary = false
+                    self.showSummary = true
+                }
             }
         }
     }
     
     // Summary generation functions (same as in SummaryView)
     private func generateSummaryFromText(_ text: String) -> String {
-        let tagger = NLTagger(tagSchemes: [.lexicalClass, .nameType])
-        tagger.string = text
-        
-        let sentences = text.components(separatedBy: CharacterSet(charactersIn: ".!?")).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        // Use the ContentAnalyzer for better summarization
+        let preprocessedText = ContentAnalyzer.preprocessText(text)
+        let sentences = ContentAnalyzer.extractSentences(from: preprocessedText)
         
         guard !sentences.isEmpty else { return "No content to summarize." }
         
-        var sentenceScores: [(String, Double)] = []
-        
-        for sentence in sentences {
-            let cleanSentence = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleanSentence.isEmpty else { continue }
-            
-            var score: Double = 0
-            
-            let wordCount = cleanSentence.components(separatedBy: CharacterSet.whitespaces).count
-            if wordCount >= 5 && wordCount <= 20 {
-                score += 2.0
-            } else if wordCount > 20 {
-                score += 1.0
-            }
-            
-            let lowercased = cleanSentence.lowercased()
-            let keyTerms = ["important", "need", "must", "should", "remember", "remind", "call", "meet", "buy", "get", "do", "make", "see", "visit", "go", "come", "take", "bring"]
-            
-            for term in keyTerms {
-                if lowercased.contains(term) {
-                    score += 1.0
-                }
-            }
-            
-            let timePatterns = ["today", "tomorrow", "next", "later", "tonight", "morning", "afternoon", "evening", "week", "month", "year"]
-            for pattern in timePatterns {
-                if lowercased.contains(pattern) {
-                    score += 1.5
-                }
-            }
-            
-            sentenceScores.append((cleanSentence, score))
+        // Score sentences based on importance
+        let scoredSentences = sentences.map { sentence in
+            (sentence: sentence, score: ContentAnalyzer.calculateSentenceImportance(sentence, in: preprocessedText))
         }
         
-        let sortedSentences = sentenceScores.sorted { $0.1 > $1.1 }
-        let topSentences = Array(sortedSentences.prefix(min(3, sortedSentences.count)))
+        // Cluster related sentences to avoid redundancy
+        let clusters = ContentAnalyzer.clusterRelatedSentences(sentences)
         
-        if topSentences.isEmpty {
-            return "Summary: " + sentences.prefix(2).joined(separator: ". ") + "."
+        // Select best sentences from each cluster
+        var selectedSentences: [String] = []
+        let targetSentenceCount = min(max(sentences.count / 4, 2), 4) // 25% of sentences, min 2, max 4
+        
+        for cluster in clusters {
+            if selectedSentences.count >= targetSentenceCount { break }
+            
+            // Find the best sentence in this cluster
+            let clusterScores = cluster.map { sentence in
+                (sentence: sentence, score: ContentAnalyzer.calculateSentenceImportance(sentence, in: preprocessedText))
+            }
+            
+            if let bestInCluster = clusterScores.max(by: { $0.score < $1.score }) {
+                selectedSentences.append(bestInCluster.sentence)
+            }
         }
         
-        let summaryText = topSentences.map { $0.0 }.joined(separator: ". ") + "."
-        return "Summary: " + summaryText
+        // If we don't have enough sentences, add more from the highest scored
+        if selectedSentences.count < targetSentenceCount {
+            let remainingNeeded = targetSentenceCount - selectedSentences.count
+            let additionalSentences = scoredSentences
+                .filter { !selectedSentences.contains($0.sentence) }
+                .sorted { $0.score > $1.score }
+                .prefix(remainingNeeded)
+                .map { $0.sentence }
+            
+            selectedSentences.append(contentsOf: additionalSentences)
+        }
+        
+        // Create a coherent summary
+        let summaryText = selectedSentences.joined(separator: " ")
+        
+        // Add key phrases if available
+        let keyPhrases = ContentAnalyzer.extractKeyPhrases(from: text, maxPhrases: 3)
+        if !keyPhrases.isEmpty {
+            return "Summary: \(summaryText). Key topics: \(keyPhrases.joined(separator: ", "))."
+        }
+        
+        return "Summary: \(summaryText)."
     }
     
     private func extractTasksFromText(_ text: String) -> [String] {
-        var tasks: [String] = []
-        let sentences = text.components(separatedBy: CharacterSet(charactersIn: ".!?"))
-        
-        let taskKeywords = [
-            "need to", "have to", "must", "should", "want to", "going to", "plan to",
-            "call", "meet", "buy", "get", "do", "make", "see", "visit", "go", "come",
-            "take", "bring", "send", "email", "text", "message", "schedule", "book",
-            "order", "pick up", "drop off", "return", "check", "review", "update"
-        ]
-        
-        for sentence in sentences {
-            let cleanSentence = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
-            let lowercased = cleanSentence.lowercased()
-            
-            for keyword in taskKeywords {
-                if lowercased.contains(keyword) {
-                    if let range = lowercased.range(of: keyword) {
-                        let taskStart = cleanSentence.index(cleanSentence.startIndex, offsetBy: range.lowerBound.utf16Offset(in: lowercased))
-                        let taskText = String(cleanSentence[taskStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                        
-                        if !taskText.isEmpty && taskText.count > 5 {
-                            tasks.append(taskText.capitalized)
-                            break
-                        }
-                    }
-                }
-            }
-        }
-        
-        return Array(Set(tasks)).prefix(5).map { $0 }
+        // Use the TaskExtractor for better task extraction
+        let taskExtractor = TaskExtractor()
+        let taskItems = taskExtractor.extractTasks(from: text)
+        return taskItems.map { $0.text }
     }
     
     private func extractRemindersFromText(_ text: String) -> [String] {
-        var reminders: [String] = []
-        let sentences = text.components(separatedBy: CharacterSet(charactersIn: ".!?"))
-        
-        let reminderKeywords = [
-            "remind", "remember", "don't forget", "don't forget to", "make sure to",
-            "call", "meet", "appointment", "meeting", "deadline", "due", "by", "at"
-        ]
-        
-        let timePatterns = [
-            "today", "tomorrow", "tonight", "morning", "afternoon", "evening",
-            "next week", "next month", "next year", "later", "soon", "in an hour",
-            "at 7", "at 8", "at 9", "at 10", "at 11", "at 12", "at 1", "at 2", "at 3", "at 4", "at 5", "at 6"
-        ]
-        
-        for sentence in sentences {
-            let cleanSentence = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
-            let lowercased = cleanSentence.lowercased()
-            
-            var hasReminderKeyword = false
-            var hasTimeReference = false
-            
-            for keyword in reminderKeywords {
-                if lowercased.contains(keyword) {
-                    hasReminderKeyword = true
-                    break
-                }
-            }
-            
-            for pattern in timePatterns {
-                if lowercased.contains(pattern) {
-                    hasTimeReference = true
-                    break
-                }
-            }
-            
-            if hasReminderKeyword || hasTimeReference {
-                if cleanSentence.count > 5 {
-                    reminders.append(cleanSentence.capitalized)
-                }
-            }
-        }
-        
-        return Array(Set(reminders)).prefix(5).map { $0 }
+        // Use the ReminderExtractor for better reminder extraction
+        let reminderExtractor = ReminderExtractor()
+        let reminderItems = reminderExtractor.extractReminders(from: text)
+        return reminderItems.map { $0.text }
     }
 } 
