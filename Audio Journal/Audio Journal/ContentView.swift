@@ -1316,6 +1316,24 @@ struct SettingsView: View {
                                         .foregroundColor(.blue)
                                     }
                                     .padding(.horizontal, 24)
+                                    
+                                    Button(action: {
+                                        // Show markdown test view
+                                    }) {
+                                        HStack {
+                                            Text("Test Markdown")
+                                            Spacer()
+                                            Image(systemName: "doc.text")
+                                        }
+                                        .padding(.horizontal, 24)
+                                        .padding(.vertical, 12)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(Color.green.opacity(0.1))
+                                        )
+                                        .foregroundColor(.green)
+                                    }
+                                    .padding(.horizontal, 24)
                                 }
                             }
                             

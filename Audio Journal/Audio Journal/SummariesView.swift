@@ -17,102 +17,32 @@ struct SummariesView: View {
     @State private var showSummary = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
+    @State private var refreshTrigger = false
+
+    // MARK: - Body
     
     var body: some View {
         NavigationView {
-            VStack {
-                if recordings.isEmpty {
-                    VStack(spacing: 16) {
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .font(.system(size: 60))
-                            .foregroundColor(.secondary)
-                        
-                        Text("No Recordings Found")
-                            .font(.title2)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                        
-                        Text("Record some audio first to generate summaries")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List(recordings, id: \.url) { recording in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(recording.name)
-                                        .font(.headline)
-                                        .foregroundColor(.primary)
-                                    Text(recording.dateString)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    if let locationData = recording.locationData {
-                                        Button(action: {
-                                            selectedLocationData = locationData
-                                        }) {
-                                            HStack {
-                                                Image(systemName: "location.fill")
-                                                    .font(.caption2)
-                                                    .foregroundColor(.accentColor)
-                                                Text(locationAddresses[recording.url] ?? locationData.coordinateString)
-                                                    .font(.caption2)
-                                                    .foregroundColor(.accentColor)
-                                            }
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                    }
-                                }
-                                Spacer()
-                                
-                                // Summary button
-                                Button(action: {
-                                    selectedRecording = recording
-                                    if summaryManager.hasSummary(for: recording.url) {
-                                        // Show existing summary
-                                        showSummary = true
-                                    } else {
-                                        // Generate new summary
-                                        Task {
-                                            await generateTranscriptAndSummary(for: recording)
-                                        }
-                                    }
-                                }) {
-                                    HStack {
-                                        if isGeneratingSummary && selectedRecording?.url == recording.url {
-                                            ProgressView()
-                                                .scaleEffect(0.8)
-                                        } else {
-                                            Image(systemName: summaryManager.hasSummary(for: recording.url) ? "doc.text.magnifyingglass" : "doc.text.magnifyingglass")
-                                        }
-                                        Text(summaryManager.hasSummary(for: recording.url) ? "View Summary" : "Generate Summary")
-                                    }
-                                    .font(.caption)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(summaryManager.hasSummary(for: recording.url) ? Color.green : Color.accentColor)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(8)
-                                }
-                                .disabled(isGeneratingSummary)
-                            }
-                        }
-                        .padding(.vertical, 4)
+            mainContentView
+                .navigationTitle("Summaries")
+                .onAppear {
+                    loadRecordings()
+                    // Configure the summary manager with the selected AI engine
+                    summaryManager.setEngine(recorderVM.selectedAIEngine)
+                    
+                    // Ensure transcription manager is using the correct engine and stop unnecessary AWS checks
+                    enhancedTranscriptionManager.updateTranscriptionEngine(recorderVM.selectedTranscriptionEngine)
+                }
+                .onReceive(summaryManager.objectWillChange) { _ in
+                    // Refresh the view when summary manager changes
+                    DispatchQueue.main.async {
+                        self.refreshTrigger.toggle()
                     }
                 }
-                    }
-        .navigationTitle("Summaries")
-        .onAppear {
-            loadRecordings()
-            // Configure the summary manager with the selected AI engine
-            summaryManager.setEngine(recorderVM.selectedAIEngine)
-            
-            // Ensure transcription manager is using the correct engine and stop unnecessary AWS checks
-            enhancedTranscriptionManager.updateTranscriptionEngine(recorderVM.selectedTranscriptionEngine)
-        }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                    // Refresh when app comes to foreground
+                    loadRecordings()
+                }
         }
         .sheet(isPresented: $showSummary) {
             if let recording = selectedRecording {
@@ -128,6 +58,18 @@ struct SummariesView: View {
             if !newValue {
                 // Sheet was dismissed, refresh the view
                 loadRecordings()
+                
+                // Force a UI refresh to update button states
+                DispatchQueue.main.async {
+                    // Additional check to ensure summary state is updated
+                    if let recording = selectedRecording {
+                        let hasSummary = summaryManager.hasSummary(for: recording.url)
+                        print("🔍 After sheet dismissal - hasSummary for \(recording.name): \(hasSummary)")
+                    }
+                    
+                    // Trigger a refresh to force button state update
+                    self.refreshTrigger.toggle()
+                }
             }
         }
         .sheet(item: $selectedLocationData) { locationData in
@@ -148,6 +90,123 @@ struct SummariesView: View {
             Text(enhancedTranscriptionManager.whisperFallbackMessage)
         }
     }
+
+    // MARK: - View Components
+
+    @ViewBuilder
+    private var mainContentView: some View {
+        VStack {
+            if recordings.isEmpty {
+                emptyStateView
+            } else {
+                recordingsListView
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var emptyStateView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 60))
+                .foregroundColor(.secondary)
+            
+            Text("No Recordings Found")
+                .font(.title2)
+                .fontWeight(.medium)
+                .foregroundColor(.primary)
+            
+            Text("Record some audio first to generate summaries")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    @ViewBuilder
+    private var recordingsListView: some View {
+        List(recordings, id: \.url) { recording in
+            recordingRow(for: recording)
+        }
+    }
+    
+    @ViewBuilder
+    private func recordingRow(for recording: RecordingFile) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(recording.name)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    Text(recording.dateString)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if let locationData = recording.locationData {
+                        Button(action: {
+                            selectedLocationData = locationData
+                        }) {
+                            HStack {
+                                Image(systemName: "location.fill")
+                                    .font(.caption2)
+                                    .foregroundColor(.accentColor)
+                                Text(locationAddresses[recording.url] ?? locationData.coordinateString)
+                                    .font(.caption2)
+                                    .foregroundColor(.accentColor)
+                            }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                Spacer()
+                
+                // Summary button
+                summaryButton(for: recording)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func summaryButton(for recording: RecordingFile) -> some View {
+        let hasSummary = summaryManager.hasSummary(for: recording.url)
+        let isGenerating = isGeneratingSummary && selectedRecording?.url == recording.url
+        
+        Button(action: {
+            selectedRecording = recording
+            
+            if hasSummary {
+                // Show existing summary
+                showSummary = true
+            } else {
+                // Generate new summary
+                Task {
+                    await generateTranscriptAndSummary(for: recording)
+                }
+            }
+        }) {
+            HStack {
+                if isGenerating {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Image(systemName: "doc.text.magnifyingglass")
+                }
+                Text(hasSummary ? "View Summary" : "Generate Summary")
+                    .id(refreshTrigger) // Force re-evaluation when refreshTrigger changes
+            }
+            .font(.caption)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(hasSummary ? Color.green : Color.accentColor)
+            .foregroundColor(.white)
+            .cornerRadius(8)
+        }
+        .disabled(isGeneratingSummary)
+    }
+
+    // MARK: - Data Handling
     
     private func loadRecordings() {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -456,7 +515,7 @@ struct SummariesView: View {
         }
     }
     
-
+    // MARK: - Summary Generation
     
     private func isValidTranscriptForSummarization(_ transcriptText: String) -> Bool {
         // Check minimum length (at least 50 characters of meaningful content)
@@ -509,7 +568,7 @@ struct SummariesView: View {
         // Lower threshold for repetitive content to allow song lyrics, poetry, etc.
         // Also check if content appears to be song lyrics or artistic content
         let transcriptLowercased = transcriptText.lowercased()
-        let isLikelySongLyrics = transcriptLowercased.contains("looking good") || 
+        let isLikelySongLyrics = transcriptLowercased.contains("looking good") ||
                                 transcriptLowercased.contains("you know") ||
                                 transcriptLowercased.contains("all right") ||
                                 transcriptLowercased.contains("what was i thinking") ||
@@ -560,6 +619,10 @@ struct SummariesView: View {
                     print("📋 Tasks found: \(enhancedSummary.tasks.count)")
                     print("🔔 Reminders found: \(enhancedSummary.reminders.count)")
                     
+                    // Check if summary was saved properly
+                    let hasSummary = summaryManager.hasSummary(for: recording.url)
+                    print("🔍 Summary saved check: \(hasSummary)")
+                    
                     // Reload recordings to reflect any name changes
                     self.loadRecordings()
                     self.isGeneratingSummary = false
@@ -577,5 +640,3 @@ struct SummariesView: View {
         }
     }
 }
-
-

@@ -324,6 +324,9 @@ class SummaryManager: ObservableObject {
             self.enhancedSummaries.removeAll { $0.recordingURL == summary.recordingURL }
             self.enhancedSummaries.append(summary)
             self.saveEnhancedSummariesToDisk()
+            
+            // Force a UI update
+            self.objectWillChange.send()
         }
     }
     
@@ -354,25 +357,7 @@ class SummaryManager: ObservableObject {
         let hasEnhanced = hasEnhancedSummary(for: recordingURL)
         let hasLegacy = summaries.contains { $0.recordingURL == recordingURL }
         
-        print("🔍 SummaryManager: Checking for summary with URL: \(recordingURL)")
-        print("🔍 SummaryManager: Enhanced summaries count: \(enhancedSummaries.count)")
-        print("🔍 SummaryManager: Legacy summaries count: \(summaries.count)")
-        print("🔍 SummaryManager: Has enhanced summary: \(hasEnhanced)")
-        print("🔍 SummaryManager: Has legacy summary: \(hasLegacy)")
-        
-        // Debug: Print all enhanced summary URLs
-        for (index, summary) in enhancedSummaries.enumerated() {
-            print("🔍 SummaryManager: Enhanced summary \(index): \(summary.recordingURL)")
-        }
-        
-        // Debug: Print all legacy summary URLs
-        for (index, summary) in summaries.enumerated() {
-            print("🔍 SummaryManager: Legacy summary \(index): \(summary.recordingURL)")
-        }
-        
-        let result = hasEnhanced || hasLegacy
-        print("🔍 SummaryManager: Final result: \(result)")
-        return result
+        return hasEnhanced || hasLegacy
     }
     
     func deleteSummary(for recordingURL: URL) {
@@ -1048,7 +1033,9 @@ class SummaryManager: ObservableObject {
     }
     
     private func loadEnhancedSummaries() {
-        guard let data = UserDefaults.standard.data(forKey: enhancedSummariesKey) else { return }
+        guard let data = UserDefaults.standard.data(forKey: enhancedSummariesKey) else { 
+            return 
+        }
         do {
             enhancedSummaries = try JSONDecoder().decode([EnhancedSummaryData].self, from: data)
         } catch {

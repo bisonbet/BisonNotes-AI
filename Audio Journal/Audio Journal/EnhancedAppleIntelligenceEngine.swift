@@ -304,11 +304,11 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     private func createVeryShortSummary(sentences: [String], fullText: String) -> String {
         // For very short content, just clean up and present the main point
         if let firstSentence = sentences.first {
-            return "Summary: \(firstSentence)."
+            return "**Summary:** \(firstSentence)."
         } else {
             // Fallback: take first 100 characters
             let preview = String(fullText.prefix(100)).trimmingCharacters(in: .whitespacesAndNewlines)
-            return "Summary: \(preview)..."
+            return "**Summary:** \(preview)..."
         }
     }
     
@@ -318,13 +318,13 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         
         switch contentType {
         case .meeting:
-            return "Meeting Summary: \(summaryText)"
+            return "**Meeting Summary:** \(summaryText)"
         case .personalJournal:
-            return "Personal Reflection: \(summaryText)"
+            return "**Personal Reflection:** \(summaryText)"
         case .technical:
-            return "Technical Discussion: \(summaryText)"
+            return "**Technical Discussion:** \(summaryText)"
         case .general:
-            return "Summary: \(summaryText)"
+            return "**Summary:** \(summaryText)"
         }
     }
     
@@ -337,7 +337,7 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         
         guard !filteredSentences.isEmpty else {
             print("⚠️ No relevant sentences found after filtering")
-            return "Summary: Unable to extract meaningful content from the transcript."
+            return "**Summary:** Unable to extract meaningful content from the transcript."
         }
         
         // Score sentences based on content relevance, not position
@@ -396,18 +396,25 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
             print("📄 Sentence \(index + 1): \(sentence.prefix(100))...")
         }
         
-        let summaryText = topSentences.joined(separator: " ")
+        // Format summary with bullet points for better readability
+        let bulletPoints = topSentences.map { "- \($0)" }.joined(separator: "\n")
         
+        let summary: String
         switch contentType {
         case .meeting:
-            return "Meeting Summary: \(summaryText)"
+            summary = "**Meeting Summary:**\n\n\(bulletPoints)\n"
         case .personalJournal:
-            return "Personal Reflection: \(summaryText)"
+            summary = "**Personal Reflection:**\n\n\(bulletPoints)\n"
         case .technical:
-            return "Technical Discussion: \(summaryText)"
+            summary = "**Technical Discussion:**\n\n\(bulletPoints)\n"
         case .general:
-            return "Summary: \(summaryText)"
+            summary = "**Summary:**\n\n\(bulletPoints)\n"
         }
+        
+        print("📄 Generated summary markdown:")
+        print(summary)
+        
+        return summary
     }
     
     private func filterRelevantSentences(_ sentences: [String]) -> [String] {
@@ -513,18 +520,25 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
             .prefix(summaryLength)
             .map { $0.sentence }
         
-        let summaryText = topSentences.joined(separator: " ")
+        // Format summary with bullet points for better readability
+        let bulletPoints = topSentences.map { "- \($0)" }.joined(separator: "\n")
         
+        let summary: String
         switch contentType {
         case .meeting:
-            return "Meeting Summary: \(summaryText)"
+            summary = "**Meeting Summary:**\n\n\(bulletPoints)\n"
         case .personalJournal:
-            return "Personal Reflection: \(summaryText)"
+            summary = "**Personal Reflection:**\n\n\(bulletPoints)\n"
         case .technical:
-            return "Technical Discussion: \(summaryText)"
+            summary = "**Technical Discussion:**\n\n\(bulletPoints)\n"
         case .general:
-            return "Summary: \(summaryText)"
+            summary = "**Summary:**\n\n\(bulletPoints)\n"
         }
+        
+        print("📄 Generated long summary markdown:")
+        print(summary)
+        
+        return summary
     }
     
 
