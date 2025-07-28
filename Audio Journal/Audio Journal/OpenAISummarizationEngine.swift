@@ -13,6 +13,7 @@ class OpenAISummarizationEngine: SummarizationEngine {
     let version: String = "1.0"
     
     private var service: OpenAISummarizationService?
+    private var currentConfig: OpenAISummarizationConfig?
     
     var isAvailable: Bool {
         // Check if API key is configured
@@ -101,9 +102,7 @@ class OpenAISummarizationEngine: SummarizationEngine {
         
         let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt41Mini
         
-        print("🔧 OpenAISummarizationEngine: Updating configuration - Model: \(model.displayName), BaseURL: \(baseURL)")
-        
-        let config = OpenAISummarizationConfig(
+        let newConfig = OpenAISummarizationConfig(
             apiKey: apiKey,
             model: model,
             baseURL: baseURL,
@@ -111,8 +110,14 @@ class OpenAISummarizationEngine: SummarizationEngine {
             maxTokens: maxTokens > 0 ? maxTokens : nil
         )
         
-        self.service = OpenAISummarizationService(config: config)
-        print("✅ OpenAISummarizationEngine: Configuration updated successfully")
+        // Only create a new service if the configuration has actually changed
+        if currentConfig == nil || currentConfig != newConfig {
+            print("🔧 OpenAISummarizationEngine: Updating configuration - Model: \(model.displayName), BaseURL: \(baseURL)")
+            
+            self.currentConfig = newConfig
+            self.service = OpenAISummarizationService(config: newConfig)
+            print("✅ OpenAISummarizationEngine: Configuration updated successfully")
+        }
     }
     
     // MARK: - Chunked Processing

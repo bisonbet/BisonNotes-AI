@@ -61,7 +61,7 @@ enum OpenAISummarizationModel: String, CaseIterable {
 
 // MARK: - OpenAI Configuration
 
-struct OpenAISummarizationConfig {
+struct OpenAISummarizationConfig: Equatable {
     let apiKey: String
     let model: OpenAISummarizationModel
     let baseURL: String
@@ -140,7 +140,7 @@ struct OpenAIChatCompletionResponse: Codable {
     }
 }
 
-// OpenAIErrorResponse is already defined in OpenAITranscribeService.swift
+// OpenAIErrorResponse is defined in OpenAITranscribeService.swift
 
 // MARK: - OpenAI Summarization Service
 
@@ -154,7 +154,15 @@ class OpenAISummarizationService {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = config.timeout
         configuration.timeoutIntervalForResource = config.timeout * 2
+        configuration.waitsForConnectivity = true
+        configuration.networkServiceType = .responsiveData
+        
         self.session = URLSession(configuration: configuration)
+    }
+    
+    deinit {
+        // Properly invalidate the session when the service is deallocated
+        session.invalidateAndCancel()
     }
     
     // MARK: - Connection Testing
@@ -398,32 +406,50 @@ class OpenAISummarizationService {
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI API key not configured")
         }
         
-        let url = URL(string: "\(config.baseURL)/chat/completions")!
+        guard let url = URL(string: "\(config.baseURL)/chat/completions") else {
+            throw SummarizationError.aiServiceUnavailable(service: "Invalid OpenAI base URL: \(config.baseURL)")
+        }
+        
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        urlRequest.setValue("Audio Journal iOS App", forHTTPHeaderField: "User-Agent")
         
-        let encoder = JSONEncoder()
-        urlRequest.httpBody = try encoder.encode(request)
-        
-        let (data, response) = try await session.data(for: urlRequest)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw SummarizationError.aiServiceUnavailable(service: "Invalid response from OpenAI")
+        do {
+            let encoder = JSONEncoder()
+            urlRequest.httpBody = try encoder.encode(request)
+        } catch {
+            throw SummarizationError.aiServiceUnavailable(service: "Failed to encode request: \(error.localizedDescription)")
         }
         
-        if httpResponse.statusCode != 200 {
-            // Try to parse error response
-            if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
-                throw SummarizationError.aiServiceUnavailable(service: "OpenAI API Error: \(errorResponse.error.message)")
+        do {
+            let (data, response) = try await session.data(for: urlRequest)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw SummarizationError.aiServiceUnavailable(service: "Invalid response from OpenAI")
+            }
+            
+            if httpResponse.statusCode != 200 {
+                // Try to parse error response
+                if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                    throw SummarizationError.aiServiceUnavailable(service: "OpenAI API Error: \(errorResponse.error.message)")
+                } else {
+                    let responseString = String(data: data, encoding: .utf8) ?? "Unknown error"
+                    throw SummarizationError.aiServiceUnavailable(service: "OpenAI API Error: HTTP \(httpResponse.statusCode) - \(responseString)")
+                }
+            }
+            
+            let decoder = JSONDecoder()
+            return try decoder.decode(OpenAIChatCompletionResponse.self, from: data)
+            
+        } catch {
+            if error is SummarizationError {
+                throw error
             } else {
-                throw SummarizationError.aiServiceUnavailable(service: "OpenAI API Error: HTTP \(httpResponse.statusCode)")
+                throw SummarizationError.aiServiceUnavailable(service: "Network error: \(error.localizedDescription)")
             }
         }
-        
-        let decoder = JSONDecoder()
-        return try decoder.decode(OpenAIChatCompletionResponse.self, from: data)
     }
     
     private func createSystemPrompt(for task: PromptTask, contentType: ContentType) -> String {
