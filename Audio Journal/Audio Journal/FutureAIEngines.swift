@@ -533,6 +533,8 @@ class AIEngineFactory {
         switch type {
         case .enhancedAppleIntelligence:
             return EnhancedAppleIntelligenceEngine()
+        case .openAI:
+            return OpenAISummarizationEngine()
         case .awsBedrock:
             return AWSBedrockEngine()
         case .whisperBased:
@@ -556,6 +558,7 @@ class AIEngineFactory {
 
 enum AIEngineType: String, CaseIterable {
     case enhancedAppleIntelligence = "Enhanced Apple Intelligence"
+    case openAI = "OpenAI"
     case awsBedrock = "AWS Bedrock"
     case whisperBased = "Whisper-Based"
     case localLLM = "Local LLM (Ollama)"
@@ -564,6 +567,8 @@ enum AIEngineType: String, CaseIterable {
         switch self {
         case .enhancedAppleIntelligence:
             return "Advanced natural language processing using Apple's frameworks"
+        case .openAI:
+            return "Advanced AI-powered summaries using OpenAI's GPT models"
         case .awsBedrock:
             return "Cloud-based AI using AWS Bedrock foundation models"
         case .whisperBased:
@@ -575,7 +580,7 @@ enum AIEngineType: String, CaseIterable {
     
     var isComingSoon: Bool {
         switch self {
-        case .enhancedAppleIntelligence, .localLLM:
+        case .enhancedAppleIntelligence, .localLLM, .openAI:
             return false
         case .awsBedrock, .whisperBased:
             return true
@@ -586,6 +591,8 @@ enum AIEngineType: String, CaseIterable {
         switch self {
         case .enhancedAppleIntelligence:
             return ["iOS 15.0+", "Built-in frameworks"]
+        case .openAI:
+            return ["OpenAI API Key", "Internet Connection", "Usage Credits"]
         case .awsBedrock:
             return ["AWS Account", "Internet Connection", "API Keys"]
         case .whisperBased:

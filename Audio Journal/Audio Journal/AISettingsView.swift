@@ -79,6 +79,7 @@ struct AISettingsView: View {
     @State private var showingEngineChangePrompt = false
     @State private var previousEngine = ""
     @State private var showingOllamaSettings = false
+    @State private var showingOpenAISettings = false
     
     // No custom init is needed anymore, which solves the compiler error.
     
@@ -96,6 +97,10 @@ struct AISettingsView: View {
                     
                     if recorderVM.selectedAIEngine == AIEngineType.localLLM.rawValue {
                         ollamaConfigurationSection
+                    }
+                    
+                    if recorderVM.selectedAIEngine == AIEngineType.openAI.rawValue {
+                        openAIConfigurationSection
                     }
                     
                     if viewModel.summaryManager.enhancedSummaries.count > 0 {
@@ -136,6 +141,9 @@ struct AISettingsView: View {
         }
         .sheet(isPresented: $showingOllamaSettings) {
             OllamaSettingsView()
+        }
+        .sheet(isPresented: $showingOpenAISettings) {
+            OpenAISummarizationSettingsView()
         }
     }
 }
@@ -362,6 +370,80 @@ private extension AISettingsView {
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.green.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+    
+    var openAIConfigurationSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("OpenAI Configuration")
+                .font(.headline)
+                .padding(.horizontal, 24)
+            
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("OpenAI API Settings")
+                            .font(.body)
+                        Text("Configure OpenAI API key and model selection for advanced summarization")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { showingOpenAISettings = true }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("Configure")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                }
+                
+                let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
+                let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
+                let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt41Mini
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("API Key:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(apiKey.isEmpty ? "Not configured" : "Configured (\(apiKey.count) chars)")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(apiKey.isEmpty ? .red : .green)
+                    }
+                    HStack {
+                        Text("Model:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(model.displayName)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    HStack {
+                        Text("Status:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(apiKey.isEmpty ? "Needs Configuration" : "Ready")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(apiKey.isEmpty ? .orange : .green)
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.1))
             )
             .padding(.horizontal, 24)
         }

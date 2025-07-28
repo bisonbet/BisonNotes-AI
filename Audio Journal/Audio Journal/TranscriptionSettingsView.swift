@@ -19,6 +19,7 @@ struct TranscriptionSettingsView: View {
     
     @State private var showingAWSSettings = false
     @State private var showingWhisperSettings = false
+    @State private var showingOpenAISettings = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -26,11 +27,17 @@ struct TranscriptionSettingsView: View {
             Form {
                 Section {
                     Picker("Engine", selection: $recorderVM.selectedTranscriptionEngine) {
-                        Text("Apple Intelligence").tag(TranscriptionEngine.appleIntelligence)
-                        Text("AWS Transcribe").tag(TranscriptionEngine.awsTranscribe)
-                        Text("Whisper").tag(TranscriptionEngine.whisper)
+                        ForEach(TranscriptionEngine.allCases.filter { $0.isAvailable }, id: \.rawValue) { engine in
+                            VStack(alignment: .leading) {
+                                Text(engine.rawValue)
+                                Text(engine.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .tag(engine)
+                        }
                     }
-                    .pickerStyle(.segmented) // .pickerStyle(SegmentedPickerStyle()) is deprecated
+                    .pickerStyle(.navigationLink)
                     
                     if recorderVM.selectedTranscriptionEngine == .awsTranscribe {
                         Button("AWS Settings") {
@@ -42,6 +49,13 @@ struct TranscriptionSettingsView: View {
                     if recorderVM.selectedTranscriptionEngine == .whisper {
                         Button("Whisper Settings") {
                             showingWhisperSettings = true
+                        }
+                        .foregroundColor(.accentColor)
+                    }
+                    
+                    if recorderVM.selectedTranscriptionEngine == .openAI {
+                        Button("OpenAI Settings") {
+                            showingOpenAISettings = true
                         }
                         .foregroundColor(.accentColor)
                     }
@@ -160,6 +174,9 @@ struct TranscriptionSettingsView: View {
             }
             .sheet(isPresented: $showingWhisperSettings) {
                 WhisperSettingsView()
+            }
+            .sheet(isPresented: $showingOpenAISettings) {
+                OpenAISettingsView()
             }
         }
     }

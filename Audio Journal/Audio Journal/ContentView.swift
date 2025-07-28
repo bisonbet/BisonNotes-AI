@@ -61,6 +61,7 @@ enum AudioQuality: String, CaseIterable {
 enum SummaryMethod: String, CaseIterable {
     case appleIntelligence = "Apple Intelligence (Basic)"
     case localServer = "Local Server (Ollama)"
+    case openAI = "OpenAI (GPT-4.1)"
     case awsBedrock = "AWS Bedrock (Advanced)"
     
     var description: String {
@@ -69,6 +70,8 @@ enum SummaryMethod: String, CaseIterable {
             return "Uses Apple's built-in Natural Language framework for basic summarization"
         case .localServer:
             return "Connect to local Ollama server for enhanced AI processing"
+        case .openAI:
+            return "Advanced AI-powered summaries using OpenAI's GPT models"
         case .awsBedrock:
             return "Use AWS Bedrock for advanced AI-powered summaries (Coming Soon)"
         }
@@ -76,7 +79,7 @@ enum SummaryMethod: String, CaseIterable {
     
     var isAvailable: Bool {
         switch self {
-        case .appleIntelligence, .localServer:
+        case .appleIntelligence, .localServer, .openAI:
             return true
         case .awsBedrock:
             return false
@@ -90,7 +93,7 @@ enum TranscriptionEngine: String, CaseIterable {
     case appleIntelligence = "Apple Intelligence (Limited)"
     case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
-    case openAIChatGPT = "OpenAI (ChatGPT)"
+    case openAI = "OpenAI"
     case openAIAPICompatible = "OpenAI API Compatible"
     
     var description: String {
@@ -101,8 +104,8 @@ enum TranscriptionEngine: String, CaseIterable {
             return "Cloud-based transcription service with support for long audio files"
         case .whisper:
             return "High-quality transcription using OpenAI's Whisper model via REST API on your local server"
-        case .openAIChatGPT:
-            return "Advanced AI transcription using OpenAI's Whisper model via ChatGPT API (Coming Soon)"
+        case .openAI:
+            return "High-quality transcription using OpenAI's GPT-4o and Whisper models via API"
         case .openAIAPICompatible:
             return "Connect to OpenAI-compatible API endpoints for flexible transcription options (Coming Soon)"
         }
@@ -110,9 +113,9 @@ enum TranscriptionEngine: String, CaseIterable {
     
     var isAvailable: Bool {
         switch self {
-        case .appleIntelligence, .awsTranscribe, .whisper:
+        case .appleIntelligence, .awsTranscribe, .whisper, .openAI:
             return true
-        case .openAIChatGPT, .openAIAPICompatible:
+        case .openAIAPICompatible:
             return false
         }
     }
@@ -121,7 +124,7 @@ enum TranscriptionEngine: String, CaseIterable {
         switch self {
         case .appleIntelligence:
             return false
-        case .awsTranscribe, .whisper, .openAIChatGPT, .openAIAPICompatible:
+        case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible:
             return true
         }
     }

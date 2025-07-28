@@ -320,10 +320,15 @@ class SummaryManager: ObservableObject {
     
     func saveEnhancedSummary(_ summary: EnhancedSummaryData) {
         DispatchQueue.main.async {
+            print("💾 SummaryManager: Saving enhanced summary for \(summary.recordingName)")
+            
             // Remove any existing enhanced summary for this recording
             self.enhancedSummaries.removeAll { $0.recordingURL == summary.recordingURL }
             self.enhancedSummaries.append(summary)
             self.saveEnhancedSummariesToDisk()
+            
+            print("💾 SummaryManager: Enhanced summary saved. Total summaries: \(self.enhancedSummaries.count)")
+            print("🔍 SummaryManager: Can find summary: \(self.hasSummary(for: summary.recordingURL))")
             
             // Force a UI update
             self.objectWillChange.send()
@@ -357,7 +362,10 @@ class SummaryManager: ObservableObject {
         let hasEnhanced = hasEnhancedSummary(for: recordingURL)
         let hasLegacy = summaries.contains { $0.recordingURL == recordingURL }
         
-        return hasEnhanced || hasLegacy
+        let result = hasEnhanced || hasLegacy
+        print("🔍 SummaryManager: hasSummary for \(recordingURL.lastPathComponent) = \(result) (enhanced: \(hasEnhanced), legacy: \(hasLegacy))")
+        
+        return result
     }
     
     func deleteSummary(for recordingURL: URL) {

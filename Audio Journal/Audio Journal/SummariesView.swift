@@ -35,8 +35,10 @@ struct SummariesView: View {
                 }
                 .onReceive(summaryManager.objectWillChange) { _ in
                     // Refresh the view when summary manager changes
+                    print("🔄 SummariesView: Received summary manager change notification")
                     DispatchQueue.main.async {
                         self.refreshTrigger.toggle()
+                        print("🔄 SummariesView: Toggled refresh trigger to \(self.refreshTrigger)")
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
@@ -57,18 +59,18 @@ struct SummariesView: View {
         .onChange(of: showSummary) { _, newValue in
             if !newValue {
                 // Sheet was dismissed, refresh the view
-                loadRecordings()
+                print("🔄 SummariesView: Summary sheet dismissed, refreshing UI")
                 
                 // Force a UI refresh to update button states
                 DispatchQueue.main.async {
                     // Additional check to ensure summary state is updated
-                    if let recording = selectedRecording {
-                        let hasSummary = summaryManager.hasSummary(for: recording.url)
+                    if let recording = self.selectedRecording {
+                        let hasSummary = self.summaryManager.hasSummary(for: recording.url)
                         print("🔍 After sheet dismissal - hasSummary for \(recording.name): \(hasSummary)")
                     }
                     
-                    // Trigger a refresh to force button state update
-                    self.refreshTrigger.toggle()
+                    // Force complete UI refresh
+                    self.forceRefreshUI()
                 }
             }
         }
@@ -191,10 +193,9 @@ struct SummariesView: View {
                     ProgressView()
                         .scaleEffect(0.8)
                 } else {
-                    Image(systemName: "doc.text.magnifyingglass")
+                    Image(systemName: hasSummary ? "eye" : "doc.text.magnifyingglass")
                 }
                 Text(hasSummary ? "View Summary" : "Generate Summary")
-                    .id(refreshTrigger) // Force re-evaluation when refreshTrigger changes
             }
             .font(.caption)
             .padding(.horizontal, 12)
@@ -204,9 +205,18 @@ struct SummariesView: View {
             .cornerRadius(8)
         }
         .disabled(isGeneratingSummary)
+        .id("\(recording.url.absoluteString)-\(hasSummary)-\(refreshTrigger)") // Force re-evaluation when state changes
     }
 
     // MARK: - Data Handling
+    
+    private func forceRefreshUI() {
+        print("🔄 SummariesView: Forcing UI refresh")
+        DispatchQueue.main.async {
+            self.refreshTrigger.toggle()
+            self.loadRecordings()
+        }
+    }
     
     private func loadRecordings() {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -623,16 +633,21 @@ struct SummariesView: View {
                     let hasSummary = summaryManager.hasSummary(for: recording.url)
                     print("🔍 Summary saved check: \(hasSummary)")
                     
-                    // Reload recordings to reflect any name changes
-                    self.loadRecordings()
+                    // Force UI refresh by triggering state changes
                     self.isGeneratingSummary = false
-                    self.showSummary = true
+                    self.forceRefreshUI()
+                    
+                    // Small delay to ensure UI updates, then show summary
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        self.showSummary = true
+                    }
                 }
             } catch {
                 print("❌ Enhanced summary generation failed: \(error)")
                 
                 await MainActor.run {
                     self.isGeneratingSummary = false
+                    self.forceRefreshUI()
                     self.showErrorAlert = true
                     self.errorMessage = error.localizedDescription
                 }

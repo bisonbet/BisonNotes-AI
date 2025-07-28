@@ -11,6 +11,7 @@ struct EnhancedSummaryDetailView: View {
     @State private var isRegenerating = false
     @State private var showingRegenerationAlert = false
     @State private var regenerationError: String?
+    @State private var showingDeleteConfirmation = false
     @StateObject private var summaryManager = SummaryManager()
     @StateObject private var transcriptManager = TranscriptManager.shared
     
@@ -95,6 +96,14 @@ struct EnhancedSummaryDetailView: View {
             if let error = regenerationError {
                 Text(error)
             }
+        }
+        .alert("Delete Summary", isPresented: $showingDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                deleteSummary()
+            }
+        } message: {
+            Text("Are you sure you want to delete this summary? This action cannot be undone. The audio file and transcript will remain unchanged.")
         }
         }
     }
@@ -201,10 +210,11 @@ struct EnhancedSummaryDetailView: View {
             iconColor: .accentColor,
             isExpanded: expandedSections.contains("summary")
         ) {
-            markdownText(summaryData.summary)
+            Text(MarkdownRenderer.renderEnhancedMarkdown(summaryData.summary))
                 .font(.body)
                 .lineSpacing(4)
                 .padding(.top, 4)
+                .textSelection(.enabled)
         }
         .onTapGesture {
             toggleSection("summary")
@@ -305,7 +315,57 @@ struct EnhancedSummaryDetailView: View {
                 .disabled(isRegenerating)
             }
             .padding(.horizontal)
+            
+            // Delete Section
+            deleteSection
         }
+    }
+    
+    // MARK: - Delete Section
+    
+    private var deleteSection: some View {
+        VStack(spacing: 12) {
+            Divider()
+                .padding(.horizontal)
+            
+            VStack(spacing: 8) {
+                Text("Delete Summary")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                Text("Remove this summary while keeping the audio file and transcript")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                
+                Button(action: {
+                    showingDeleteConfirmation = true
+                }) {
+                    HStack {
+                        Image(systemName: "trash")
+                        Text("Delete")
+                    }
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(Color.red)
+                    .cornerRadius(10)
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+    
+    // MARK: - Delete Logic
+    
+    private func deleteSummary() {
+        // Delete the summary from the manager
+        summaryManager.deleteSummary(for: recording.url)
+        
+        // Dismiss the view
+        dismiss()
     }
     
     // MARK: - Regeneration Logic

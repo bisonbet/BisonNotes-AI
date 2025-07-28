@@ -135,6 +135,31 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         return config
     }
     
+    // OpenAI Configuration
+    private var openAIConfig: OpenAITranscribeConfig? {
+        let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
+        let modelString = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAITranscribeModel.whisper1.rawValue
+        let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
+        
+        print("🔍 OpenAI config debug - apiKey length: \(apiKey.count), model: \(modelString), baseURL: \(baseURL)")
+        
+        guard !apiKey.isEmpty else {
+            print("⚠️ OpenAI API key is not configured")
+            return nil
+        }
+        
+        let model = OpenAITranscribeModel(rawValue: modelString) ?? .whisper1
+        
+        let config = OpenAITranscribeConfig(
+            apiKey: apiKey,
+            model: model,
+            baseURL: baseURL
+        )
+        
+        print("✅ OpenAI config created with model: \(model.displayName)")
+        return config
+    }
+    
     // MARK: - Whisper Validation
     
     func isWhisperProperlyConfigured() -> Bool {
@@ -291,7 +316,19 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                 return try await transcribeWithAppleIntelligence(url: url, duration: duration)
             }
             
-        case .openAIChatGPT, .openAIAPICompatible:
+        case .openAI:
+            switchToAppleTranscription() // OpenAI doesn't need background checking
+            
+            // Validate OpenAI configuration
+            if let config = openAIConfig {
+                print("🤖 Using OpenAI for transcription")
+                return try await transcribeWithOpenAI(url: url, config: config)
+            } else {
+                print("⚠️ OpenAI not properly configured, falling back to Apple Intelligence")
+                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+            }
+            
+        case .openAIAPICompatible:
             // These are not implemented yet, fall back to Apple Intelligence
             print("⚠️ \(selectedEngine.rawValue) not yet implemented, falling back to Apple Intelligence")
             switchToAppleTranscription()
@@ -894,6 +931,58 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - OpenAI Transcription
+    
+    private func transcribeWithOpenAI(url: URL, config: OpenAITranscribeConfig) async throws -> TranscriptionResult {
+        print("🤖 Starting OpenAI transcription...")
+        
+        let openAIService = OpenAITranscribeService(config: config)
+        
+        do {
+            // Test connection first
+            print("🔌 Testing OpenAI connection...")
+            try await openAIService.testConnection()
+            print("✅ OpenAI service connected successfully")
+            
+            // OpenAI has a 25MB file size limit, so we don't need chunking for most files
+            // But we should check the file size
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let fileSize = fileAttributes[.size] as? Int64 ?? 0
+            let maxSize: Int64 = 25 * 1024 * 1024 // 25MB
+            
+            if fileSize > maxSize {
+                print("⚠️ File too large for OpenAI (\(fileSize / 1024 / 1024)MB > 25MB), falling back to chunked Apple Intelligence")
+                return try await transcribeWithAppleIntelligence(url: url, duration: try await getAudioDuration(url: url))
+            }
+            
+            print("🎤 Using OpenAI transcription with model: \(config.model.displayName)")
+            let openAIResult = try await openAIService.transcribeAudioFile(at: url)
+            
+            // Convert OpenAI result to our TranscriptionResult format
+            let transcriptionResult = TranscriptionResult(
+                fullText: openAIResult.transcriptText,
+                segments: openAIResult.segments,
+                processingTime: openAIResult.processingTime,
+                chunkCount: 1,
+                success: openAIResult.success,
+                error: openAIResult.error
+            )
+            
+            print("✅ OpenAI transcription completed successfully")
+            print("📝 Transcript length: \(transcriptionResult.fullText.count) characters")
+            
+            if let usage = openAIResult.usage {
+                print("💰 Token usage - Input: \(usage.inputTokens ?? 0), Output: \(usage.outputTokens ?? 0), Total: \(usage.totalTokens ?? 0)")
+            }
+            
+            return transcriptionResult
+            
+        } catch {
+            print("❌ OpenAI transcription failed: \(error)")
+            throw TranscriptionError.openAITranscriptionFailed(error)
+        }
+    }
+    
     // MARK: - Job Tracking Helpers
     
     /// Update pending jobs when recording files are renamed
@@ -1068,7 +1157,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             switchToAWSTranscription()
         case .whisper:
             switchToWhisperTranscription()
-        case .appleIntelligence, .openAIChatGPT, .openAIAPICompatible:
+        case .appleIntelligence, .openAI, .openAIAPICompatible:
             switchToAppleTranscription()
         }
     }
@@ -1220,6 +1309,7 @@ enum TranscriptionError: LocalizedError {
     case awsTranscriptionFailed(Error)
     case whisperConnectionFailed
     case whisperTranscriptionFailed(Error)
+    case openAITranscriptionFailed(Error)
     
     var errorDescription: String? {
         switch self {
@@ -1243,6 +1333,8 @@ enum TranscriptionError: LocalizedError {
             return "Failed to connect to Whisper service"
         case .whisperTranscriptionFailed(let error):
             return "Whisper transcription failed: \(error.localizedDescription)"
+        case .openAITranscriptionFailed(let error):
+            return "OpenAI transcription failed: \(error.localizedDescription)"
         }
     }
 }
