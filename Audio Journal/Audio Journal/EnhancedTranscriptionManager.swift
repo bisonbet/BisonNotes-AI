@@ -82,7 +82,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     }
     
     private var chunkOverlap: TimeInterval {
-        UserDefaults.standard.double(forKey: "chunkOverlap").nonZero ?? 30.0 // 30 second overlap between chunks
+        UserDefaults.standard.double(forKey: "chunkOverlap").nonZero ?? 30.0 // 2 second overlap between chunks
     }
     
     private var enableAWSTranscribe: Bool {
