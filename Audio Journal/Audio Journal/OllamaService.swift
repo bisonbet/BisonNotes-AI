@@ -203,7 +203,7 @@ class OllamaService: ObservableObject {
         cleanedTitle = cleanedTitle.replacingOccurrences(of: "'", with: "")
         
         // Remove common prefixes/suffixes that might be added
-        let unwantedPrefixes = ["Title:", "Name:", "Generated Title:", "Conversation Title:"]
+        let unwantedPrefixes = ["Title:", "Name:", "Generated Title:", "Conversation Title:", "The title is:", "Here's the title:", "Title is:"]
         for prefix in unwantedPrefixes {
             if cleanedTitle.lowercased().hasPrefix(prefix.lowercased()) {
                 cleanedTitle = String(cleanedTitle.dropFirst(prefix.count))
@@ -218,12 +218,35 @@ class OllamaService: ObservableObject {
             options: .regularExpression
         )
         
+        // Remove markdown formatting
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "**", with: "")
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "*", with: "")
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "#", with: "")
+        
+        // Remove extra punctuation at the end
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: #"\.+$"#, with: "", options: .regularExpression)
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: #"!+$"#, with: "", options: .regularExpression)
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: #"\?+$"#, with: "", options: .regularExpression)
+        
         // Trim whitespace and newlines
         cleanedTitle = cleanedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         
         // Ensure title is not too long (max 50 characters)
         if cleanedTitle.count > 50 {
             cleanedTitle = String(cleanedTitle.prefix(50)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        // Validate that the title makes sense (not just random characters or repeated words)
+        let words = cleanedTitle.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        if words.count < 2 || words.count > 6 {
+            // If too few or too many words, it might be nonsensical
+            cleanedTitle = "Untitled Conversation"
+        }
+        
+        // Check for repeated words or nonsensical patterns
+        let uniqueWords = Set(words.map { $0.lowercased() })
+        if uniqueWords.count < Int(Double(words.count) * 0.7) { // If more than 30% of words are repeated
+            cleanedTitle = "Untitled Conversation"
         }
         
         // Ensure title is not empty
@@ -263,6 +286,7 @@ class OllamaService: ObservableObject {
         3. Be specific and meaningful
         4. Work well as a file name or conversation title
         5. Avoid generic terms like "Meeting" or "Conversation" unless truly appropriate
+        6. Focus on the most important subject or action mentioned
 
         Examples of good titles:
         - "Trump Scotland Visit"
@@ -270,8 +294,11 @@ class OllamaService: ObservableObject {
         - "Texas Redistricting Debate"
         - "Walmart Stabbing Investigation"
         - "Harvard Funding Deal"
+        - "Project Budget Review"
+        - "Client Presentation Prep"
+        - "Team Strategy Meeting"
 
-        **Return ONLY the title, nothing else. No quotes, no explanation, no markdown formatting.**
+        **IMPORTANT: Return ONLY the title, nothing else. No quotes, no explanation, no markdown formatting, no extra text.**
 
         Transcript:
         \(text)

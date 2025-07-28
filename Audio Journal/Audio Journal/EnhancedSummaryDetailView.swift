@@ -8,6 +8,11 @@ struct EnhancedSummaryDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var locationAddress: String?
     @State private var expandedSections: Set<String> = ["summary", "metadata"]
+    @State private var isRegenerating = false
+    @State private var showingRegenerationAlert = false
+    @State private var regenerationError: String?
+    @StateObject private var summaryManager = SummaryManager()
+    @StateObject private var transcriptManager = TranscriptManager.shared
     
     var body: some View {
         NavigationView {
@@ -55,6 +60,9 @@ struct EnhancedSummaryDetailView: View {
                         
                         // Reminders Section (Expandable)
                         remindersSection
+                        
+                        // Regenerate Button Section
+                        regenerateSection
                     }
                     .padding(.vertical)
                 }
@@ -68,17 +76,26 @@ struct EnhancedSummaryDetailView: View {
                     }
                 }
             }
-            .onAppear {
-                if let locationData = recording.locationData {
-                    let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
-                    let tempLocationManager = LocationManager()
-                    tempLocationManager.reverseGeocodeLocation(location) { address in
-                        if let address = address {
-                            locationAddress = address
-                        }
+                    .onAppear {
+            if let locationData = recording.locationData {
+                let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
+                let tempLocationManager = LocationManager()
+                tempLocationManager.reverseGeocodeLocation(location) { address in
+                    if let address = address {
+                        locationAddress = address
                     }
                 }
             }
+        }
+        .alert("Regeneration Error", isPresented: $showingRegenerationAlert) {
+            Button("OK") {
+                regenerationError = nil
+            }
+        } message: {
+            if let error = regenerationError {
+                Text(error)
+            }
+        }
         }
     }
     
@@ -243,6 +260,98 @@ struct EnhancedSummaryDetailView: View {
         }
         .onTapGesture {
             toggleSection("reminders")
+        }
+    }
+    
+    // MARK: - Regenerate Section
+    
+    private var regenerateSection: some View {
+        VStack(spacing: 16) {
+            Divider()
+                .padding(.horizontal)
+            
+            VStack(spacing: 12) {
+                Text("Need a different summary?")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                Text("Regenerate this summary with the current AI engine settings")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                
+                Button(action: {
+                    Task {
+                        await regenerateSummary()
+                    }
+                }) {
+                    HStack {
+                        if isRegenerating {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        Text(isRegenerating ? "Regenerating..." : "Regenerate Summary")
+                    }
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(isRegenerating ? Color.gray : Color.orange)
+                    .cornerRadius(10)
+                }
+                .disabled(isRegenerating)
+            }
+            .padding(.horizontal)
+        }
+    }
+    
+    // MARK: - Regeneration Logic
+    
+    private func regenerateSummary() async {
+        guard !isRegenerating else { return }
+        
+        await MainActor.run {
+            isRegenerating = true
+        }
+        
+        do {
+            // Get the transcript for this recording
+            guard let transcript = transcriptManager.getTranscript(for: recording.url) else {
+                await MainActor.run {
+                    regenerationError = "No transcript found for this recording. Please generate a transcript first."
+                    showingRegenerationAlert = true
+                    isRegenerating = false
+                }
+                return
+            }
+            
+            // Set the current AI engine
+            summaryManager.setEngine(UserDefaults.standard.string(forKey: "selectedAIEngine") ?? "OpenAI")
+            
+            // Generate new enhanced summary
+            _ = try await summaryManager.generateEnhancedSummary(
+                from: transcript.plainText,
+                for: recording.url,
+                recordingName: recording.name,
+                recordingDate: recording.date
+            )
+            
+            await MainActor.run {
+                isRegenerating = false
+                // Dismiss the current view and show the new summary
+                dismiss()
+                // The parent view will automatically show the updated summary
+            }
+            
+        } catch {
+            await MainActor.run {
+                isRegenerating = false
+                regenerationError = "Failed to regenerate summary: \(error.localizedDescription)"
+                showingRegenerationAlert = true
+            }
         }
     }
     

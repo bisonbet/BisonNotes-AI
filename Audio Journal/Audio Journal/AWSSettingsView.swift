@@ -39,7 +39,7 @@ struct AWSSettingsView: View {
                     
                     if enableAWSTranscribe {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("AWS Transcribe provides high-quality transcription for large audio files with automatic speaker diarization and better accuracy than local transcription.")
+                            Text("AWS Transcribe provides high-quality transcription for large audio files with better accuracy than local transcription.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }

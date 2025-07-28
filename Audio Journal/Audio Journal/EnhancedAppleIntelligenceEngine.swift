@@ -78,6 +78,20 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         let contentType = try await classifyContent(text)
         print("🏷️ Content classified as: \(contentType.rawValue)")
         
+        // Check if text needs chunking based on token count
+        let tokenCount = TokenManager.getTokenCount(text)
+        print("📊 Text token count: \(tokenCount)")
+        
+        if TokenManager.needsChunking(text) {
+            print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+            return try await processChunkedText(text, contentType: contentType)
+        } else {
+            print("📝 Processing single chunk (\(tokenCount) tokens)")
+            return try await processSingleChunk(text, contentType: contentType)
+        }
+    }
+    
+    private func processSingleChunk(_ text: String, contentType: ContentType) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
         // Always process sequentially: Summary first, then extract tasks/reminders
         // This ensures the AI has full context when generating the summary
         print("📊 Step 1: Generating contextual summary...")
@@ -93,6 +107,93 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         print("✅ Found \(reminders.count) reminders")
         
         return (summary, tasks, reminders, contentType)
+    }
+    
+    private func processChunkedText(_ text: String, contentType: ContentType) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+        let startTime = Date()
+        
+        // Split text into chunks
+        let chunks = TokenManager.chunkText(text)
+        print("📦 Split text into \(chunks.count) chunks")
+        
+        // Process each chunk
+        var allSummaries: [String] = []
+        var allTasks: [TaskItem] = []
+        var allReminders: [ReminderItem] = []
+        
+        for (index, chunk) in chunks.enumerated() {
+            print("🔄 Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+            
+            do {
+                let chunkResult = try await processSingleChunk(chunk, contentType: contentType)
+                allSummaries.append(chunkResult.summary)
+                allTasks.append(contentsOf: chunkResult.tasks)
+                allReminders.append(contentsOf: chunkResult.reminders)
+                
+            } catch {
+                print("❌ Failed to process chunk \(index + 1): \(error)")
+                throw error
+            }
+        }
+        
+        // Combine results
+        let combinedSummary = TokenManager.combineSummaries(allSummaries, contentType: contentType)
+        
+        // Deduplicate tasks and reminders
+        let uniqueTasks = deduplicateTasks(allTasks)
+        let uniqueReminders = deduplicateReminders(allReminders)
+        
+        let processingTime = Date().timeIntervalSince(startTime)
+        print("✅ Chunked processing completed in \(String(format: "%.2f", processingTime))s")
+        print("📊 Final summary: \(combinedSummary.count) characters")
+        print("📋 Final tasks: \(uniqueTasks.count)")
+        print("🔔 Final reminders: \(uniqueReminders.count)")
+        
+        return (combinedSummary, uniqueTasks, uniqueReminders, contentType)
+    }
+    
+    private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
+        var uniqueTasks: [TaskItem] = []
+        
+        for task in tasks {
+            let isDuplicate = uniqueTasks.contains { existingTask in
+                let similarity = calculateTextSimilarity(task.text, existingTask.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueTasks.append(task)
+            }
+        }
+        
+        return Array(uniqueTasks.prefix(15)) // Limit to 15 tasks
+    }
+    
+    private func deduplicateReminders(_ reminders: [ReminderItem]) -> [ReminderItem] {
+        var uniqueReminders: [ReminderItem] = []
+        
+        for reminder in reminders {
+            let isDuplicate = uniqueReminders.contains { existingReminder in
+                let similarity = calculateTextSimilarity(reminder.text, existingReminder.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueReminders.append(reminder)
+            }
+        }
+        
+        return Array(uniqueReminders.prefix(15)) // Limit to 15 reminders
+    }
+    
+    private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
+        let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
+        let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
+        
+        let intersection = words1.intersection(words2)
+        let union = words1.union(words2)
+        
+        return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
     }
     
     private func isValidTranscriptContent(_ text: String) -> Bool {
@@ -117,7 +218,7 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
             "no audio detected",
             "silence detected",
             "aws transcription coming soon",
-            "whisper-based diarization coming soon"
+            "whisper-based transcription coming soon"
         ]
         
         for pattern in placeholderPatterns {

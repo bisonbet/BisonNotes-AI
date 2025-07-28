@@ -44,16 +44,18 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         case .notDetermined:
             // Only request if we haven't already requested
             if locationStatus == .notDetermined {
-                // Use a small delay to avoid UI unresponsiveness
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                // Move authorization request to background queue to avoid UI unresponsiveness
+                DispatchQueue.global(qos: .userInitiated).async {
                     self.locationManager.requestWhenInUseAuthorization()
                 }
             }
         case .denied, .restricted:
             locationError = "Location access denied. Please enable in Settings."
         case .authorizedWhenInUse, .authorizedAlways:
-            // Already authorized, start location updates
-            startLocationUpdates()
+            // Already authorized, start location updates on background queue
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.startLocationUpdates()
+            }
         @unknown default:
             locationError = "Unknown authorization status"
         }
@@ -68,10 +70,14 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         switch locationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
             // Try to get a one-time location first, then start continuous updates
-            locationManager.requestLocation()
-            locationManager.startUpdatingLocation()
-            isLocationEnabled = true
-            locationError = nil
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.locationManager.requestLocation()
+                self.locationManager.startUpdatingLocation()
+                DispatchQueue.main.async {
+                    self.isLocationEnabled = true
+                    self.locationError = nil
+                }
+            }
         case .denied, .restricted:
             locationError = "Location access denied. Please enable in Settings."
         case .notDetermined:
@@ -99,8 +105,12 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         
         switch locationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
-            locationManager.requestLocation()
-            locationError = nil
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.locationManager.requestLocation()
+                DispatchQueue.main.async {
+                    self.locationError = nil
+                }
+            }
         case .denied, .restricted:
             locationError = "Location access denied. Please enable in Settings."
         case .notDetermined:

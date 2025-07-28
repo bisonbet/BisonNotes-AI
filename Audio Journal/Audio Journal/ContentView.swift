@@ -84,35 +84,12 @@ enum SummaryMethod: String, CaseIterable {
     }
 }
 
-enum DiarizationMethod: String, CaseIterable {
-    case basicPause = "Basic Pause Detection"
-    case awsTranscription = "External AWS Transcription"
-    case whisperBased = "Whisper-Based"
-    
-    var description: String {
-        switch self {
-        case .basicPause:
-            return "Uses longer pause thresholds and substantial text requirements to identify speaker changes"
-        case .awsTranscription:
-            return "Advanced speaker diarization using AWS Transcribe service (Coming Soon)"
-        case .whisperBased:
-            return "AI-powered speaker identification using Whisper models (Coming Soon)"
-        }
-    }
-    
-    var isAvailable: Bool {
-        switch self {
-        case .basicPause:
-            return true
-        case .awsTranscription, .whisperBased:
-            return false
-        }
-    }
-}
+
 
 enum TranscriptionEngine: String, CaseIterable {
     case appleIntelligence = "Apple Intelligence (Limited)"
     case awsTranscribe = "AWS Transcribe"
+    case whisper = "Whisper (Local Server)"
     case openAIChatGPT = "OpenAI (ChatGPT)"
     case openAIAPICompatible = "OpenAI API Compatible"
     
@@ -121,7 +98,9 @@ enum TranscriptionEngine: String, CaseIterable {
         case .appleIntelligence:
             return "Uses Apple's built-in Speech framework for local transcription with 1-minute limit per request"
         case .awsTranscribe:
-            return "Cloud-based transcription service with support for long audio files and speaker diarization"
+            return "Cloud-based transcription service with support for long audio files"
+        case .whisper:
+            return "High-quality transcription using OpenAI's Whisper model via REST API on your local server"
         case .openAIChatGPT:
             return "Advanced AI transcription using OpenAI's Whisper model via ChatGPT API (Coming Soon)"
         case .openAIAPICompatible:
@@ -131,7 +110,7 @@ enum TranscriptionEngine: String, CaseIterable {
     
     var isAvailable: Bool {
         switch self {
-        case .appleIntelligence, .awsTranscribe:
+        case .appleIntelligence, .awsTranscribe, .whisper:
             return true
         case .openAIChatGPT, .openAIAPICompatible:
             return false
@@ -142,7 +121,7 @@ enum TranscriptionEngine: String, CaseIterable {
         switch self {
         case .appleIntelligence:
             return false
-        case .awsTranscribe, .openAIChatGPT, .openAIAPICompatible:
+        case .awsTranscribe, .whisper, .openAIChatGPT, .openAIAPICompatible:
             return true
         }
     }
@@ -178,16 +157,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             }
         }
     }
-    @Published var isDiarizationEnabled: Bool = false {
-        didSet {
-            UserDefaults.standard.set(isDiarizationEnabled, forKey: "DiarizationEnabled")
-        }
-    }
-    @Published var selectedDiarizationMethod: DiarizationMethod = .basicPause {
-        didSet {
-            UserDefaults.standard.set(selectedDiarizationMethod.rawValue, forKey: "SelectedDiarizationMethod")
-        }
-    }
+
     @Published var selectedAIEngine: String = "Enhanced Apple Intelligence" {
         didSet {
             UserDefaults.standard.set(selectedAIEngine, forKey: "SelectedAIEngine")
@@ -230,12 +200,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         // Load location tracking preference (default to true)
         isLocationTrackingEnabled = UserDefaults.standard.object(forKey: "LocationTrackingEnabled") as? Bool ?? true
         
-        // Load diarization preferences (default to false)
-        isDiarizationEnabled = UserDefaults.standard.object(forKey: "DiarizationEnabled") as? Bool ?? false
-        if let diarizationMethodString = UserDefaults.standard.string(forKey: "SelectedDiarizationMethod"),
-           let diarizationMethod = DiarizationMethod(rawValue: diarizationMethodString) {
-            selectedDiarizationMethod = diarizationMethod
-        }
+
         
         // Load AI engine preference (default to Enhanced Apple Intelligence)
         selectedAIEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
@@ -587,6 +552,8 @@ struct ContentView: View {
 
 struct RecordingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
+    @StateObject private var importManager = FileImportManager()
+    @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
     @State private var showingRecordingsList = false
     
     var body: some View {
@@ -668,7 +635,14 @@ struct RecordingsView: View {
                         }
                         
                         Button(action: {
-                            showingRecordingsList = true
+                            // Directly trigger document picker for audio files
+                            documentPickerCoordinator.selectAudioFiles { urls in
+                                if !urls.isEmpty {
+                                    Task {
+                                        await importManager.importAudioFiles(from: urls)
+                                    }
+                                }
+                            }
                         }) {
                             HStack {
                                 Image(systemName: "plus.circle")
@@ -732,6 +706,9 @@ struct RecordingsView: View {
             .sheet(isPresented: $showingRecordingsList) {
                 RecordingsListView()
                     .environmentObject(recorderVM)
+            }
+            .sheet(isPresented: $documentPickerCoordinator.isShowingPicker) {
+                AudioDocumentPicker(isPresented: $documentPickerCoordinator.isShowingPicker, coordinator: documentPickerCoordinator)
             }
         }
     }
@@ -1429,7 +1406,7 @@ struct SettingsView: View {
                                     HStack {
                                         Image(systemName: "waveform")
                                             .foregroundColor(.purple)
-                                        Text("Configure transcription engines, speaker diarization, chunking, and processing options")
+                                        Text("Configure transcription engines, chunking, and processing options")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                     }
@@ -1457,27 +1434,7 @@ struct SettingsView: View {
                                     }
                                     .padding(.horizontal, 24)
                                     
-                                    // Show current diarization status
-                                    HStack {
-                                        Text("Diarization:")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                        Text(recorderVM.isDiarizationEnabled ? recorderVM.selectedDiarizationMethod.rawValue : "Disabled")
-                                            .font(.caption)
-                                            .fontWeight(.medium)
-                                            .foregroundColor(.primary)
-                                        
-                                        if recorderVM.isDiarizationEnabled && !recorderVM.selectedDiarizationMethod.isAvailable {
-                                            Text("(Coming Soon)")
-                                                .font(.caption)
-                                                .foregroundColor(.orange)
-                                                .padding(.horizontal, 4)
-                                                .padding(.vertical, 1)
-                                                .background(Color.orange.opacity(0.2))
-                                                .cornerRadius(3)
-                                        }
-                                    }
-                                    .padding(.horizontal, 24)
+
                                     
                                     Button(action: {
                                         showingTranscriptionSettings = true
@@ -1738,6 +1695,13 @@ struct TranscriptsView: View {
             } message: {
                 Text(completedTranscriptionText.isEmpty ? "A background transcription has completed. The transcript is now available for editing." : completedTranscriptionText)
             }
+            .alert("Whisper Fallback", isPresented: $enhancedTranscriptionManager.showingWhisperFallbackAlert) {
+                Button("OK") {
+                    enhancedTranscriptionManager.showingWhisperFallbackAlert = false
+                }
+            } message: {
+                Text(enhancedTranscriptionManager.whisperFallbackMessage)
+            }
             
         }
         
@@ -1824,13 +1788,12 @@ struct TranscriptsView: View {
                     
                     if result.success && !result.fullText.isEmpty {
                         print("✅ Creating transcript data...")
-                        // Create diarized transcript segments
-                        let segments = self.createDiarizedSegments(from: result.segments)
+                        // Create transcript data
                         let transcriptData = TranscriptData(
                             recordingURL: recording.url,
                             recordingName: recording.name,
                             recordingDate: recording.date,
-                            segments: segments
+                            segments: result.segments
                         )
                         
                         // Save the transcript
@@ -1894,12 +1857,11 @@ struct TranscriptsView: View {
                         return recording.url == jobInfo.recordingURL
                     }) {
                         // Create transcript data and save it
-                        let segments = self.createDiarizedSegments(from: result.segments)
                         let transcriptData = TranscriptData(
                             recordingURL: recording.url,
                             recordingName: recording.name,
                             recordingDate: recording.date,
-                            segments: segments
+                            segments: result.segments
                         )
                         
                         self.transcriptManager.saveTranscript(transcriptData)
@@ -1920,94 +1882,7 @@ struct TranscriptsView: View {
             }
         }
         
-        private func createDiarizedSegments(from segments: [TranscriptSegment]) -> [TranscriptSegment] {
-            if segments.isEmpty {
-                return []
-            }
-            
-            // Check if diarization is enabled and use the selected method
-            guard recorderVM.isDiarizationEnabled else {
-                // Return segments as-is for single speaker
-                return segments
-            }
-            
-            // Apply diarization based on selected method
-            switch recorderVM.selectedDiarizationMethod {
-            case .basicPause:
-                return createBasicPauseDiarization(from: segments)
-            case .awsTranscription:
-                // Placeholder for future AWS implementation
-                return segments.map { segment in
-                    TranscriptSegment(
-                        speaker: segment.speaker,
-                        text: segment.text + "\n\n[AWS Transcription coming soon]",
-                        startTime: segment.startTime,
-                        endTime: segment.endTime
-                    )
-                }
-            case .whisperBased:
-                // Placeholder for future Whisper implementation
-                return segments.map { segment in
-                    TranscriptSegment(
-                        speaker: segment.speaker,
-                        text: segment.text + "\n\n[Whisper-based diarization coming soon]",
-                        startTime: segment.startTime,
-                        endTime: segment.endTime
-                    )
-                }
-            }
-        }
-        
-        private func createBasicPauseDiarization(from segments: [TranscriptSegment]) -> [TranscriptSegment] {
-            var diarizedSegments: [TranscriptSegment] = []
-            var currentSpeaker = "Speaker 1"
-            var currentText = ""
-            var currentStartTime: TimeInterval = 0
-            var speakerCount = 1
-            var lastSegmentEndTime: TimeInterval = 0
-            
-            for segment in segments {
-                let pauseDuration = segment.startTime - lastSegmentEndTime
-                
-                // Conservative diarization logic - only change speaker on very long pauses
-                let shouldChangeSpeaker = pauseDuration > 8.0 && // Very long pause threshold
-                                        !currentText.isEmpty && 
-                                        currentText.count > 100 && // Substantial text before switching
-                                        speakerCount < 3 // Limit to maximum 3 speakers
-                
-                if shouldChangeSpeaker {
-                    diarizedSegments.append(TranscriptSegment(
-                        speaker: currentSpeaker,
-                        text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
-                        startTime: currentStartTime,
-                        endTime: segment.startTime
-                    ))
-                    
-                    speakerCount += 1
-                    currentSpeaker = "Speaker \(speakerCount)"
-                    currentText = segment.text
-                    currentStartTime = segment.startTime
-                } else {
-                    if currentText.isEmpty {
-                        currentStartTime = segment.startTime
-                    }
-                    currentText += " " + segment.text
-                }
-                
-                lastSegmentEndTime = segment.endTime
-            }
-            
-            if !currentText.isEmpty {
-                diarizedSegments.append(TranscriptSegment(
-                    speaker: currentSpeaker,
-                    text: currentText.trimmingCharacters(in: .whitespacesAndNewlines),
-                    startTime: currentStartTime,
-                    endTime: segments.last?.endTime ?? 0
-                ))
-            }
-            
-            return diarizedSegments
-        }
+
     }
     
     struct EditableTranscriptView: View {

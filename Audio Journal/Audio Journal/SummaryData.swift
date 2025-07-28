@@ -645,6 +645,24 @@ class SummaryManager: ObservableObject {
         // Try different strategies to generate a good name from the full transcript
         let maxLength = 35
         
+        // Strategy 0: Use AI-generated title if available (for Ollama and other AI engines)
+        if let aiGeneratedTitle = UserDefaults.standard.string(forKey: "lastGeneratedTitle"),
+           !aiGeneratedTitle.isEmpty,
+           aiGeneratedTitle != "Untitled Conversation" {
+            // Clean up the title and ensure it's within length limits
+            let cleanedTitle = aiGeneratedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanedTitle.count <= maxLength {
+                // Clear the stored title after using it
+                UserDefaults.standard.removeObject(forKey: "lastGeneratedTitle")
+                return cleanedTitle
+            } else {
+                // Truncate if too long
+                let truncatedTitle = String(cleanedTitle.prefix(maxLength)).trimmingCharacters(in: .whitespacesAndNewlines)
+                UserDefaults.standard.removeObject(forKey: "lastGeneratedTitle")
+                return truncatedTitle
+            }
+        }
+        
         // Strategy 1: Use the first task if it's high priority
         if let highPriorityTask = tasks.first(where: { $0.priority == .high }) {
             let taskName = generateNameFromTask(highPriorityTask, maxLength: maxLength)

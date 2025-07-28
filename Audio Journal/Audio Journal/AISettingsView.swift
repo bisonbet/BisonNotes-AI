@@ -107,6 +107,13 @@ struct AISettingsView: View {
             }
             .navigationTitle("AI Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
         }
         .alert("Engine Change", isPresented: $showingEngineChangePrompt) {
             Button("Skip") { /* Do nothing, just dismiss */ }

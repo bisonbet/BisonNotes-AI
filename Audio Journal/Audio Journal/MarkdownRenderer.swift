@@ -40,6 +40,19 @@ struct MarkdownRenderer {
         }
     }
     
+    /// Renders markdown text with enhanced formatting support
+    static func renderEnhancedMarkdown(_ markdown: String) -> AttributedString {
+        let processedMarkdown = preprocessMarkdown(markdown)
+        
+        do {
+            let attributedString = try AttributedString(markdown: processedMarkdown)
+            return attributedString
+        } catch {
+            // Fallback to plain text if markdown parsing fails
+            return AttributedString(markdown)
+        }
+    }
+    
     /// Cleans markdown text by removing unwanted formatting
     static func cleanMarkdown(_ markdown: String) -> String {
         var cleaned = markdown
@@ -62,6 +75,59 @@ struct MarkdownRenderer {
         // Apply custom styling based on the style configuration
         // This can be expanded to support different themes
         return attributedString
+    }
+    
+    private static func preprocessMarkdown(_ markdown: String) -> String {
+        var processed = markdown
+        
+        // Remove any leading/trailing whitespace
+        processed = processed.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Ensure proper spacing for bullet points
+        processed = processed.replacingOccurrences(of: "\n- ", with: "\n\n- ")
+        processed = processed.replacingOccurrences(of: "\n* ", with: "\n\n* ")
+        processed = processed.replacingOccurrences(of: "\n+ ", with: "\n\n+ ")
+        
+        // Ensure proper spacing for numbered lists
+        processed = processed.replacingOccurrences(of: "\n\\d+\\. ", with: "\n\n$0", options: .regularExpression)
+        
+        // Ensure proper spacing for headers
+        processed = processed.replacingOccurrences(of: "\n#", with: "\n\n#")
+        processed = processed.replacingOccurrences(of: "\n##", with: "\n\n##")
+        processed = processed.replacingOccurrences(of: "\n###", with: "\n\n###")
+        
+        // Fix bold formatting - ensure proper spacing around **text**
+        processed = processed.replacingOccurrences(of: "\\*\\*\\s+", with: "**", options: .regularExpression)
+        processed = processed.replacingOccurrences(of: "\\s+\\*\\*", with: "**", options: .regularExpression)
+        
+        // Fix italic formatting - ensure proper spacing around *text*
+        processed = processed.replacingOccurrences(of: "\\*\\s+", with: "*", options: .regularExpression)
+        processed = processed.replacingOccurrences(of: "\\s+\\*", with: "*", options: .regularExpression)
+        
+        // Ensure bullet points are properly formatted with single space
+        processed = processed.replacingOccurrences(of: "^-\\s+", with: "- ", options: .regularExpression)
+        processed = processed.replacingOccurrences(of: "^\\*\\s+", with: "* ", options: .regularExpression)
+        processed = processed.replacingOccurrences(of: "^\\+\\s+", with: "+ ", options: .regularExpression)
+        
+        // Fix common issues with bullet points not being recognized
+        processed = processed.replacingOccurrences(of: "^-\\s*", with: "- ", options: .regularExpression)
+        processed = processed.replacingOccurrences(of: "^\\*\\s*", with: "* ", options: .regularExpression)
+        processed = processed.replacingOccurrences(of: "^\\+\\s*", with: "+ ", options: .regularExpression)
+        
+        // Ensure proper spacing around bold and italic text
+        processed = processed.replacingOccurrences(of: "\\*\\*(.*?)\\*\\*", with: " **$1** ", options: .regularExpression)
+        processed = processed.replacingOccurrences(of: "\\*(.*?)\\*", with: " *$1* ", options: .regularExpression)
+        
+        // Clean up excessive spaces
+        processed = processed.replacingOccurrences(of: " +", with: " ", options: .regularExpression)
+        
+        // Ensure proper line breaks
+        processed = processed.replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+        
+        // Remove any trailing whitespace
+        processed = processed.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        return processed
     }
 }
 
@@ -94,8 +160,18 @@ extension View {
     /// Displays markdown text with proper rendering
     func markdownText(_ markdown: String, style: MarkdownStyle = .default) -> some View {
         let cleanedMarkdown = MarkdownRenderer.cleanMarkdown(markdown)
-        let attributedString = MarkdownRenderer.renderMarkdown(cleanedMarkdown, style: style)
+        let attributedString = MarkdownRenderer.renderEnhancedMarkdown(cleanedMarkdown)
         
         return Text(attributedString)
+            .textSelection(.enabled)
+    }
+    
+    /// Displays markdown text with enhanced formatting
+    func enhancedMarkdownText(_ markdown: String) -> some View {
+        let cleanedMarkdown = MarkdownRenderer.cleanMarkdown(markdown)
+        let attributedString = MarkdownRenderer.renderEnhancedMarkdown(cleanedMarkdown)
+        
+        return Text(attributedString)
+            .textSelection(.enabled)
     }
 } 

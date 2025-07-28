@@ -54,7 +54,7 @@ class PerformanceOptimizer: ObservableObject {
     
     // MARK: - Chunked Processing
     
-    func processLargeTranscript(_ text: String, using engine: SummarizationEngine, chunkSize: Int = 2000) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    func processLargeTranscript(_ text: String, using engine: SummarizationEngine) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
         
         let startTime = Date()
         processingStartTime = startTime
@@ -74,10 +74,11 @@ class PerformanceOptimizer: ObservableObject {
             return cachedResult
         }
         
-        // Validate input size
-        let wordCount = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
+        // Check if text needs chunking based on token count
+        let tokenCount = TokenManager.getTokenCount(text)
+        logger.info("Text token count: \(tokenCount)")
         
-        if wordCount <= chunkSize {
+        if !TokenManager.needsChunking(text) {
             // Process normally for small content
             let result = try await engine.processComplete(text: text)
             cacheResult(key: cacheKey, result: result, cost: text.count)
@@ -85,9 +86,9 @@ class PerformanceOptimizer: ObservableObject {
         }
         
         // Chunk processing for large content
-        logger.info("Processing large transcript with chunked approach: \(wordCount) words")
+        logger.info("Processing large transcript with token-based chunking: \(tokenCount) tokens")
         
-        let chunks = createTextChunks(text, maxWords: chunkSize)
+        let chunks = TokenManager.chunkText(text)
         var allTasks: [TaskItem] = []
         var allReminders: [ReminderItem] = []
         var summaryParts: [String] = []
@@ -117,8 +118,8 @@ class PerformanceOptimizer: ObservableObject {
         
         processingProgress = 0.9 // 90% - consolidating results
         
-        // Consolidate results
-        let finalSummary = consolidateSummaryParts(summaryParts)
+        // Consolidate results using TokenManager
+        let finalSummary = TokenManager.combineSummaries(summaryParts, contentType: determinePrimaryContentType(contentTypes))
         let finalTasks = deduplicateAndLimitTasks(allTasks, limit: 15)
         let finalReminders = deduplicateAndLimitReminders(allReminders, limit: 15)
         let finalContentType = determinePrimaryContentType(contentTypes)
@@ -190,36 +191,7 @@ class PerformanceOptimizer: ObservableObject {
     
     // MARK: - Private Helper Methods
     
-    private func createTextChunks(_ text: String, maxWords: Int) -> [String] {
-        let sentences = text.components(separatedBy: CharacterSet(charactersIn: ".!?"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        
-        var chunks: [String] = []
-        var currentChunk: [String] = []
-        var currentWordCount = 0
-        
-        for sentence in sentences {
-            let sentenceWordCount = sentence.components(separatedBy: .whitespacesAndNewlines).count
-            
-            if currentWordCount + sentenceWordCount > maxWords && !currentChunk.isEmpty {
-                // Start new chunk
-                chunks.append(currentChunk.joined(separator: ". ") + ".")
-                currentChunk = [sentence]
-                currentWordCount = sentenceWordCount
-            } else {
-                currentChunk.append(sentence)
-                currentWordCount += sentenceWordCount
-            }
-        }
-        
-        // Add remaining chunk
-        if !currentChunk.isEmpty {
-            chunks.append(currentChunk.joined(separator: ". ") + ".")
-        }
-        
-        return chunks
-    }
+
     
     private func processChunkWithRetry(_ chunk: String, using engine: SummarizationEngine, retryCount: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
         
@@ -243,29 +215,7 @@ class PerformanceOptimizer: ObservableObject {
         throw lastError ?? SummarizationError.processingFailed(reason: "All retry attempts failed")
     }
     
-    private func consolidateSummaryParts(_ parts: [String]) -> String {
-        guard !parts.isEmpty else { return "" }
-        
-        if parts.count == 1 {
-            return parts[0]
-        }
-        
-        // Combine and deduplicate summary parts
-        let combinedText = parts.joined(separator: " ")
-        let sentences = combinedText.components(separatedBy: CharacterSet(charactersIn: ".!?"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        
-        // Remove duplicate sentences
-        let uniqueSentences = Array(NSOrderedSet(array: sentences.map { $0.lowercased() }))
-            .compactMap { lowercased in
-                sentences.first { $0.lowercased() == lowercased as? String }
-            }
-        
-        // Limit to reasonable length
-        let limitedSentences = Array(uniqueSentences.prefix(5))
-        return limitedSentences.joined(separator: ". ") + "."
-    }
+
     
     private func deduplicateAndLimitTasks(_ tasks: [TaskItem], limit: Int) -> [TaskItem] {
         // Remove duplicates based on text similarity

@@ -120,15 +120,11 @@ class WhisperBasedEngine: SummarizationEngine {
     // Configuration for future implementation
     struct WhisperConfig {
         let modelSize: WhisperModelSize
-        let enableSpeakerDiarization: Bool
-        let maxSpeakers: Int
         let languageCode: String
         let enableTimestamps: Bool
         
         static let `default` = WhisperConfig(
             modelSize: .large,
-            enableSpeakerDiarization: true,
-            maxSpeakers: 5,
             languageCode: "en",
             enableTimestamps: true
         )
@@ -194,23 +190,7 @@ class WhisperBasedEngine: SummarizationEngine {
         throw SummarizationError.aiServiceUnavailable(service: "Model download not implemented")
     }
     
-    private func transcribeWithSpeakerDiarization(audioURL: URL) async throws -> DiarizedTranscript {
-        // Future implementation:
-        // 1. Load audio file
-        // 2. Run Whisper transcription
-        // 3. Apply speaker diarization
-        // 4. Return structured transcript with speaker labels
-        throw SummarizationError.aiServiceUnavailable(service: name)
-    }
-    
-    private func enhancedSpeakerIdentification(transcript: DiarizedTranscript) async throws -> DiarizedTranscript {
-        // Future implementation:
-        // 1. Analyze voice characteristics
-        // 2. Apply speaker clustering
-        // 3. Identify consistent speakers across segments
-        // 4. Apply speaker labels based on voice patterns
-        throw SummarizationError.aiServiceUnavailable(service: name)
-    }
+
 }
 
 // MARK: - Supporting Structures for Future Implementation
@@ -383,14 +363,126 @@ class LocalLLMEngine: SummarizationEngine {
             throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server. Please check your server URL and port settings.")
         }
         
+        // Check if text needs chunking based on token count
+        let tokenCount = TokenManager.getTokenCount(text)
+        print("📊 Text token count: \(tokenCount)")
+        
+        if TokenManager.needsChunking(text) {
+            print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+            return try await processChunkedText(text, service: service)
+        } else {
+            print("📝 Processing single chunk (\(tokenCount) tokens)")
+            return try await processSingleChunk(text, service: service)
+        }
+    }
+    
+    private func processSingleChunk(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
         async let summaryTask = service.generateSummary(from: text)
         async let extractionTask = service.extractTasksAndReminders(from: text)
+        async let titleTask = service.generateTitle(from: text)
         
         let summary = try await summaryTask
         let extraction = try await extractionTask
+        let generatedTitle = try await titleTask
         let contentType = try await classifyContent(text)
         
+        // Store the AI-generated title for use in recording name generation
+        UserDefaults.standard.set(generatedTitle, forKey: "lastGeneratedTitle")
+        
         return (summary, extraction.tasks, extraction.reminders, contentType)
+    }
+    
+    private func processChunkedText(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+        let startTime = Date()
+        
+        // Split text into chunks
+        let chunks = TokenManager.chunkText(text)
+        print("📦 Split text into \(chunks.count) chunks")
+        
+        // Process each chunk
+        var allSummaries: [String] = []
+        var allTasks: [TaskItem] = []
+        var allReminders: [ReminderItem] = []
+        var contentType: ContentType = .general
+        
+        for (index, chunk) in chunks.enumerated() {
+            print("🔄 Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+            
+            do {
+                let chunkResult = try await processSingleChunk(chunk, service: service)
+                allSummaries.append(chunkResult.summary)
+                allTasks.append(contentsOf: chunkResult.tasks)
+                allReminders.append(contentsOf: chunkResult.reminders)
+                
+                // Use the first chunk's content type
+                if index == 0 {
+                    contentType = chunkResult.contentType
+                }
+                
+            } catch {
+                print("❌ Failed to process chunk \(index + 1): \(error)")
+                throw error
+            }
+        }
+        
+        // Combine results
+        let combinedSummary = TokenManager.combineSummaries(allSummaries, contentType: contentType)
+        
+        // Deduplicate tasks and reminders
+        let uniqueTasks = deduplicateTasks(allTasks)
+        let uniqueReminders = deduplicateReminders(allReminders)
+        
+        let processingTime = Date().timeIntervalSince(startTime)
+        print("✅ Chunked processing completed in \(String(format: "%.2f", processingTime))s")
+        print("📊 Final summary: \(combinedSummary.count) characters")
+        print("📋 Final tasks: \(uniqueTasks.count)")
+        print("🔔 Final reminders: \(uniqueReminders.count)")
+        
+        return (combinedSummary, uniqueTasks, uniqueReminders, contentType)
+    }
+    
+    private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
+        var uniqueTasks: [TaskItem] = []
+        
+        for task in tasks {
+            let isDuplicate = uniqueTasks.contains { existingTask in
+                let similarity = calculateTextSimilarity(task.text, existingTask.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueTasks.append(task)
+            }
+        }
+        
+        return Array(uniqueTasks.prefix(15)) // Limit to 15 tasks
+    }
+    
+    private func deduplicateReminders(_ reminders: [ReminderItem]) -> [ReminderItem] {
+        var uniqueReminders: [ReminderItem] = []
+        
+        for reminder in reminders {
+            let isDuplicate = uniqueReminders.contains { existingReminder in
+                let similarity = calculateTextSimilarity(reminder.text, existingReminder.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueReminders.append(reminder)
+            }
+        }
+        
+        return Array(uniqueReminders.prefix(15)) // Limit to 15 reminders
+    }
+    
+    private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
+        let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
+        let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
+        
+        let intersection = words1.intersection(words2)
+        let union = words1.union(words2)
+        
+        return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
     }
     
     // MARK: - Configuration Management
@@ -475,7 +567,7 @@ enum AIEngineType: String, CaseIterable {
         case .awsBedrock:
             return "Cloud-based AI using AWS Bedrock foundation models"
         case .whisperBased:
-            return "Local AI with advanced speaker diarization using Whisper"
+            return "Local AI with advanced transcription using Whisper"
         case .localLLM:
             return "Privacy-focused local language model processing"
         }

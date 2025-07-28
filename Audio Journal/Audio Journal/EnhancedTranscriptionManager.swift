@@ -68,13 +68,9 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     private var speechRecognizer: SFSpeechRecognizer?
     private var currentTask: SFSpeechRecognitionTask?
     
-    // Configuration
+    // Configuration - Always use enhanced transcription
     private var enableEnhancedTranscription: Bool {
-        // Default to true if not set
-        if UserDefaults.standard.object(forKey: "enableEnhancedTranscription") == nil {
-            UserDefaults.standard.set(true, forKey: "enableEnhancedTranscription")
-        }
-        return UserDefaults.standard.bool(forKey: "enableEnhancedTranscription")
+        return true
     }
     
     private var maxChunkDuration: TimeInterval {
@@ -114,6 +110,70 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         )
     }
     
+    // Whisper Configuration
+    private var whisperConfig: WhisperConfig? {
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableWhisper")
+        let serverURL = UserDefaults.standard.string(forKey: "whisperServerURL") ?? "http://localhost"
+        let port = UserDefaults.standard.integer(forKey: "whisperPort")
+        
+        print("🔍 Whisper config debug - enabled: \(isEnabled), serverURL: \(serverURL), port: \(port)")
+        
+        guard isEnabled else { 
+            print("⚠️ Whisper is not enabled")
+            return nil 
+        }
+        
+        // Use default port if not set (UserDefaults.integer returns 0 if key doesn't exist)
+        let effectivePort = port > 0 ? port : 9000
+        
+        let config = WhisperConfig(
+            serverURL: serverURL,
+            port: effectivePort
+        )
+        
+        print("✅ Whisper config created: \(config.baseURL)")
+        return config
+    }
+    
+    // MARK: - Whisper Validation
+    
+    func isWhisperProperlyConfigured() -> Bool {
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableWhisper")
+        let serverURL = UserDefaults.standard.string(forKey: "whisperServerURL")
+        let port = UserDefaults.standard.integer(forKey: "whisperPort")
+        
+        print("🔍 Whisper validation debug - enabled: \(isEnabled), serverURL: \(serverURL ?? "nil"), port: \(port)")
+        
+        guard isEnabled else {
+            print("⚠️ Whisper is not enabled in settings")
+            return false
+        }
+        
+        guard let serverURL = serverURL, !serverURL.isEmpty else {
+            print("⚠️ Whisper server URL is not configured")
+            return false
+        }
+        
+        // Use default port if not set (UserDefaults.integer returns 0 if key doesn't exist)
+        let effectivePort = port > 0 ? port : 9000
+        
+        print("✅ Whisper configuration appears valid (effective port: \(effectivePort))")
+        return true
+    }
+    
+    func validateWhisperService() async -> Bool {
+        guard isWhisperProperlyConfigured() else {
+            return false
+        }
+        
+        guard let config = whisperConfig else {
+            return false
+        }
+        
+        let whisperService = WhisperService(config: config)
+        return await whisperService.testConnection()
+    }
+    
     // Job tracking for async transcriptions
     private var pendingJobNames: String = ""
     private var pendingJobs: [TranscriptionJobInfo] = []
@@ -124,6 +184,10 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     
     // Callback for when transcriptions complete
     var onTranscriptionCompleted: ((TranscriptionResult, TranscriptionJobInfo) -> Void)?
+    
+    // Alert states for user notifications
+    @Published var showingWhisperFallbackAlert = false
+    @Published var whisperFallbackMessage = ""
     
     // MARK: - Initialization
     
@@ -200,6 +264,32 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         case .appleIntelligence:
             switchToAppleTranscription()
             return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+            
+        case .whisper:
+            switchToWhisperTranscription()
+            
+            // Validate Whisper configuration and availability
+            if !isWhisperProperlyConfigured() {
+                print("⚠️ Whisper not properly configured, falling back to Apple Intelligence")
+                switchToAppleTranscription()
+                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+            }
+            
+            let isWhisperAvailable = await validateWhisperService()
+            if isWhisperAvailable {
+                print("🎤 Using Whisper for transcription")
+                if let config = whisperConfig {
+                    return try await transcribeWithWhisper(url: url, config: config)
+                } else {
+                    print("❌ Whisper config is nil despite validation passing")
+                    switchToAppleTranscription()
+                    return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+                }
+            } else {
+                print("⚠️ Whisper service not available, falling back to Apple Intelligence")
+                switchToAppleTranscription()
+                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+            }
             
         case .openAIChatGPT, .openAIAPICompatible:
             // These are not implemented yet, fall back to Apple Intelligence
@@ -765,6 +855,45 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         return completedResults
     }
     
+    // MARK: - Whisper Transcription
+    
+    private func transcribeWithWhisper(url: URL, config: WhisperConfig) async throws -> TranscriptionResult {
+        print("🎤 Starting Whisper transcription...")
+        
+        let whisperService = WhisperService(config: config)
+        
+        do {
+            // Test connection first
+            print("🔌 Testing Whisper connection...")
+            let isConnected = await whisperService.testConnection()
+            guard isConnected else {
+                print("❌ Whisper connection failed")
+                throw TranscriptionError.whisperConnectionFailed
+            }
+            
+            print("✅ Whisper service connected successfully")
+            
+            // Get audio duration to determine if we need chunking
+            let duration = try await getAudioDuration(url: url)
+            
+            let result: TranscriptionResult
+            if duration > maxChunkDuration && enableEnhancedTranscription {
+                print("🔀 Using chunked Whisper transcription for large file")
+                result = try await whisperService.transcribeAudioInChunks(url: url, chunkDuration: maxChunkDuration)
+            } else {
+                print("🎤 Using standard Whisper transcription")
+                result = try await whisperService.transcribeAudio(url: url)
+            }
+            
+            print("✅ Whisper transcription completed successfully")
+            return result
+            
+        } catch {
+            print("❌ Whisper transcription failed: \(error)")
+            throw TranscriptionError.whisperTranscriptionFailed(error)
+        }
+    }
+    
     // MARK: - Job Tracking Helpers
     
     /// Update pending jobs when recording files are renamed
@@ -911,6 +1040,25 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         }
     }
     
+    func switchToWhisperTranscription() {
+        print("🔄 Switching to Whisper transcription...")
+        // Whisper doesn't use background checking like AWS, so we stop any existing background processes
+        stopBackgroundChecking()
+        
+        // Clear any pending AWS jobs since we're switching to Whisper
+        let pendingCount = getPendingJobNames().count
+        if pendingCount > 0 {
+            print("🧹 Clearing \(pendingCount) pending AWS transcription jobs")
+            clearAllPendingJobs()
+        }
+        
+        if whisperConfig != nil {
+            print("✅ Whisper transcription configured and ready")
+        } else {
+            print("⚠️ Whisper transcription selected but not configured")
+        }
+    }
+    
     /// Public method to update transcription engine and manage background processes
     func updateTranscriptionEngine(_ engine: TranscriptionEngine) {
         print("🔧 Updating transcription engine to: \(engine.rawValue)")
@@ -918,6 +1066,8 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         switch engine {
         case .awsTranscribe:
             switchToAWSTranscription()
+        case .whisper:
+            switchToWhisperTranscription()
         case .appleIntelligence, .openAIChatGPT, .openAIAPICompatible:
             switchToAppleTranscription()
         }
@@ -1068,6 +1218,8 @@ enum TranscriptionError: LocalizedError {
     case audioExtractionFailed
     case timeout
     case awsTranscriptionFailed(Error)
+    case whisperConnectionFailed
+    case whisperTranscriptionFailed(Error)
     
     var errorDescription: String? {
         switch self {
@@ -1087,6 +1239,10 @@ enum TranscriptionError: LocalizedError {
             return "Transcription timed out"
         case .awsTranscriptionFailed(let error):
             return "AWS Transcribe failed: \(error.localizedDescription)"
+        case .whisperConnectionFailed:
+            return "Failed to connect to Whisper service"
+        case .whisperTranscriptionFailed(let error):
+            return "Whisper transcription failed: \(error.localizedDescription)"
         }
     }
 }
