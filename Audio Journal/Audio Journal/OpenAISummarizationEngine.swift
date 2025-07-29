@@ -25,6 +25,8 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         
         // Check if OpenAI is enabled in settings
         let isEnabled = UserDefaults.standard.bool(forKey: "enableOpenAI")
+        let keyExists = UserDefaults.standard.object(forKey: "enableOpenAI") != nil
+        print("🔧 OpenAISummarizationEngine: Checking enableOpenAI setting - Value: \(isEnabled), Key exists: \(keyExists)")
         guard isEnabled else {
             print("❌ OpenAISummarizationEngine: OpenAI is not enabled in settings")
             return false
@@ -98,6 +100,23 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         }
     }
     
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        print("🤖 OpenAISummarizationEngine: Starting title extraction")
+        
+        updateConfiguration()
+        
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: "OpenAI service not properly configured")
+        }
+        
+        do {
+            return try await service.extractTitles(from: text)
+        } catch {
+            print("❌ OpenAISummarizationEngine: Title extraction failed: \(error)")
+            throw handleAPIError(error)
+        }
+    }
+    
     func classifyContent(_ text: String) async throws -> ContentType {
         print("🤖 OpenAISummarizationEngine: Starting content classification")
         
@@ -115,7 +134,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         }
     }
     
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         print("🤖 OpenAISummarizationEngine: Starting complete processing")
         
         updateConfiguration()
@@ -146,12 +165,12 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
     
     private func updateConfiguration() {
         let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
-        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt4oMini.rawValue
+        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt35Turbo.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAISummarizationBaseURL") ?? "https://api.openai.com/v1"
         let temperature = UserDefaults.standard.double(forKey: "openAISummarizationTemperature")
         let maxTokens = UserDefaults.standard.integer(forKey: "openAISummarizationMaxTokens")
         
-        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt4oMini
+        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt35Turbo
         
         let newConfig = OpenAISummarizationConfig(
             apiKey: apiKey,
@@ -173,7 +192,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
     
     // MARK: - Chunked Processing
     
-    private func processChunkedText(_ text: String, service: OpenAISummarizationService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    private func processChunkedText(_ text: String, service: OpenAISummarizationService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         let startTime = Date()
         
         // Split text into chunks
@@ -184,6 +203,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         var allSummaries: [String] = []
         var allTasks: [TaskItem] = []
         var allReminders: [ReminderItem] = []
+        var allTitles: [TitleItem] = []
         var contentType: ContentType = .general
         
         for (index, chunk) in chunks.enumerated() {
@@ -194,6 +214,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
                 allSummaries.append(chunkResult.summary)
                 allTasks.append(contentsOf: chunkResult.tasks)
                 allReminders.append(contentsOf: chunkResult.reminders)
+                allTitles.append(contentsOf: chunkResult.titles)
                 
                 // Use the first chunk's content type
                 if index == 0 {
@@ -209,17 +230,19 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         // Combine results
         let combinedSummary = TokenManager.combineSummaries(allSummaries, contentType: contentType)
         
-        // Deduplicate tasks and reminders
+        // Deduplicate tasks, reminders, and titles
         let uniqueTasks = deduplicateTasks(allTasks)
         let uniqueReminders = deduplicateReminders(allReminders)
+        let uniqueTitles = deduplicateTitles(allTitles)
         
         let processingTime = Date().timeIntervalSince(startTime)
         print("✅ Chunked processing completed in \(String(format: "%.2f", processingTime))s")
         print("📊 Final summary: \(combinedSummary.count) characters")
         print("📋 Final tasks: \(uniqueTasks.count)")
         print("🔔 Final reminders: \(uniqueReminders.count)")
+        print("📝 Final titles: \(uniqueTitles.count)")
         
-        return (combinedSummary, uniqueTasks, uniqueReminders, contentType)
+        return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
     }
     
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
@@ -254,6 +277,23 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         }
         
         return Array(uniqueReminders.prefix(15)) // Limit to 15 reminders
+    }
+    
+    private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
+        var uniqueTitles: [TitleItem] = []
+        
+        for title in titles {
+            let isDuplicate = uniqueTitles.contains { existingTitle in
+                let similarity = calculateTextSimilarity(title.text, existingTitle.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueTitles.append(title)
+            }
+        }
+        
+        return Array(uniqueTitles.prefix(5)) // Limit to 5 titles
     }
     
     private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {

@@ -6,7 +6,7 @@ class RecordingNameGenerator {
     
     // MARK: - Public Methods
     
-    static func generateRecordingNameFromTranscript(_ transcript: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem]) -> String {
+    static func generateRecordingNameFromTranscript(_ transcript: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) -> String {
         // Try different strategies to generate a good name from the full transcript
         let maxLength = 35
         
@@ -28,7 +28,15 @@ class RecordingNameGenerator {
             }
         }
         
-        // Strategy 1: Use the first task if it's high priority
+        // Strategy 1: Use the first high-confidence title
+        if let bestTitle = titles.first(where: { $0.confidence >= 0.8 }) {
+            let titleName = generateNameFromTitle(bestTitle, maxLength: maxLength)
+            if !titleName.isEmpty {
+                return titleName
+            }
+        }
+        
+        // Strategy 2: Use the first task if it's high priority
         if let highPriorityTask = tasks.first(where: { $0.priority == .high }) {
             let taskName = generateNameFromTask(highPriorityTask, maxLength: maxLength)
             if !taskName.isEmpty {
@@ -36,7 +44,7 @@ class RecordingNameGenerator {
             }
         }
         
-        // Strategy 2: Use the first urgent reminder
+        // Strategy 3: Use the first urgent reminder
         if let urgentReminder = reminders.first(where: { $0.urgency == .immediate || $0.urgency == .today }) {
             let reminderName = generateNameFromReminder(urgentReminder, maxLength: maxLength)
             if !reminderName.isEmpty {
@@ -44,13 +52,13 @@ class RecordingNameGenerator {
             }
         }
         
-        // Strategy 3: Extract key phrases from the full transcript
+        // Strategy 4: Extract key phrases from the full transcript
         let transcriptName = generateNameFromTranscript(transcript, contentType: contentType, maxLength: maxLength)
         if !transcriptName.isEmpty {
             return transcriptName
         }
         
-        // Strategy 4: Use content type with date
+        // Strategy 5: Use content type with date
         return generateFallbackName(contentType: contentType, maxLength: maxLength)
     }
     
@@ -288,6 +296,22 @@ class RecordingNameGenerator {
     }
     
     // MARK: - Helper Functions for Title Generation
+    
+    private static func generateNameFromTitle(_ title: TitleItem, maxLength: Int) -> String {
+        let words = title.text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        
+        // Take the first few meaningful words
+        let keyWords = words.prefix(4).map { $0.capitalized }
+        let name = keyWords.joined(separator: " ")
+        
+        if name.count <= maxLength {
+            return name
+        } else {
+            // Try with fewer words
+            let shortName = keyWords.prefix(2).joined(separator: " ")
+            return shortName.count <= maxLength ? shortName : String(shortName.prefix(maxLength))
+        }
+    }
     
     private static func extractKeyPhrasesFromTranscript(_ transcript: String, maxPhrases: Int) -> [String] {
         // Use ContentAnalyzer to extract key phrases

@@ -54,7 +54,7 @@ class PerformanceOptimizer: ObservableObject {
     
     // MARK: - Chunked Processing
     
-    func processLargeTranscript(_ text: String, using engine: SummarizationEngine) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    func processLargeTranscript(_ text: String, using engine: SummarizationEngine) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         
         let startTime = Date()
         processingStartTime = startTime
@@ -91,6 +91,7 @@ class PerformanceOptimizer: ObservableObject {
         let chunks = TokenManager.chunkText(text)
         var allTasks: [TaskItem] = []
         var allReminders: [ReminderItem] = []
+        var allTitles: [TitleItem] = []
         var summaryParts: [String] = []
         var contentTypes: [ContentType] = []
         
@@ -103,6 +104,7 @@ class PerformanceOptimizer: ObservableObject {
                 summaryParts.append(chunkResult.summary)
                 allTasks.append(contentsOf: chunkResult.tasks)
                 allReminders.append(contentsOf: chunkResult.reminders)
+                allTitles.append(contentsOf: chunkResult.titles)
                 contentTypes.append(chunkResult.contentType)
                 
                 // Memory management: clear intermediate results
@@ -126,7 +128,9 @@ class PerformanceOptimizer: ObservableObject {
         
         processingProgress = 1.0
         
-        let result = (summary: finalSummary, tasks: finalTasks, reminders: finalReminders, contentType: finalContentType)
+        let finalTitles = deduplicateAndLimitTitles(allTitles, limit: 15)
+        
+        let result = (summary: finalSummary, tasks: finalTasks, reminders: finalReminders, titles: finalTitles, contentType: finalContentType)
         cacheResult(key: cacheKey, result: result, cost: text.count)
         
         return result
@@ -193,7 +197,7 @@ class PerformanceOptimizer: ObservableObject {
     
 
     
-    private func processChunkWithRetry(_ chunk: String, using engine: SummarizationEngine, retryCount: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    private func processChunkWithRetry(_ chunk: String, using engine: SummarizationEngine, retryCount: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         
         var lastError: Error?
         
@@ -269,6 +273,29 @@ class PerformanceOptimizer: ObservableObject {
         return Array(sortedReminders.prefix(limit))
     }
     
+    private func deduplicateAndLimitTitles(_ titles: [TitleItem], limit: Int) -> [TitleItem] {
+        // Remove duplicates based on text similarity
+        var uniqueTitles: [TitleItem] = []
+        
+        for title in titles {
+            let isDuplicate = uniqueTitles.contains { existingTitle in
+                let similarity = calculateTextSimilarity(title.text, existingTitle.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueTitles.append(title)
+            }
+        }
+        
+        // Sort by confidence, then limit
+        let sortedTitles = uniqueTitles.sorted { title1, title2 in
+            return title1.confidence > title2.confidence
+        }
+        
+        return Array(sortedTitles.prefix(limit))
+    }
+    
     private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
         let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
         let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
@@ -296,11 +323,11 @@ class PerformanceOptimizer: ObservableObject {
         return "\(engine)_\(textHash)"
     }
     
-    private func getCachedResult(key: String) -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType)? {
+    private func getCachedResult(key: String) -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)? {
         return summaryCache.object(forKey: NSString(string: key))?.result
     }
     
-    private func cacheResult(key: String, result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType), cost: Int) {
+    private func cacheResult(key: String, result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType), cost: Int) {
         let cachedResult = CachedSummaryResult(result: result, timestamp: Date())
         summaryCache.setObject(cachedResult, forKey: NSString(string: key), cost: cost)
     }
@@ -455,10 +482,10 @@ struct PerformanceMetrics {
 }
 
 class CachedSummaryResult: NSObject {
-    let result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType)
+    let result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
     let timestamp: Date
     
-    init(result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType), timestamp: Date) {
+    init(result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType), timestamp: Date) {
         self.result = result
         self.timestamp = timestamp
         super.init()

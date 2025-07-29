@@ -166,9 +166,9 @@ struct SettingsView: View {
                         )
                     }
                     
-                    // AI Settings
+                    // AI Processing
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("AI Engine")
+                        Text("AI Processing")
                             .font(.headline)
                             .foregroundColor(.primary)
                             .padding(.horizontal, 24)
@@ -212,7 +212,7 @@ struct SettingsView: View {
                                 showingAISettings = true
                             }) {
                                 HStack {
-                                    Text("Configure AI Engine")
+                                    Text("Configure AI Engines")
                                     Spacer()
                                     Image(systemName: "arrow.right")
                                 }
@@ -237,43 +237,6 @@ struct SettingsView: View {
                             .padding(.horizontal, 8)
                         }
                         .padding(.horizontal, 24)
-                    }
-                    
-                    // AI Processing Settings
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("AI Processing")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                            .padding(.horizontal, 24)
-                        
-                        HStack {
-                            Text("Current AI Engine:")
-                                .font(.body)
-                                .foregroundColor(.secondary)
-                            Text(recorderVM.selectedAIEngine)
-                                .font(.body)
-                                .fontWeight(.medium)
-                                .foregroundColor(.primary)
-                        }
-                        .padding(.horizontal, 24)
-                        
-                        Button(action: {
-                            showingAISettings = true
-                        }) {
-                            HStack {
-                                Text("Configure AI Engines")
-                                Spacer()
-                                Image(systemName: "arrow.right")
-                            }
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.blue.opacity(0.1))
-                            )
-                            .foregroundColor(.blue)
-                        }
-                        .padding(.horizontal, 24)
                         
                         Button(action: {
                             showingPerformanceView = true
@@ -292,8 +255,6 @@ struct SettingsView: View {
                             .foregroundColor(.green)
                         }
                         .padding(.horizontal, 24)
-                        
-
                     }
                     
                     // Transcription Settings

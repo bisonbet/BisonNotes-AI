@@ -9,10 +9,11 @@ import SwiftUI
 
 struct OpenAISummarizationSettingsView: View {
     @AppStorage("openAISummarizationAPIKey") private var apiKey: String = ""
-    @AppStorage("openAISummarizationModel") private var selectedModel: String = OpenAISummarizationModel.gpt4oMini.rawValue
+    @AppStorage("openAISummarizationModel") private var selectedModel: String = OpenAISummarizationModel.gpt35Turbo.rawValue
     @AppStorage("openAISummarizationBaseURL") private var baseURL: String = "https://api.openai.com/v1"
     @AppStorage("openAISummarizationTemperature") private var temperature: Double = 0.1
     @AppStorage("openAISummarizationMaxTokens") private var maxTokens: Int = 0
+    @AppStorage("enableOpenAI") private var enableOpenAI: Bool = true
     
     @State private var isTestingConnection = false
     @State private var connectionTestResult: String = ""
@@ -22,8 +23,20 @@ struct OpenAISummarizationSettingsView: View {
     
     @Environment(\.dismiss) private var dismiss
     
+    var onConfigurationChanged: (() -> Void)?
+    
     private var selectedModelEnum: OpenAISummarizationModel {
-        OpenAISummarizationModel(rawValue: selectedModel) ?? .gpt4oMini
+                    OpenAISummarizationModel(rawValue: selectedModel) ?? .gpt35Turbo
+    }
+    
+    init(onConfigurationChanged: (() -> Void)? = nil) {
+        self.onConfigurationChanged = onConfigurationChanged
+        
+        // Ensure enableOpenAI has a default value in UserDefaults
+        if UserDefaults.standard.object(forKey: "enableOpenAI") == nil {
+            UserDefaults.standard.set(true, forKey: "enableOpenAI")
+            print("🔧 OpenAISummarizationSettingsView: Initialized enableOpenAI to true in UserDefaults")
+        }
     }
     
     var body: some View {
@@ -235,6 +248,24 @@ struct OpenAISummarizationSettingsView: View {
                 }
                 
                 Section {
+                    Toggle("Enable OpenAI Processing", isOn: $enableOpenAI)
+                        .onChange(of: enableOpenAI) {
+                            print("🔧 OpenAISummarizationSettingsView: enableOpenAI changed to: \(enableOpenAI)")
+                            // Force UserDefaults to sync immediately
+                            UserDefaults.standard.synchronize()
+                            onConfigurationChanged?()
+                        }
+                    
+                    if !enableOpenAI {
+                        Text("OpenAI processing is disabled. Enable to use OpenAI for summarization.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Text("Enable/Disable")
+                }
+                
+                Section {
                     Button("Reset to Defaults") {
                         resetToDefaults()
                     }
@@ -246,6 +277,9 @@ struct OpenAISummarizationSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
+                        // Force refresh engine availability when settings are dismissed
+                        UserDefaults.standard.synchronize()
+                        onConfigurationChanged?()
                         dismiss()
                     }
                 }
@@ -310,7 +344,7 @@ struct OpenAISummarizationSettingsView: View {
     
     private func resetToDefaults() {
         apiKey = ""
-        selectedModel = OpenAISummarizationModel.gpt4oMini.rawValue
+                        selectedModel = OpenAISummarizationModel.gpt35Turbo.rawValue
         baseURL = "https://api.openai.com/v1"
         temperature = 0.1
         maxTokens = 0

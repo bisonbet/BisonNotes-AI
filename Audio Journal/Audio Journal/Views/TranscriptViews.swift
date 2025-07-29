@@ -22,6 +22,7 @@ struct TranscriptsView: View {
     @State private var showingTranscriptionCompletionAlert = false
     @State private var completedTranscriptionText = ""
     @State private var isCheckingForCompletions = false
+    @State private var refreshTrigger = false
     
     var body: some View {
         NavigationView {
@@ -103,6 +104,7 @@ struct TranscriptsView: View {
                                     .cornerRadius(8)
                                 }
                                 .disabled(isGeneratingTranscript)
+                                .id("\(recording.url.absoluteString)-\(transcriptManager.hasTranscript(for: recording.url))-\(refreshTrigger)")
                             }
                         }
                         .padding(.vertical, 4)
@@ -149,6 +151,10 @@ struct TranscriptsView: View {
             .onAppear {
                 loadRecordings()
                 setupTranscriptionCompletionCallback()
+                // Force UI refresh to ensure transcript states are properly displayed
+                DispatchQueue.main.async {
+                    self.refreshTrigger.toggle()
+                }
             }
         }
         .sheet(item: $selectedRecording) { recording in
@@ -220,6 +226,14 @@ struct TranscriptsView: View {
         }
     }
     
+    private func forceRefreshUI() {
+        print("🔄 TranscriptsView: Forcing UI refresh")
+        DispatchQueue.main.async {
+            self.refreshTrigger.toggle()
+            self.loadRecordings()
+        }
+    }
+    
     private func getRecordingDuration(url: URL) -> TimeInterval {
         do {
             let player = try AVAudioPlayer(contentsOf: url)
@@ -274,6 +288,9 @@ struct TranscriptsView: View {
                     
                     // Update the selected recording to show the editable view
                     self.selectedRecording = recording
+                    
+                    // Force UI refresh to update button states
+                    self.forceRefreshUI()
                 } else {
                     print("❌ Transcription failed or returned empty result")
                 }
@@ -338,6 +355,9 @@ struct TranscriptsView: View {
                     
                     self.transcriptManager.saveTranscript(transcriptData)
                     print("💾 Background transcript saved for: \(recording.name)")
+                    
+                    // Force UI refresh to update button states
+                    self.forceRefreshUI()
                     
                     // Show completion alert
                     self.completedTranscriptionText = "Transcription completed for: \(recording.name)"
@@ -665,6 +685,134 @@ struct TranscriptDetailView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+// MARK: - Title Row View
+
+struct TitleRowView: View {
+    let title: TitleItem
+    let recordingName: String
+    @StateObject private var systemIntegration = SystemIntegrationManager()
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            // Category icon
+            Image(systemName: title.category.icon)
+                .font(.caption)
+                .foregroundColor(.accentColor)
+                .frame(width: 16)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                // Title text
+                Text(title.text)
+                    .font(.body)
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.leading)
+                
+                // Confidence indicator
+                HStack {
+                    Text("Confidence: \(Int(title.confidence * 100))%")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    // Copy button
+                    Button(action: {
+                        UIPasteboard.general.string = title.text
+                    }) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption2)
+                            .foregroundColor(.accentColor)
+                    }
+                }
+            }
+            
+            Spacer()
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Enhanced Title Row View
+
+struct EnhancedTitleRowView: View {
+    let title: TitleItem
+    let recordingName: String
+    @StateObject private var systemIntegration = SystemIntegrationManager()
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            // Category icon with background
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.1))
+                    .frame(width: 32, height: 32)
+                
+                Image(systemName: title.category.icon)
+                    .font(.caption)
+                    .foregroundColor(.accentColor)
+            }
+            
+            VStack(alignment: .leading, spacing: 6) {
+                // Title text
+                Text(title.text)
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(nil)
+                
+                // Metadata row
+                HStack {
+                    // Confidence indicator
+                    HStack(spacing: 4) {
+                        Image(systemName: "chart.bar.fill")
+                            .font(.caption2)
+                            .foregroundColor(confidenceColor)
+                        Text("\(Int(title.confidence * 100))%")
+                            .font(.caption2)
+                            .foregroundColor(confidenceColor)
+                    }
+                    
+                    // Category badge
+                    Text(title.category.rawValue)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.1))
+                        .foregroundColor(.secondary)
+                        .cornerRadius(4)
+                    
+                    Spacer()
+                    
+                    // Copy button
+                    Button(action: {
+                        UIPasteboard.general.string = title.text
+                    }) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption2)
+                            .foregroundColor(.accentColor)
+                    }
+                }
+            }
+            
+            Spacer()
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(Color.secondary.opacity(0.05))
+        .cornerRadius(8)
+    }
+    
+    private var confidenceColor: Color {
+        switch title.confidence {
+        case 0.8...1.0: return .green
+        case 0.6..<0.8: return .blue
+        case 0.4..<0.6: return .orange
+        default: return .red
         }
     }
 }

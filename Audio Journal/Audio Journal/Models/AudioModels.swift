@@ -99,7 +99,7 @@ enum TranscriptionEngine: String, CaseIterable {
         case .whisper:
             return "High-quality transcription using OpenAI's Whisper model via REST API on your local server"
         case .openAI:
-            return "High-quality transcription using OpenAI's GPT-4o and Whisper models via API"
+            return "High-quality transcription using OpenAI's GPT-4o models and Whisper via API"
         case .openAIAPICompatible:
             return "Connect to OpenAI-compatible API endpoints for flexible transcription options (Coming Soon)"
         }

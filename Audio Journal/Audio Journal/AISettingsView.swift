@@ -67,9 +67,8 @@ final class AISettingsViewModel: ObservableObject {
             return (shouldPrompt: false, oldEngine: "", error: validation.errorMessage)
         }
         
-        guard validation.isAvailable else {
-            return (shouldPrompt: false, oldEngine: "", error: validation.errorMessage)
-        }
+        // Allow selection even if not available - user can configure it
+        // Only return error if the engine is completely invalid, not just unavailable
 
         recorderVM.selectedAIEngine = newEngine
         self.summaryManager.setEngine(newEngine)
@@ -138,6 +137,7 @@ struct AISettingsView: View {
                     
                     Spacer(minLength: 40)
                 }
+                .padding(.horizontal, 16)
             }
             .navigationTitle("AI Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -146,6 +146,7 @@ struct AISettingsView: View {
                     Button("Done") {
                         dismiss()
                     }
+                    .fontWeight(.medium)
                 }
             }
         }
@@ -175,10 +176,15 @@ struct AISettingsView: View {
             Text(errorHandler.currentError?.localizedDescription ?? "An unknown error occurred.")
         }
         .sheet(isPresented: $showingOllamaSettings) {
-            OllamaSettingsView()
+            OllamaSettingsView(onConfigurationChanged: {
+                self.refreshEngineStatuses()
+            })
         }
         .sheet(isPresented: $showingOpenAISettings) {
             OpenAISummarizationSettingsView()
+                .onDisappear {
+                    self.refreshEngineStatuses()
+                }
         }
     }
 }
@@ -378,8 +384,8 @@ private extension AISettingsView {
     var openAIConfigurationSection: some View {
         // FIX: Logic moved outside the ViewBuilder closure.
         let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
-        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt4oMini.rawValue
-        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt4oMini
+        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt35Turbo.rawValue
+        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt35Turbo
         
         // The return statement is now required because the property contains more than a single expression.
         return VStack(alignment: .leading, spacing: 16) {
@@ -507,7 +513,6 @@ private extension AISettingsView {
     @ViewBuilder
     func engineRow(for engineType: AIEngineType) -> some View {
         let engineStatus = self.engineStatuses[engineType.rawValue]
-        let isAvailable = engineStatus?.isAvailable ?? false
         let isCurrentEngine = self.recorderVM.selectedAIEngine == engineType.rawValue
         
         VStack(alignment: .leading, spacing: 4) {
@@ -579,7 +584,7 @@ private extension AISettingsView {
         )
         .contentShape(Rectangle())
         .onTapGesture {
-            if !engineType.isComingSoon && isAvailable {
+            if !engineType.isComingSoon {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     let result = self.viewModel.selectEngine(engineType, recorderVM: self.recorderVM)
                     if let error = result.error {
@@ -592,12 +597,6 @@ private extension AISettingsView {
                         self.showingEngineChangePrompt = true
                     }
                 }
-            } else if !isAvailable && !engineType.isComingSoon {
-                // Show error for unavailable engine
-                let errorMessage = "\(engineType.rawValue) is not available. \(engineStatus?.requirements.joined(separator: ", ") ?? "Check requirements")"
-                let systemError = SystemError.configurationError(message: errorMessage)
-                let error = AppError.system(systemError)
-                self.errorHandler.handle(error, context: "Engine Selection")
             }
         }
         .opacity(engineType.isComingSoon ? 0.6 : 1.0)

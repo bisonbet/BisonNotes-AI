@@ -138,7 +138,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     // OpenAI Configuration
     private var openAIConfig: OpenAITranscribeConfig? {
         let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
-        let modelString = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAITranscribeModel.whisper1.rawValue
+        let modelString = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAITranscribeModel.gpt4oMiniTranscribe.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
         
         print("🔍 OpenAI config debug - apiKey length: \(apiKey.count), model: \(modelString), baseURL: \(baseURL)")
@@ -148,7 +148,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             return nil
         }
         
-        let model = OpenAITranscribeModel(rawValue: modelString) ?? .whisper1
+        let model = OpenAITranscribeModel(rawValue: modelString) ?? .gpt4oMiniTranscribe
         
         let config = OpenAITranscribeConfig(
             apiKey: apiKey,

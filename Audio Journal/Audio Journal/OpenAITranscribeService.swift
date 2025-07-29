@@ -17,7 +17,7 @@ struct OpenAITranscribeConfig {
     
     static let `default` = OpenAITranscribeConfig(
         apiKey: "",
-        model: .whisper1,
+        model: .gpt4oMiniTranscribe,
         baseURL: "https://api.openai.com/v1"
     )
 }
@@ -43,11 +43,11 @@ enum OpenAITranscribeModel: String, CaseIterable {
     var description: String {
         switch self {
         case .gpt4oTranscribe:
-            return "Advanced transcription with GPT-4o model"
+            return "Most robust transcription with GPT-4o model"
         case .gpt4oMiniTranscribe:
-            return "Fast transcription with GPT-4o Mini model"
+            return "Cheapest and fastest transcription with GPT-4o Mini model"
         case .whisper1:
-            return "High-quality transcription with Whisper V2 model"
+            return "Legacy transcription with Whisper V2 model"
         }
     }
     

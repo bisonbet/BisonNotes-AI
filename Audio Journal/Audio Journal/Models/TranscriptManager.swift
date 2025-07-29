@@ -96,7 +96,7 @@ class TranscriptManager: ObservableObject {
     }
     
     func hasTranscript(for recordingURL: URL) -> Bool {
-        return transcripts.contains { $0.recordingURL == recordingURL }
+        return getTranscript(for: recordingURL) != nil
     }
     
     func updateRecordingURL(from oldURL: URL, to newURL: URL) {

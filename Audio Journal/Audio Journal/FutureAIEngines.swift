@@ -52,11 +52,15 @@ class AWSBedrockEngine: SummarizationEngine {
         throw SummarizationError.aiServiceUnavailable(service: name)
     }
     
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        throw SummarizationError.aiServiceUnavailable(service: name)
+    }
+    
     func classifyContent(_ text: String) async throws -> ContentType {
         throw SummarizationError.aiServiceUnavailable(service: name)
     }
     
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         throw SummarizationError.aiServiceUnavailable(service: name)
     }
     
@@ -124,7 +128,7 @@ class OpenAICompatibleEngine: SummarizationEngine {
         let temperature: Double
         
         static let `default` = OpenAICompatibleConfig(
-            modelName: "gpt-3.5-turbo",
+            modelName: "gpt-4.1-mini",
             maxTokens: 1000,
             temperature: 0.7
         )
@@ -148,11 +152,15 @@ class OpenAICompatibleEngine: SummarizationEngine {
         throw SummarizationError.aiServiceUnavailable(service: name)
     }
     
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        throw SummarizationError.aiServiceUnavailable(service: name)
+    }
+    
     func classifyContent(_ text: String) async throws -> ContentType {
         throw SummarizationError.aiServiceUnavailable(service: name)
     }
     
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         throw SummarizationError.aiServiceUnavailable(service: name)
     }
     
@@ -214,6 +222,8 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     var isAvailable: Bool {
         // Check if Ollama is enabled in settings
         let isEnabled = UserDefaults.standard.bool(forKey: "enableOllama")
+        let keyExists = UserDefaults.standard.object(forKey: "enableOllama") != nil
+        print("🔧 LocalLLMEngine: Checking enableOllama setting - Value: \(isEnabled), Key exists: \(keyExists)")
         guard isEnabled else {
             print("❌ LocalLLMEngine: Ollama is not enabled in settings")
             return false
@@ -360,6 +370,36 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         }
     }
     
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        print("🤖 LocalLLMEngine: Starting title extraction")
+        
+        // Update configuration with latest settings
+        updateConfiguration()
+        
+        guard let service = ollamaService else {
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama service not properly configured")
+        }
+        
+        // Check if Ollama is enabled
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableOllama")
+        guard isEnabled else {
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama is not enabled in settings")
+        }
+        
+        // Test connection before attempting to extract titles
+        let isConnected = await service.testConnection()
+        guard isConnected else {
+            throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server. Please check your server URL and port settings.")
+        }
+        
+        do {
+            return try await service.extractTitles(from: text)
+        } catch {
+            print("❌ LocalLLMEngine: Title extraction failed: \(error)")
+            throw handleOllamaError(error)
+        }
+    }
+    
 
     
     // MARK: - Enhanced Error Handling
@@ -402,7 +442,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         return contentType
     }
     
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         // Update configuration with latest settings
         updateConfiguration()
         
@@ -435,23 +475,20 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         }
     }
     
-    private func processSingleChunk(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    private func processSingleChunk(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         async let summaryTask = service.generateSummary(from: text)
         async let extractionTask = service.extractTasksAndReminders(from: text)
-        async let titleTask = service.generateTitle(from: text)
+        async let titlesTask = service.extractTitles(from: text)
         
         let summary = try await summaryTask
         let extraction = try await extractionTask
-        let generatedTitle = try await titleTask
+        let titles = try await titlesTask
         let contentType = try await classifyContent(text)
         
-        // Store the AI-generated title for use in recording name generation
-        UserDefaults.standard.set(generatedTitle, forKey: "lastGeneratedTitle")
-        
-        return (summary, extraction.tasks, extraction.reminders, contentType)
+        return (summary, extraction.tasks, extraction.reminders, titles, contentType)
     }
     
-    private func processChunkedText(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    private func processChunkedText(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         let startTime = Date()
         
         // Split text into chunks
@@ -462,6 +499,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         var allSummaries: [String] = []
         var allTasks: [TaskItem] = []
         var allReminders: [ReminderItem] = []
+        var allTitles: [TitleItem] = []
         var contentType: ContentType = .general
         
         for (index, chunk) in chunks.enumerated() {
@@ -472,6 +510,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
                 allSummaries.append(chunkResult.summary)
                 allTasks.append(contentsOf: chunkResult.tasks)
                 allReminders.append(contentsOf: chunkResult.reminders)
+                allTitles.append(contentsOf: chunkResult.titles)
                 
                 // Use the first chunk's content type
                 if index == 0 {
@@ -487,17 +526,19 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         // Combine results
         let combinedSummary = TokenManager.combineSummaries(allSummaries, contentType: contentType)
         
-        // Deduplicate tasks and reminders
+        // Deduplicate tasks, reminders, and titles
         let uniqueTasks = deduplicateTasks(allTasks)
         let uniqueReminders = deduplicateReminders(allReminders)
+        let uniqueTitles = deduplicateTitles(allTitles)
         
         let processingTime = Date().timeIntervalSince(startTime)
         print("✅ Chunked processing completed in \(String(format: "%.2f", processingTime))s")
         print("📊 Final summary: \(combinedSummary.count) characters")
         print("📋 Final tasks: \(uniqueTasks.count)")
         print("🔔 Final reminders: \(uniqueReminders.count)")
+        print("📝 Final titles: \(uniqueTitles.count)")
         
-        return (combinedSummary, uniqueTasks, uniqueReminders, contentType)
+        return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
     }
     
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
@@ -532,6 +573,23 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         }
         
         return Array(uniqueReminders.prefix(15)) // Limit to 15 reminders
+    }
+    
+    private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
+        var uniqueTitles: [TitleItem] = []
+        
+        for title in titles {
+            let isDuplicate = uniqueTitles.contains { existingTitle in
+                let similarity = calculateTextSimilarity(title.text, existingTitle.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueTitles.append(title)
+            }
+        }
+        
+        return Array(uniqueTitles.prefix(5)) // Limit to 5 titles
     }
     
     private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {

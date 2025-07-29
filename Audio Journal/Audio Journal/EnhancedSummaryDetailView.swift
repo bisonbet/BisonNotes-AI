@@ -62,6 +62,9 @@ struct EnhancedSummaryDetailView: View {
                         // Reminders Section (Expandable)
                         remindersSection
                         
+                        // Titles Section (Expandable)
+                        titlesSection
+                        
                         // Regenerate Button Section
                         regenerateSection
                     }
@@ -210,7 +213,7 @@ struct EnhancedSummaryDetailView: View {
             iconColor: .accentColor,
             isExpanded: expandedSections.contains("summary")
         ) {
-            Text(MarkdownRenderer.renderEnhancedMarkdown(summaryData.summary))
+            AITextView(text: summaryData.summary)
                 .font(.body)
                 .lineSpacing(4)
                 .padding(.top, 4)
@@ -270,6 +273,32 @@ struct EnhancedSummaryDetailView: View {
         }
         .onTapGesture {
             toggleSection("reminders")
+        }
+    }
+    
+    // MARK: - Titles Section
+    
+    private var titlesSection: some View {
+        ExpandableSection(
+            title: "Titles",
+            icon: "text.quote.open",
+            iconColor: .purple,
+            isExpanded: expandedSections.contains("titles"),
+            count: summaryData.titles.count
+        ) {
+            if summaryData.titles.isEmpty {
+                emptyStateView(message: "No titles found", icon: "text.quote.open")
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(summaryData.titles, id: \.id) { title in
+                        TitleRowView(title: title, recordingName: summaryData.recordingName)
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+        .onTapGesture {
+            toggleSection("titles")
         }
     }
     

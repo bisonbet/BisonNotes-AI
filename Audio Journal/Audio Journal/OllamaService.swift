@@ -165,6 +165,9 @@ class OllamaService: ObservableObject {
             options: .regularExpression
         )
         
+        // Convert \n escape sequences to actual newlines
+        cleanedResponse = cleanedResponse.replacingOccurrences(of: "\\n", with: "\n")
+        
         // Clean up markdown formatting
         cleanedResponse = cleanMarkdownFormatting(cleanedResponse)
         
@@ -174,6 +177,9 @@ class OllamaService: ObservableObject {
     
     private func cleanMarkdownFormatting(_ text: String) -> String {
         var cleaned = text
+        
+        // Convert \n escape sequences to actual newlines first
+        cleaned = cleaned.replacingOccurrences(of: "\\n", with: "\n")
         
         // Remove excessive markdown formatting
         cleaned = cleaned.replacingOccurrences(of: "\\*\\*\\*", with: "**", options: .regularExpression)
@@ -394,6 +400,65 @@ class OllamaService: ObservableObject {
         }
     }
     
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        let prompt = """
+        Analyze the following transcript and extract potential titles or headlines. Focus on:
+        - Main topics or themes discussed
+        - Key decisions or outcomes
+        - Important events or milestones
+        - Central questions or problems addressed
+
+        **Return the results in this exact JSON format (no markdown, just pure JSON):**
+        {
+          "titles": [
+            {
+              "text": "title text",
+              "category": "Meeting|Personal|Technical|General",
+              "confidence": 0.85
+            }
+          ]
+        }
+
+        Only include titles with 80% or higher confidence. If no titles are found, return empty array.
+
+        Transcript:
+        \(text)
+        """
+        
+        print("🔧 OllamaService: Sending title extraction request")
+        let response = try await generateResponse(prompt: prompt, model: config.modelName)
+        
+        print("🔧 OllamaService: Received response for titles: \(response)")
+        
+        // Parse JSON response
+        guard let data = response.data(using: .utf8) else {
+            throw OllamaError.parsingError("Failed to convert response to data")
+        }
+        
+        do {
+            print("🔧 OllamaService: Attempting to parse JSON response for titles")
+            let rawResult = try JSONDecoder().decode(RawTitleResult.self, from: data)
+            
+            print("✅ OllamaService: Successfully parsed titles JSON")
+            print("🔧 OllamaService: Found \(rawResult.titles.count) titles")
+            
+            // Convert raw results to proper TitleItem objects
+            let titles = rawResult.titles.map { rawTitle in
+                TitleItem(
+                    text: rawTitle.text,
+                    confidence: rawTitle.confidence,
+                    category: TitleItem.TitleCategory(rawValue: rawTitle.category) ?? .general
+                )
+            }
+            
+            return titles
+        } catch {
+            print("❌ OllamaService: JSON parsing failed for titles: \(error)")
+            print("❌ OllamaService: Raw response data: \(String(data: data, encoding: .utf8) ?? "nil")")
+            throw OllamaError.parsingError("Failed to parse JSON response: \(error.localizedDescription)")
+        }
+    }
+    
     private func generateResponse(prompt: String, model: String) async throws -> String {
         guard isConnected else {
             throw OllamaError.notConnected
@@ -457,6 +522,10 @@ struct RawTaskReminderResult: Codable {
     let reminders: [RawReminderItem]
 }
 
+struct RawTitleResult: Codable {
+    let titles: [RawTitleItem]
+}
+
 struct RawTaskItem: Codable {
     let text: String
     let priority: String
@@ -468,6 +537,12 @@ struct RawReminderItem: Codable {
     let text: String
     let urgency: String
     let timeReference: String?
+}
+
+struct RawTitleItem: Codable {
+    let text: String
+    let category: String
+    let confidence: Double
 }
 
 // MARK: - Errors

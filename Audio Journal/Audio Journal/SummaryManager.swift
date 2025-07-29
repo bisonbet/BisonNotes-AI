@@ -88,7 +88,45 @@ class SummaryManager: ObservableObject {
     }
     
     func getSummary(for recordingURL: URL) -> SummaryData? {
-        return summaries.first { $0.recordingURL == recordingURL }
+        print("🔍 SummaryManager: Looking for legacy summary with URL: \(recordingURL)")
+        print("🔍 SummaryManager: Total legacy summaries: \(summaries.count)")
+        
+        let targetFilename = recordingURL.lastPathComponent
+        let targetName = recordingURL.deletingPathExtension().lastPathComponent
+        
+        print("🔍 SummaryManager: Looking for filename: \(targetFilename)")
+        print("🔍 SummaryManager: Looking for name: \(targetName)")
+        
+        for (index, summary) in summaries.enumerated() {
+            let summaryFilename = summary.recordingURL.lastPathComponent
+            let summaryName = summary.recordingURL.deletingPathExtension().lastPathComponent
+            
+            print("🔍 SummaryManager: Checking legacy summary \(index): \(summary.recordingName)")
+            print("🔍 SummaryManager: Stored filename: \(summaryFilename)")
+            print("🔍 SummaryManager: Stored name: \(summaryName)")
+            
+            // Try multiple comparison methods
+            let exactMatch = summary.recordingURL == recordingURL
+            let pathMatch = summary.recordingURL.path == recordingURL.path
+            let filenameMatch = summaryFilename == targetFilename
+            let nameMatch = summaryName == targetName
+            let recordingNameMatch = summary.recordingName == targetName
+            
+            print("🔍 SummaryManager: Exact match: \(exactMatch)")
+            print("🔍 SummaryManager: Path match: \(pathMatch)")
+            print("🔍 SummaryManager: Filename match: \(filenameMatch)")
+            print("🔍 SummaryManager: Name match: \(nameMatch)")
+            print("🔍 SummaryManager: Recording name match: \(recordingNameMatch)")
+            
+            // Match if any of these conditions are true
+            if exactMatch || pathMatch || filenameMatch || nameMatch || recordingNameMatch {
+                print("✅ SummaryManager: Found matching legacy summary!")
+                return summary
+            }
+        }
+        
+        print("❌ SummaryManager: No matching legacy summary found")
+        return nil
     }
     
     // MARK: - Enhanced Summary Methods
@@ -103,10 +141,14 @@ class SummaryManager: ObservableObject {
             self.saveEnhancedSummariesToDisk()
             
             print("💾 SummaryManager: Enhanced summary saved. Total summaries: \(self.enhancedSummaries.count)")
-            print("🔍 SummaryManager: Can find summary: \(self.hasSummary(for: summary.recordingURL))")
             
             // Force a UI update
             self.objectWillChange.send()
+            
+            // Verify the save operation
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                print("🔍 SummaryManager: Can find summary: \(self.hasSummary(for: summary.recordingURL))")
+            }
         }
     }
     
@@ -122,12 +164,50 @@ class SummaryManager: ObservableObject {
     }
     
     func getEnhancedSummary(for recordingURL: URL) -> EnhancedSummaryData? {
-        return enhancedSummaries.first { $0.recordingURL == recordingURL }
+        print("🔍 SummaryManager: Looking for enhanced summary with URL: \(recordingURL)")
+        print("🔍 SummaryManager: Total enhanced summaries: \(enhancedSummaries.count)")
+        
+        let targetFilename = recordingURL.lastPathComponent
+        let targetName = recordingURL.deletingPathExtension().lastPathComponent
+        
+        print("🔍 SummaryManager: Looking for filename: \(targetFilename)")
+        print("🔍 SummaryManager: Looking for name: \(targetName)")
+        
+        for (index, summary) in enhancedSummaries.enumerated() {
+            let summaryFilename = summary.recordingURL.lastPathComponent
+            let summaryName = summary.recordingURL.deletingPathExtension().lastPathComponent
+            
+            print("🔍 SummaryManager: Checking enhanced summary \(index): \(summary.recordingName)")
+            print("🔍 SummaryManager: Stored filename: \(summaryFilename)")
+            print("🔍 SummaryManager: Stored name: \(summaryName)")
+            
+            // Try multiple comparison methods
+            let exactMatch = summary.recordingURL == recordingURL
+            let pathMatch = summary.recordingURL.path == recordingURL.path
+            let filenameMatch = summaryFilename == targetFilename
+            let nameMatch = summaryName == targetName
+            let recordingNameMatch = summary.recordingName == targetName
+            
+            print("🔍 SummaryManager: Exact match: \(exactMatch)")
+            print("🔍 SummaryManager: Path match: \(pathMatch)")
+            print("🔍 SummaryManager: Filename match: \(filenameMatch)")
+            print("🔍 SummaryManager: Name match: \(nameMatch)")
+            print("🔍 SummaryManager: Recording name match: \(recordingNameMatch)")
+            
+            // Match if any of these conditions are true
+            if exactMatch || pathMatch || filenameMatch || nameMatch || recordingNameMatch {
+                print("✅ SummaryManager: Found matching enhanced summary!")
+                return summary
+            }
+        }
+        
+        print("❌ SummaryManager: No matching enhanced summary found")
+        return nil
     }
     
     func hasEnhancedSummary(for recordingURL: URL) -> Bool {
-        let result = enhancedSummaries.contains { $0.recordingURL == recordingURL }
-        print("🔍 SummaryManager: hasEnhancedSummary for \(recordingURL) = \(result)")
+        let result = getEnhancedSummary(for: recordingURL) != nil
+        print("🔍 SummaryManager: hasEnhancedSummary for \(recordingURL.lastPathComponent) = \(result)")
         return result
     }
     
@@ -135,7 +215,7 @@ class SummaryManager: ObservableObject {
     
     func hasSummary(for recordingURL: URL) -> Bool {
         let hasEnhanced = hasEnhancedSummary(for: recordingURL)
-        let hasLegacy = summaries.contains { $0.recordingURL == recordingURL }
+        let hasLegacy = getSummary(for: recordingURL) != nil
         
         let result = hasEnhanced || hasLegacy
         print("🔍 SummaryManager: hasSummary for \(recordingURL.lastPathComponent) = \(result) (enhanced: \(hasEnhanced), legacy: \(hasLegacy))")
@@ -185,6 +265,7 @@ class SummaryManager: ObservableObject {
         let reminderItems = legacy.reminders.map { 
             ReminderItem(text: $0, timeReference: ReminderItem.TimeReference(originalText: "No time specified"))
         }
+        let titleItems: [TitleItem] = [] // Legacy summaries don't have titles
         
         return EnhancedSummaryData(
             recordingURL: legacy.recordingURL,
@@ -193,6 +274,7 @@ class SummaryManager: ObservableObject {
             summary: legacy.summary,
             tasks: taskItems,
             reminders: reminderItems,
+            titles: titleItems,
             contentType: contentType,
             aiMethod: aiMethod,
             originalLength: originalLength > 0 ? originalLength : legacy.summary.components(separatedBy: .whitespacesAndNewlines).count * 5 // Estimate
@@ -802,7 +884,8 @@ class SummaryManager: ObservableObject {
                 from: text,
                 contentType: result.contentType,
                 tasks: result.tasks,
-                reminders: result.reminders
+                reminders: result.reminders,
+                titles: result.titles
             )
             
             // Use the intelligent name if it's better than the original
@@ -815,6 +898,7 @@ class SummaryManager: ObservableObject {
                 summary: result.summary,
                 tasks: result.tasks,
                 reminders: result.reminders,
+                titles: result.titles,
                 contentType: result.contentType,
                 aiMethod: engine.name,
                 originalLength: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count,
@@ -907,7 +991,8 @@ class SummaryManager: ObservableObject {
             from: text,
             contentType: contentType,
             tasks: tasks,
-            reminders: reminders
+            reminders: reminders,
+            titles: []
         )
         
         // Use the intelligent name if it's better than the original
@@ -928,7 +1013,7 @@ class SummaryManager: ObservableObject {
         
         // Validate basic summary quality
         let qualityReport = errorHandler.validateSummaryQuality(enhancedSummary)
-        if qualityReport.qualityLevel == .unacceptable {
+        if qualityReport.qualityLevel == SummaryQualityLevel.unacceptable {
             print("⚠️ SummaryManager: Basic summary quality is unacceptable")
             handleError(SummarizationError.processingFailed(reason: "Basic summary quality below threshold"), context: "Basic Summary Quality", recordingName: recordingName)
         }
@@ -1079,16 +1164,49 @@ class SummaryManager: ObservableObject {
         return reminders
     }
     
+    func extractTitlesFromText(_ text: String) async throws -> [TitleItem] {
+        print("📝 SummaryManager: Extracting titles using AI engine")
+        
+        // First try to use the current AI engine if available
+        if let engine = currentEngine {
+            do {
+                let titles = try await engine.extractTitles(from: text)
+                print("✅ SummaryManager: AI engine extracted \(titles.count) titles")
+                return titles
+            } catch {
+                print("⚠️ SummaryManager: AI engine title extraction failed")
+                print("🔍 Error: \(error)")
+            }
+        }
+        
+        // Fallback: return empty array for now
+        print("ℹ️ SummaryManager: No title extraction fallback available")
+        return []
+    }
+    
     func extractTasksAndRemindersFromText(_ text: String) async throws -> (tasks: [TaskItem], reminders: [ReminderItem]) {
         print("📋🔔 SummaryManager: Extracting tasks and reminders from text")
         
         async let tasks = extractTasksFromText(text)
         async let reminders = extractRemindersFromText(text)
         
-        let (extractedTasks, extractedReminders) = try await (tasks, reminders)
+        let (taskResults, reminderResults) = try await (tasks, reminders)
         
-        print("✅ SummaryManager: Extraction complete - \(extractedTasks.count) tasks, \(extractedReminders.count) reminders")
-        return (extractedTasks, extractedReminders)
+        print("✅ SummaryManager: Extracted \(taskResults.count) tasks and \(reminderResults.count) reminders")
+        return (taskResults, reminderResults)
+    }
+    
+    func extractTasksRemindersAndTitlesFromText(_ text: String) async throws -> (tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) {
+        print("📋🔔📝 SummaryManager: Extracting tasks, reminders, and titles from text")
+        
+        async let tasks = extractTasksFromText(text)
+        async let reminders = extractRemindersFromText(text)
+        async let titles = extractTitlesFromText(text)
+        
+        let (taskResults, reminderResults, titleResults) = try await (tasks, reminders, titles)
+        
+        print("✅ SummaryManager: Extracted \(taskResults.count) tasks, \(reminderResults.count) reminders, and \(titleResults.count) titles")
+        return (taskResults, reminderResults, titleResults)
     }
     
     // MARK: - Content Type Influenced Processing
@@ -1492,7 +1610,7 @@ class SummaryManager: ObservableObject {
     
     // MARK: - Recording Name Management
     
-    func generateIntelligentRecordingName(from text: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem]) -> String {
+    func generateIntelligentRecordingName(from text: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) -> String {
         print("🎯 SummaryManager: Generating intelligent recording name")
         
         // Use the RecordingNameGenerator to create a meaningful name
@@ -1500,7 +1618,8 @@ class SummaryManager: ObservableObject {
             text,
             contentType: contentType,
             tasks: tasks,
-            reminders: reminders
+            reminders: reminders,
+            titles: titles
         )
         
         // Validate and fix the generated name
@@ -1514,7 +1633,7 @@ class SummaryManager: ObservableObject {
         print("🤖 SummaryManager: Updating recording name using AI analysis")
         
         // Generate intelligent name using AI analysis
-        let newName = generateIntelligentRecordingName(from: transcript, contentType: contentType, tasks: tasks, reminders: reminders)
+        let newName = generateIntelligentRecordingName(from: transcript, contentType: contentType, tasks: tasks, reminders: reminders, titles: [])
         
         // Only update if the new name is different and meaningful
         if newName != oldName && !newName.isEmpty && newName != "Recording" {

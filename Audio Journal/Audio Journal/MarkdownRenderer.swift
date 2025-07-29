@@ -73,9 +73,12 @@ struct MarkdownRenderer {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
             
             if trimmedLine.isEmpty {
-                // Add paragraph break only if not at the end
+                // Add paragraph break only if not at the end and not followed by another empty line
                 if index < lines.count - 1 {
-                    attributedString.append(AttributedString("\n"))
+                    let nextLine = lines[index + 1].trimmingCharacters(in: .whitespaces)
+                    if !nextLine.isEmpty {
+                        attributedString.append(AttributedString("\n"))
+                    }
                 }
                 continue
             }
@@ -122,7 +125,21 @@ struct MarkdownRenderer {
                 // Regular text - handle inline formatting
                 let formattedText = processInlineFormatting(trimmedLine)
                 attributedString.append(formattedText)
-                attributedString.append(AttributedString("\n"))
+                
+                // Add appropriate spacing based on context
+                if index < lines.count - 1 {
+                    let nextLine = lines[index + 1].trimmingCharacters(in: .whitespaces)
+                    if nextLine.isEmpty {
+                        // Next line is empty, add paragraph break
+                        attributedString.append(AttributedString("\n\n"))
+                    } else if nextLine.hasPrefix("- ") || nextLine.hasPrefix("* ") || nextLine.matches("^\\d+\\. ") {
+                        // Next line is a list item, add single line break
+                        attributedString.append(AttributedString("\n"))
+                    } else {
+                        // Next line is regular text, add single line break
+                        attributedString.append(AttributedString("\n"))
+                    }
+                }
             }
         }
         
@@ -149,9 +166,115 @@ struct MarkdownRenderer {
         }
     }
     
+    /// Renders AI-generated text with proper line break handling
+    static func renderAIGeneratedText(_ text: String) -> AttributedString {
+        print("🔧 MarkdownRenderer: Starting to render AI-generated text")
+        print("📝 Input text: \(text.prefix(200))...")
+        
+        // Convert \n escape sequences to proper markdown line breaks
+        let processedText = convertAITextWithLineBreaks(text)
+        
+        do {
+            let attributedString = try AttributedString(markdown: processedText)
+            print("✅ AI text markdown parsing succeeded")
+            return attributedString
+        } catch {
+            print("❌ AI text markdown parsing failed, using custom formatting: \(error)")
+            return createCustomFormattedString(from: processedText)
+        }
+    }
+    
+    /// Converts AI text with \n escape sequences to proper markdown
+    private static func convertAITextWithLineBreaks(_ text: String) -> String {
+        var result = text
+        
+        // Convert \n escape sequences to actual newlines first
+        result = result.replacingOccurrences(of: "\\n", with: "\n")
+        
+        // Split by newlines to process each line
+        let lines = result.components(separatedBy: .newlines)
+        var processedLines: [String] = []
+        
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            
+            if trimmedLine.isEmpty {
+                continue
+            }
+            
+            // If line starts with "- " or "* ", it's a bullet point
+            if trimmedLine.hasPrefix("- ") || trimmedLine.hasPrefix("* ") {
+                processedLines.append(trimmedLine)
+            } else if trimmedLine.matches("^\\d+\\. ") {
+                // Numbered list
+                processedLines.append(trimmedLine)
+            } else if trimmedLine.hasPrefix("**") && trimmedLine.hasSuffix("**") {
+                // Bold text as header
+                let headerText = String(trimmedLine.dropFirst(2).dropLast(2))
+                processedLines.append("## \(headerText)")
+            } else {
+                // Regular text
+                processedLines.append(trimmedLine)
+            }
+        }
+        
+        // Join with double newlines to create proper paragraph breaks
+        let markdown = processedLines.joined(separator: "\n\n")
+        
+        print("🔧 Converted AI text to markdown:")
+        print(markdown.prefix(300))
+        
+        return markdown
+    }
+    
+    /// Converts AI-generated text to proper markdown format
+    private static func convertAITextToMarkdown(_ text: String) -> String {
+        var markdown = text
+        
+        // First, convert \n escape sequences to actual newlines
+        markdown = markdown.replacingOccurrences(of: "\\n", with: "\n")
+        
+        // Split into lines
+        let lines = markdown.components(separatedBy: .newlines)
+        var processedLines: [String] = []
+        
+        for (_, line) in lines.enumerated() {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            
+            if trimmedLine.isEmpty {
+                continue
+            }
+            
+            // Handle bullet points that might be separated by \n
+            if trimmedLine.hasPrefix("- ") || trimmedLine.hasPrefix("* ") {
+                processedLines.append(trimmedLine)
+            } else if trimmedLine.matches("^\\d+\\. ") {
+                processedLines.append(trimmedLine)
+            } else if trimmedLine.hasPrefix("**") && trimmedLine.hasSuffix("**") {
+                // Bold text - add as header
+                let text = String(trimmedLine.dropFirst(2).dropLast(2))
+                processedLines.append("## \(text)")
+            } else {
+                // Regular text
+                processedLines.append(trimmedLine)
+            }
+        }
+        
+        // Join with proper spacing - use double newlines for paragraph breaks
+        let result = processedLines.joined(separator: "\n\n")
+        
+        print("🔧 Converted AI text to markdown:")
+        print(result.prefix(300))
+        
+        return result
+    }
+    
     /// Cleans markdown text by removing unwanted formatting
     static func cleanMarkdown(_ markdown: String) -> String {
         var cleaned = markdown
+        
+        // Convert \n escape sequences to actual newlines first
+        cleaned = cleaned.replacingOccurrences(of: "\\n", with: "\n")
         
         // Remove any leading/trailing whitespace
         cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -167,8 +290,16 @@ struct MarkdownRenderer {
         cleaned = cleaned.replacingOccurrences(of: "\n* ", with: "\n\n* ")
         cleaned = cleaned.replacingOccurrences(of: "\n1. ", with: "\n\n1. ")
         
-        // Remove excessive newlines
-        cleaned = cleaned.replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+        // Handle bullet points that are separated by \n in the original text
+        // Convert patterns like "text. \n- " to "text.\n\n- "
+        cleaned = cleaned.replacingOccurrences(of: "([.!?])\\s*\\n\\s*- ", with: "$1\n\n- ", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: "([.!?])\\s*\\n\\s*\\* ", with: "$1\n\n* ", options: .regularExpression)
+        
+        // Handle numbered lists
+        cleaned = cleaned.replacingOccurrences(of: "([.!?])\\s*\\n\\s*\\d+\\. ", with: "$1\n\n$2", options: .regularExpression)
+        
+        // Remove excessive newlines (but preserve intentional paragraph breaks)
+        cleaned = cleaned.replacingOccurrences(of: "\n{4,}", with: "\n\n", options: .regularExpression)
         
         // Remove excessive spaces
         cleaned = cleaned.replacingOccurrences(of: " {2,}", with: " ", options: .regularExpression)

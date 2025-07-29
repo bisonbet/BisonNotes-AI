@@ -90,7 +90,7 @@ struct OpenAISettingsView: View {
                 } header: {
                     Text("Model Selection")
                 } footer: {
-                    Text("GPT-4o models provide advanced transcription with better accuracy. Whisper-1 is faster and more cost-effective.")
+                    Text("GPT-4o Mini is the cheapest and fastest option. GPT-4o Transcribe is the most robust. Whisper-1 is the legacy model.")
                 }
                 
                 Section {

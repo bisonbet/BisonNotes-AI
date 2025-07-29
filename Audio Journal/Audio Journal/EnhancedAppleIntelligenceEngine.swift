@@ -59,43 +59,119 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     }
     
     func extractReminders(from text: String) async throws -> [ReminderItem] {
-        return try await performAdvancedReminderExtraction(from: text)
+        print("🍎 EnhancedAppleIntelligenceEngine: Starting reminder extraction")
+        
+        let sentences = ContentAnalyzer.extractSentences(from: text)
+        var allReminders: [ReminderItem] = []
+        
+        for sentence in sentences {
+            if let reminder = extractReminderFromSentence(sentence) {
+                allReminders.append(reminder)
+            }
+        }
+        
+        // Remove duplicates and sort by urgency
+        let uniqueReminders = Array(Set(allReminders)).sorted { $0.urgency.sortOrder < $1.urgency.sortOrder }
+        
+        print("🔔 Final reminder count: \(uniqueReminders.count)")
+        
+        return Array(uniqueReminders.prefix(config.maxReminders))
+    }
+    
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        print("🍎 EnhancedAppleIntelligenceEngine: Starting title extraction")
+        
+        let sentences = ContentAnalyzer.extractSentences(from: text)
+        var allTitles: [TitleItem] = []
+        
+        for sentence in sentences {
+            if let title = extractTitleFromSentence(sentence) {
+                allTitles.append(title)
+            }
+        }
+        
+        // Remove duplicates and sort by confidence
+        let uniqueTitles = Array(Set(allTitles)).sorted { $0.confidence > $1.confidence }
+        
+        print("📝 Final title count: \(uniqueTitles.count)")
+        
+        return Array(uniqueTitles.prefix(5)) // Limit to 5 titles
     }
     
     func classifyContent(_ text: String) async throws -> ContentType {
-        return ContentAnalyzer.classifyContent(text)
-    }
-    
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
-        // Validate transcript content first
-        guard isValidTranscriptContent(text) else {
-            throw SummarizationError.invalidInput
+        print("🍎 EnhancedAppleIntelligenceEngine: Starting content classification")
+        
+        let sentences = ContentAnalyzer.extractSentences(from: text)
+        
+        // Analyze content patterns
+        var meetingScore = 0
+        var personalScore = 0
+        var technicalScore = 0
+        
+        for sentence in sentences {
+            let lowercased = sentence.lowercased()
+            
+            // Meeting indicators
+            if lowercased.contains("meeting") || lowercased.contains("discussion") || 
+               lowercased.contains("team") || lowercased.contains("agenda") ||
+               lowercased.contains("presentation") || lowercased.contains("call") {
+                meetingScore += 1
+            }
+            
+            // Personal indicators
+            if lowercased.contains("i feel") || lowercased.contains("my") || 
+               lowercased.contains("personal") || lowercased.contains("experience") ||
+               lowercased.contains("thought") || lowercased.contains("reflection") {
+                personalScore += 1
+            }
+            
+            // Technical indicators
+            if lowercased.contains("code") || lowercased.contains("system") || 
+               lowercased.contains("technical") || lowercased.contains("implementation") ||
+               lowercased.contains("architecture") || lowercased.contains("development") {
+                technicalScore += 1
+            }
         }
         
-        print("🤖 Enhanced AI processing complete transcript...")
-        print("📝 Input text length: \(text.count) characters")
+        // Determine content type based on scores
+        let totalSentences = sentences.count
+        let meetingRatio = Double(meetingScore) / Double(totalSentences)
+        let personalRatio = Double(personalScore) / Double(totalSentences)
+        let technicalRatio = Double(technicalScore) / Double(totalSentences)
         
-        let contentType = try await classifyContent(text)
-        print("🏷️ Content classified as: \(contentType.rawValue)")
+        print("📊 Content classification scores - Meeting: \(meetingRatio), Personal: \(personalRatio), Technical: \(technicalRatio)")
         
-        // Check if text needs chunking based on token count
+        if meetingRatio > 0.3 {
+            return .meeting
+        } else if personalRatio > 0.3 {
+            return .personalJournal
+        } else if technicalRatio > 0.3 {
+            return .technical
+        } else {
+            return .general
+        }
+    }
+    
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        print("🍎 EnhancedAppleIntelligenceEngine: Starting complete processing")
+        
+        // Check if we need to process in chunks
         let tokenCount = TokenManager.getTokenCount(text)
-        print("📊 Text token count: \(tokenCount)")
         
-        if TokenManager.needsChunking(text) {
-            print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
-            return try await processChunkedText(text, contentType: contentType)
+        if tokenCount > config.maxTokens {
+            print("📦 Processing large text in chunks (\(tokenCount) tokens)")
+            return try await processChunkedText(text)
         } else {
             print("📝 Processing single chunk (\(tokenCount) tokens)")
-            return try await processSingleChunk(text, contentType: contentType)
+            return try await processSingleChunk(text)
         }
     }
     
-    private func processSingleChunk(_ text: String, contentType: ContentType) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
-        // Always process sequentially: Summary first, then extract tasks/reminders
+    private func processSingleChunk(_ text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        // Always process sequentially: Summary first, then extract tasks/reminders/titles
         // This ensures the AI has full context when generating the summary
         print("📊 Step 1: Generating contextual summary...")
-        let summary = try await generateSummary(from: text, contentType: contentType)
+        let summary = try await generateSummary(from: text, contentType: .general)
         print("✅ Summary generated: \(summary.count) characters")
         
         print("📋 Step 2: Extracting tasks from full transcript...")
@@ -106,10 +182,16 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         let reminders = try await extractReminders(from: text)
         print("✅ Found \(reminders.count) reminders")
         
-        return (summary, tasks, reminders, contentType)
+        print("📝 Step 4: Extracting titles from full transcript...")
+        let titles = try await extractTitles(from: text)
+        print("✅ Found \(titles.count) titles")
+        
+        let contentType = try await classifyContent(text)
+        
+        return (summary, tasks, reminders, titles, contentType)
     }
     
-    private func processChunkedText(_ text: String, contentType: ContentType) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    private func processChunkedText(_ text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         let startTime = Date()
         
         // Split text into chunks
@@ -120,15 +202,23 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         var allSummaries: [String] = []
         var allTasks: [TaskItem] = []
         var allReminders: [ReminderItem] = []
+        var allTitles: [TitleItem] = []
+        var contentType: ContentType = .general
         
         for (index, chunk) in chunks.enumerated() {
             print("🔄 Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
             
             do {
-                let chunkResult = try await processSingleChunk(chunk, contentType: contentType)
+                let chunkResult = try await processSingleChunk(chunk)
                 allSummaries.append(chunkResult.summary)
                 allTasks.append(contentsOf: chunkResult.tasks)
                 allReminders.append(contentsOf: chunkResult.reminders)
+                allTitles.append(contentsOf: chunkResult.titles)
+                
+                // Use the first chunk's content type
+                if index == 0 {
+                    contentType = chunkResult.contentType
+                }
                 
             } catch {
                 print("❌ Failed to process chunk \(index + 1): \(error)")
@@ -139,17 +229,19 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         // Combine results
         let combinedSummary = TokenManager.combineSummaries(allSummaries, contentType: contentType)
         
-        // Deduplicate tasks and reminders
+        // Deduplicate tasks, reminders, and titles
         let uniqueTasks = deduplicateTasks(allTasks)
         let uniqueReminders = deduplicateReminders(allReminders)
+        let uniqueTitles = deduplicateTitles(allTitles)
         
         let processingTime = Date().timeIntervalSince(startTime)
         print("✅ Chunked processing completed in \(String(format: "%.2f", processingTime))s")
         print("📊 Final summary: \(combinedSummary.count) characters")
         print("📋 Final tasks: \(uniqueTasks.count)")
         print("🔔 Final reminders: \(uniqueReminders.count)")
+        print("📝 Final titles: \(uniqueTitles.count)")
         
-        return (combinedSummary, uniqueTasks, uniqueReminders, contentType)
+        return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
     }
     
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
@@ -184,6 +276,23 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         }
         
         return Array(uniqueReminders.prefix(15)) // Limit to 15 reminders
+    }
+    
+    private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
+        var uniqueTitles: [TitleItem] = []
+        
+        for title in titles {
+            let isDuplicate = uniqueTitles.contains { existingTitle in
+                let similarity = calculateTextSimilarity(title.text, existingTitle.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueTitles.append(title)
+            }
+        }
+        
+        return Array(uniqueTitles.prefix(5)) // Limit to 5 titles
     }
     
     private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
@@ -857,7 +966,9 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         let cleanedText = cleanReminderText(sentence)
         
         // Skip if reminder text is too short or generic
-        if cleanedText.count < 10 || cleanedText.lowercased().contains("this") || cleanedText.lowercased().contains("that") {
+        guard cleanedText.count >= 5 && 
+              !cleanedText.lowercased().contains("reminder") && // Avoid meta references
+              !cleanedText.lowercased().contains("task") else {
             return nil
         }
         
@@ -867,6 +978,108 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
             urgency: urgency,
             confidence: confidence
         )
+    }
+    
+    private func extractTitleFromSentence(_ sentence: String) -> TitleItem? {
+        let lowercased = sentence.lowercased()
+        
+        // First, filter out sentences that are clearly not title-related
+        let nonTitleIndicators = [
+            "this is", "that was", "we discussed", "we talked about", "the topic was",
+            "according to", "research shows", "studies indicate", "experts say",
+            "it's important to note", "it's worth mentioning", "interestingly",
+            "this message comes from", "sponsored by", "advertisement"
+        ]
+        
+        for indicator in nonTitleIndicators {
+            if lowercased.contains(indicator) {
+                return nil
+            }
+        }
+        
+        let titleIndicators = [
+            "main topic", "key theme", "primary focus", "central issue",
+            "main point", "key decision", "important outcome", "major milestone",
+            "primary question", "central problem", "main objective"
+        ]
+        
+        let hasTitleIndicator = titleIndicators.contains { lowercased.contains($0) }
+        let sentenceLength = sentence.count
+        let hasGoodLength = sentenceLength >= 10 && sentenceLength <= 100
+        
+        // Must have either a title indicator or be a good candidate sentence
+        guard hasTitleIndicator || (hasGoodLength && sentenceLength > 20) else { 
+            return nil 
+        }
+        
+        let category = determineTitleCategory(from: sentence)
+        let confidence = calculateTitleConfidence(sentence: sentence, hasIndicator: hasTitleIndicator, hasGoodLength: hasGoodLength)
+        
+        // Only return titles with good confidence
+        guard confidence >= 0.7 else { return nil }
+        
+        let cleanedText = cleanTitleText(sentence)
+        
+        // Skip if title text is too short or generic
+        guard cleanedText.count >= 5 && 
+              !cleanedText.lowercased().contains("title") && // Avoid meta references
+              !cleanedText.lowercased().contains("reminder") &&
+              !cleanedText.lowercased().contains("task") else {
+            return nil
+        }
+        
+        return TitleItem(
+            text: cleanedText,
+            confidence: confidence,
+            category: category
+        )
+    }
+    
+    private func determineTitleCategory(from sentence: String) -> TitleItem.TitleCategory {
+        let lowercased = sentence.lowercased()
+        
+        if lowercased.contains("meeting") || lowercased.contains("discussion") || 
+           lowercased.contains("team") || lowercased.contains("agenda") {
+            return .meeting
+        } else if lowercased.contains("i feel") || lowercased.contains("my") || 
+                  lowercased.contains("personal") || lowercased.contains("experience") {
+            return .personal
+        } else if lowercased.contains("code") || lowercased.contains("system") || 
+                  lowercased.contains("technical") || lowercased.contains("implementation") {
+            return .technical
+        } else {
+            return .general
+        }
+    }
+    
+    private func calculateTitleConfidence(sentence: String, hasIndicator: Bool, hasGoodLength: Bool) -> Double {
+        var confidence = 0.5
+        
+        if hasIndicator {
+            confidence += 0.3
+        }
+        
+        if hasGoodLength {
+            confidence += 0.2
+        }
+        
+        // Bonus for sentences that start with key words
+        let keyStartWords = ["the", "a", "an", "key", "main", "primary", "important"]
+        let firstWord = sentence.components(separatedBy: .whitespaces).first?.lowercased() ?? ""
+        if keyStartWords.contains(firstWord) {
+            confidence += 0.1
+        }
+        
+        return min(confidence, 1.0)
+    }
+    
+    private func cleanTitleText(_ text: String) -> String {
+        return text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "Main topic:", with: "")
+            .replacingOccurrences(of: "Key theme:", with: "")
+            .replacingOccurrences(of: "Primary focus:", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
     private func cleanReminderText(_ sentence: String) -> String {

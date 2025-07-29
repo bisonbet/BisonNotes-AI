@@ -26,13 +26,21 @@ struct OllamaSettingsView: View {
     
     @Environment(\.dismiss) private var dismiss
     
-    init() {
+    init(onConfigurationChanged: (() -> Void)? = nil) {
+        self.onConfigurationChanged = onConfigurationChanged
+        
         // Initialize with current settings
         let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
         let port = UserDefaults.standard.integer(forKey: "ollamaPort")
         let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
         let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
         let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
+        
+        // Ensure enableOllama has a default value in UserDefaults
+        if UserDefaults.standard.object(forKey: "enableOllama") == nil {
+            UserDefaults.standard.set(true, forKey: "enableOllama")
+            print("🔧 OllamaSettingsView: Initialized enableOllama to true in UserDefaults")
+        }
         
         let config = OllamaConfig(
             serverURL: serverURL,
@@ -249,11 +257,17 @@ struct OllamaSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
+                        // Force refresh engine availability when settings are dismissed
+                        UserDefaults.standard.synchronize()
+                        onConfigurationChanged?()
                         dismiss()
                     }
                 }
             }
             .onAppear {
+                let userDefaultsValue = UserDefaults.standard.bool(forKey: "enableOllama")
+                print("🔧 OllamaSettingsView: onAppear - enableOllama value: \(enableOllama)")
+                print("🔧 OllamaSettingsView: UserDefaults value for enableOllama: \(userDefaultsValue)")
                 loadModelsIfConnected()
             }
             .onChange(of: serverURL) {
@@ -272,6 +286,9 @@ struct OllamaSettingsView: View {
                 onConfigurationChanged?()
             }
             .onChange(of: enableOllama) {
+                print("🔧 OllamaSettingsView: enableOllama changed to: \(enableOllama)")
+                // Force UserDefaults to sync immediately
+                UserDefaults.standard.synchronize()
                 onConfigurationChanged?()
             }
             .alert("Error", isPresented: $showingError) {

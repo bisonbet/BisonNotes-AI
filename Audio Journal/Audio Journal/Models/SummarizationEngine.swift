@@ -17,10 +17,11 @@ protocol SummarizationEngine {
     func generateSummary(from text: String, contentType: ContentType) async throws -> String
     func extractTasks(from text: String) async throws -> [TaskItem]
     func extractReminders(from text: String) async throws -> [ReminderItem]
+    func extractTitles(from text: String) async throws -> [TitleItem]
     func classifyContent(_ text: String) async throws -> ContentType
     
     // Optional: Full processing in one call for efficiency
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType)
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
 }
 
 // MARK: - Processing Configuration
@@ -29,6 +30,7 @@ struct SummarizationConfig {
     let maxSummaryLength: Int
     let maxTasks: Int
     let maxReminders: Int
+    let maxTokens: Int
     let minConfidenceThreshold: Double
     let timeoutInterval: TimeInterval
     let enableParallelProcessing: Bool
@@ -37,6 +39,7 @@ struct SummarizationConfig {
         maxSummaryLength: 500,
         maxTasks: 5,
         maxReminders: 5,
+        maxTokens: 8192,
         minConfidenceThreshold: 0.8,
         timeoutInterval: 30.0,
         enableParallelProcessing: true
@@ -46,6 +49,7 @@ struct SummarizationConfig {
         maxSummaryLength: 300,
         maxTasks: 5,
         maxReminders: 5,
+        maxTokens: 4096,
         minConfidenceThreshold: 0.5,
         timeoutInterval: 15.0,
         enableParallelProcessing: false
@@ -77,11 +81,15 @@ class PlaceholderEngine: SummarizationEngine {
         throw SummarizationError.aiServiceUnavailable(service: name)
     }
     
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        throw SummarizationError.aiServiceUnavailable(service: name)
+    }
+    
     func classifyContent(_ text: String) async throws -> ContentType {
         throw SummarizationError.aiServiceUnavailable(service: name)
     }
     
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         throw SummarizationError.aiServiceUnavailable(service: name)
     }
 }

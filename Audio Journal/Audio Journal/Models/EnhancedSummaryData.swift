@@ -178,6 +178,42 @@ struct ReminderItem: Codable, Identifiable, Equatable, Hashable {
     }
 }
 
+// MARK: - Title Item
+
+struct TitleItem: Codable, Identifiable, Equatable, Hashable {
+    let id: UUID
+    let text: String
+    let confidence: Double
+    let category: TitleCategory
+    
+    init(text: String, confidence: Double = 0.5, category: TitleCategory = .general) {
+        self.id = UUID()
+        self.text = text
+        self.confidence = confidence
+        self.category = category
+    }
+    
+    enum TitleCategory: String, CaseIterable, Codable {
+        case meeting = "Meeting"
+        case personal = "Personal"
+        case technical = "Technical"
+        case general = "General"
+        
+        var icon: String {
+            switch self {
+            case .meeting: return "person.2"
+            case .personal: return "person"
+            case .technical: return "gearshape"
+            case .general: return "text.quote"
+            }
+        }
+    }
+    
+    var displayText: String {
+        return text
+    }
+}
+
 // MARK: - Enhanced Summary Data
 
 struct EnhancedSummaryData: Codable, Identifiable {
@@ -190,6 +226,7 @@ struct EnhancedSummaryData: Codable, Identifiable {
     let summary: String
     let tasks: [TaskItem]
     let reminders: [ReminderItem]
+    let titles: [TitleItem]
     
     // Metadata
     let contentType: ContentType
@@ -204,7 +241,7 @@ struct EnhancedSummaryData: Codable, Identifiable {
     let confidence: Double
     let processingTime: TimeInterval
     
-    init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], contentType: ContentType = .general, aiMethod: String, originalLength: Int, processingTime: TimeInterval = 0) {
+    init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiMethod: String, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
         self.recordingURL = recordingURL
         self.recordingName = recordingName
@@ -212,6 +249,7 @@ struct EnhancedSummaryData: Codable, Identifiable {
         self.summary = summary
         self.tasks = tasks.sorted { $0.priority.sortOrder < $1.priority.sortOrder }
         self.reminders = reminders.sorted { $0.urgency.sortOrder < $1.urgency.sortOrder }
+        self.titles = titles.sorted { $0.confidence > $1.confidence }
         self.contentType = contentType
         self.aiMethod = aiMethod
         self.generatedAt = Date()
@@ -224,7 +262,8 @@ struct EnhancedSummaryData: Codable, Identifiable {
         // Calculate confidence after all properties are initialized
         let taskConfidence = tasks.isEmpty ? 0.5 : tasks.map { $0.confidence }.reduce(0, +) / Double(tasks.count)
         let reminderConfidence = reminders.isEmpty ? 0.5 : reminders.map { $0.confidence }.reduce(0, +) / Double(reminders.count)
-        self.confidence = (taskConfidence + reminderConfidence) / 2.0
+        let titleConfidence = titles.isEmpty ? 0.5 : titles.map { $0.confidence }.reduce(0, +) / Double(titles.count)
+        self.confidence = (taskConfidence + reminderConfidence + titleConfidence) / 3.0
     }
     
     var formattedCompressionRatio: String {
