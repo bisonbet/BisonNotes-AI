@@ -547,7 +547,7 @@ struct SummariesView: View {
             "no audio detected",
             "silence detected",
             "aws transcription coming soon",
-            "whisper-based diarization coming soon",
+            "openai api compatible summaries coming soon",
             "transcription job started:",
             "job is running in background",
             "check status later to retrieve results",

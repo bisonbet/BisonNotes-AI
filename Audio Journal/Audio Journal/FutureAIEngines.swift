@@ -111,50 +111,28 @@ class AWSBedrockEngine: SummarizationEngine {
 
 // MARK: - Whisper-Based Engine (Future Implementation)
 
-class WhisperBasedEngine: SummarizationEngine {
-    let name: String = "Whisper-Based"
-    let description: String = "AI-powered speaker identification and summarization using OpenAI Whisper models"
+class OpenAICompatibleEngine: SummarizationEngine {
+    let name: String = "OpenAI API Compatible"
+    let description: String = "Advanced AI summaries using OpenAI API compatible models"
     let isAvailable: Bool = false
     let version: String = "1.0-preview"
     
     // Configuration for future implementation
-    struct WhisperConfig {
-        let modelSize: WhisperModelSize
-        let languageCode: String
-        let enableTimestamps: Bool
+    struct OpenAICompatibleConfig {
+        let modelName: String
+        let maxTokens: Int
+        let temperature: Double
         
-        static let `default` = WhisperConfig(
-            modelSize: .large,
-            languageCode: "en",
-            enableTimestamps: true
+        static let `default` = OpenAICompatibleConfig(
+            modelName: "gpt-3.5-turbo",
+            maxTokens: 1000,
+            temperature: 0.7
         )
     }
     
-    enum WhisperModelSize: String, CaseIterable {
-        case tiny = "tiny"
-        case base = "base"
-        case small = "small"
-        case medium = "medium"
-        case large = "large"
-        case largeV2 = "large-v2"
-        case largeV3 = "large-v3"
-        
-        var description: String {
-            switch self {
-            case .tiny: return "Tiny (39 MB) - Fastest, lowest accuracy"
-            case .base: return "Base (74 MB) - Fast, good for real-time"
-            case .small: return "Small (244 MB) - Balanced speed/accuracy"
-            case .medium: return "Medium (769 MB) - Good accuracy"
-            case .large: return "Large (1550 MB) - High accuracy"
-            case .largeV2: return "Large V2 (1550 MB) - Improved accuracy"
-            case .largeV3: return "Large V3 (1550 MB) - Latest, best accuracy"
-            }
-        }
-    }
+    private let config: OpenAICompatibleConfig
     
-    private let config: WhisperConfig
-    
-    init(config: WhisperConfig = .default) {
+    init(config: OpenAICompatibleConfig = .default) {
         self.config = config
     }
     
@@ -180,14 +158,14 @@ class WhisperBasedEngine: SummarizationEngine {
     
     // MARK: - Future Implementation Methods
     
-    private func checkWhisperModelAvailability() -> Bool {
-        // Future implementation: check if Whisper model is downloaded and available
+    private func checkOpenAICompatibleServiceAvailability() -> Bool {
+        // Future implementation: check if OpenAI API compatible service is available
         return false
     }
     
-    private func downloadWhisperModel() async throws {
-        // Future implementation: download and cache Whisper model
-        throw SummarizationError.aiServiceUnavailable(service: "Model download not implemented")
+    private func connectToOpenAICompatibleService() async throws {
+        // Future implementation: connect to OpenAI API compatible service
+        throw SummarizationError.aiServiceUnavailable(service: "Service connection not implemented")
     }
     
 
@@ -228,11 +206,36 @@ struct VoiceCharacteristics {
 
 // MARK: - Local LLM Engine (Future Implementation)
 
-class LocalLLMEngine: SummarizationEngine {
+class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     let name: String = "Local LLM (Ollama)"
     let description: String = "Privacy-focused local language model processing using Ollama"
-    let isAvailable: Bool = true
     let version: String = "1.0"
+    
+    var isAvailable: Bool {
+        // Check if Ollama is enabled in settings
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableOllama")
+        guard isEnabled else {
+            print("❌ LocalLLMEngine: Ollama is not enabled in settings")
+            return false
+        }
+        
+        // Check if server URL is configured
+        let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? ""
+        guard !serverURL.isEmpty else {
+            print("❌ LocalLLMEngine: Server URL not configured")
+            return false
+        }
+        
+        // Check if model name is configured
+        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? ""
+        guard !modelName.isEmpty else {
+            print("❌ LocalLLMEngine: Model name not configured")
+            return false
+        }
+        
+        print("✅ LocalLLMEngine: Basic availability checks passed")
+        return true
+    }
     
     private var ollamaService: OllamaService?
     
@@ -263,7 +266,7 @@ class LocalLLMEngine: SummarizationEngine {
         
         guard let service = ollamaService else {
             print("❌ LocalLLMEngine: Ollama service is nil")
-            throw SummarizationError.aiServiceUnavailable(service: name)
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama service not properly configured")
         }
         
         // Check if Ollama is enabled
@@ -286,15 +289,23 @@ class LocalLLMEngine: SummarizationEngine {
         }
         
         print("✅ LocalLLMEngine: Calling Ollama service for summary")
-        return try await service.generateSummary(from: text)
+        
+        do {
+            return try await service.generateSummary(from: text)
+        } catch {
+            print("❌ LocalLLMEngine: Summary generation failed: \(error)")
+            throw handleOllamaError(error)
+        }
     }
     
     func extractTasks(from text: String) async throws -> [TaskItem] {
+        print("🤖 LocalLLMEngine: Starting task extraction")
+        
         // Update configuration with latest settings
         updateConfiguration()
         
         guard let service = ollamaService else {
-            throw SummarizationError.aiServiceUnavailable(service: name)
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama service not properly configured")
         }
         
         // Check if Ollama is enabled
@@ -309,16 +320,23 @@ class LocalLLMEngine: SummarizationEngine {
             throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server. Please check your server URL and port settings.")
         }
         
-        let result = try await service.extractTasksAndReminders(from: text)
-        return result.tasks
+        do {
+            let result = try await service.extractTasksAndReminders(from: text)
+            return result.tasks
+        } catch {
+            print("❌ LocalLLMEngine: Task extraction failed: \(error)")
+            throw handleOllamaError(error)
+        }
     }
     
     func extractReminders(from text: String) async throws -> [ReminderItem] {
+        print("🤖 LocalLLMEngine: Starting reminder extraction")
+        
         // Update configuration with latest settings
         updateConfiguration()
         
         guard let service = ollamaService else {
-            throw SummarizationError.aiServiceUnavailable(service: name)
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama service not properly configured")
         }
         
         // Check if Ollama is enabled
@@ -333,14 +351,55 @@ class LocalLLMEngine: SummarizationEngine {
             throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server. Please check your server URL and port settings.")
         }
         
-        let result = try await service.extractTasksAndReminders(from: text)
-        return result.reminders
+        do {
+            let result = try await service.extractTasksAndReminders(from: text)
+            return result.reminders
+        } catch {
+            print("❌ LocalLLMEngine: Reminder extraction failed: \(error)")
+            throw handleOllamaError(error)
+        }
+    }
+    
+
+    
+    // MARK: - Enhanced Error Handling
+    
+    private func handleOllamaError(_ error: Error) -> SummarizationError {
+        if let summarizationError = error as? SummarizationError {
+            return summarizationError
+        }
+        
+        // Handle specific Ollama errors
+        if let ollamaError = error as? OllamaError {
+            switch ollamaError {
+            case .notConnected:
+                return SummarizationError.aiServiceUnavailable(service: "Ollama server is not connected. Please check your server URL and port settings.")
+            case .serverError(let message):
+                return SummarizationError.aiServiceUnavailable(service: "Ollama server error: \(message)")
+            case .parsingError(let message):
+                return SummarizationError.aiServiceUnavailable(service: "Ollama parsing error: \(message)")
+            case .modelNotFound(let model):
+                return SummarizationError.aiServiceUnavailable(service: "Ollama model '\(model)' not found on server. Please check your model configuration.")
+            }
+        }
+        
+        // Handle network errors
+        let errorString = error.localizedDescription.lowercased()
+        if errorString.contains("timeout") || errorString.contains("network") {
+            return SummarizationError.processingTimeout
+        } else {
+            return SummarizationError.aiServiceUnavailable(service: "Ollama error: \(error.localizedDescription)")
+        }
     }
     
     func classifyContent(_ text: String) async throws -> ContentType {
-        // For now, return general content type
-        // Could be enhanced with specific classification prompts
-        return .general
+        print("🔍 LocalLLMEngine: Starting content classification")
+        
+        // Use enhanced ContentAnalyzer for classification
+        let contentType = ContentAnalyzer.classifyContent(text)
+        print("✅ LocalLLMEngine: Content classified as \(contentType.rawValue)")
+        
+        return contentType
     }
     
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], contentType: ContentType) {
@@ -511,8 +570,22 @@ class LocalLLMEngine: SummarizationEngine {
     // MARK: - Connection Testing
     
     func testConnection() async -> Bool {
+        print("🔧 LocalLLMEngine: Testing connection...")
+        
         updateConfiguration()
-        return await ollamaService?.testConnection() ?? false
+        
+        guard let service = ollamaService else {
+            print("❌ LocalLLMEngine: Service is nil - configuration issue")
+            return false
+        }
+        
+        let isConnected = await service.testConnection()
+        if isConnected {
+            print("✅ LocalLLMEngine: Connection test successful")
+        } else {
+            print("❌ LocalLLMEngine: Connection test failed")
+        }
+        return isConnected
     }
     
     func loadAvailableModels() async throws -> [String] {
@@ -524,6 +597,8 @@ class LocalLLMEngine: SummarizationEngine {
         let models = try await service.loadAvailableModels()
         return models.map { $0.name }
     }
+    
+
 }
 
 // MARK: - Engine Factory
@@ -537,8 +612,8 @@ class AIEngineFactory {
             return OpenAISummarizationEngine()
         case .awsBedrock:
             return AWSBedrockEngine()
-        case .whisperBased:
-            return WhisperBasedEngine()
+        case .openAICompatible:
+            return OpenAICompatibleEngine()
         case .localLLM:
             return LocalLLMEngine()
         }
@@ -560,7 +635,7 @@ enum AIEngineType: String, CaseIterable {
     case enhancedAppleIntelligence = "Enhanced Apple Intelligence"
     case openAI = "OpenAI"
     case awsBedrock = "AWS Bedrock"
-    case whisperBased = "Whisper-Based"
+    case openAICompatible = "OpenAI API Compatible"
     case localLLM = "Local LLM (Ollama)"
     
     var description: String {
@@ -571,8 +646,8 @@ enum AIEngineType: String, CaseIterable {
             return "Advanced AI-powered summaries using OpenAI's GPT models"
         case .awsBedrock:
             return "Cloud-based AI using AWS Bedrock foundation models"
-        case .whisperBased:
-            return "Local AI with advanced transcription using Whisper"
+        case .openAICompatible:
+            return "Advanced AI summaries using OpenAI API compatible models"
         case .localLLM:
             return "Privacy-focused local language model processing"
         }
@@ -582,7 +657,7 @@ enum AIEngineType: String, CaseIterable {
         switch self {
         case .enhancedAppleIntelligence, .localLLM, .openAI:
             return false
-        case .awsBedrock, .whisperBased:
+        case .awsBedrock, .openAICompatible:
             return true
         }
     }
@@ -595,8 +670,8 @@ enum AIEngineType: String, CaseIterable {
             return ["OpenAI API Key", "Internet Connection", "Usage Credits"]
         case .awsBedrock:
             return ["AWS Account", "Internet Connection", "API Keys"]
-        case .whisperBased:
-            return ["Local Storage (2GB+)", "Processing Power"]
+        case .openAICompatible:
+            return ["OpenAI API Compatible Service", "Internet Connection"]
         case .localLLM:
             return ["Ollama Server", "Local Network", "Model Download"]
         }

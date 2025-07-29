@@ -1,5 +1,11 @@
 import Foundation
 
+// MARK: - Connection Testing Protocol
+
+protocol ConnectionTestable {
+    func testConnection() async -> Bool
+}
+
 // MARK: - Summarization Engine Protocol
 
 protocol SummarizationEngine {

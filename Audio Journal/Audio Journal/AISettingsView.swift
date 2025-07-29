@@ -53,12 +53,22 @@ final class AISettingsViewModel: ObservableObject {
     }
 
     /// Moves the engine selection logic into the view model.
-    func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) -> (shouldPrompt: Bool, oldEngine: String) {
+    func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) -> (shouldPrompt: Bool, oldEngine: String, error: String?) {
         let oldEngine = recorderVM.selectedAIEngine
         let newEngine = engineType.rawValue
 
         guard oldEngine != newEngine else {
-            return (shouldPrompt: false, oldEngine: "")
+            return (shouldPrompt: false, oldEngine: "", error: nil)
+        }
+        
+        // Validate engine availability before switching
+        let validation = summaryManager.validateEngineAvailability(newEngine)
+        guard validation.isValid else {
+            return (shouldPrompt: false, oldEngine: "", error: validation.errorMessage)
+        }
+        
+        guard validation.isAvailable else {
+            return (shouldPrompt: false, oldEngine: "", error: validation.errorMessage)
         }
 
         recorderVM.selectedAIEngine = newEngine
@@ -66,7 +76,7 @@ final class AISettingsViewModel: ObservableObject {
         self.regenerationManager.setEngine(newEngine)
         
         let shouldPrompt = self.regenerationManager.shouldPromptForRegeneration(oldEngine: oldEngine, newEngine: newEngine)
-        return (shouldPrompt: shouldPrompt, oldEngine: oldEngine)
+        return (shouldPrompt: shouldPrompt, oldEngine: oldEngine, error: nil)
     }
 }
 
@@ -74,17 +84,36 @@ final class AISettingsViewModel: ObservableObject {
 struct AISettingsView: View {
     @StateObject private var viewModel = AISettingsViewModel()
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
+    @StateObject private var errorHandler = ErrorHandler()
     
     @Environment(\.dismiss) private var dismiss
     @State private var showingEngineChangePrompt = false
     @State private var previousEngine = ""
     @State private var showingOllamaSettings = false
     @State private var showingOpenAISettings = false
+    @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
+    @State private var isRefreshingStatus = false
     
     // No custom init is needed anymore, which solves the compiler error.
     
     private var currentEngineType: AIEngineType? {
         AIEngineType.allCases.first(where: { $0.rawValue == recorderVM.selectedAIEngine })
+    }
+    
+    private func refreshEngineStatuses() {
+        Task {
+            await MainActor.run {
+                isRefreshingStatus = true
+            }
+            
+            // Get engine statuses from SummaryManager
+            let statuses = viewModel.summaryManager.getEngineAvailabilityStatus()
+            
+            await MainActor.run {
+                engineStatuses = statuses
+                isRefreshingStatus = false
+            }
+        }
     }
     
     var body: some View {
@@ -131,13 +160,19 @@ struct AISettingsView: View {
         .alert("Regeneration Complete", isPresented: $viewModel.regenerationManager.showingRegenerationAlert) {
             Button("OK") { viewModel.regenerationManager.regenerationResults = nil }
         } message: {
-            if let results = viewModel.regenerationManager.regenerationResults {
-                Text(results.summary)
-            }
+            Text(viewModel.regenerationManager.regenerationResults?.summary ?? "Regeneration process finished.")
         }
         .onAppear {
             viewModel.summaryManager.setEngine(recorderVM.selectedAIEngine)
             viewModel.regenerationManager.setEngine(recorderVM.selectedAIEngine)
+            self.refreshEngineStatuses()
+        }
+        .alert("Error", isPresented: $errorHandler.showingErrorAlert) {
+            Button("OK") {
+                errorHandler.clearCurrentError()
+            }
+        } message: {
+            Text(errorHandler.currentError?.localizedDescription ?? "An unknown error occurred.")
         }
         .sheet(isPresented: $showingOllamaSettings) {
             OllamaSettingsView()
@@ -234,9 +269,28 @@ private extension AISettingsView {
     
     var engineSelectionSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Available Engines")
-                .font(.headline)
-                .padding(.horizontal, 24)
+            HStack {
+                Text("Available Engines")
+                    .font(.headline)
+                
+                Spacer()
+                
+                Button(action: { self.refreshEngineStatuses() }) {
+                    HStack(spacing: 4) {
+                        if isRefreshingStatus {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        Text("Refresh")
+                    }
+                    .font(.caption)
+                    .foregroundColor(.blue)
+                }
+                .disabled(isRefreshingStatus)
+            }
+            .padding(.horizontal, 24)
             
             ForEach(AIEngineType.allCases, id: \.self) { engineType in
                 engineRow(for: engineType)
@@ -244,64 +298,16 @@ private extension AISettingsView {
         }
     }
     
-    func engineRow(for engineType: AIEngineType) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(engineType.rawValue)
-                            .font(.body)
-                        if engineType.isComingSoon {
-                            Text("(Coming Soon)")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.orange.opacity(0.2))
-                                .cornerRadius(4)
-                        }
-                    }
-                    Text(engineType.description)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                if recorderVM.selectedAIEngine == engineType.rawValue {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.blue)
-                        .font(.title2)
-                }
-            }
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(.systemGray6))
-                .opacity(recorderVM.selectedAIEngine == engineType.rawValue ? 0.3 : 0.1)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(recorderVM.selectedAIEngine == engineType.rawValue ? Color.blue : Color.clear, lineWidth: 2)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if !engineType.isComingSoon {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    let result = viewModel.selectEngine(engineType, recorderVM: recorderVM)
-                    if result.shouldPrompt {
-                        previousEngine = result.oldEngine
-                        showingEngineChangePrompt = true
-                    }
-                }
-            }
-        }
-        .opacity(!engineType.isComingSoon ? 1.0 : 0.6)
-        .padding(.horizontal, 24)
-    }
-    
     var ollamaConfigurationSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        // FIX: Logic moved outside the ViewBuilder closure.
+        let serverURL = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaServerURL) ?? AppSettingsKeys.Defaults.ollamaServerURL
+        let port = UserDefaults.standard.integer(forKey: AppSettingsKeys.ollamaPort)
+        let effectivePort = port > 0 ? port : AppSettingsKeys.Defaults.ollamaPort
+        let modelName = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaModelName) ?? AppSettingsKeys.Defaults.ollamaModelName
+        let isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.enableOllama)
+        
+        // The return statement is now required because the property contains more than a single expression.
+        return VStack(alignment: .leading, spacing: 16) {
             Text("Ollama Configuration")
                 .font(.headline)
                 .padding(.horizontal, 24)
@@ -329,12 +335,6 @@ private extension AISettingsView {
                         .cornerRadius(8)
                     }
                 }
-                
-                let serverURL = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaServerURL) ?? AppSettingsKeys.Defaults.ollamaServerURL
-                let port = UserDefaults.standard.integer(forKey: AppSettingsKeys.ollamaPort)
-                let effectivePort = port > 0 ? port : AppSettingsKeys.Defaults.ollamaPort
-                let modelName = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaModelName) ?? AppSettingsKeys.Defaults.ollamaModelName
-                let isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.enableOllama)
                 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -376,7 +376,13 @@ private extension AISettingsView {
     }
     
     var openAIConfigurationSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        // FIX: Logic moved outside the ViewBuilder closure.
+        let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
+        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt4oMini.rawValue
+        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt4oMini
+        
+        // The return statement is now required because the property contains more than a single expression.
+        return VStack(alignment: .leading, spacing: 16) {
             Text("OpenAI Configuration")
                 .font(.headline)
                 .padding(.horizontal, 24)
@@ -391,7 +397,7 @@ private extension AISettingsView {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
-                    Button(action: { showingOpenAISettings = true }) {
+                    Button(action: { self.showingOpenAISettings = true }) {
                         HStack {
                             Image(systemName: "gear")
                             Text("Configure")
@@ -404,10 +410,6 @@ private extension AISettingsView {
                         .cornerRadius(8)
                     }
                 }
-                
-                let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
-                let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt4oMini.rawValue
-                let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt4oMini
                 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -500,6 +502,138 @@ private extension AISettingsView {
     }
 }
 
+// MARK: - Helper Functions
+private extension AISettingsView {
+    @ViewBuilder
+    func engineRow(for engineType: AIEngineType) -> some View {
+        let engineStatus = self.engineStatuses[engineType.rawValue]
+        let isAvailable = engineStatus?.isAvailable ?? false
+        let isCurrentEngine = self.recorderVM.selectedAIEngine == engineType.rawValue
+        
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(engineType.rawValue)
+                            .font(.body)
+                        
+                        // Status indicator
+                        HStack(spacing: 2) {
+                            Circle()
+                                .fill(statusColor(for: engineType, status: engineStatus))
+                                .frame(width: 8, height: 8)
+                            
+                            Text(statusText(for: engineType, status: engineStatus))
+                                .font(.caption2)
+                                .foregroundColor(statusColor(for: engineType, status: engineStatus))
+                        }
+                        
+                        if engineType.isComingSoon {
+                            Text("(Coming Soon)")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.2))
+                                .cornerRadius(4)
+                        }
+                    }
+                    Text(engineType.description)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    // Requirements if not available
+                    if let status = engineStatus, !status.isAvailable && !engineType.isComingSoon {
+                        Text("Requirements: \(status.requirements.joined(separator: ", "))")
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                    }
+                }
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 4) {
+                    if isCurrentEngine {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.blue)
+                            .font(.title2)
+                    }
+                    
+                    if let status = engineStatus {
+                        Text(status.version)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(.systemGray6))
+                .opacity(isCurrentEngine ? 0.3 : 0.1)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isCurrentEngine ? Color.blue : Color.clear, lineWidth: 2)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !engineType.isComingSoon && isAvailable {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    let result = self.viewModel.selectEngine(engineType, recorderVM: self.recorderVM)
+                    if let error = result.error {
+                        // Show error from validation
+                        let systemError = SystemError.configurationError(message: error)
+                        let appError = AppError.system(systemError)
+                        self.errorHandler.handle(appError, context: "Engine Selection")
+                    } else if result.shouldPrompt {
+                        self.previousEngine = result.oldEngine
+                        self.showingEngineChangePrompt = true
+                    }
+                }
+            } else if !isAvailable && !engineType.isComingSoon {
+                // Show error for unavailable engine
+                let errorMessage = "\(engineType.rawValue) is not available. \(engineStatus?.requirements.joined(separator: ", ") ?? "Check requirements")"
+                let systemError = SystemError.configurationError(message: errorMessage)
+                let error = AppError.system(systemError)
+                self.errorHandler.handle(error, context: "Engine Selection")
+            }
+        }
+        .opacity(engineType.isComingSoon ? 0.6 : 1.0)
+        .padding(.horizontal, 24)
+    }
+    
+    func statusColor(for engineType: AIEngineType, status: EngineAvailabilityStatus?) -> Color {
+        if engineType.isComingSoon {
+            return .orange
+        }
+        
+        guard let status = status else {
+            return .gray
+        }
+        
+        if status.isCurrentEngine {
+            return .green
+        } else if status.isAvailable {
+            return .blue
+        } else {
+            return .red
+        }
+    }
+    
+    func statusText(for engineType: AIEngineType, status: EngineAvailabilityStatus?) -> String {
+        if engineType.isComingSoon {
+            return "Coming Soon"
+        }
+        
+        guard let status = status else {
+            return "Unknown"
+        }
+        
+        return status.statusMessage
+    }
+}
 
 #Preview {
     AISettingsView()

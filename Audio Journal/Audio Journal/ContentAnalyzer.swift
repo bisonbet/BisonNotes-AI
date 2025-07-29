@@ -18,12 +18,15 @@ class ContentAnalyzer {
         let cleanedText = preprocessText(text)
         let lowercased = cleanedText.lowercased()
         
-        // Calculate scores for each content type
-        let meetingScore = calculateMeetingScore(lowercased)
-        let journalScore = calculateJournalScore(lowercased)
-        let technicalScore = calculateTechnicalScore(lowercased)
+        // Calculate scores for each content type with enhanced algorithms
+        let meetingScore = calculateEnhancedMeetingScore(lowercased, originalText: text)
+        let journalScore = calculateEnhancedJournalScore(lowercased, originalText: text)
+        let technicalScore = calculateEnhancedTechnicalScore(lowercased, originalText: text)
         
-        // Determine the highest scoring type
+        // Log classification scores for debugging
+        print("🔍 ContentAnalyzer: Classification scores - Meeting: \(String(format: "%.3f", meetingScore)), Journal: \(String(format: "%.3f", journalScore)), Technical: \(String(format: "%.3f", technicalScore))")
+        
+        // Determine the highest scoring type with improved confidence thresholds
         let scores = [
             (ContentType.meeting, meetingScore),
             (ContentType.personalJournal, journalScore),
@@ -32,12 +35,62 @@ class ContentAnalyzer {
         
         let bestMatch = scores.max { $0.1 < $1.1 }
         
-        // Only classify as specific type if confidence is high enough
-        if let match = bestMatch, match.1 > 0.3 {
+        // Enhanced confidence threshold based on text length and content complexity
+        let confidenceThreshold = calculateConfidenceThreshold(for: text)
+        
+        if let match = bestMatch, match.1 > confidenceThreshold {
+            print("✅ ContentAnalyzer: Classified as \(match.0.rawValue) with confidence \(String(format: "%.3f", match.1))")
             return match.0
         }
         
+        print("🏷️ ContentAnalyzer: Classified as General (best score: \(String(format: "%.3f", bestMatch?.1 ?? 0.0)) < threshold: \(String(format: "%.3f", confidenceThreshold)))")
         return .general
+    }
+    
+    // MARK: - Enhanced Classification Methods
+    
+    static func classifyContentWithConfidence(_ text: String) -> (contentType: ContentType, confidence: Double) {
+        let cleanedText = preprocessText(text)
+        let lowercased = cleanedText.lowercased()
+        
+        let meetingScore = calculateEnhancedMeetingScore(lowercased, originalText: text)
+        let journalScore = calculateEnhancedJournalScore(lowercased, originalText: text)
+        let technicalScore = calculateEnhancedTechnicalScore(lowercased, originalText: text)
+        
+        let scores = [
+            (ContentType.meeting, meetingScore),
+            (ContentType.personalJournal, journalScore),
+            (ContentType.technical, technicalScore)
+        ]
+        
+        let bestMatch = scores.max { $0.1 < $1.1 }
+        let confidenceThreshold = calculateConfidenceThreshold(for: text)
+        
+        if let match = bestMatch, match.1 > confidenceThreshold {
+            return (match.0, match.1)
+        }
+        
+        return (.general, bestMatch?.1 ?? 0.0)
+    }
+    
+    static func getContentTypeRecommendations(_ text: String) -> [ContentType] {
+        let cleanedText = preprocessText(text)
+        let lowercased = cleanedText.lowercased()
+        
+        let meetingScore = calculateEnhancedMeetingScore(lowercased, originalText: text)
+        let journalScore = calculateEnhancedJournalScore(lowercased, originalText: text)
+        let technicalScore = calculateEnhancedTechnicalScore(lowercased, originalText: text)
+        
+        let scores = [
+            (ContentType.meeting, meetingScore),
+            (ContentType.personalJournal, journalScore),
+            (ContentType.technical, technicalScore)
+        ]
+        
+        // Return types ordered by score (descending)
+        return scores
+            .sorted { $0.1 > $1.1 }
+            .map { $0.0 }
     }
     
     // MARK: - Text Preprocessing
@@ -324,6 +377,229 @@ class ContentAnalyzer {
         // Jaccard similarity: if > 0.3, consider related
         let similarity = Double(intersection.count) / Double(union.count)
         return similarity > 0.3
+    }
+    
+    // MARK: - Enhanced Classification Methods
+    
+    private static func calculateEnhancedMeetingScore(_ text: String, originalText: String) -> Double {
+        var score = calculateMeetingScore(text) // Start with base score
+        
+        // Enhanced features for meeting detection
+        
+        // Multi-speaker detection with improved patterns
+        let speakerPatterns = [
+            "speaker \\d+", "\\w+ said", "\\w+ mentioned", "\\w+ asked", "\\w+ replied",
+            "\\w+ suggested", "\\w+ agreed", "\\w+ disagreed", "\\w+ commented"
+        ]
+        
+        var uniqueSpeakers = Set<String>()
+        for pattern in speakerPatterns {
+            let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+            let matches = regex?.matches(in: originalText, options: [], range: NSRange(location: 0, length: originalText.count)) ?? []
+            
+            for match in matches {
+                let speakerText = String(originalText[Range(match.range, in: originalText)!])
+                uniqueSpeakers.insert(speakerText.lowercased())
+            }
+        }
+        
+        // Boost score for multiple speakers
+        if uniqueSpeakers.count > 1 {
+            score += Double(uniqueSpeakers.count) * 0.2
+        }
+        
+        // Meeting structure indicators
+        let meetingStructureIndicators = [
+            "agenda", "minutes", "action items", "next steps", "follow up",
+            "decision", "consensus", "vote", "motion", "seconded",
+            "meeting adjourned", "meeting ended", "wrap up", "summary"
+        ]
+        
+        for indicator in meetingStructureIndicators {
+            if text.contains(indicator) {
+                score += 0.5
+            }
+        }
+        
+        // Conversation flow indicators
+        let conversationFlow = [
+            "what do you think", "do you agree", "any questions", "any concerns",
+            "let's discuss", "let's review", "let's go through", "any other business"
+        ]
+        
+        for flow in conversationFlow {
+            if text.contains(flow) {
+                score += 0.3
+            }
+        }
+        
+        // Normalize and return
+        return min(score, 1.0)
+    }
+    
+    private static func calculateEnhancedJournalScore(_ text: String, originalText: String) -> Double {
+        var score = calculateJournalScore(text) // Start with base score
+        
+        let wordCount = originalText.components(separatedBy: .whitespaces).count
+        
+        // Enhanced personal reflection indicators
+        let reflectionIndicators = [
+            "i realized", "i learned", "i discovered", "i noticed", "i observed",
+            "looking back", "in retrospect", "thinking about", "reflecting on",
+            "i feel like", "i think that", "i believe", "my experience"
+        ]
+        
+        for indicator in reflectionIndicators {
+            if text.contains(indicator) {
+                score += 0.4
+            }
+        }
+        
+        // Emotional intensity scoring
+        let emotionalIntensityWords = [
+            "overwhelmed", "ecstatic", "devastated", "thrilled", "heartbroken",
+            "elated", "furious", "terrified", "euphoric", "desperate"
+        ]
+        
+        for word in emotionalIntensityWords {
+            if text.contains(word) {
+                score += 0.3
+            }
+        }
+        
+        // Personal pronoun density
+        let personalPronouns = ["i ", "my ", "me ", "myself ", "mine "]
+        var pronounCount = 0
+        for pronoun in personalPronouns {
+            pronounCount += originalText.lowercased().components(separatedBy: pronoun).count - 1
+        }
+        
+        if wordCount > 0 {
+            let pronounDensity = Double(pronounCount) / Double(wordCount)
+            score += pronounDensity * 3.0
+        }
+        
+        // Temporal references (common in journals)
+        let temporalReferences = [
+            "today", "yesterday", "this morning", "tonight", "this week",
+            "last week", "next week", "this month", "this year"
+        ]
+        
+        for reference in temporalReferences {
+            if text.contains(reference) {
+                score += 0.2
+            }
+        }
+        
+        // Normalize and return
+        return min(score, 1.0)
+    }
+    
+    private static func calculateEnhancedTechnicalScore(_ text: String, originalText: String) -> Double {
+        var score = calculateTechnicalScore(text) // Start with base score
+        
+        let wordCount = originalText.components(separatedBy: .whitespaces).count
+        
+        // Enhanced technical pattern detection
+        let enhancedTechnicalPatterns = [
+            "\\w+\\.\\w+\\(\\)", // method calls
+            "\\w+\\[\\d+\\]", // array access
+            "if\\s+\\w+", "for\\s+\\w+", "while\\s+\\w+", "switch\\s+\\w+", // control structures
+            "\\d+\\.\\d+\\.\\d+", // version numbers
+            "http[s]?://[\\w\\-\\.]+", // URLs
+            "\\w+@[\\w\\-\\.]+\\.[a-z]{2,}", // email addresses
+            "\\w+://[\\w\\-\\.]+", // protocols
+            "\\w+\\.\\w+\\.\\w+", // domain patterns
+            "\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}", // IP addresses
+            "\\w+\\s*=\\s*\\w+", // variable assignments
+            "function\\s+\\w+", "def\\s+\\w+", "class\\s+\\w+" // function/class definitions
+        ]
+        
+        for pattern in enhancedTechnicalPatterns {
+            let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+            let matches = regex?.numberOfMatches(in: originalText, options: [], range: NSRange(location: 0, length: originalText.count)) ?? 0
+            score += Double(matches) * 0.3
+        }
+        
+        // Technical jargon density with expanded vocabulary
+        let expandedTechnicalKeywords = [
+            "algorithm", "function", "method", "class", "object", "variable", "parameter",
+            "database", "server", "client", "api", "endpoint", "request", "response",
+            "code", "programming", "development", "software", "hardware", "firmware",
+            "system", "architecture", "framework", "library", "module", "package",
+            "bug", "error", "exception", "debug", "test", "unit test", "integration test",
+            "deployment", "production", "staging", "environment", "configuration",
+            "performance", "optimization", "scalability", "security", "authentication",
+            "encryption", "compression", "caching", "load balancing", "microservices",
+            "container", "docker", "kubernetes", "cloud", "aws", "azure", "gcp"
+        ]
+        
+        let technicalWordCount = originalText.lowercased().components(separatedBy: .whitespaces).filter { word in
+            expandedTechnicalKeywords.contains { word.contains($0) }
+        }.count
+        
+        if wordCount > 0 {
+            let technicalDensity = Double(technicalWordCount) / Double(wordCount)
+            score += technicalDensity * 4.0
+        }
+        
+        // Code block indicators
+        let codeBlockIndicators = [
+            "```", "code block", "source code", "implementation", "example code"
+        ]
+        
+        for indicator in codeBlockIndicators {
+            if text.contains(indicator) {
+                score += 0.5
+            }
+        }
+        
+        // Normalize and return
+        return min(score, 1.0)
+    }
+    
+    private static func calculateConfidenceThreshold(for text: String) -> Double {
+        let wordCount = text.components(separatedBy: .whitespaces).count
+        let sentences = extractSentences(from: text)
+        
+        // Base threshold
+        var threshold = 0.3
+        
+        // Adjust based on text length (longer texts need higher confidence)
+        if wordCount > 500 {
+            threshold += 0.1
+        } else if wordCount > 200 {
+            threshold += 0.05
+        }
+        
+        // Adjust based on sentence count (more complex content needs higher confidence)
+        if sentences.count > 20 {
+            threshold += 0.1
+        } else if sentences.count > 10 {
+            threshold += 0.05
+        }
+        
+        // Adjust based on content complexity (technical content needs higher confidence)
+        let technicalDensity = calculateTechnicalDensity(text)
+        if technicalDensity > 0.1 {
+            threshold += 0.1
+        }
+        
+        return min(threshold, 0.6) // Cap at 0.6 to avoid being too strict
+    }
+    
+    private static func calculateTechnicalDensity(_ text: String) -> Double {
+        let technicalKeywords = [
+            "algorithm", "function", "method", "class", "object", "variable",
+            "database", "server", "client", "api", "endpoint", "code", "programming"
+        ]
+        
+        let words = text.lowercased().components(separatedBy: .whitespaces)
+        let technicalWordCount = words.filter { word in
+            technicalKeywords.contains { word.contains($0) }
+        }.count
+        
+        return words.count > 0 ? Double(technicalWordCount) / Double(words.count) : 0.0
     }
 }
 

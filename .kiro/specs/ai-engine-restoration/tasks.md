@@ -72,7 +72,7 @@
   - Test configuration persistence and loading across app restarts
   - _Requirements: 2.1, 2.2_
 
-- [ ] 13. Add engine performance monitoring and statistics
+- [x] 13. Add engine performance monitoring and statistics
   - Implement processing time tracking for each engine
   - Add confidence scoring and quality metrics collection
   - Create engine usage statistics and performance comparison
@@ -84,7 +84,7 @@
   - Test parallel processing of summary, tasks, and reminders
   - _Requirements: 1.1, 1.2, 3.1, 3.2, 3.3_
 
-- [ ] 15. Integrate with existing UI and settings
+- [x] 15. Integrate with existing UI and settings
   - Ensure AI engine selection works in settings UI
   - Test engine status indicators and availability display
   - Verify error messages are properly displayed to users

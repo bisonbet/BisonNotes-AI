@@ -13,10 +13,12 @@ struct SettingsView: View {
     @StateObject private var summaryManager = SummaryManager()
     @StateObject private var transcriptManager = TranscriptManager.shared
     @StateObject private var regenerationManager: SummaryRegenerationManager
+    @StateObject private var errorHandler = ErrorHandler()
     @State private var showingEngineChangePrompt = false
     @State private var previousEngine = ""
     @State private var showingTranscriptionSettings = false
     @State private var showingAISettings = false
+    @State private var showingPerformanceView = false
     @State private var showingClearSummariesAlert = false
     
     init() {
@@ -171,8 +173,81 @@ struct SettingsView: View {
                             .foregroundColor(.primary)
                             .padding(.horizontal, 24)
                         
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Current Engine:")
+                                    .font(.body)
+                                    .foregroundColor(.secondary)
+                                Text(recorderVM.selectedAIEngine)
+                                    .font(.body)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            // Engine status indicator
+                            HStack {
+                                Text("Status:")
+                                    .font(.body)
+                                    .foregroundColor(.secondary)
+                                
+                                let engineStatus = summaryManager.getEngineAvailabilityStatus()[recorderVM.selectedAIEngine]
+                                let statusColor: Color = engineStatus?.isAvailable == true ? .green : .red
+                                let statusText = engineStatus?.isAvailable == true ? "Available" : "Unavailable"
+                                
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(statusColor)
+                                        .frame(width: 8, height: 8)
+                                    Text(statusText)
+                                        .font(.body)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(statusColor)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        
                         HStack {
-                            Text("Current Engine:")
+                            Button(action: {
+                                showingAISettings = true
+                            }) {
+                                HStack {
+                                    Text("Configure AI Engine")
+                                    Spacer()
+                                    Image(systemName: "arrow.right")
+                                }
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.blue.opacity(0.1))
+                                )
+                                .foregroundColor(.blue)
+                            }
+                            
+                            Button(action: {
+                                Task {
+                                    await summaryManager.refreshEngineAvailability()
+                                }
+                            }) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.caption)
+                                    .foregroundColor(.blue)
+                            }
+                            .padding(.horizontal, 8)
+                        }
+                        .padding(.horizontal, 24)
+                    }
+                    
+                    // AI Processing Settings
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("AI Processing")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 24)
+                        
+                        HStack {
+                            Text("Current AI Engine:")
                                 .font(.body)
                                 .foregroundColor(.secondary)
                             Text(recorderVM.selectedAIEngine)
@@ -186,7 +261,7 @@ struct SettingsView: View {
                             showingAISettings = true
                         }) {
                             HStack {
-                                Text("Configure AI Engine")
+                                Text("Configure AI Engines")
                                 Spacer()
                                 Image(systemName: "arrow.right")
                             }
@@ -199,6 +274,26 @@ struct SettingsView: View {
                             .foregroundColor(.blue)
                         }
                         .padding(.horizontal, 24)
+                        
+                        Button(action: {
+                            showingPerformanceView = true
+                        }) {
+                            HStack {
+                                Text("Engine Performance")
+                                Spacer()
+                                Image(systemName: "chart.line.uptrend.xyaxis")
+                            }
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.green.opacity(0.1))
+                            )
+                            .foregroundColor(.green)
+                        }
+                        .padding(.horizontal, 24)
+                        
+
                     }
                     
                     // Transcription Settings
@@ -256,6 +351,10 @@ struct SettingsView: View {
             AISettingsView()
                 .environmentObject(recorderVM)
         }
+        .sheet(isPresented: $showingPerformanceView) {
+            EnginePerformanceView(summaryManager: summaryManager)
+        }
+
         .alert("Clear All Summaries", isPresented: $showingClearSummariesAlert) {
             Button("Cancel", role: .cancel) {
                 // Do nothing, just dismiss
@@ -266,6 +365,15 @@ struct SettingsView: View {
         } message: {
             let totalSummaries = summaryManager.enhancedSummaries.count + summaryManager.summaries.count
             Text("This will permanently delete all \(totalSummaries) summaries, transcripts, and extracted tasks/reminders. This action cannot be undone.")
+        }
+        .alert("Error", isPresented: $errorHandler.showingErrorAlert) {
+            Button("OK") {
+                errorHandler.clearCurrentError()
+            }
+        } message: {
+            if let error = errorHandler.currentError {
+                Text(error.localizedDescription)
+            }
         }
     }
     
