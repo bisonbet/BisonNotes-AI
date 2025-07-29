@@ -10,50 +10,50 @@ import Foundation
 // MARK: - OpenAI Models for Summarization
 
 enum OpenAISummarizationModel: String, CaseIterable {
-    case gpt41 = "gpt-4.1"
-    case gpt41Mini = "gpt-4.1-mini"
-    case gpt41Nano = "gpt-4.1-nano"
+    case gpt4o = "gpt-4o"
+    case gpt4oMini = "gpt-4o-mini"
+    case gpt35Turbo = "gpt-3.5-turbo"
     
     var displayName: String {
         switch self {
-        case .gpt41:
-            return "GPT-4.1"
-        case .gpt41Mini:
-            return "GPT-4.1 Mini"
-        case .gpt41Nano:
-            return "GPT-4.1 Nano"
+        case .gpt4o:
+            return "GPT-4o"
+        case .gpt4oMini:
+            return "GPT-4o Mini"
+        case .gpt35Turbo:
+            return "GPT-3.5 Turbo"
         }
     }
     
     var description: String {
         switch self {
-        case .gpt41:
+        case .gpt4o:
             return "Most capable model with advanced reasoning and comprehensive analysis"
-        case .gpt41Mini:
+        case .gpt4oMini:
             return "Balanced performance and cost, suitable for most summarization tasks"
-        case .gpt41Nano:
+        case .gpt35Turbo:
             return "Fast and cost-effective for basic summarization needs"
         }
     }
     
     var maxTokens: Int {
         switch self {
-        case .gpt41:
+        case .gpt4o:
             return 4096
-        case .gpt41Mini:
+        case .gpt4oMini:
             return 2048
-        case .gpt41Nano:
+        case .gpt35Turbo:
             return 1024
         }
     }
     
     var costTier: String {
         switch self {
-        case .gpt41:
+        case .gpt4o:
             return "Premium"
-        case .gpt41Mini:
+        case .gpt4oMini:
             return "Standard"
-        case .gpt41Nano:
+        case .gpt35Turbo:
             return "Economy"
         }
     }
@@ -71,7 +71,7 @@ struct OpenAISummarizationConfig: Equatable {
     
     static let `default` = OpenAISummarizationConfig(
         apiKey: "",
-        model: .gpt41Mini,
+        model: .gpt4oMini,
         baseURL: "https://api.openai.com/v1",
         temperature: 0.1,
         maxTokens: 2048,
@@ -188,8 +188,19 @@ class OpenAISummarizationService {
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
         let systemPrompt = createSystemPrompt(for: .summary, contentType: contentType)
         let userPrompt = """
-        Please provide a comprehensive summary of the following content:
+        Please provide a comprehensive summary of the following content using proper Markdown formatting:
 
+        Use the following Markdown elements as appropriate:
+        - **Bold text** for key points and important information
+        - *Italic text* for emphasis
+        - ## Headers for main sections
+        - ### Subheaders for subsections
+        - • Bullet points for lists
+        - 1. Numbered lists for sequential items
+        - > Blockquotes for important quotes or statements
+        - `Code formatting` for technical terms or specific names
+
+        Content to summarize:
         \(text)
         """
         
@@ -351,9 +362,10 @@ class OpenAISummarizationService {
         // Create a comprehensive prompt for all tasks
         let systemPrompt = createSystemPrompt(for: .complete, contentType: contentType)
         let userPrompt = """
-        Please analyze the following content and provide a comprehensive response in JSON format with the following structure:
+        Please analyze the following content and provide a comprehensive response in VALID JSON format only. Do not include any text before or after the JSON. The response must be a single, well-formed JSON object with this exact structure:
+
         {
-            "summary": "A detailed summary of the content",
+            "summary": "A detailed summary using Markdown formatting with **bold**, *italic*, ## headers, • bullet points, etc.",
             "tasks": [
                 {
                     "text": "task description",
@@ -373,7 +385,16 @@ class OpenAISummarizationService {
             ]
         }
 
-        Content:
+        IMPORTANT: 
+        - Return ONLY valid JSON, no additional text or explanations
+        - The "summary" field must use Markdown formatting: **bold**, *italic*, ## headers, • bullets, etc.
+        - If no tasks are found, use an empty array: "tasks": []
+        - If no reminders are found, use an empty array: "reminders": []
+        - Ensure all strings are properly quoted and escaped (especially for Markdown characters)
+        - Do not include trailing commas
+        - Escape special characters in JSON strings (quotes, backslashes, newlines)
+
+        Content to analyze:
         \(text)
         """
         
@@ -468,13 +489,13 @@ class OpenAISummarizationService {
         
         let taskSpecific = switch task {
         case .summary:
-            "Provide a comprehensive, well-structured summary using markdown formatting. Use bullet points, headers, and emphasis where appropriate."
+            "Provide a comprehensive, well-structured summary using proper Markdown formatting. Use **bold** for key points, *italic* for emphasis, ## headers for sections, • bullet points for lists, and > blockquotes for important statements."
         case .tasks:
             "Focus on identifying actionable items, tasks, and things that need to be done. Be specific about priorities and timeframes."
         case .reminders:
             "Focus on time-sensitive items, deadlines, appointments, and things to remember. Pay attention to dates and urgency."
         case .complete:
-            "Provide a comprehensive analysis including summary, tasks, and reminders. Use clear, structured formatting."
+            "Provide a comprehensive analysis including summary, tasks, and reminders. The summary field must use Markdown formatting (**bold**, *italic*, ## headers, • bullets). You must respond with ONLY valid JSON format - no additional text, explanations, or formatting. Ensure proper JSON syntax with no trailing commas or syntax errors."
         }
         
         return "\(basePrompt) \(contentContext) \(taskSpecific)"
@@ -501,17 +522,57 @@ class OpenAISummarizationService {
             let confidence: Double?
         }
         
-        let taskResponses = try JSONDecoder().decode([TaskResponse].self, from: data)
-        
-        return taskResponses.map { response in
-            TaskItem(
-                text: response.text,
-                priority: TaskItem.Priority(rawValue: response.priority?.lowercased() ?? "medium") ?? .medium,
-                timeReference: response.timeReference,
-                category: TaskItem.TaskCategory(rawValue: response.category?.lowercased() ?? "general") ?? .general,
-                confidence: response.confidence ?? 0.8
-            )
+        do {
+            let taskResponses = try JSONDecoder().decode([TaskResponse].self, from: data)
+            
+            return taskResponses.map { response in
+                TaskItem(
+                    text: response.text,
+                    priority: TaskItem.Priority(rawValue: response.priority?.lowercased() ?? "medium") ?? .medium,
+                    timeReference: response.timeReference,
+                    category: TaskItem.TaskCategory(rawValue: response.category?.lowercased() ?? "general") ?? .general,
+                    confidence: response.confidence ?? 0.8
+                )
+            }
+        } catch {
+            print("❌ JSON parsing error for tasks: \(error)")
+            print("📝 Raw JSON: \(cleanedJSON)")
+            
+            // Try to extract tasks from plain text as fallback
+            return extractTasksFromPlainText(jsonString)
         }
+    }
+    
+    private func extractTasksFromPlainText(_ text: String) -> [TaskItem] {
+        // Fallback: extract tasks from plain text using simple pattern matching
+        let lines = text.components(separatedBy: .newlines)
+        var tasks: [TaskItem] = []
+        
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.lowercased().contains("task") || 
+               trimmed.lowercased().contains("todo") ||
+               trimmed.lowercased().contains("action") ||
+               trimmed.contains("•") || trimmed.contains("-") {
+                
+                let cleanText = trimmed
+                    .replacingOccurrences(of: "•", with: "")
+                    .replacingOccurrences(of: "-", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                if !cleanText.isEmpty && cleanText.count > 5 {
+                    tasks.append(TaskItem(
+                        text: cleanText,
+                        priority: .medium,
+                        timeReference: nil,
+                        category: .general,
+                        confidence: 0.6
+                    ))
+                }
+            }
+        }
+        
+        return tasks
     }
     
     private func parseRemindersFromJSON(_ jsonString: String) throws -> [ReminderItem] {
@@ -528,19 +589,60 @@ class OpenAISummarizationService {
             let confidence: Double?
         }
         
-        let reminderResponses = try JSONDecoder().decode([ReminderResponse].self, from: data)
-        
-        return reminderResponses.map { response in
-            let urgency = ReminderItem.Urgency(rawValue: response.urgency?.lowercased() ?? "later") ?? .later
-            let timeRef = ReminderItem.TimeReference(originalText: response.timeReference ?? "No time specified")
+        do {
+            let reminderResponses = try JSONDecoder().decode([ReminderResponse].self, from: data)
             
-            return ReminderItem(
-                text: response.text,
-                timeReference: timeRef,
-                urgency: urgency,
-                confidence: response.confidence ?? 0.8
-            )
+            return reminderResponses.map { response in
+                let urgency = ReminderItem.Urgency(rawValue: response.urgency?.lowercased() ?? "later") ?? .later
+                let timeRef = ReminderItem.TimeReference(originalText: response.timeReference ?? "No time specified")
+                
+                return ReminderItem(
+                    text: response.text,
+                    timeReference: timeRef,
+                    urgency: urgency,
+                    confidence: response.confidence ?? 0.8
+                )
+            }
+        } catch {
+            print("❌ JSON parsing error for reminders: \(error)")
+            print("📝 Raw JSON: \(cleanedJSON)")
+            
+            // Try to extract reminders from plain text as fallback
+            return extractRemindersFromPlainText(jsonString)
         }
+    }
+    
+    private func extractRemindersFromPlainText(_ text: String) -> [ReminderItem] {
+        // Fallback: extract reminders from plain text using simple pattern matching
+        let lines = text.components(separatedBy: .newlines)
+        var reminders: [ReminderItem] = []
+        
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.lowercased().contains("remind") || 
+               trimmed.lowercased().contains("remember") ||
+               trimmed.lowercased().contains("deadline") ||
+               trimmed.lowercased().contains("due") ||
+               trimmed.contains("•") || trimmed.contains("-") {
+                
+                let cleanText = trimmed
+                    .replacingOccurrences(of: "•", with: "")
+                    .replacingOccurrences(of: "-", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                if !cleanText.isEmpty && cleanText.count > 5 {
+                    let timeRef = ReminderItem.TimeReference(originalText: "No time specified")
+                    reminders.append(ReminderItem(
+                        text: cleanText,
+                        timeReference: timeRef,
+                        urgency: .later,
+                        confidence: 0.6
+                    ))
+                }
+            }
+        }
+        
+        return reminders
     }
     
     private func parseCompleteResponseFromJSON(_ jsonString: String) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem]) {
@@ -571,31 +673,74 @@ class OpenAISummarizationService {
             }
         }
         
-        let response = try JSONDecoder().decode(CompleteResponse.self, from: data)
-        
-        let tasks = response.tasks.map { taskResponse in
-            TaskItem(
-                text: taskResponse.text,
-                priority: TaskItem.Priority(rawValue: taskResponse.priority?.lowercased() ?? "medium") ?? .medium,
-                timeReference: taskResponse.timeReference,
-                category: TaskItem.TaskCategory(rawValue: taskResponse.category?.lowercased() ?? "general") ?? .general,
-                confidence: taskResponse.confidence ?? 0.8
-            )
-        }
-        
-        let reminders = response.reminders.map { reminderResponse in
-            let urgency = ReminderItem.Urgency(rawValue: reminderResponse.urgency?.lowercased() ?? "later") ?? .later
-            let timeRef = ReminderItem.TimeReference(originalText: reminderResponse.timeReference ?? "No time specified")
+        do {
+            let response = try JSONDecoder().decode(CompleteResponse.self, from: data)
             
-            return ReminderItem(
-                text: reminderResponse.text,
-                timeReference: timeRef,
-                urgency: urgency,
-                confidence: reminderResponse.confidence ?? 0.8
-            )
+            let tasks = response.tasks.map { taskResponse in
+                TaskItem(
+                    text: taskResponse.text,
+                    priority: TaskItem.Priority(rawValue: taskResponse.priority?.lowercased() ?? "medium") ?? .medium,
+                    timeReference: taskResponse.timeReference,
+                    category: TaskItem.TaskCategory(rawValue: taskResponse.category?.lowercased() ?? "general") ?? .general,
+                    confidence: taskResponse.confidence ?? 0.8
+                )
+            }
+            
+            let reminders = response.reminders.map { reminderResponse in
+                let urgency = ReminderItem.Urgency(rawValue: reminderResponse.urgency?.lowercased() ?? "later") ?? .later
+                let timeRef = ReminderItem.TimeReference(originalText: reminderResponse.timeReference ?? "No time specified")
+                
+                return ReminderItem(
+                    text: reminderResponse.text,
+                    timeReference: timeRef,
+                    urgency: urgency,
+                    confidence: reminderResponse.confidence ?? 0.8
+                )
+            }
+            
+            return (response.summary, tasks, reminders)
+        } catch {
+            print("❌ JSON parsing error for complete response: \(error)")
+            print("📝 Raw JSON: \(cleanedJSON)")
+            
+            // Fallback: try to extract information from plain text
+            let summary = extractSummaryFromPlainText(jsonString)
+            let tasks = extractTasksFromPlainText(jsonString)
+            let reminders = extractRemindersFromPlainText(jsonString)
+            
+            return (summary, tasks, reminders)
+        }
+    }
+    
+    private func extractSummaryFromPlainText(_ text: String) -> String {
+        // Try to find a summary in the text
+        let lines = text.components(separatedBy: .newlines)
+        var summaryLines: [String] = []
+        
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && 
+               !trimmed.lowercased().contains("task") &&
+               !trimmed.lowercased().contains("reminder") &&
+               !trimmed.contains("{") && !trimmed.contains("}") &&
+               !trimmed.contains("[") && !trimmed.contains("]") &&
+               trimmed.count > 20 {
+                summaryLines.append(trimmed)
+            }
         }
         
-        return (response.summary, tasks, reminders)
+        let summary = summaryLines.joined(separator: "\n\n")
+        
+        // Add basic markdown formatting to the fallback summary
+        if summary.isEmpty {
+            return "## Summary\n\n*Unable to generate summary from the provided content.*"
+        } else {
+            // Add a header and format as markdown
+            let formattedSummary = "## Summary\n\n" + summary
+                .replacingOccurrences(of: ". ", with: ".\n\n• ")
+                .replacingOccurrences(of: "• • ", with: "• ")
+            return formattedSummary
+        }
     }
     
     private func extractJSONFromResponse(_ response: String) -> String {
@@ -608,7 +753,55 @@ class OpenAISummarizationService {
         // Find JSON array or object
         if let startIndex = cleaned.firstIndex(of: "[") ?? cleaned.firstIndex(of: "{") {
             let substring = String(cleaned[startIndex...])
-            return substring
+            
+            // Try to find the end of the JSON object/array to avoid trailing content
+            var braceCount = 0
+            var bracketCount = 0
+            var inString = false
+            var escapeNext = false
+            var endIndex = substring.startIndex
+            
+            for (index, char) in substring.enumerated() {
+                let currentIndex = substring.index(substring.startIndex, offsetBy: index)
+                
+                if escapeNext {
+                    escapeNext = false
+                    continue
+                }
+                
+                if char == "\\" {
+                    escapeNext = true
+                    continue
+                }
+                
+                if char == "\"" {
+                    inString.toggle()
+                    continue
+                }
+                
+                if !inString {
+                    switch char {
+                    case "{":
+                        braceCount += 1
+                    case "}":
+                        braceCount -= 1
+                    case "[":
+                        bracketCount += 1
+                    case "]":
+                        bracketCount -= 1
+                    default:
+                        break
+                    }
+                    
+                    // If we've closed all braces and brackets, we've found the end
+                    if braceCount == 0 && bracketCount == 0 && index > 0 {
+                        endIndex = substring.index(currentIndex, offsetBy: 1)
+                        break
+                    }
+                }
+            }
+            
+            return String(substring[..<endIndex])
         }
         
         return cleaned

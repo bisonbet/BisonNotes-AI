@@ -95,12 +95,12 @@ class OpenAISummarizationEngine: SummarizationEngine {
     
     private func updateConfiguration() {
         let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
-        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
+        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt4oMini.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAISummarizationBaseURL") ?? "https://api.openai.com/v1"
         let temperature = UserDefaults.standard.double(forKey: "openAISummarizationTemperature")
         let maxTokens = UserDefaults.standard.integer(forKey: "openAISummarizationMaxTokens")
         
-        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt41Mini
+        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt4oMini
         
         let newConfig = OpenAISummarizationConfig(
             apiKey: apiKey,

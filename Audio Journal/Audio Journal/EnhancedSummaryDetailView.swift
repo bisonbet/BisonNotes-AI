@@ -388,8 +388,8 @@ struct EnhancedSummaryDetailView: View {
                 return
             }
             
-            // Set the current AI engine
-            summaryManager.setEngine(UserDefaults.standard.string(forKey: "selectedAIEngine") ?? "OpenAI")
+            // Set the current AI engine (temporarily disabled until engine system is fully implemented)
+            // summaryManager.setEngine(UserDefaults.standard.string(forKey: "selectedAIEngine") ?? "OpenAI")
             
             // Generate new enhanced summary
             _ = try await summaryManager.generateEnhancedSummary(

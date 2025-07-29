@@ -304,27 +304,27 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     private func createVeryShortSummary(sentences: [String], fullText: String) -> String {
         // For very short content, just clean up and present the main point
         if let firstSentence = sentences.first {
-            return "**Summary:** \(firstSentence)."
+            return "## Summary\n\n*\(firstSentence)*"
         } else {
             // Fallback: take first 100 characters
             let preview = String(fullText.prefix(100)).trimmingCharacters(in: .whitespacesAndNewlines)
-            return "**Summary:** \(preview)..."
+            return "## Summary\n\n*\(preview)...*"
         }
     }
     
     private func createShortSummary(sentences: [String], fullText: String, contentType: ContentType) -> String {
         let topSentences = sentences.prefix(2)
-        let summaryText = topSentences.joined(separator: " ")
+        let summaryText = topSentences.joined(separator: "\n\n")
         
         switch contentType {
         case .meeting:
-            return "**Meeting Summary:** \(summaryText)"
+            return "## Meeting Summary\n\n\(summaryText)"
         case .personalJournal:
-            return "**Personal Reflection:** \(summaryText)"
+            return "## Personal Reflection\n\n\(summaryText)"
         case .technical:
-            return "**Technical Discussion:** \(summaryText)"
+            return "## Technical Discussion\n\n\(summaryText)"
         case .general:
-            return "**Summary:** \(summaryText)"
+            return "## Summary\n\n\(summaryText)"
         }
     }
     
@@ -396,19 +396,19 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
             print("📄 Sentence \(index + 1): \(sentence.prefix(100))...")
         }
         
-        // Format summary with bullet points for better readability
-        let bulletPoints = topSentences.map { "- \($0)" }.joined(separator: "\n")
+        // Format summary with proper markdown bullet points for better readability
+        let bulletPoints = topSentences.map { "• \($0)" }.joined(separator: "\n")
         
         let summary: String
         switch contentType {
         case .meeting:
-            summary = "**Meeting Summary:**\n\n\(bulletPoints)\n"
+            summary = "## Meeting Summary\n\n\(bulletPoints)"
         case .personalJournal:
-            summary = "**Personal Reflection:**\n\n\(bulletPoints)\n"
+            summary = "## Personal Reflection\n\n\(bulletPoints)"
         case .technical:
-            summary = "**Technical Discussion:**\n\n\(bulletPoints)\n"
+            summary = "## Technical Discussion\n\n\(bulletPoints)"
         case .general:
-            summary = "**Summary:**\n\n\(bulletPoints)\n"
+            summary = "## Summary\n\n\(bulletPoints)"
         }
         
         print("📄 Generated summary markdown:")
@@ -520,19 +520,19 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
             .prefix(summaryLength)
             .map { $0.sentence }
         
-        // Format summary with bullet points for better readability
-        let bulletPoints = topSentences.map { "- \($0)" }.joined(separator: "\n")
+        // Format summary with proper markdown bullet points for better readability
+        let bulletPoints = topSentences.map { "• \($0)" }.joined(separator: "\n")
         
         let summary: String
         switch contentType {
         case .meeting:
-            summary = "**Meeting Summary:**\n\n\(bulletPoints)\n"
+            summary = "## Meeting Summary\n\n\(bulletPoints)"
         case .personalJournal:
-            summary = "**Personal Reflection:**\n\n\(bulletPoints)\n"
+            summary = "## Personal Reflection\n\n\(bulletPoints)"
         case .technical:
-            summary = "**Technical Discussion:**\n\n\(bulletPoints)\n"
+            summary = "## Technical Discussion\n\n\(bulletPoints)"
         case .general:
-            summary = "**Summary:**\n\n\(bulletPoints)\n"
+            summary = "## Summary\n\n\(bulletPoints)"
         }
         
         print("📄 Generated long summary markdown:")

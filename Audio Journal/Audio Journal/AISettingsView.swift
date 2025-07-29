@@ -406,8 +406,8 @@ private extension AISettingsView {
                 }
                 
                 let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
-                let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
-                let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt41Mini
+                let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt4oMini.rawValue
+                let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt4oMini
                 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {

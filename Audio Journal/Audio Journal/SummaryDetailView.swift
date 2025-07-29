@@ -17,7 +17,7 @@ struct SummaryDetailView: View {
     
     // Convert legacy summary data to enhanced format for better display
     private var enhancedData: EnhancedSummaryData {
-        return summaryData.toEnhanced()
+        return summaryManager.convertLegacyToEnhanced(summaryData)
     }
     
     var body: some View {

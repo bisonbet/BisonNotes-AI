@@ -9,7 +9,7 @@ import SwiftUI
 
 struct OpenAISummarizationSettingsView: View {
     @AppStorage("openAISummarizationAPIKey") private var apiKey: String = ""
-    @AppStorage("openAISummarizationModel") private var selectedModel: String = OpenAISummarizationModel.gpt41Mini.rawValue
+    @AppStorage("openAISummarizationModel") private var selectedModel: String = OpenAISummarizationModel.gpt4oMini.rawValue
     @AppStorage("openAISummarizationBaseURL") private var baseURL: String = "https://api.openai.com/v1"
     @AppStorage("openAISummarizationTemperature") private var temperature: Double = 0.1
     @AppStorage("openAISummarizationMaxTokens") private var maxTokens: Int = 0
@@ -23,7 +23,7 @@ struct OpenAISummarizationSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     
     private var selectedModelEnum: OpenAISummarizationModel {
-        OpenAISummarizationModel(rawValue: selectedModel) ?? .gpt41Mini
+        OpenAISummarizationModel(rawValue: selectedModel) ?? .gpt4oMini
     }
     
     var body: some View {
@@ -310,7 +310,7 @@ struct OpenAISummarizationSettingsView: View {
     
     private func resetToDefaults() {
         apiKey = ""
-        selectedModel = OpenAISummarizationModel.gpt41Mini.rawValue
+        selectedModel = OpenAISummarizationModel.gpt4oMini.rawValue
         baseURL = "https://api.openai.com/v1"
         temperature = 0.1
         maxTokens = 0
