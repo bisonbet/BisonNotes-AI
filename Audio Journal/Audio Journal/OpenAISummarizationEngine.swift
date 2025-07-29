@@ -170,19 +170,27 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         let temperature = UserDefaults.standard.double(forKey: "openAISummarizationTemperature")
         let maxTokens = UserDefaults.standard.integer(forKey: "openAISummarizationMaxTokens")
         
-        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt35Turbo
+        // Check if the model is a predefined one or a dynamic model
+        let model: OpenAISummarizationModel
+        if let predefinedModel = OpenAISummarizationModel(rawValue: modelString) {
+            model = predefinedModel
+        } else {
+            // Use a default model for dynamic models, but pass the actual model string to the service
+            model = .gpt35Turbo
+        }
         
         let newConfig = OpenAISummarizationConfig(
             apiKey: apiKey,
             model: model,
             baseURL: baseURL,
             temperature: temperature > 0 ? temperature : 0.1,
-            maxTokens: maxTokens > 0 ? maxTokens : nil
+            maxTokens: maxTokens > 0 ? maxTokens : nil,
+            dynamicModelId: modelString // Pass the actual model ID for dynamic models
         )
         
         // Only create a new service if the configuration has actually changed
         if currentConfig == nil || currentConfig != newConfig {
-            print("🔧 OpenAISummarizationEngine: Updating configuration - Model: \(model.displayName), BaseURL: \(baseURL)")
+            print("🔧 OpenAISummarizationEngine: Updating configuration - Model: \(modelString), BaseURL: \(baseURL)")
             
             self.currentConfig = newConfig
             self.service = OpenAISummarizationService(config: newConfig)
@@ -365,6 +373,187 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
             return SummarizationError.processingTimeout
         } else {
             return SummarizationError.aiServiceUnavailable(service: "OpenAI API error: \(error.localizedDescription)")
+        }
+    }
+}
+
+// MARK: - OpenAI Compatible Engine
+
+class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
+    let name: String = "OpenAI API Compatible"
+    let description: String = "Advanced AI summaries using OpenAI API compatible models"
+    let version: String = "1.0"
+    
+    private var service: OpenAICompatibleService?
+    private var currentConfig: OpenAICompatibleConfig?
+    
+    var isAvailable: Bool {
+        // Check if API key is configured
+        let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
+        guard !apiKey.isEmpty else {
+            print("❌ OpenAICompatibleEngine: API key not configured")
+            return false
+        }
+        
+        // Check if OpenAI Compatible is enabled in settings
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableOpenAICompatible")
+        let keyExists = UserDefaults.standard.object(forKey: "enableOpenAICompatible") != nil
+        print("🔧 OpenAICompatibleEngine: Checking enableOpenAICompatible setting - Value: \(isEnabled), Key exists: \(keyExists)")
+        guard isEnabled else {
+            print("❌ OpenAICompatibleEngine: OpenAI Compatible is not enabled in settings")
+            return false
+        }
+        
+        print("✅ OpenAICompatibleEngine: Basic availability checks passed")
+        return true
+    }
+    
+    init() {
+        updateConfiguration()
+    }
+    
+    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
+        updateConfiguration()
+        
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        do {
+            return try await service.generateSummary(from: text, contentType: contentType)
+        } catch {
+            print("❌ OpenAICompatibleEngine: Failed to generate summary: \(error)")
+            throw handleAPIError(error)
+        }
+    }
+    
+    func extractTasks(from text: String) async throws -> [TaskItem] {
+        updateConfiguration()
+        
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        do {
+            let result = try await service.processComplete(text: text)
+            return result.tasks
+        } catch {
+            print("❌ OpenAICompatibleEngine: Failed to extract tasks: \(error)")
+            throw handleAPIError(error)
+        }
+    }
+    
+    func extractReminders(from text: String) async throws -> [ReminderItem] {
+        updateConfiguration()
+        
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        do {
+            let result = try await service.processComplete(text: text)
+            return result.reminders
+        } catch {
+            print("❌ OpenAICompatibleEngine: Failed to extract reminders: \(error)")
+            throw handleAPIError(error)
+        }
+    }
+    
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        updateConfiguration()
+        
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        do {
+            let result = try await service.processComplete(text: text)
+            return result.titles
+        } catch {
+            print("❌ OpenAICompatibleEngine: Failed to extract titles: \(error)")
+            throw handleAPIError(error)
+        }
+    }
+    
+    func classifyContent(_ text: String) async throws -> ContentType {
+        updateConfiguration()
+        
+        guard let service = service else {
+            return .general
+        }
+        
+        do {
+            return try await service.classifyContent(text)
+        } catch {
+            print("❌ OpenAICompatibleEngine: Failed to classify content: \(error)")
+            return .general
+        }
+    }
+    
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        updateConfiguration()
+        
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        do {
+            return try await service.processComplete(text: text)
+        } catch {
+            print("❌ OpenAICompatibleEngine: Failed to process complete: \(error)")
+            throw handleAPIError(error)
+        }
+    }
+    
+    func testConnection() async -> Bool {
+        updateConfiguration()
+        
+        guard let service = service else {
+            return false
+        }
+        
+        do {
+            try await service.testConnection()
+            print("✅ OpenAICompatibleEngine: Connection test successful")
+            return true
+        } catch {
+            print("❌ OpenAICompatibleEngine: Connection test failed: \(error)")
+            return false
+        }
+    }
+    
+    // MARK: - Configuration Management
+    
+    private func updateConfiguration() {
+        let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
+        let modelId = UserDefaults.standard.string(forKey: "openAICompatibleModel") ?? "gpt-3.5-turbo"
+        let baseURL = UserDefaults.standard.string(forKey: "openAICompatibleBaseURL") ?? "https://api.openai.com/v1"
+        let temperature = UserDefaults.standard.double(forKey: "openAICompatibleTemperature")
+        let maxTokens = UserDefaults.standard.integer(forKey: "openAICompatibleMaxTokens")
+        
+        let newConfig = OpenAICompatibleConfig(
+            apiKey: apiKey,
+            modelId: modelId,
+            baseURL: baseURL,
+            temperature: temperature > 0 ? temperature : 0.1,
+            maxTokens: maxTokens > 0 ? maxTokens : 2048
+        )
+        
+        // Only create a new service if the configuration has actually changed
+        if currentConfig == nil || currentConfig != newConfig {
+            print("🔧 OpenAICompatibleEngine: Updating configuration - Model: \(modelId), BaseURL: \(baseURL)")
+            
+            self.currentConfig = newConfig
+            self.service = OpenAICompatibleService(config: newConfig)
+            print("✅ OpenAICompatibleEngine: Configuration updated successfully")
+        }
+    }
+    
+    private func handleAPIError(_ error: Error) -> SummarizationError {
+        if let summarizationError = error as? SummarizationError {
+            return summarizationError
+        } else {
+            return SummarizationError.aiServiceUnavailable(service: "\(name): \(error.localizedDescription)")
         }
     }
 }

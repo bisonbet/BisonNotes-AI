@@ -115,69 +115,8 @@ class AWSBedrockEngine: SummarizationEngine {
 
 // MARK: - Whisper-Based Engine (Future Implementation)
 
-class OpenAICompatibleEngine: SummarizationEngine {
-    let name: String = "OpenAI API Compatible"
-    let description: String = "Advanced AI summaries using OpenAI API compatible models"
-    let isAvailable: Bool = false
-    let version: String = "1.0-preview"
-    
-    // Configuration for future implementation
-    struct OpenAICompatibleConfig {
-        let modelName: String
-        let maxTokens: Int
-        let temperature: Double
-        
-        static let `default` = OpenAICompatibleConfig(
-            modelName: "gpt-4.1-mini",
-            maxTokens: 1000,
-            temperature: 0.7
-        )
-    }
-    
-    private let config: OpenAICompatibleConfig
-    
-    init(config: OpenAICompatibleConfig = .default) {
-        self.config = config
-    }
-    
-    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        throw SummarizationError.aiServiceUnavailable(service: name)
-    }
-    
-    func extractTasks(from text: String) async throws -> [TaskItem] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
-    }
-    
-    func extractReminders(from text: String) async throws -> [ReminderItem] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
-    }
-    
-    func extractTitles(from text: String) async throws -> [TitleItem] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
-    }
-    
-    func classifyContent(_ text: String) async throws -> ContentType {
-        throw SummarizationError.aiServiceUnavailable(service: name)
-    }
-    
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        throw SummarizationError.aiServiceUnavailable(service: name)
-    }
-    
-    // MARK: - Future Implementation Methods
-    
-    private func checkOpenAICompatibleServiceAvailability() -> Bool {
-        // Future implementation: check if OpenAI API compatible service is available
-        return false
-    }
-    
-    private func connectToOpenAICompatibleService() async throws {
-        // Future implementation: connect to OpenAI API compatible service
-        throw SummarizationError.aiServiceUnavailable(service: "Service connection not implemented")
-    }
-    
-
-}
+// OpenAICompatibleEngine has been moved to OpenAISummarizationEngine.swift
+// This placeholder is for future Whisper-based implementations
 
 // MARK: - Supporting Structures for Future Implementation
 
@@ -659,6 +598,47 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
 
 }
 
+// MARK: - Google AI Studio Engine
+
+class GoogleAIStudioEngine: SummarizationEngine {
+    let name = "Google AI Studio"
+    let description = "Advanced AI-powered summaries using Google's Gemini models"
+    let isAvailable = false // Coming soon
+    let version = "1.0"
+    
+    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
+        throw SummarizationError.aiServiceUnavailable(service: name)
+    }
+    
+    func extractTasks(from text: String) async throws -> [TaskItem] {
+        throw SummarizationError.aiServiceUnavailable(service: name)
+    }
+    
+    func extractReminders(from text: String) async throws -> [ReminderItem] {
+        throw SummarizationError.aiServiceUnavailable(service: name)
+    }
+    
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        throw SummarizationError.aiServiceUnavailable(service: name)
+    }
+    
+    func classifyContent(_ text: String) async throws -> ContentType {
+        throw SummarizationError.aiServiceUnavailable(service: name)
+    }
+    
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        throw SummarizationError.aiServiceUnavailable(service: name)
+    }
+    
+    func testConnection() async -> Bool {
+        return false // Not available yet
+    }
+    
+    func loadAvailableModels() async throws -> [String] {
+        throw SummarizationError.aiServiceUnavailable(service: name)
+    }
+}
+
 // MARK: - Engine Factory
 
 class AIEngineFactory {
@@ -674,6 +654,8 @@ class AIEngineFactory {
             return OpenAICompatibleEngine()
         case .localLLM:
             return LocalLLMEngine()
+        case .googleAIStudio:
+            return GoogleAIStudioEngine()
         }
     }
     
@@ -695,6 +677,7 @@ enum AIEngineType: String, CaseIterable {
     case awsBedrock = "AWS Bedrock"
     case openAICompatible = "OpenAI API Compatible"
     case localLLM = "Local LLM (Ollama)"
+    case googleAIStudio = "Google AI Studio"
     
     var description: String {
         switch self {
@@ -708,14 +691,16 @@ enum AIEngineType: String, CaseIterable {
             return "Advanced AI summaries using OpenAI API compatible models"
         case .localLLM:
             return "Privacy-focused local language model processing"
+        case .googleAIStudio:
+            return "Advanced AI-powered summaries using Google's Gemini models"
         }
     }
     
     var isComingSoon: Bool {
         switch self {
-        case .enhancedAppleIntelligence, .localLLM, .openAI:
+        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible:
             return false
-        case .awsBedrock, .openAICompatible:
+        case .awsBedrock, .googleAIStudio:
             return true
         }
     }
@@ -732,6 +717,8 @@ enum AIEngineType: String, CaseIterable {
             return ["OpenAI API Compatible Service", "Internet Connection"]
         case .localLLM:
             return ["Ollama Server", "Local Network", "Model Download"]
+        case .googleAIStudio:
+            return ["Google AI Studio API Key", "Internet Connection", "Usage Credits"]
         }
     }
 }

@@ -90,6 +90,7 @@ struct AISettingsView: View {
     @State private var previousEngine = ""
     @State private var showingOllamaSettings = false
     @State private var showingOpenAISettings = false
+    @State private var showingOpenAICompatibleSettings = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     
@@ -129,6 +130,10 @@ struct AISettingsView: View {
                     
                     if recorderVM.selectedAIEngine == AIEngineType.openAI.rawValue {
                         openAIConfigurationSection
+                    }
+                    
+                    if recorderVM.selectedAIEngine == AIEngineType.openAICompatible.rawValue {
+                        openAICompatibleConfigurationSection
                     }
                     
                     if viewModel.summaryManager.enhancedSummaries.count > 0 {
@@ -181,10 +186,14 @@ struct AISettingsView: View {
             })
         }
         .sheet(isPresented: $showingOpenAISettings) {
-            OpenAISummarizationSettingsView()
-                .onDisappear {
-                    self.refreshEngineStatuses()
-                }
+            OpenAISummarizationSettingsView(onConfigurationChanged: {
+                Task { refreshEngineStatuses() }
+            })
+        }
+        .sheet(isPresented: $showingOpenAICompatibleSettings) {
+            OpenAICompatibleSettingsView(onConfigurationChanged: {
+                Task { refreshEngineStatuses() }
+            })
         }
     }
 }
@@ -452,6 +461,81 @@ private extension AISettingsView {
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.blue.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+    
+    var openAICompatibleConfigurationSection: some View {
+        // FIX: Logic moved outside the ViewBuilder closure.
+        let compatibleApiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
+        let compatibleModel = UserDefaults.standard.string(forKey: "openAICompatibleModel") ?? "gpt-3.5-turbo"
+        
+        // The return statement is now required because the property contains more than a single expression.
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("OpenAI Compatible Configuration")
+                .font(.headline)
+                .padding(.horizontal, 24)
+            
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("OpenAI Compatible API Settings")
+                            .font(.body)
+                        Text("Configure OpenAI-compatible API providers (Azure, etc.)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { self.showingOpenAICompatibleSettings = true }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("Configure")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.green)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("API Key:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(compatibleApiKey.isEmpty ? "Not configured" : "Configured (\(compatibleApiKey.count) chars)")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(compatibleApiKey.isEmpty ? .red : .green)
+                    }
+                    HStack {
+                        Text("Model:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(compatibleModel)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    HStack {
+                        Text("Status:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(compatibleApiKey.isEmpty ? "Needs Configuration" : "Ready")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(compatibleApiKey.isEmpty ? .orange : .green)
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.green.opacity(0.1))
             )
             .padding(.horizontal, 24)
         }
