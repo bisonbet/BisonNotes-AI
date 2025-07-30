@@ -14,25 +14,32 @@ BisonNotes AI is your personal AI assistant for capturing, transcribing, and ana
 - **Location Tracking**: Automatic GPS location capture with each recording
 - **Smart Duration Management**: Auto-stop at 2 hours with real-time duration display
 - **Background Processing**: Continues recording even when app is minimized
+- **File Import**: Import existing audio files with progress tracking
 
 ### 🤖 **AI-Powered Intelligence**
-- **Enhanced Apple Intelligence Engine**: Advanced natural language processing
+- **Enhanced Apple Intelligence Engine**: Advanced natural language processing using Apple's NLTagger
+- **OpenAI Integration**: GPT-4.1, GPT-4.1 Mini, and GPT-4.1 Nano models for advanced summarization
+- **Google AI Studio Integration**: Gemini models for AI-powered summaries
 - **Whisper Integration**: High-quality transcription using OpenAI's Whisper model via REST API
 - **Ollama Integration**: Local AI processing with customizable models
 - **Content Classification**: Automatically categorizes content (meetings, personal journal, technical, general)
 - **Smart Summarization**: Context-aware summaries based on content type
 - **Task Extraction**: Identifies and categorizes actionable items with priority levels
 - **Reminder Detection**: Extracts time-sensitive reminders with urgency classification
+- **Intelligent Recording Names**: AI-generated names based on content analysis
 
 ### 📝 **Intelligent Transcription**
 - **Real-Time Speech Recognition**: Powered by Apple's Speech framework
+- **OpenAI Transcription**: GPT-4o, GPT-4o Mini, and Whisper-1 models via API
 - **Whisper REST API**: High-quality transcription using local Whisper server
+- **AWS Transcribe**: Cloud-based transcription service for long audio files
 - **Enhanced Large File Support**: Automatic chunking for files over 5 minutes
 - **Progress Tracking**: Real-time progress updates for long transcriptions
 - **Timeout Handling**: Configurable timeout settings to prevent hanging
 - **Speaker Diarization**: Identifies different speakers in conversations
 - **Editable Transcripts**: Full editing capabilities with speaker management
 - **Time-Stamped Segments**: Precise timing for each transcript segment
+- **File Size Validation**: Automatic fallback for oversized files
 
 ### 📊 **Enhanced Summary View**
 - **Expandable Sections**: Organized content with collapsible metadata, summary, tasks, and reminders
@@ -40,6 +47,7 @@ BisonNotes AI is your personal AI assistant for capturing, transcribing, and ana
 - **Urgency Classification**: Visual indicators for reminder urgency (immediate, today, this week, later)
 - **Confidence Scoring**: Visual confidence indicators for AI-generated content
 - **Metadata Display**: AI method, generation time, content type, word count, compression ratio
+- **Quality Validation**: Automatic quality assessment and recovery mechanisms
 
 ### 🗺️ **Location Intelligence**
 - **GPS Integration**: Automatic location capture with each recording
@@ -53,12 +61,53 @@ BisonNotes AI is your personal AI assistant for capturing, transcribing, and ana
 - **Speaker Diarization Options**: Basic pause detection and advanced methods
 - **Batch Processing**: Regenerate all summaries with updated AI engines
 - **Comprehensive Settings**: Fine-tune every aspect of the app
+- **Engine Monitoring**: Automatic availability checking and recovery
 
 ## 🔧 AI Integration Setup
 
+### **OpenAI Integration**
+
+BisonNotes AI supports advanced AI processing using OpenAI's latest models for both transcription and summarization.
+
+#### **Transcription Setup**
+1. **Get OpenAI API Key**: Visit [platform.openai.com](https://platform.openai.com) to obtain an API key
+2. **Configure in App**: Go to Settings → Transcription Settings → OpenAI
+3. **Select Model**: Choose between GPT-4o Transcribe, GPT-4o Mini Transcribe, or Whisper-1
+4. **Test Connection**: Use the test button to verify your configuration
+
+#### **Summarization Setup**
+1. **Configure API Key**: Go to Settings → AI Settings → OpenAI
+2. **Select Model**: Choose from GPT-4.1, GPT-4.1 Mini, or GPT-4.1 Nano
+3. **Adjust Settings**: Configure temperature, max tokens, and timeout
+4. **Test Connection**: Verify your setup with the test button
+
+#### **Supported Models**
+- **GPT-4o Transcribe**: Most robust transcription with GPT-4o model
+- **GPT-4o Mini Transcribe**: Fastest and most economical transcription
+- **Whisper-1**: Legacy high-quality transcription
+- **GPT-4.1**: Most powerful summarization with advanced reasoning
+- **GPT-4.1 Mini**: Balanced performance and cost
+- **GPT-4.1 Nano**: Fastest and most economical
+
+### **Google AI Studio Integration**
+
+BisonNotes AI supports Google's Gemini models for advanced AI processing.
+
+#### **Setup Instructions**
+1. **Get API Key**: Visit [Google AI Studio](https://aistudio.google.com) to obtain an API key
+2. **Configure in App**: Go to Settings → AI Settings → Google AI Studio
+3. **Select Model**: Choose from Gemini 2.5 Flash, 2.5 Pro, 1.5 Flash, or 1.5 Pro
+4. **Test Connection**: Verify your configuration
+
+#### **Available Models**
+- **Gemini 2.5 Flash**: Fast and efficient for most tasks
+- **Gemini 2.5 Pro**: Most powerful with advanced capabilities
+- **Gemini 1.5 Flash**: Good balance of speed and quality
+- **Gemini 1.5 Pro**: High quality with comprehensive analysis
+
 ### **Whisper Integration**
 
-BisonNotes AI supports high-quality transcription using OpenAI's Whisper model via a local REST API server. This provides superior transcription quality compared to Apple's built-in speech recognition.
+BisonNotes AI supports high-quality transcription using OpenAI's Whisper model via a local REST API server.
 
 #### **Setup Instructions**
 
@@ -161,7 +210,7 @@ BisonNotes AI supports local AI processing using Ollama, allowing you to run var
 - **Natural Language**: Advanced text processing and analysis
 - **Core Location**: GPS and location services
 - **Core Data**: Local data persistence
-- **URLSession**: REST API communication for Whisper and Ollama
+- **URLSession**: REST API communication for various AI services
 
 ### **AI Processing Pipeline**
 1. **Audio Capture** → High-quality recording with location metadata
@@ -184,6 +233,8 @@ BisonNotes AI supports local AI processing using Ollama, allowing you to run var
 - iOS 15.0 or later
 - iPhone or iPad with microphone access
 - Location services (optional but recommended)
+- For OpenAI: API key from platform.openai.com
+- For Google AI Studio: API key from aistudio.google.com
 - For Whisper: Local server running Whisper ASR Webservice
 - For Ollama: Local Ollama installation
 
@@ -195,7 +246,7 @@ BisonNotes AI supports local AI processing using Ollama, allowing you to run var
 
 ### **First Use**
 1. **Grant Permissions**: Allow microphone and location access when prompted
-2. **Configure AI Services**: Set up Whisper and/or Ollama integration
+2. **Configure AI Services**: Set up OpenAI, Google AI Studio, Whisper, and/or Ollama integration
 3. **Start Recording**: Tap the record button to begin capturing audio
 4. **Generate Summary**: Use the Summaries tab to create AI-powered summaries
 5. **View Transcripts**: Access detailed transcripts in the Transcripts tab
@@ -223,9 +274,22 @@ BisonNotes AI supports local AI processing using Ollama, allowing you to run var
 - **Location Tracking**: Enable/disable GPS capture
 
 ### **AI Processing**
-- **Engine Selection**: Enhanced Apple Intelligence, Whisper (Local Server), Ollama Integration
+- **Engine Selection**: Enhanced Apple Intelligence, OpenAI, Google AI Studio, Ollama Integration
 - **Speaker Diarization**: Basic pause detection, AWS Transcription, Whisper-based (coming soon)
 - **Batch Regeneration**: Update all summaries with new AI engines
+- **Engine Monitoring**: Automatic availability checking and recovery
+
+### **OpenAI Settings**
+- **API Configuration**: Secure API key input with validation
+- **Model Selection**: Choose from available GPT models
+- **Connection Testing**: Verify API connectivity
+- **Usage Tracking**: Monitor token usage and costs
+
+### **Google AI Studio Settings**
+- **API Configuration**: Secure API key input with validation
+- **Model Selection**: Choose from available Gemini models
+- **Connection Testing**: Verify API connectivity
+- **Feature Overview**: Display model capabilities and limits
 
 ### **Whisper Settings**
 - **Server Configuration**: URL and port settings
@@ -280,6 +344,7 @@ BisonNotes AI supports local AI processing using Ollama, allowing you to run var
 - **User Control**: Full control over data and settings
 - **Whisper Privacy**: Process audio on your local server
 - **Ollama Privacy**: Run AI models locally without external dependencies
+- **API Key Security**: Secure storage of API keys with validation
 
 ## 🛠️ Development
 
@@ -291,12 +356,27 @@ Audio Journal/
 ├── SummaryDetailView.swift         # Enhanced summary display
 ├── SummariesView.swift             # Summary management
 ├── EnhancedAppleIntelligenceEngine.swift # AI processing engine
+├── OpenAISummarizationEngine.swift # OpenAI integration
+├── GoogleAIStudioService.swift     # Google AI Studio integration
 ├── WhisperService.swift            # Whisper REST API integration
 ├── OllamaService.swift             # Ollama integration
+├── OpenAITranscribeService.swift   # OpenAI transcription
 ├── TaskExtractor.swift             # Task identification logic
 ├── ReminderExtractor.swift         # Reminder extraction
 ├── LocationManager.swift           # GPS and location services
 ├── SummaryData.swift               # Data models and persistence
+├── Models/
+│   ├── AudioModels.swift           # Core data models
+│   ├── SummarizationEngine.swift   # AI engine protocols
+│   └── EnhancedSummaryData.swift   # Enhanced summary models
+├── ViewModels/
+│   └── AudioRecorderViewModel.swift # Recording logic
+├── Views/
+│   ├── RecordingsView.swift        # Main recording interface
+│   ├── RecordingsListView.swift    # Recording list with deletion
+│   ├── TranscriptViews.swift       # Transcript functionality
+│   ├── SettingsView.swift          # Settings management
+│   └── AISettingsView.swift        # AI engine configuration
 └── Assets/                         # App icons and resources
 ```
 
@@ -305,25 +385,27 @@ Audio Journal/
 - **SummaryManager**: Handles summary generation and storage
 - **TranscriptManager**: Manages transcript creation and editing
 - **LocationManager**: Handles GPS and geocoding services
+- **OpenAISummarizationService**: OpenAI API communication
+- **GoogleAIStudioService**: Google AI Studio API communication
 - **WhisperService**: REST API communication with Whisper server
 - **OllamaService**: Local AI model communication
 
 ## 🔮 Future Enhancements
 
 ### **Planned Features**
-- **Cloud Integration**: Optional cloud backup and sync
-- **Advanced AI Engines**: AWS Bedrock and additional local AI integrations
+- **AWS Bedrock Integration**: Advanced AI using AWS Bedrock foundation models
 - **Enhanced Diarization**: Whisper-based speaker identification
 - **Export Options**: PDF, text, and calendar integration
 - **Collaboration**: Shared recordings and summaries
 - **Voice Commands**: Hands-free operation
+- **Cloud Integration**: Optional cloud backup and sync
 
 ### **AI Improvements**
 - **Multi-language Support**: International language processing
 - **Emotion Detection**: Sentiment analysis and mood tracking
 - **Topic Clustering**: Automatic topic organization
 - **Smart Suggestions**: AI-powered recommendations
-- **Custom Models**: Support for fine-tuned Whisper and Ollama models
+- **Custom Models**: Support for fine-tuned models
 
 ## 📄 License
 
@@ -348,6 +430,16 @@ For support, questions, or feature requests:
 - Review the settings for configuration help
 
 ## 🔗 External Dependencies
+
+### **OpenAI**
+- **Website**: [platform.openai.com](https://platform.openai.com)
+- **Documentation**: [platform.openai.com/docs](https://platform.openai.com/docs)
+- **API Reference**: [platform.openai.com/docs/api-reference](https://platform.openai.com/docs/api-reference)
+
+### **Google AI Studio**
+- **Website**: [aistudio.google.com](https://aistudio.google.com)
+- **Documentation**: [ai.google.dev](https://ai.google.dev)
+- **API Reference**: [ai.google.dev/api](https://ai.google.dev/api)
 
 ### **Whisper ASR Webservice**
 - **Project**: [ahmetoner/whisper-asr-webservice](https://github.com/ahmetoner/whisper-asr-webservice)
