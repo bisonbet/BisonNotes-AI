@@ -63,6 +63,21 @@ class SummaryManager: ObservableObject {
     
     private lazy var performanceMonitor = EnginePerformanceMonitor()
     
+    // MARK: - iCloud Integration
+    
+    private let iCloudManager: iCloudStorageManager = {
+        // Use preview instance in preview environments
+        let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
+                       ProcessInfo.processInfo.processName.contains("PreviewShell") ||
+                       ProcessInfo.processInfo.arguments.contains("--enable-previews")
+        
+        if isPreview {
+            print("🔍 SummaryManager using preview iCloudManager")
+            return iCloudStorageManager.preview
+        }
+        return iCloudStorageManager()
+    }()
+    
     init() {
         loadSummaries()
         loadEnhancedSummaries()
@@ -168,6 +183,15 @@ class SummaryManager: ObservableObject {
             
             // Force a UI update
             self.objectWillChange.send()
+            
+            // Sync to iCloud if enabled
+            Task {
+                do {
+                    try await self.iCloudManager.syncSummary(summary)
+                } catch {
+                    AppLogger.shared.error("Failed to sync summary to iCloud: \(error)", category: "SummaryManager")
+                }
+            }
             
             // Verify the save operation
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -276,10 +300,24 @@ class SummaryManager: ObservableObject {
     
     func deleteSummary(for recordingURL: URL) {
         DispatchQueue.main.async {
+            // Find the enhanced summary to get its ID for iCloud deletion
+            let enhancedSummary = self.enhancedSummaries.first { $0.recordingURL == recordingURL }
+            
             self.summaries.removeAll { $0.recordingURL == recordingURL }
             self.enhancedSummaries.removeAll { $0.recordingURL == recordingURL }
             self.saveSummariesToDisk()
             self.saveEnhancedSummariesToDisk()
+            
+            // Delete from iCloud if there was an enhanced summary
+            if let summary = enhancedSummary {
+                Task {
+                    do {
+                        try await self.iCloudManager.deleteSummaryFromiCloud(summary.id)
+                    } catch {
+                        AppLogger.shared.error("Failed to delete summary from iCloud: \(error)", category: "SummaryManager")
+                    }
+                }
+            }
         }
     }
     
@@ -295,6 +333,12 @@ class SummaryManager: ObservableObject {
         }
         
         return nil
+    }
+    
+    // MARK: - iCloud Access Methods
+    
+    func getiCloudManager() -> iCloudStorageManager {
+        return iCloudManager
     }
     
     // MARK: - Migration Methods

@@ -14,6 +14,7 @@ struct SettingsView: View {
     @StateObject private var transcriptManager = TranscriptManager.shared
     @StateObject private var regenerationManager: SummaryRegenerationManager
     @StateObject private var errorHandler = ErrorHandler()
+    @ObservedObject private var iCloudManager: iCloudStorageManager
     @State private var showingEngineChangePrompt = false
     @State private var previousEngine = ""
     @State private var showingTranscriptionSettings = false
@@ -30,6 +31,7 @@ struct SettingsView: View {
         self._summaryManager = StateObject(wrappedValue: summaryMgr)
         self._transcriptManager = StateObject(wrappedValue: transcriptMgr)
         self._regenerationManager = StateObject(wrappedValue: SummaryRegenerationManager(summaryManager: summaryMgr, transcriptManager: transcriptMgr))
+        self.iCloudManager = summaryMgr.getiCloudManager()
     }
     
     var body: some View {
@@ -295,6 +297,222 @@ struct SettingsView: View {
                             .foregroundColor(.purple)
                         }
                         .padding(.horizontal, 24)
+                    }
+                    
+                    // iCloud Storage Section
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("iCloud Storage")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 24)
+                        
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Sync Summaries to iCloud")
+                                        .font(.body)
+                                        .foregroundColor(.primary)
+                                    Text("Save summaries to iCloud for access across devices")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Toggle("", isOn: $iCloudManager.isEnabled)
+                                    .labelsHidden()
+                            }
+                            
+                            // Sync Status
+                            HStack {
+                                Text("Status:")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                HStack(spacing: 4) {
+                                    let statusColor: Color = {
+                                        switch iCloudManager.syncStatus {
+                                        case .idle, .completed:
+                                            return .green
+                                        case .syncing:
+                                            return .orange
+                                        case .failed:
+                                            return .red
+                                        }
+                                    }()
+                                    
+                                    Circle()
+                                        .fill(statusColor)
+                                        .frame(width: 8, height: 8)
+                                    
+                                    Text(iCloudManager.syncStatus.description)
+                                        .font(.caption)
+                                        .foregroundColor(statusColor)
+                                    
+                                    if case .syncing = iCloudManager.syncStatus {
+                                        ProgressView()
+                                            .scaleEffect(0.6)
+                                            .padding(.leading, 4)
+                                    }
+                                }
+                            }
+                            
+                            // Network Status
+                            HStack {
+                                Text("Network:")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                HStack(spacing: 4) {
+                                    let networkColor: Color = {
+                                        switch iCloudManager.networkStatus {
+                                        case .available:
+                                            return .green
+                                        case .limited:
+                                            return .orange
+                                        case .unavailable:
+                                            return .red
+                                        }
+                                    }()
+                                    
+                                    let networkText: String = {
+                                        switch iCloudManager.networkStatus {
+                                        case .available:
+                                            return "Available"
+                                        case .limited:
+                                            return "Limited"
+                                        case .unavailable:
+                                            return "Unavailable"
+                                        }
+                                    }()
+                                    
+                                    Circle()
+                                        .fill(networkColor)
+                                        .frame(width: 8, height: 8)
+                                    
+                                    Text(networkText)
+                                        .font(.caption)
+                                        .foregroundColor(networkColor)
+                                }
+                            }
+                            
+                            // Last Sync Date
+                            if let lastSync = iCloudManager.lastSyncDate {
+                                HStack {
+                                    Text("Last Sync:")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Text(lastSync, style: .relative)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            
+                            // Pending Sync Count
+                            if iCloudManager.pendingSyncCount > 0 {
+                                HStack {
+                                    Text("Pending:")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Text("\(iCloudManager.pendingSyncCount) items")
+                                        .font(.caption)
+                                        .foregroundColor(.orange)
+                                }
+                            }
+                            
+                            // Manual Sync Button
+                            if iCloudManager.isEnabled {
+                                Button(action: {
+                                    Task {
+                                        await syncAllSummaries()
+                                    }
+                                }) {
+                                    HStack {
+                                        Image(systemName: "icloud.and.arrow.up")
+                                        Text("Sync Now")
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.blue)
+                                    )
+                                }
+                                .disabled(iCloudManager.syncStatus == .syncing)
+                            }
+                            
+                            // Error Display
+                            if let error = iCloudManager.lastError {
+                                Text("Error: \(error)")
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                                    .padding(.top, 4)
+                            }
+                            
+                            // Conflict Resolution
+                            if !iCloudManager.pendingConflicts.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Sync Conflicts (\(iCloudManager.pendingConflicts.count))")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.orange)
+                                    
+                                    ForEach(iCloudManager.pendingConflicts, id: \.summaryId) { conflict in
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(conflict.localSummary.recordingName)
+                                                    .font(.caption)
+                                                    .foregroundColor(.primary)
+                                                Text("Modified on different devices")
+                                                    .font(.caption2)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            HStack(spacing: 8) {
+                                                Button("Use Local") {
+                                                    Task {
+                                                        try? await iCloudManager.resolveConflict(conflict, useLocal: true)
+                                                    }
+                                                }
+                                                .font(.caption2)
+                                                .foregroundColor(.blue)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 4)
+                                                        .fill(Color.blue.opacity(0.1))
+                                                )
+                                                
+                                                Button("Use Cloud") {
+                                                    Task {
+                                                        try? await iCloudManager.resolveConflict(conflict, useLocal: false)
+                                                    }
+                                                }
+                                                .font(.caption2)
+                                                .foregroundColor(.green)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 4)
+                                                        .fill(Color.green.opacity(0.1))
+                                                )
+                                            }
+                                        }
+                                        .padding(.vertical, 4)
+                                    }
+                                }
+                                .padding(.top, 8)
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(
+                            Rectangle()
+                                .fill(Color(.systemGray6))
+                                .opacity(0.3)
+                        )
                     }
                     
                     // Data Cleanup Section
@@ -578,6 +796,20 @@ struct SettingsView: View {
         }
         
         return false
+    }
+    
+    // MARK: - iCloud Sync Functions
+    
+    private func syncAllSummaries() async {
+        do {
+            let allSummaries = Array(summaryManager.enhancedSummaries)
+            try await iCloudManager.performBidirectionalSync(localSummaries: allSummaries)
+        } catch {
+            print("❌ Sync error: \(error)")
+            await MainActor.run {
+                errorHandler.handle(AppError.from(error, context: "iCloud Sync"), context: "Sync", showToUser: true)
+            }
+        }
     }
 }
 

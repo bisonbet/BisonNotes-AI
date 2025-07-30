@@ -9,6 +9,7 @@ struct SummariesView: View {
     @StateObject private var summaryManager = SummaryManager()
     @StateObject private var transcriptManager = TranscriptManager.shared
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
+    @StateObject private var enhancedFileManager = EnhancedFileManager.shared
     @State private var recordings: [RecordingFile] = []
     @State private var selectedRecording: RecordingFile?
     @State private var isGeneratingSummary = false
@@ -18,6 +19,7 @@ struct SummariesView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var refreshTrigger = false
+    @State private var showOrphanedSummaries = false
 
     // MARK: - Body
     
@@ -25,6 +27,17 @@ struct SummariesView: View {
         NavigationView {
             mainContentView
                 .navigationTitle("Summaries")
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: {
+                            showOrphanedSummaries = true
+                        }) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .foregroundColor(.orange)
+                        }
+                        .help("View orphaned summaries")
+                    }
+                }
                 .onAppear {
                     loadRecordings()
                     // Configure the summary manager with the selected AI engine
@@ -32,6 +45,9 @@ struct SummariesView: View {
                     
                     // Ensure transcription manager is using the correct engine and stop unnecessary AWS checks
                     enhancedTranscriptionManager.updateTranscriptionEngine(recorderVM.selectedTranscriptionEngine)
+                    
+                    // Refresh file relationships
+                    enhancedFileManager.refreshAllRelationships()
                 }
                 .onReceive(summaryManager.objectWillChange) { _ in
                     // Refresh the view when summary manager changes
@@ -96,6 +112,9 @@ struct SummariesView: View {
         }
         .sheet(item: $selectedLocationData) { locationData in
             LocationDetailView(locationData: locationData)
+        }
+        .sheet(isPresented: $showOrphanedSummaries) {
+            OrphanedSummariesView()
         }
         .alert("Summary Generation Error", isPresented: $showErrorAlert) {
             Button("OK") {
@@ -165,6 +184,28 @@ struct SummariesView: View {
                     Text(recording.dateString)
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    
+                    // File availability indicator
+                    if let relationships = enhancedFileManager.getFileRelationships(for: recording.url) {
+                        FileAvailabilityIndicator(
+                            status: relationships.availabilityStatus,
+                            showLabel: true,
+                            size: .small
+                        )
+                        
+                        // Show warning if audio source is no longer available
+                        if relationships.isOrphaned {
+                            HStack {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.caption2)
+                                    .foregroundColor(.orange)
+                                Text("Audio source no longer available")
+                                    .font(.caption2)
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                    }
+                    
                     if let locationData = recording.locationData {
                         Button(action: {
                             selectedLocationData = locationData

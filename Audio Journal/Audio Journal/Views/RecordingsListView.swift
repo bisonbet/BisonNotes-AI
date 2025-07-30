@@ -17,12 +17,14 @@ struct RecordingsListView: View {
     @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
     @StateObject private var transcriptManager = TranscriptManager.shared
     @StateObject private var summaryManager = SummaryManager()
+    @StateObject private var enhancedFileManager = EnhancedFileManager.shared
     @State private var recordings: [AudioRecordingFile] = []
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
     @State private var showingDocumentPicker = false
     @State private var recordingToDelete: AudioRecordingFile?
     @State private var showingDeleteConfirmation = false
+    @State private var preserveSummaryOnDelete = false
     
     var body: some View {
         NavigationView {
@@ -108,6 +110,16 @@ struct RecordingsListView: View {
                                                 .font(.caption)
                                                 .foregroundColor(.secondary)
                                         }
+                                        
+                                        // File availability indicator
+                                        if let relationships = enhancedFileManager.getFileRelationships(for: recording.url) {
+                                            FileAvailabilityIndicator(
+                                                status: relationships.availabilityStatus,
+                                                showLabel: true,
+                                                size: .small
+                                            )
+                                        }
+                                        
                                         if let locationData = recording.locationData {
                                             Button(action: {
                                                 // Show location details
@@ -187,21 +199,51 @@ struct RecordingsListView: View {
             .alert("Delete Recording", isPresented: $showingDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {
                     recordingToDelete = nil
+                    preserveSummaryOnDelete = false
                 }
-                Button("Delete", role: .destructive) {
-                    if let recording = recordingToDelete {
-                        deleteRecording(recording)
+                
+                if let recording = recordingToDelete,
+                   let relationships = enhancedFileManager.getFileRelationships(for: recording.url),
+                   relationships.summaryExists {
+                    Button("Delete All", role: .destructive) {
+                        if let recording = recordingToDelete {
+                            deleteRecording(recording, preserveSummary: false)
+                        }
+                        recordingToDelete = nil
+                        preserveSummaryOnDelete = false
                     }
-                    recordingToDelete = nil
+                    
+                    Button("Keep Summary") {
+                        if let recording = recordingToDelete {
+                            deleteRecording(recording, preserveSummary: true)
+                        }
+                        recordingToDelete = nil
+                        preserveSummaryOnDelete = false
+                    }
+                } else {
+                    Button("Delete", role: .destructive) {
+                        if let recording = recordingToDelete {
+                            deleteRecording(recording, preserveSummary: false)
+                        }
+                        recordingToDelete = nil
+                        preserveSummaryOnDelete = false
+                    }
                 }
             } message: {
-                if let recording = recordingToDelete {
-                    Text("Are you sure you want to delete '\(recording.name)'? This will also delete any associated transcript and summary. This action cannot be undone.")
+                if let recording = recordingToDelete,
+                   let relationships = enhancedFileManager.getFileRelationships(for: recording.url) {
+                    if relationships.summaryExists {
+                        Text("What would you like to do with '\(recording.name)'?\n\n• Delete All: Removes recording, transcript, and summary\n• Keep Summary: Removes recording and transcript but preserves the summary for future reference\n\nThis action cannot be undone.")
+                    } else {
+                        Text("Are you sure you want to delete '\(recording.name)'? This will also delete any associated transcript. This action cannot be undone.")
+                    }
                 }
             }
         }
         .onAppear {
             loadRecordings()
+            // Refresh file relationships when view appears
+            enhancedFileManager.refreshAllRelationships()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
             // Refresh recordings list when a recording is renamed
@@ -257,36 +299,27 @@ struct RecordingsListView: View {
         }
     }
     
-    private func deleteRecording(_ recording: AudioRecordingFile) {
+    private func deleteRecording(_ recording: AudioRecordingFile, preserveSummary: Bool = false) {
         // Stop playback if this recording is currently playing
         if recorderVM.currentlyPlayingURL == recording.url {
             recorderVM.stopPlayback()
         }
         
-        do {
-            // Delete the audio file
-            try FileManager.default.removeItem(at: recording.url)
-            print("✅ Deleted audio file: \(recording.url.lastPathComponent)")
-            
-            // Delete the associated location file if it exists
-            let locationURL = recording.url.deletingPathExtension().appendingPathExtension("location")
-            if FileManager.default.fileExists(atPath: locationURL.path) {
-                try FileManager.default.removeItem(at: locationURL)
-                print("✅ Deleted location file: \(locationURL.lastPathComponent)")
+        Task {
+            do {
+                // Use EnhancedFileManager for selective deletion
+                try await enhancedFileManager.deleteRecording(recording.url, preserveSummary: preserveSummary)
+                
+                // Reload the list on main thread
+                await MainActor.run {
+                    loadRecordings()
+                }
+                
+                print("✅ Recording deletion completed: \(recording.name) (preserve summary: \(preserveSummary))")
+            } catch {
+                print("❌ Error deleting recording: \(error)")
+                // TODO: Show error alert to user
             }
-            
-            // Delete associated transcript from TranscriptManager
-            transcriptManager.deleteTranscript(for: recording.url)
-            print("✅ Deleted transcript for: \(recording.name)")
-            
-            // Delete associated summary from SummaryManager
-            summaryManager.deleteSummary(for: recording.url)
-            print("✅ Deleted summary for: \(recording.name)")
-            
-            loadRecordings() // Reload the list
-            print("✅ Recording deletion completed: \(recording.name)")
-        } catch {
-            print("❌ Error deleting recording: \(error)")
         }
     }
 }
