@@ -20,6 +20,9 @@ struct SettingsView: View {
     @State private var showingAISettings = false
     @State private var showingPerformanceView = false
     @State private var showingClearSummariesAlert = false
+    @State private var showingCleanupAlert = false
+    @State private var isPerformingCleanup = false
+    @State private var cleanupResults: CleanupResults?
     
     init() {
         let summaryMgr = SummaryManager()
@@ -294,6 +297,78 @@ struct SettingsView: View {
                         .padding(.horizontal, 24)
                     }
                     
+                    // Data Cleanup Section
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Data Management")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 24)
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Cleanup Orphaned Data")
+                                        .font(.body)
+                                        .foregroundColor(.primary)
+                                    Text("Remove summaries and transcripts for deleted recordings")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Button(action: {
+                                    showingCleanupAlert = true
+                                }) {
+                                    HStack {
+                                        if isPerformingCleanup {
+                                            ProgressView()
+                                                .scaleEffect(0.8)
+                                                .padding(.trailing, 4)
+                                        }
+                                        Text(isPerformingCleanup ? "Cleaning..." : "Clean Up")
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(isPerformingCleanup ? Color.gray : Color.orange)
+                                    )
+                                }
+                                .disabled(isPerformingCleanup)
+                            }
+                            
+                            if let results = cleanupResults {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Last Cleanup Results:")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.secondary)
+                                    
+                                    Text("• Removed \(results.orphanedSummaries) orphaned summaries")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    
+                                    Text("• Removed \(results.orphanedTranscripts) orphaned transcripts")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    
+                                    Text("• Freed \(results.freedSpaceMB, specifier: "%.1f") MB of space")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.top, 8)
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(
+                            Rectangle()
+                                .fill(Color(.systemGray6))
+                                .opacity(0.3)
+                        )
+                    }
+                    
                     Spacer(minLength: 20)
                 }
                 .background(Color(.systemBackground))
@@ -326,6 +401,18 @@ struct SettingsView: View {
         } message: {
             let totalSummaries = summaryManager.enhancedSummaries.count + summaryManager.summaries.count
             Text("This will permanently delete all \(totalSummaries) summaries, transcripts, and extracted tasks/reminders. This action cannot be undone.")
+        }
+        .alert("Cleanup Orphaned Data", isPresented: $showingCleanupAlert) {
+            Button("Cancel", role: .cancel) {
+                // Do nothing, just dismiss
+            }
+            Button("Clean Up", role: .destructive) {
+                Task {
+                    await performCleanup()
+                }
+            }
+        } message: {
+            Text("This will find and remove all summaries and transcripts for recordings that no longer exist. This action cannot be undone.")
         }
         .alert("Error", isPresented: $errorHandler.showingErrorAlert) {
             Button("OK") {
@@ -367,4 +454,137 @@ struct SettingsView: View {
         summaryManager.clearAllSummaries()
         transcriptManager.clearAllTranscripts()
     }
+    
+    // MARK: - Cleanup Functions
+    
+    private func performCleanup() async {
+        isPerformingCleanup = true
+        
+        do {
+            let results = try await cleanupOrphanedData()
+            await MainActor.run {
+                self.cleanupResults = results
+                self.isPerformingCleanup = false
+            }
+        } catch {
+            await MainActor.run {
+                self.isPerformingCleanup = false
+                self.errorHandler.handle(AppError.from(error, context: "Data Cleanup"), context: "Cleanup", showToUser: true)
+            }
+        }
+    }
+    
+    private func cleanupOrphanedData() async throws -> CleanupResults {
+        print("🧹 Starting orphaned data cleanup...")
+        
+        // Get all current active recordings
+        let activeRecordings = getActiveRecordings()
+        print("📁 Found \(activeRecordings.count) active recordings")
+        
+        // Get all stored summaries and transcripts
+        let enhancedSummaries = Array(summaryManager.enhancedSummaries)
+        let regularSummaries = Array(summaryManager.summaries)
+        let allTranscripts = transcriptManager.transcripts
+        
+        print("📊 Found \(enhancedSummaries.count + regularSummaries.count) stored summaries and \(allTranscripts.count) stored transcripts")
+        
+        var orphanedSummaries = 0
+        var orphanedTranscripts = 0
+        var freedSpaceBytes: Int64 = 0
+        
+        // Check for orphaned enhanced summaries
+        for summary in enhancedSummaries {
+            let recordingURL = summary.recordingURL
+            if !isRecordingActive(recordingURL, in: activeRecordings) {
+                print("🗑️ Found orphaned enhanced summary for: \(recordingURL.lastPathComponent)")
+                summaryManager.deleteSummary(for: recordingURL)
+                orphanedSummaries += 1
+                
+                // Calculate freed space (rough estimate)
+                freedSpaceBytes += Int64(summary.summary.count * 2) // Approximate UTF-8 bytes
+            }
+        }
+        
+        // Check for orphaned regular summaries
+        for summary in regularSummaries {
+            let recordingURL = summary.recordingURL
+            if !isRecordingActive(recordingURL, in: activeRecordings) {
+                print("🗑️ Found orphaned regular summary for: \(recordingURL.lastPathComponent)")
+                summaryManager.deleteSummary(for: recordingURL)
+                orphanedSummaries += 1
+                
+                // Calculate freed space (rough estimate)
+                freedSpaceBytes += Int64(summary.summary.count * 2) // Approximate UTF-8 bytes
+            }
+        }
+        
+        // Check for orphaned transcripts
+        for transcript in allTranscripts {
+            let recordingURL = transcript.recordingURL
+            if !isRecordingActive(recordingURL, in: activeRecordings) {
+                print("🗑️ Found orphaned transcript for: \(recordingURL.lastPathComponent)")
+                transcriptManager.deleteTranscript(for: recordingURL)
+                orphanedTranscripts += 1
+                
+                // Calculate freed space
+                let transcriptText = transcript.segments.map { $0.text }.joined(separator: " ")
+                freedSpaceBytes += Int64(transcriptText.count * 2) // Approximate UTF-8 bytes
+            }
+        }
+        
+        let freedSpaceMB = Double(freedSpaceBytes) / (1024 * 1024)
+        
+        print("✅ Cleanup complete:")
+        print("   • Removed \(orphanedSummaries) orphaned summaries")
+        print("   • Removed \(orphanedTranscripts) orphaned transcripts")
+        print("   • Freed \(String(format: "%.1f", freedSpaceMB)) MB of space")
+        
+        return CleanupResults(
+            orphanedSummaries: orphanedSummaries,
+            orphanedTranscripts: orphanedTranscripts,
+            freedSpaceMB: freedSpaceMB
+        )
+    }
+    
+    private func getActiveRecordings() -> [URL] {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        
+        do {
+            let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
+            return fileURLs.filter { ["m4a", "mp3", "wav"].contains($0.pathExtension.lowercased()) }
+        } catch {
+            print("Error loading active recordings: \(error)")
+            return []
+        }
+    }
+    
+    private func isRecordingActive(_ recordingURL: URL, in activeRecordings: [URL]) -> Bool {
+        let targetFilename = recordingURL.lastPathComponent
+        let targetName = recordingURL.deletingPathExtension().lastPathComponent
+        
+        // Check for exact URL match
+        if activeRecordings.contains(recordingURL) {
+            return true
+        }
+        
+        // Check for filename match
+        if activeRecordings.contains(where: { $0.lastPathComponent == targetFilename }) {
+            return true
+        }
+        
+        // Check for name match (without extension)
+        if activeRecordings.contains(where: { $0.deletingPathExtension().lastPathComponent == targetName }) {
+            return true
+        }
+        
+        return false
+    }
+}
+
+// MARK: - Supporting Structures
+
+struct CleanupResults {
+    let orphanedSummaries: Int
+    let orphanedTranscripts: Int
+    let freedSpaceMB: Double
 }

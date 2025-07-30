@@ -203,6 +203,11 @@ struct RecordingsListView: View {
         .onAppear {
             loadRecordings()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
+            // Refresh recordings list when a recording is renamed
+            print("🔄 RecordingsListView: Received recording renamed notification, refreshing list")
+            loadRecordings()
+        }
     }
     
     private func loadRecordings() {

@@ -35,14 +35,28 @@ struct SummariesView: View {
                 }
                 .onReceive(summaryManager.objectWillChange) { _ in
                     // Refresh the view when summary manager changes
-                    print("🔄 SummariesView: Received summary manager change notification")
+                    // Only log if verbose logging is enabled
+                    if PerformanceOptimizer.shouldLogEngineInitialization() {
+                        AppLogger.shared.verbose("Received summary manager change notification", category: "SummariesView")
+                    }
                     DispatchQueue.main.async {
                         self.refreshTrigger.toggle()
-                        print("🔄 SummariesView: Toggled refresh trigger to \(self.refreshTrigger)")
+                        // Only log if verbose logging is enabled
+                        if PerformanceOptimizer.shouldLogEngineInitialization() {
+                            AppLogger.shared.verbose("Toggled refresh trigger to \(self.refreshTrigger)", category: "SummariesView")
+                        }
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                     // Refresh when app comes to foreground
+                    loadRecordings()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
+                    // Refresh recordings list when a recording is renamed
+                    // Only log if verbose logging is enabled
+                    if PerformanceOptimizer.shouldLogEngineInitialization() {
+                        AppLogger.shared.verbose("Received recording renamed notification, refreshing list", category: "SummariesView")
+                    }
                     loadRecordings()
                 }
         }
@@ -59,14 +73,20 @@ struct SummariesView: View {
         .onChange(of: showSummary) { _, newValue in
             if !newValue {
                 // Sheet was dismissed, refresh the view
-                print("🔄 SummariesView: Summary sheet dismissed, refreshing UI")
+                // Only log if verbose logging is enabled
+                if PerformanceOptimizer.shouldLogEngineInitialization() {
+                    AppLogger.shared.verbose("Summary sheet dismissed, refreshing UI", category: "SummariesView")
+                }
                 
                 // Force a UI refresh to update button states
                 DispatchQueue.main.async {
                     // Additional check to ensure summary state is updated
                     if let recording = self.selectedRecording {
                         let hasSummary = self.summaryManager.hasSummary(for: recording.url)
-                        print("🔍 After sheet dismissal - hasSummary for \(recording.name): \(hasSummary)")
+                        // Only log if verbose logging is enabled
+                        if PerformanceOptimizer.shouldLogEngineInitialization() {
+                            AppLogger.shared.verbose("After sheet dismissal - hasSummary for \(recording.name): \(hasSummary)", category: "SummariesView")
+                        }
                     }
                     
                     // Force complete UI refresh
@@ -211,7 +231,10 @@ struct SummariesView: View {
     // MARK: - Data Handling
     
     private func forceRefreshUI() {
-        print("🔄 SummariesView: Forcing UI refresh")
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Forcing UI refresh", category: "SummariesView")
+        }
         DispatchQueue.main.async {
             self.refreshTrigger.toggle()
             self.loadRecordings()
@@ -266,19 +289,22 @@ struct SummariesView: View {
             let player = try AVAudioPlayer(contentsOf: url)
             return player.duration
         } catch {
-            print("Error getting duration: \(error)")
+            AppLogger.shared.error("Error getting duration: \(error)", category: "SummariesView")
             return 0
         }
     }
     
     private func generateTranscriptAndSummary(for recording: RecordingFile) async {
-        print("🎬 Starting generateTranscriptAndSummary for: \(recording.name)")
-        print("🔍 Looking for transcript with URL: \(recording.url)")
-        print("📋 Total transcripts in manager: \(transcriptManager.transcripts.count)")
-        
-        // Debug: Print all stored transcript URLs
-        for (index, transcript) in transcriptManager.transcripts.enumerated() {
-            print("📄 Transcript \(index): \(transcript.recordingName) - \(transcript.recordingURL)")
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Starting generateTranscriptAndSummary for: \(recording.name)", category: "SummariesView")
+            AppLogger.shared.verbose("Looking for transcript with URL: \(recording.url)", category: "SummariesView")
+            AppLogger.shared.verbose("Total transcripts in manager: \(transcriptManager.transcripts.count)", category: "SummariesView")
+            
+            // Debug: Print all stored transcript URLs
+            for (index, transcript) in transcriptManager.transcripts.enumerated() {
+                AppLogger.shared.verbose("Transcript \(index): \(transcript.recordingName) - \(transcript.recordingURL)", category: "SummariesView")
+            }
         }
         
         isGeneratingSummary = true

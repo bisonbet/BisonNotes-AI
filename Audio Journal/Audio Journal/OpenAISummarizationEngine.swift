@@ -19,26 +19,40 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         // Check if API key is configured
         let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
         guard !apiKey.isEmpty else {
-            print("❌ OpenAISummarizationEngine: API key not configured")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                AppLogger.shared.verbose("API key not configured", category: "OpenAISummarizationEngine")
+            }
             return false
         }
         
         // Check if OpenAI is enabled in settings
         let isEnabled = UserDefaults.standard.bool(forKey: "enableOpenAI")
         let keyExists = UserDefaults.standard.object(forKey: "enableOpenAI") != nil
-        print("🔧 OpenAISummarizationEngine: Checking enableOpenAI setting - Value: \(isEnabled), Key exists: \(keyExists)")
+        
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+            AppLogger.shared.verbose("Checking enableOpenAI setting - Value: \(isEnabled), Key exists: \(keyExists)", category: "OpenAISummarizationEngine")
+        }
+        
         guard isEnabled else {
-            print("❌ OpenAISummarizationEngine: OpenAI is not enabled in settings")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                AppLogger.shared.verbose("OpenAI is not enabled in settings", category: "OpenAISummarizationEngine")
+            }
             return false
         }
         
         // Basic API key format validation
         guard apiKey.hasPrefix("sk-") else {
-            print("❌ OpenAISummarizationEngine: Invalid API key format")
+            AppLogger.shared.error("Invalid API key format", category: "OpenAISummarizationEngine")
             return false
         }
         
-        print("✅ OpenAISummarizationEngine: Basic availability checks passed")
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+            AppLogger.shared.verbose("Basic availability checks passed", category: "OpenAISummarizationEngine")
+        }
         return true
     }
     
@@ -190,11 +204,18 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         
         // Only create a new service if the configuration has actually changed
         if currentConfig == nil || currentConfig != newConfig {
-            print("🔧 OpenAISummarizationEngine: Updating configuration - Model: \(modelString), BaseURL: \(baseURL)")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Updating configuration - Model: \(modelString), BaseURL: \(baseURL)", category: "OpenAISummarizationEngine")
+            }
             
             self.currentConfig = newConfig
             self.service = OpenAISummarizationService(config: newConfig)
-            print("✅ OpenAISummarizationEngine: Configuration updated successfully")
+            
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Configuration updated successfully", category: "OpenAISummarizationEngine")
+            }
         }
     }
     
@@ -391,20 +412,34 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
         // Check if API key is configured
         let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
         guard !apiKey.isEmpty else {
-            print("❌ OpenAICompatibleEngine: API key not configured")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                AppLogger.shared.verbose("API key not configured", category: "OpenAICompatibleEngine")
+            }
             return false
         }
         
         // Check if OpenAI Compatible is enabled in settings
         let isEnabled = UserDefaults.standard.bool(forKey: "enableOpenAICompatible")
         let keyExists = UserDefaults.standard.object(forKey: "enableOpenAICompatible") != nil
-        print("🔧 OpenAICompatibleEngine: Checking enableOpenAICompatible setting - Value: \(isEnabled), Key exists: \(keyExists)")
+        
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+            AppLogger.shared.verbose("Checking enableOpenAICompatible setting - Value: \(isEnabled), Key exists: \(keyExists)", category: "OpenAICompatibleEngine")
+        }
+        
         guard isEnabled else {
-            print("❌ OpenAICompatibleEngine: OpenAI Compatible is not enabled in settings")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                AppLogger.shared.verbose("OpenAI Compatible is not enabled in settings", category: "OpenAICompatibleEngine")
+            }
             return false
         }
         
-        print("✅ OpenAICompatibleEngine: Basic availability checks passed")
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+            AppLogger.shared.verbose("Basic availability checks passed", category: "OpenAICompatibleEngine")
+        }
         return true
     }
     
@@ -541,11 +576,18 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
         
         // Only create a new service if the configuration has actually changed
         if currentConfig == nil || currentConfig != newConfig {
-            print("🔧 OpenAICompatibleEngine: Updating configuration - Model: \(modelId), BaseURL: \(baseURL)")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Updating configuration - Model: \(modelId), BaseURL: \(baseURL)", category: "OpenAICompatibleEngine")
+            }
             
             self.currentConfig = newConfig
             self.service = OpenAICompatibleService(config: newConfig)
-            print("✅ OpenAICompatibleEngine: Configuration updated successfully")
+            
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Configuration updated successfully", category: "OpenAICompatibleEngine")
+            }
         }
     }
     

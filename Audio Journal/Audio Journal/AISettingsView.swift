@@ -91,6 +91,7 @@ struct AISettingsView: View {
     @State private var showingOllamaSettings = false
     @State private var showingOpenAISettings = false
     @State private var showingOpenAICompatibleSettings = false
+    @State private var showingGoogleAIStudioSettings = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     
@@ -134,6 +135,10 @@ struct AISettingsView: View {
                     
                     if recorderVM.selectedAIEngine == AIEngineType.openAICompatible.rawValue {
                         openAICompatibleConfigurationSection
+                    }
+                    
+                    if recorderVM.selectedAIEngine == AIEngineType.googleAIStudio.rawValue {
+                        googleAIStudioConfigurationSection
                     }
                     
                     if viewModel.summaryManager.enhancedSummaries.count > 0 {
@@ -192,6 +197,11 @@ struct AISettingsView: View {
         }
         .sheet(isPresented: $showingOpenAICompatibleSettings) {
             OpenAICompatibleSettingsView(onConfigurationChanged: {
+                Task { refreshEngineStatuses() }
+            })
+        }
+        .sheet(isPresented: $showingGoogleAIStudioSettings) {
+            GoogleAIStudioSettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
         }
@@ -461,6 +471,90 @@ private extension AISettingsView {
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.blue.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+    
+    var googleAIStudioConfigurationSection: some View {
+        // FIX: Logic moved outside the ViewBuilder closure.
+        let apiKey = UserDefaults.standard.string(forKey: "googleAIStudioAPIKey") ?? ""
+        let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-2.5-flash"
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
+        
+        // The return statement is now required because the property contains more than a single expression.
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("Google AI Studio Configuration")
+                .font(.headline)
+                .padding(.horizontal, 24)
+            
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Google AI Studio API Settings")
+                            .font(.body)
+                        Text("Configure Google AI Studio API key and model selection for advanced summarization")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { self.showingGoogleAIStudioSettings = true }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("Configure")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.purple)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Status:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(isEnabled && !apiKey.isEmpty ? Color.green : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text(isEnabled && !apiKey.isEmpty ? "Configured" : "Not Configured")
+                                .font(.caption)
+                                .foregroundColor(isEnabled && !apiKey.isEmpty ? .green : .red)
+                        }
+                    }
+                    
+                    HStack {
+                        Text("Model:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(model)
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+                    
+                    HStack {
+                        Text("API Key:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(apiKey.isEmpty ? "Not Set" : "Set")
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(apiKey.isEmpty ? .red : .green)
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.purple.opacity(0.1))
             )
             .padding(.horizontal, 24)
         }

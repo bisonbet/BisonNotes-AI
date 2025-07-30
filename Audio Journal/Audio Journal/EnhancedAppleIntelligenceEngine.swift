@@ -170,21 +170,47 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     private func processSingleChunk(_ text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         // Always process sequentially: Summary first, then extract tasks/reminders/titles
         // This ensures the AI has full context when generating the summary
-        print("📊 Step 1: Generating contextual summary...")
+        
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Step 1: Generating contextual summary...", category: "EnhancedAppleIntelligenceEngine")
+        }
+        
         let summary = try await generateSummary(from: text, contentType: .general)
-        print("✅ Summary generated: \(summary.count) characters")
         
-        print("📋 Step 2: Extracting tasks from full transcript...")
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Summary generated: \(summary.count) characters", category: "EnhancedAppleIntelligenceEngine")
+        }
+        
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Step 2: Extracting tasks from full transcript...", category: "EnhancedAppleIntelligenceEngine")
+        }
+        
         let tasks = try await extractTasks(from: text)
-        print("✅ Found \(tasks.count) tasks")
         
-        print("🔔 Step 3: Extracting reminders from full transcript...")
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Found \(tasks.count) tasks", category: "EnhancedAppleIntelligenceEngine")
+        }
+        
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Step 3: Extracting reminders from full transcript...", category: "EnhancedAppleIntelligenceEngine")
+        }
+        
         let reminders = try await extractReminders(from: text)
-        print("✅ Found \(reminders.count) reminders")
         
-        print("📝 Step 4: Extracting titles from full transcript...")
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Found \(reminders.count) reminders", category: "EnhancedAppleIntelligenceEngine")
+        }
+        
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Step 4: Extracting titles from full transcript...", category: "EnhancedAppleIntelligenceEngine")
+        }
+        
         let titles = try await extractTitles(from: text)
-        print("✅ Found \(titles.count) titles")
+        
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Found \(titles.count) titles", category: "EnhancedAppleIntelligenceEngine")
+        }
         
         let contentType = try await classifyContent(text)
         
@@ -196,7 +222,11 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         
         // Split text into chunks
         let chunks = TokenManager.chunkText(text)
-        print("📦 Split text into \(chunks.count) chunks")
+        
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Split text into \(chunks.count) chunks", category: "EnhancedAppleIntelligenceEngine")
+        }
         
         // Process each chunk
         var allSummaries: [String] = []
@@ -206,7 +236,10 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         var contentType: ContentType = .general
         
         for (index, chunk) in chunks.enumerated() {
-            print("🔄 Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)", category: "EnhancedAppleIntelligenceEngine")
+            }
             
             do {
                 let chunkResult = try await processSingleChunk(chunk)
@@ -221,7 +254,7 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
                 }
                 
             } catch {
-                print("❌ Failed to process chunk \(index + 1): \(error)")
+                AppLogger.shared.error("Failed to process chunk \(index + 1): \(error)", category: "EnhancedAppleIntelligenceEngine")
                 throw error
             }
         }
@@ -235,11 +268,15 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         let uniqueTitles = deduplicateTitles(allTitles)
         
         let processingTime = Date().timeIntervalSince(startTime)
-        print("✅ Chunked processing completed in \(String(format: "%.2f", processingTime))s")
-        print("📊 Final summary: \(combinedSummary.count) characters")
-        print("📋 Final tasks: \(uniqueTasks.count)")
-        print("🔔 Final reminders: \(uniqueReminders.count)")
-        print("📝 Final titles: \(uniqueTitles.count)")
+        
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Chunked processing completed in \(String(format: "%.2f", processingTime))s", category: "EnhancedAppleIntelligenceEngine")
+            AppLogger.shared.verbose("Final summary: \(combinedSummary.count) characters", category: "EnhancedAppleIntelligenceEngine")
+            AppLogger.shared.verbose("Final tasks: \(uniqueTasks.count)", category: "EnhancedAppleIntelligenceEngine")
+            AppLogger.shared.verbose("Final reminders: \(uniqueReminders.count)", category: "EnhancedAppleIntelligenceEngine")
+            AppLogger.shared.verbose("Final titles: \(uniqueTitles.count)", category: "EnhancedAppleIntelligenceEngine")
+        }
         
         return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
     }

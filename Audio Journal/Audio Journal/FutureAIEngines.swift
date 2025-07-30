@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import os.log
+import SwiftUI
 
 // MARK: - AWS Bedrock Engine (Future Implementation)
 
@@ -162,27 +164,44 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         // Check if Ollama is enabled in settings
         let isEnabled = UserDefaults.standard.bool(forKey: "enableOllama")
         let keyExists = UserDefaults.standard.object(forKey: "enableOllama") != nil
-        print("🔧 LocalLLMEngine: Checking enableOllama setting - Value: \(isEnabled), Key exists: \(keyExists)")
+        
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+            AppLogger.shared.verbose("Checking enableOllama setting - Value: \(isEnabled), Key exists: \(keyExists)", category: "LocalLLMEngine")
+        }
+        
         guard isEnabled else {
-            print("❌ LocalLLMEngine: Ollama is not enabled in settings")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                AppLogger.shared.verbose("Ollama is not enabled in settings", category: "LocalLLMEngine")
+            }
             return false
         }
         
         // Check if server URL is configured
         let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? ""
         guard !serverURL.isEmpty else {
-            print("❌ LocalLLMEngine: Server URL not configured")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                AppLogger.shared.verbose("Server URL not configured", category: "LocalLLMEngine")
+            }
             return false
         }
         
         // Check if model name is configured
         let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? ""
         guard !modelName.isEmpty else {
-            print("❌ LocalLLMEngine: Model name not configured")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                AppLogger.shared.verbose("Model name not configured", category: "LocalLLMEngine")
+            }
             return false
         }
         
-        print("✅ LocalLLMEngine: Basic availability checks passed")
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+            AppLogger.shared.verbose("Basic availability checks passed", category: "LocalLLMEngine")
+        }
         return true
     }
     
@@ -600,42 +619,413 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
 
 // MARK: - Google AI Studio Engine
 
+// Local SummaryResponse struct for JSON parsing
+private struct SummaryResponse: Codable {
+    let summary: String
+    let tasks: [String]
+    let reminders: [String]
+    let titles: [String]
+    let contentType: String
+}
+
 class GoogleAIStudioEngine: SummarizationEngine {
     let name = "Google AI Studio"
     let description = "Advanced AI-powered summaries using Google's Gemini models"
-    let isAvailable = false // Coming soon
+    let isAvailable: Bool
     let version = "1.0"
     
+    private let service = GoogleAIStudioService()
+    private let logger = Logger(subsystem: "com.audiojournal.app", category: "GoogleAIStudioEngine")
+    
+    init() {
+        // Check if Google AI Studio is enabled and configured
+        let apiKey = UserDefaults.standard.string(forKey: "googleAIStudioAPIKey") ?? ""
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
+        self.isAvailable = !apiKey.isEmpty && isEnabled
+    }
+    
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        guard isAvailable else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        let prompt = createSummaryPrompt(text: text, contentType: contentType)
+        return try await service.generateContent(prompt: prompt, useStructuredOutput: false)
     }
     
     func extractTasks(from text: String) async throws -> [TaskItem] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        guard isAvailable else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        let prompt = createTaskExtractionPrompt(text: text)
+        let response = try await service.generateContent(prompt: prompt, useStructuredOutput: false)
+        return parseTasksFromResponse(response)
     }
     
     func extractReminders(from text: String) async throws -> [ReminderItem] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        guard isAvailable else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        let prompt = createReminderExtractionPrompt(text: text)
+        let response = try await service.generateContent(prompt: prompt, useStructuredOutput: false)
+        return parseRemindersFromResponse(response)
     }
     
     func extractTitles(from text: String) async throws -> [TitleItem] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        guard isAvailable else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        let prompt = createTitleExtractionPrompt(text: text)
+        let response = try await service.generateContent(prompt: prompt, useStructuredOutput: false)
+        return parseTitlesFromResponse(response)
     }
     
     func classifyContent(_ text: String) async throws -> ContentType {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        guard isAvailable else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        let prompt = createContentClassificationPrompt(text: text)
+        let response = try await service.generateContent(prompt: prompt, useStructuredOutput: false)
+        return parseContentTypeFromResponse(response)
     }
     
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        guard isAvailable else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        // Create a comprehensive prompt for complete processing
+        let prompt = createCompleteProcessingPrompt(text: text)
+        
+        // Use structured output for complete processing
+        let response = try await service.generateContent(prompt: prompt, useStructuredOutput: true)
+        
+        // Parse the structured response
+        let components = parseStructuredResponse(response)
+        
+        return (
+            summary: components.summary,
+            tasks: components.tasks,
+            reminders: components.reminders,
+            titles: components.titles,
+            contentType: components.contentType
+        )
     }
     
     func testConnection() async -> Bool {
-        return false // Not available yet
+        return await service.testConnection()
     }
     
     func loadAvailableModels() async throws -> [String] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        return try await service.loadAvailableModels()
+    }
+    
+    // MARK: - Private Helper Methods
+    
+    private func createSummaryPrompt(text: String, contentType: ContentType) -> String {
+        return """
+        Please provide a comprehensive summary of the following content using proper Markdown formatting:
+        
+        Use the following Markdown elements as appropriate:
+        - **Bold text** for key points and important information
+        - *Italic text* for emphasis
+        - ## Headers for main sections
+        - ### Subheaders for subsections
+        - • Bullet points for lists
+        - 1. Numbered lists for sequential items
+        - > Blockquotes for important quotes or statements
+        - `Code formatting` for technical terms or specific names
+        
+        Content to summarize:
+        \(text)
+        
+        Content type: \(contentType.rawValue)
+        
+        Focus on the key points and main ideas. Keep the summary clear, informative, and well-structured with proper markdown formatting.
+        """
+    }
+    
+    private func createTaskExtractionPrompt(text: String) -> String {
+        return """
+        Extract personal and relevant actionable tasks from the following text:
+        
+        \(text)
+        
+        IMPORTANT GUIDELINES:
+        - Focus ONLY on tasks that are personal to the speaker or their immediate context
+        - Avoid tasks related to national news, public figures, celebrities, or general world events
+        - Include specific action items, to-dos, or commitments mentioned by the speaker
+        - Prioritize tasks that require personal action or follow-up
+        - Examples of GOOD tasks: "Call John about the project", "Schedule dentist appointment", "Buy groceries"
+        - Examples of tasks to AVOID: "Follow the news about elections", "Check updates on celebrity gossip", "Monitor world events"
+        
+        Return only personal, actionable tasks that directly affect the speaker.
+        """
+    }
+    
+    private func createReminderExtractionPrompt(text: String) -> String {
+        return """
+        Extract personal and relevant reminders from the following text:
+        
+        \(text)
+        
+        IMPORTANT GUIDELINES:
+        - Focus ONLY on personal appointments, deadlines, or time-sensitive commitments
+        - Avoid reminders about national news, public events, or general world happenings
+        - Include specific dates, times, or deadlines mentioned by the speaker
+        - Prioritize items that affect the speaker personally
+        - Examples of GOOD reminders: "Dentist appointment on Friday", "Submit report by Monday", "Pick up dry cleaning tomorrow"
+        - Examples of reminders to AVOID: "Election day is coming", "Check the weather forecast", "Follow news about world events"
+        
+        Return only personal, time-sensitive items that directly affect the speaker.
+        """
+    }
+    
+    private func createTitleExtractionPrompt(text: String) -> String {
+        return """
+        Suggest 3-5 appropriate titles for the following content:
+        
+        \(text)
+        
+        Provide concise, descriptive titles that capture the main topic or theme.
+        """
+    }
+    
+    private func createContentClassificationPrompt(text: String) -> String {
+        return """
+        Classify the following content into one of these categories:
+        - meeting
+        - interview
+        - lecture
+        - conversation
+        - presentation
+        - general
+        
+        Content:
+        \(text)
+        
+        Respond with only the category name.
+        """
+    }
+    
+    private func parseTasksFromResponse(_ response: String) -> [TaskItem] {
+        let lines = response.components(separatedBy: .newlines)
+        var tasks: [TaskItem] = []
+        
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
+                let taskText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                if !taskText.isEmpty {
+                    tasks.append(TaskItem(text: taskText, priority: .medium, confidence: 0.8))
+                }
+            }
+        }
+        
+        return tasks
+    }
+    
+    private func parseRemindersFromResponse(_ response: String) -> [ReminderItem] {
+        let lines = response.components(separatedBy: .newlines)
+        var reminders: [ReminderItem] = []
+        
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
+                let reminderText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                if !reminderText.isEmpty {
+                    let timeRef = ReminderItem.TimeReference(originalText: reminderText)
+                    reminders.append(ReminderItem(text: reminderText, timeReference: timeRef, urgency: .later, confidence: 0.8))
+                }
+            }
+        }
+        
+        return reminders
+    }
+    
+    private func parseTitlesFromResponse(_ response: String) -> [TitleItem] {
+        let lines = response.components(separatedBy: .newlines)
+        var titles: [TitleItem] = []
+        
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
+                let titleText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                if !titleText.isEmpty {
+                    titles.append(TitleItem(text: titleText, confidence: 0.8))
+                }
+            }
+        }
+        
+        return titles
+    }
+    
+    private func parseContentTypeFromResponse(_ response: String) -> ContentType {
+        let lowercased = response.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        switch lowercased {
+        case "meeting": return .meeting
+        case "interview": return .meeting
+        case "lecture": return .technical
+        case "conversation": return .meeting
+        case "presentation": return .technical
+        default: return .general
+        }
+    }
+    
+    private func createCompleteProcessingPrompt(text: String) -> String {
+        return """
+        Analyze the following transcript and extract comprehensive information:
+        
+        \(text)
+        
+        Please provide a structured response with:
+        1. A detailed summary using proper Markdown formatting:
+           - Use **bold** for key points and important information
+           - Use *italic* for emphasis
+           - Use ## headers for main sections
+           - Use ### subheaders for subsections
+           - Use • bullet points for lists
+           - Use > blockquotes for important statements
+           - Keep the summary well-structured and informative
+        
+        2. Personal and relevant actionable tasks (not general news or public events):
+           - Focus on tasks that are personal to the speaker or their immediate context
+           - Avoid tasks related to national news, public figures, or general world events
+           - Include specific action items, to-dos, or commitments mentioned
+           - Prioritize tasks that require personal action or follow-up
+        
+        3. Personal and relevant reminders (not general news or public events):
+           - Focus on personal appointments, deadlines, or time-sensitive commitments
+           - Avoid reminders about national news, public events, or general world happenings
+           - Include specific dates, times, or deadlines mentioned
+           - Prioritize items that affect the speaker personally
+        
+        4. 3-5 suggested titles that capture the main topic or theme
+        
+        5. The content type classification (meeting, interview, lecture, conversation, presentation, or general)
+        
+        Format your response as a JSON object with the following structure:
+        {
+          "summary": "detailed markdown-formatted summary of the content",
+          "tasks": ["personal task1", "personal task2", "personal task3"],
+          "reminders": ["personal reminder1", "personal reminder2"],
+          "titles": ["title1", "title2", "title3"],
+          "contentType": "content type"
+        }
+        
+        IMPORTANT: Focus on personal, relevant content. Avoid extracting tasks or reminders related to:
+        - National or international news events
+        - Public figures or celebrities
+        - General world events or politics
+        - Events that don't directly affect the speaker
+        """
+    }
+    
+    private func parseStructuredResponse(_ response: String) -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        logger.info("GoogleAIStudioEngine: Parsing structured response")
+        logger.info("Response length: \(response.count) characters")
+        
+        // Try to parse as JSON first
+        if let jsonData = response.data(using: .utf8) {
+            do {
+                let summaryResponse = try JSONDecoder().decode(SummaryResponse.self, from: jsonData)
+                logger.info("GoogleAIStudioEngine: Successfully parsed JSON response")
+                logger.info("Summary length: \(summaryResponse.summary.count)")
+                logger.info("Tasks count: \(summaryResponse.tasks.count)")
+                logger.info("Reminders count: \(summaryResponse.reminders.count)")
+                logger.info("Titles count: \(summaryResponse.titles.count)")
+                
+                // Convert string arrays to proper objects
+                let tasks = summaryResponse.tasks.map { TaskItem(text: $0, priority: .medium, confidence: 0.8) }
+                let reminders = summaryResponse.reminders.map { ReminderItem(text: $0, timeReference: ReminderItem.TimeReference(originalText: $0), urgency: .later, confidence: 0.8) }
+                let titles = summaryResponse.titles.map { TitleItem(text: $0, confidence: 0.8) }
+                let contentType = ContentType(rawValue: summaryResponse.contentType) ?? .general
+                
+                return (
+                    summary: summaryResponse.summary,
+                    tasks: tasks,
+                    reminders: reminders,
+                    titles: titles,
+                    contentType: contentType
+                )
+            } catch {
+                logger.error("GoogleAIStudioEngine: Failed to parse JSON response: \(error)")
+                logger.error("GoogleAIStudioEngine: Raw response: \(response)")
+            }
+        }
+        
+        // Fallback: parse the formatted response
+        var summary = ""
+        var tasks: [TaskItem] = []
+        var reminders: [ReminderItem] = []
+        var titles: [TitleItem] = []
+        var contentType: ContentType = .general
+        
+        let lines = response.components(separatedBy: .newlines)
+        var currentSection = ""
+        
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            if trimmed.hasPrefix("SUMMARY:") {
+                currentSection = "summary"
+                continue
+            } else if trimmed.hasPrefix("TASKS:") {
+                currentSection = "tasks"
+                continue
+            } else if trimmed.hasPrefix("REMINDERS:") {
+                currentSection = "reminders"
+                continue
+            } else if trimmed.hasPrefix("SUGGESTED TITLES:") {
+                currentSection = "titles"
+                continue
+            } else if trimmed.hasPrefix("CONTENT TYPE:") {
+                currentSection = "contentType"
+                continue
+            }
+            
+            switch currentSection {
+            case "summary":
+                if !trimmed.isEmpty {
+                    summary += (summary.isEmpty ? "" : "\n") + trimmed
+                }
+            case "tasks":
+                if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") {
+                    let taskText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !taskText.isEmpty {
+                        tasks.append(TaskItem(text: taskText, priority: .medium, confidence: 0.8))
+                    }
+                }
+            case "reminders":
+                if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") {
+                    let reminderText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                                            if !reminderText.isEmpty {
+                            let timeRef = ReminderItem.TimeReference(originalText: reminderText)
+                            reminders.append(ReminderItem(text: reminderText, timeReference: timeRef, urgency: .later, confidence: 0.8))
+                        }
+                }
+            case "titles":
+                if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") {
+                    let titleText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !titleText.isEmpty {
+                        titles.append(TitleItem(text: titleText, confidence: 0.8))
+                    }
+                }
+            case "contentType":
+                if !trimmed.isEmpty {
+                    contentType = parseContentTypeFromResponse(trimmed)
+                }
+            default:
+                break
+            }
+        }
+        
+        return (summary: summary, tasks: tasks, reminders: reminders, titles: titles, contentType: contentType)
     }
 }
 
@@ -698,9 +1088,9 @@ enum AIEngineType: String, CaseIterable {
     
     var isComingSoon: Bool {
         switch self {
-        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible:
+        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio:
             return false
-        case .awsBedrock, .googleAIStudio:
+        case .awsBedrock:
             return true
         }
     }

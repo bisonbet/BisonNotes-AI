@@ -28,7 +28,7 @@ class RecordingNameGenerator {
             }
         }
         
-        // Strategy 1: Use the first high-confidence title
+        // Strategy 1: Use the first high-confidence title from the titles array
         if let bestTitle = titles.first(where: { $0.confidence >= 0.8 }) {
             let titleName = generateNameFromTitle(bestTitle, maxLength: maxLength)
             if !titleName.isEmpty {
@@ -36,7 +36,15 @@ class RecordingNameGenerator {
             }
         }
         
-        // Strategy 2: Use the first task if it's high priority
+        // Strategy 2: Use any title from the titles array (even lower confidence)
+        if let anyTitle = titles.first {
+            let titleName = generateNameFromTitle(anyTitle, maxLength: maxLength)
+            if !titleName.isEmpty {
+                return titleName
+            }
+        }
+        
+        // Strategy 3: Use the first task if it's high priority
         if let highPriorityTask = tasks.first(where: { $0.priority == .high }) {
             let taskName = generateNameFromTask(highPriorityTask, maxLength: maxLength)
             if !taskName.isEmpty {
@@ -44,7 +52,7 @@ class RecordingNameGenerator {
             }
         }
         
-        // Strategy 3: Use the first urgent reminder
+        // Strategy 4: Use the first urgent reminder
         if let urgentReminder = reminders.first(where: { $0.urgency == .immediate || $0.urgency == .today }) {
             let reminderName = generateNameFromReminder(urgentReminder, maxLength: maxLength)
             if !reminderName.isEmpty {
@@ -52,13 +60,13 @@ class RecordingNameGenerator {
             }
         }
         
-        // Strategy 4: Extract key phrases from the full transcript
+        // Strategy 5: Extract key phrases from the full transcript
         let transcriptName = generateNameFromTranscript(transcript, contentType: contentType, maxLength: maxLength)
         if !transcriptName.isEmpty {
             return transcriptName
         }
         
-        // Strategy 5: Use content type with date
+        // Strategy 6: Use content type with date
         return generateFallbackName(contentType: contentType, maxLength: maxLength)
     }
     

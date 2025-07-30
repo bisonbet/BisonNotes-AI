@@ -115,37 +115,23 @@ struct TranscriptsView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
+                        isCheckingForCompletions = true
                         Task {
-                            isCheckingForCompletions = true
                             await enhancedTranscriptionManager.checkForCompletedTranscriptions()
-                            isCheckingForCompletions = false
+                            await MainActor.run {
+                                isCheckingForCompletions = false
+                            }
                         }
                     }) {
                         HStack {
                             if isCheckingForCompletions {
                                 ProgressView()
                                     .scaleEffect(0.8)
-                            } else {
-                                Image(systemName: "arrow.clockwise")
                             }
                             Text("Check Status")
                         }
                     }
                     .disabled(isCheckingForCompletions)
-                }
-                
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Add Test Job") {
-                        // Add your specific job for testing
-                        if let recording = recordings.first {
-                            enhancedTranscriptionManager.addJobForTracking(
-                                jobName: "transcription-7AF86DD3-083E-404C-9C4C-532A5C5213DC",
-                                recordingURL: recording.url,
-                                recordingName: recording.name
-                            )
-                        }
-                    }
-                    .font(.caption)
                 }
             }
             .onAppear {
@@ -155,6 +141,11 @@ struct TranscriptsView: View {
                 DispatchQueue.main.async {
                     self.refreshTrigger.toggle()
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
+                // Refresh recordings list when a recording is renamed
+                print("🔄 TranscriptViews: Received recording renamed notification, refreshing list")
+                loadRecordings()
             }
         }
         .sheet(item: $selectedRecording) { recording in

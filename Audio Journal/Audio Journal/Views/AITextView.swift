@@ -4,6 +4,13 @@ struct AITextView: View {
     let text: String
     
     var body: some View {
+        // Use the enhanced Google AI content renderer for better header and bullet point styling
+        googleAIContentText(text)
+            .lineSpacing(4)
+    }
+    
+    // Fallback to original custom rendering if needed
+    private var fallbackView: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(processText(), id: \.self) { line in
                 if isBulletPoint(line) {
@@ -106,19 +113,38 @@ struct AITextView: View {
     
     private func formatBoldText(_ text: String) -> AttributedString {
         var attributedString = AttributedString()
+        var currentIndex = text.startIndex
         
-        // Simple bold text formatting
-        let components = text.components(separatedBy: "**")
-        
-        for (index, component) in components.enumerated() {
-            if index % 2 == 0 {
-                // Regular text
-                attributedString.append(AttributedString(component))
+        while currentIndex < text.endIndex {
+            // Look for asterisks for emphasis/italic
+            if let asteriskStart = text[currentIndex...].firstIndex(of: "*") {
+                // Add text before the asterisk
+                if asteriskStart > currentIndex {
+                    let beforeText = String(text[currentIndex..<asteriskStart])
+                    attributedString.append(AttributedString(beforeText))
+                }
+                
+                // Look for the closing asterisk
+                let afterAsterisk = text.index(after: asteriskStart)
+                if let asteriskEnd = text[afterAsterisk...].firstIndex(of: "*") {
+                    // Found matching asterisks - create italic text
+                    let italicText = String(text[afterAsterisk..<asteriskEnd])
+                    var italicString = AttributedString(italicText)
+                    italicString.font = .body.italic()
+                    attributedString.append(italicString)
+                    
+                    // Move past the closing asterisk
+                    currentIndex = text.index(after: asteriskEnd)
+                } else {
+                    // No closing asterisk found - treat as regular text
+                    attributedString.append(AttributedString("*"))
+                    currentIndex = text.index(after: asteriskStart)
+                }
             } else {
-                // Bold text
-                var boldString = AttributedString(component)
-                boldString.font = .body.weight(.bold)
-                attributedString.append(boldString)
+                // No more asterisks - add remaining text
+                let remainingText = String(text[currentIndex...])
+                attributedString.append(AttributedString(remainingText))
+                break
             }
         }
         

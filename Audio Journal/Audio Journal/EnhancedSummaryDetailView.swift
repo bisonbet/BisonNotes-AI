@@ -4,7 +4,7 @@ import CoreLocation
 
 struct EnhancedSummaryDetailView: View {
     let recording: RecordingFile
-    let summaryData: EnhancedSummaryData
+    @State private var summaryData: EnhancedSummaryData
     @Environment(\.dismiss) private var dismiss
     @State private var locationAddress: String?
     @State private var expandedSections: Set<String> = ["summary", "metadata"]
@@ -14,6 +14,11 @@ struct EnhancedSummaryDetailView: View {
     @State private var showingDeleteConfirmation = false
     @StateObject private var summaryManager = SummaryManager()
     @StateObject private var transcriptManager = TranscriptManager.shared
+    
+    init(recording: RecordingFile, summaryData: EnhancedSummaryData) {
+        self.recording = recording
+        self._summaryData = State(initialValue: summaryData)
+    }
     
     var body: some View {
         NavigationView {
@@ -81,16 +86,21 @@ struct EnhancedSummaryDetailView: View {
                 }
             }
                     .onAppear {
-            if let locationData = recording.locationData {
-                let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
-                let tempLocationManager = LocationManager()
-                tempLocationManager.reverseGeocodeLocation(location) { address in
-                    if let address = address {
-                        locationAddress = address
+                // Refresh summary data from SummaryManager to get the latest version
+                if let latestSummary = summaryManager.getEnhancedSummary(for: recording.url) {
+                    summaryData = latestSummary
+                }
+                
+                if let locationData = recording.locationData {
+                    let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
+                    let tempLocationManager = LocationManager()
+                    tempLocationManager.reverseGeocodeLocation(location) { address in
+                        if let address = address {
+                            locationAddress = address
+                        }
                     }
                 }
             }
-        }
         .alert("Regeneration Error", isPresented: $showingRegenerationAlert) {
             Button("OK") {
                 regenerationError = nil
@@ -281,13 +291,13 @@ struct EnhancedSummaryDetailView: View {
     private var titlesSection: some View {
         ExpandableSection(
             title: "Titles",
-            icon: "text.quote.open",
+            icon: "text.quote",
             iconColor: .purple,
             isExpanded: expandedSections.contains("titles"),
             count: summaryData.titles.count
         ) {
             if summaryData.titles.isEmpty {
-                emptyStateView(message: "No titles found", icon: "text.quote.open")
+                emptyStateView(message: "No titles found", icon: "text.quote")
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(summaryData.titles, id: \.id) { title in
@@ -417,11 +427,12 @@ struct EnhancedSummaryDetailView: View {
                 return
             }
             
-            // Set the current AI engine (temporarily disabled until engine system is fully implemented)
-            // summaryManager.setEngine(UserDefaults.standard.string(forKey: "selectedAIEngine") ?? "OpenAI")
+            // Set the current AI engine to use the currently selected engine from settings
+            let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+            summaryManager.setEngine(selectedEngine)
             
             // Generate new enhanced summary
-            _ = try await summaryManager.generateEnhancedSummary(
+            let newSummary = try await summaryManager.generateEnhancedSummary(
                 from: transcript.plainText,
                 for: recording.url,
                 recordingName: recording.name,
@@ -430,9 +441,8 @@ struct EnhancedSummaryDetailView: View {
             
             await MainActor.run {
                 isRegenerating = false
-                // Dismiss the current view and show the new summary
-                dismiss()
-                // The parent view will automatically show the updated summary
+                // Update the local state with the new summary data
+                summaryData = newSummary
             }
             
         } catch {

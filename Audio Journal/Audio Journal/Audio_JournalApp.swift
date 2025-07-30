@@ -10,6 +10,11 @@ import SwiftUI
 @main
 struct Audio_JournalApp: App {
     let persistenceController = PersistenceController.shared
+    
+    init() {
+        // Initialize performance optimization and logging
+        PerformanceOptimizer.shared.optimizeStartupLogging()
+    }
 
     var body: some Scene {
         WindowGroup {

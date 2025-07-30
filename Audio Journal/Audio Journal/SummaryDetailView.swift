@@ -403,7 +403,7 @@ struct SummaryDetailView: View {
             }
             
             // Set the current AI engine
-            summaryManager.setEngine(UserDefaults.standard.string(forKey: "selectedAIEngine") ?? "OpenAI")
+            summaryManager.setEngine(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence")
             
             // Generate new enhanced summary
             _ = try await summaryManager.generateEnhancedSummary(

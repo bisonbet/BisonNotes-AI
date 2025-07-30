@@ -750,6 +750,7 @@ class OpenAISummarizationService {
     
     private func parseTasksFromJSON(_ jsonString: String) throws -> [TaskItem] {
         let cleanedJSON = extractJSONFromResponse(jsonString)
+        print("🔍 parseTasksFromJSON - Cleaned JSON: \(cleanedJSON)")
         
         guard let data = cleanedJSON.data(using: .utf8) else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid JSON data")
@@ -768,7 +769,9 @@ class OpenAISummarizationService {
             let jsonString = extractJSONFromResponse(jsonString)
             let jsonData = jsonString.data(using: .utf8) ?? data
             
+            print("🔍 parseTasksFromJSON - Attempting to decode as [TaskResponse]")
             let taskResponses = try JSONDecoder().decode([TaskResponse].self, from: jsonData)
+            print("✅ parseTasksFromJSON - Successfully decoded \(taskResponses.count) tasks")
             
             return taskResponses.map { response in
                 TaskItem(
@@ -837,6 +840,7 @@ class OpenAISummarizationService {
     
     private func parseRemindersFromJSON(_ jsonString: String) throws -> [ReminderItem] {
         let cleanedJSON = extractJSONFromResponse(jsonString)
+        print("🔍 parseRemindersFromJSON - Cleaned JSON: \(cleanedJSON)")
         
         guard let data = cleanedJSON.data(using: .utf8) else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid JSON data")
@@ -854,7 +858,9 @@ class OpenAISummarizationService {
             let jsonString = extractJSONFromResponse(jsonString)
             let jsonData = jsonString.data(using: .utf8) ?? data
             
+            print("🔍 parseRemindersFromJSON - Attempting to decode as [ReminderResponse]")
             let reminderResponses = try JSONDecoder().decode([ReminderResponse].self, from: jsonData)
+            print("✅ parseRemindersFromJSON - Successfully decoded \(reminderResponses.count) reminders")
             
             return reminderResponses.map { response in
                 let urgency = ReminderItem.Urgency(rawValue: response.urgency?.lowercased() ?? "later") ?? .later
@@ -1194,11 +1200,21 @@ class OpenAISummarizationService {
     
     // Method 3: Extract from wrapped response (e.g., {"choices": [{"message": {"content": "..."}}]})
     private func extractJSONFromWrappedResponse(_ response: String) -> String? {
+        print("🔍 extractJSONFromWrappedResponse - Attempting to parse wrapped response")
+        
         // Try to parse as OpenAI-style response
-        if let data = response.data(using: .utf8),
-           let openAIResponse = try? JSONDecoder().decode(OpenAIChatCompletionResponse.self, from: data),
-           let content = openAIResponse.choices.first?.message.content {
-            return extractValidJSONFromString(content)
+        if let data = response.data(using: .utf8) {
+            do {
+                let openAIResponse = try JSONDecoder().decode(OpenAIChatCompletionResponse.self, from: data)
+                if let content = openAIResponse.choices.first?.message.content {
+                    print("✅ extractJSONFromWrappedResponse - Successfully extracted content from OpenAI response")
+                    return extractValidJSONFromString(content)
+                } else {
+                    print("❌ extractJSONFromWrappedResponse - No content found in OpenAI response")
+                }
+            } catch {
+                print("❌ extractJSONFromWrappedResponse - Failed to decode OpenAI response: \(error)")
+            }
         }
         
         return nil
@@ -1232,9 +1248,12 @@ class OpenAISummarizationService {
     
     // Helper method to extract and validate JSON
     private func extractValidJSONFromString(_ input: String) -> String? {
+        print("🔍 extractValidJSONFromString - Input: \(input.prefix(100))...")
+        
         // Find JSON array or object
         if let startIndex = input.firstIndex(of: "[") ?? input.firstIndex(of: "{") {
             let substring = String(input[startIndex...])
+            print("🔍 extractValidJSONFromString - Found start at index \(startIndex)")
             
             // Try to find the end of the JSON object/array
             var braceCount = 0
@@ -1284,19 +1303,20 @@ class OpenAISummarizationService {
             }
             
             let extractedJSON = String(substring[..<endIndex])
+            print("🔍 extractValidJSONFromString - Extracted JSON: \(extractedJSON.prefix(100))...")
             
-            // Validate that it looks like our expected JSON structure
-            if extractedJSON.contains("\"summary\"") || 
-               extractedJSON.contains("\"tasks\"") || 
-               extractedJSON.contains("\"reminders\"") ||
-               extractedJSON.contains("\"titles\"") {
-                
-                // Try to parse it to ensure it's valid JSON
-                if let data = extractedJSON.data(using: .utf8),
-                   let _ = try? JSONSerialization.jsonObject(with: data) {
+            // Try to parse it to ensure it's valid JSON
+            if let data = extractedJSON.data(using: .utf8) {
+                do {
+                    let _ = try JSONSerialization.jsonObject(with: data)
+                    print("✅ extractValidJSONFromString - JSON validation successful")
                     return extractedJSON
+                } catch {
+                    print("❌ extractValidJSONFromString - JSON validation failed: \(error)")
                 }
             }
+        } else {
+            print("❌ extractValidJSONFromString - No JSON start found")
         }
         
         return nil
@@ -1340,6 +1360,7 @@ class OpenAISummarizationService {
         }
         
         print("❌ extractJSONFromResponse - All extraction methods failed")
+        print("🔍 extractJSONFromResponse - Full response for debugging: \(response)")
         return "{}"
     }
     

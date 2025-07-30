@@ -230,7 +230,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     }
     
     private func setupSpeechRecognizer() {
-        print("🔧 Setting up speech recognizer...")
         speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         speechRecognizer?.delegate = self
         
@@ -238,7 +237,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             print("❌ Failed to create speech recognizer")
         } else {
             print("✅ Speech recognizer created successfully")
-            print("🔍 Speech recognizer available: \(speechRecognizer?.isAvailable ?? false)")
         }
     }
     
@@ -255,7 +253,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         // Validate audio file before transcription
         do {
             let testPlayer = try AVAudioPlayer(contentsOf: url)
-            print("📊 Audio file validation - Duration: \(testPlayer.duration)s, Channels: \(testPlayer.numberOfChannels)")
             guard testPlayer.duration > 0 else {
                 print("❌ Audio file has no content")
                 throw TranscriptionError.noSpeechDetected
@@ -267,7 +264,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         
         // Check file duration
         let duration = try await getAudioDuration(url: url)
-        print("📏 File duration: \(duration) seconds (\(duration/60) minutes)")
         
         // Determine transcription engine to use
         let selectedEngine = engine ?? .appleIntelligence // Default fallback
@@ -358,23 +354,19 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     func checkForCompletedTranscriptions() async {
         // Only check if AWS is enabled and configured
         guard enableAWSTranscribe else {
-            print("ℹ️ Manual check: AWS transcription not enabled, skipping check")
             return
         }
         
         guard let config = awsConfig else { 
-            print("❌ Manual check: No AWS config available")
             return 
         }
         
         let jobNames = getPendingJobNames()
         guard !jobNames.isEmpty else { 
-            print("❌ Manual check: No pending jobs found")
             return 
         }
         
-        print("🔍 Manual check: Checking \(jobNames.count) pending transcription jobs...")
-        print("📋 Pending jobs: \(jobNames)")
+        print("🔍 Checking \(jobNames.count) pending AWS transcription jobs...")
         
         var stillPendingJobs: [String] = []
         
@@ -383,7 +375,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                 let status = try await checkTranscriptionStatus(jobName: jobName, config: config)
                 
                 if status.isCompleted {
-                    print("✅ Manual check: Found completed job: \(jobName)")
+                    print("✅ AWS job completed: \(jobName)")
                     let result = try await retrieveTranscription(jobName: jobName, config: config)
                     
                     // Get job info before removing it
@@ -394,25 +386,18 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                     
                     // Notify completion
                     if let jobInfo = jobInfo {
-                        print("🔔 Manual check: Calling onTranscriptionCompleted callback for job: \(jobName)")
-                        print("🔔 Manual check: Job info: \(jobInfo.recordingName) - \(jobInfo.recordingURL)")
-                        print("🔔 Manual check: Result text length: \(result.fullText.count)")
                         onTranscriptionCompleted?(result, jobInfo)
-                        print("🔔 Manual check: Callback completed")
-                    } else {
-                        print("❌ Manual check: No job info found for completed job: \(jobName)")
                     }
                     
                 } else if status.isFailed {
-                    print("❌ Manual check: Job failed: \(jobName) - \(status.failureReason ?? "Unknown error")")
+                    print("❌ AWS job failed: \(jobName) - \(status.failureReason ?? "Unknown error")")
                     // Remove failed jobs from pending list
                     removePendingJob(jobName)
                 } else {
-                    print("⏳ Manual check: Job still pending: \(jobName)")
                     stillPendingJobs.append(jobName)
                 }
             } catch {
-                print("❌ Manual check: Error checking job \(jobName): \(error)")
+                print("❌ Error checking AWS job \(jobName): \(error)")
                 // Keep job in pending list if we can't check it
                 stillPendingJobs.append(jobName)
             }
@@ -422,12 +407,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         if stillPendingJobs != jobNames {
             updatePendingJobNames(stillPendingJobs)
         }
-    }
-    
-    /// Manually add a job for tracking (useful for testing)
-    func addJobForTracking(jobName: String, recordingURL: URL, recordingName: String) {
-        addPendingJob(jobName, recordingURL: recordingURL, recordingName: recordingName)
-        print("📝 Manually added job for tracking: \(jobName)")
     }
     
     // MARK: - Private Methods
@@ -465,7 +444,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                         request.addsPunctuation = true
                     }
                     
-                    print("📝 Creating recognition task with request for: \(url.lastPathComponent)")
+
                     
                     self.currentTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
                         guard let self = self else { return }
@@ -483,7 +462,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                                 self.currentStatus = "Transcription failed"
                                 continuation.resume(throwing: TranscriptionError.recognitionFailed(error))
                             } else if let result = result {
-                                print("📝 Recognition result received, isFinal: \(result.isFinal)")
+        
                                 if result.isFinal {
                                     let processingTime = Date().timeIntervalSince(startTime)
                                     let transcriptText = result.bestTranscription.formattedString
@@ -1031,8 +1010,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         if !pendingJobs.contains(where: { $0.jobName == jobName }) {
             pendingJobs.append(jobInfo)
             savePendingJobs()
-            print("📝 Added pending job: \(jobName) for recording: \(recordingName)")
-            print("📝 Job URL: \(recordingURL)")
+            
         }
     }
     
@@ -1142,15 +1120,21 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         }
         
         if whisperConfig != nil {
-            print("✅ Whisper transcription configured and ready")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Whisper transcription configured and ready", category: "EnhancedTranscriptionManager")
+            }
         } else {
-            print("⚠️ Whisper transcription selected but not configured")
+            AppLogger.shared.warning("Whisper transcription selected but not configured", category: "EnhancedTranscriptionManager")
         }
     }
     
     /// Public method to update transcription engine and manage background processes
     func updateTranscriptionEngine(_ engine: TranscriptionEngine) {
-        print("🔧 Updating transcription engine to: \(engine.rawValue)")
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Updating transcription engine to: \(engine.rawValue)", category: "EnhancedTranscriptionManager")
+        }
         
         switch engine {
         case .awsTranscribe:

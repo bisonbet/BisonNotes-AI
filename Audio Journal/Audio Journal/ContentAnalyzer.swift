@@ -23,8 +23,10 @@ class ContentAnalyzer {
         let journalScore = calculateEnhancedJournalScore(lowercased, originalText: text)
         let technicalScore = calculateEnhancedTechnicalScore(lowercased, originalText: text)
         
-        // Log classification scores for debugging
-        print("🔍 ContentAnalyzer: Classification scores - Meeting: \(String(format: "%.3f", meetingScore)), Journal: \(String(format: "%.3f", journalScore)), Technical: \(String(format: "%.3f", technicalScore))")
+        // Log classification scores for debugging (only if verbose logging is enabled)
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Classification scores - Meeting: \(String(format: "%.3f", meetingScore)), Journal: \(String(format: "%.3f", journalScore)), Technical: \(String(format: "%.3f", technicalScore))", category: "ContentAnalyzer")
+        }
         
         // Determine the highest scoring type with improved confidence thresholds
         let scores = [
@@ -39,11 +41,17 @@ class ContentAnalyzer {
         let confidenceThreshold = calculateConfidenceThreshold(for: text)
         
         if let match = bestMatch, match.1 > confidenceThreshold {
-            print("✅ ContentAnalyzer: Classified as \(match.0.rawValue) with confidence \(String(format: "%.3f", match.1))")
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Classified as \(match.0.rawValue) with confidence \(String(format: "%.3f", match.1))", category: "ContentAnalyzer")
+            }
             return match.0
         }
         
-        print("🏷️ ContentAnalyzer: Classified as General (best score: \(String(format: "%.3f", bestMatch?.1 ?? 0.0)) < threshold: \(String(format: "%.3f", confidenceThreshold)))")
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("Classified as General (best score: \(String(format: "%.3f", bestMatch?.1 ?? 0.0)) < threshold: \(String(format: "%.3f", confidenceThreshold)))", category: "ContentAnalyzer")
+        }
         return .general
     }
     

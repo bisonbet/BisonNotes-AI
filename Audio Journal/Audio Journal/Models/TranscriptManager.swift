@@ -9,23 +9,19 @@ class TranscriptManager: ObservableObject {
     
     init() {
         loadTranscripts()
+        fixMismatchedRecordingNames()
     }
     
     func saveTranscript(_ transcript: TranscriptData) {
         print("💾 Saving transcript for: \(transcript.recordingName)")
-        print("💾 Recording URL: \(transcript.recordingURL)")
-        print("💾 Transcript text length: \(transcript.segments.map { $0.text }.joined().count)")
         
         DispatchQueue.main.async {
             if let index = self.transcripts.firstIndex(where: { $0.recordingURL == transcript.recordingURL }) {
-                print("💾 Updating existing transcript at index \(index)")
                 self.transcripts[index] = transcript
             } else {
-                print("💾 Adding new transcript (total: \(self.transcripts.count + 1))")
                 self.transcripts.append(transcript)
             }
             self.saveTranscriptsToDisk()
-            print("💾 Transcript saved to disk")
         }
     }
     
@@ -54,44 +50,47 @@ class TranscriptManager: ObservableObject {
     }
     
     func getTranscript(for recordingURL: URL) -> TranscriptData? {
-        print("🔍 TranscriptManager: Looking for transcript with URL: \(recordingURL)")
-        print("🔍 TranscriptManager: Total transcripts: \(transcripts.count)")
-        
         let targetFilename = recordingURL.lastPathComponent
         let targetName = recordingURL.deletingPathExtension().lastPathComponent
         
-        print("🔍 TranscriptManager: Looking for filename: \(targetFilename)")
-        print("🔍 TranscriptManager: Looking for name: \(targetName)")
+        print("🔍 TranscriptManager: Looking for transcript for '\(targetName)'")
+        print("🔍 Target filename: \(targetFilename)")
+        print("🔍 Available transcripts: \(transcripts.count)")
         
-        for (index, transcript) in transcripts.enumerated() {
-            let transcriptFilename = transcript.recordingURL.lastPathComponent
-            let transcriptName = transcript.recordingURL.deletingPathExtension().lastPathComponent
-            
-            print("🔍 TranscriptManager: Checking transcript \(index): \(transcript.recordingName)")
-            print("🔍 TranscriptManager: Stored filename: \(transcriptFilename)")
-            print("🔍 TranscriptManager: Stored name: \(transcriptName)")
-            
-            // Try multiple comparison methods
-            let exactMatch = transcript.recordingURL == recordingURL
-            let pathMatch = transcript.recordingURL.path == recordingURL.path
-            let filenameMatch = transcriptFilename == targetFilename
-            let nameMatch = transcriptName == targetName
-            let recordingNameMatch = transcript.recordingName == targetName
-            
-            print("🔍 TranscriptManager: Exact match: \(exactMatch)")
-            print("🔍 TranscriptManager: Path match: \(pathMatch)")
-            print("🔍 TranscriptManager: Filename match: \(filenameMatch)")
-            print("🔍 TranscriptManager: Name match: \(nameMatch)")
-            print("🔍 TranscriptManager: Recording name match: \(recordingNameMatch)")
-            
-            // Match if any of these conditions are true
-            if exactMatch || pathMatch || filenameMatch || nameMatch || recordingNameMatch {
-                print("✅ TranscriptManager: Found matching transcript!")
-                return transcript
+        // Try exact URL match first (most reliable)
+        if let exactMatch = transcripts.first(where: { $0.recordingURL == recordingURL }) {
+            print("✅ Found exact URL match: \(exactMatch.recordingName)")
+            return exactMatch
+        }
+        
+        // Try filename match
+        if let filenameMatch = transcripts.first(where: { $0.recordingURL.lastPathComponent == targetFilename }) {
+            print("✅ Found filename match: \(filenameMatch.recordingName)")
+            return filenameMatch
+        }
+        
+        // Try name match (without extension)
+        if let nameMatch = transcripts.first(where: { 
+            $0.recordingURL.deletingPathExtension().lastPathComponent == targetName ||
+            $0.recordingName == targetName
+        }) {
+            print("✅ Found name match: \(nameMatch.recordingName)")
+            return nameMatch
+        }
+        
+        // Debug: Only log if no match found and we have transcripts
+        if !transcripts.isEmpty {
+            print("❌ TranscriptManager: No match found for '\(targetName)' (total transcripts: \(transcripts.count))")
+            print("❌ Available transcript names:")
+            for (index, transcript) in transcripts.enumerated() {
+                print("❌   \(index): '\(transcript.recordingName)' - \(transcript.recordingURL.lastPathComponent)")
+            }
+            // Add detailed debug info if needed
+            if UserDefaults.standard.bool(forKey: "debugTranscriptLookup") {
+                debugPrintTranscripts()
             }
         }
         
-        print("❌ TranscriptManager: No matching transcript found")
         return nil
     }
     
@@ -103,16 +102,69 @@ class TranscriptManager: ObservableObject {
         DispatchQueue.main.async {
             if let index = self.transcripts.firstIndex(where: { $0.recordingURL == oldURL }) {
                 var updatedTranscript = self.transcripts[index]
+                // Update both URL and recording name to match the new filename
+                let newRecordingName = newURL.deletingPathExtension().lastPathComponent
                 updatedTranscript = TranscriptData(
                     recordingURL: newURL,
-                    recordingName: updatedTranscript.recordingName,
+                    recordingName: newRecordingName,
                     recordingDate: updatedTranscript.recordingDate,
                     segments: updatedTranscript.segments,
                     speakerMappings: updatedTranscript.speakerMappings
                 )
                 self.transcripts[index] = updatedTranscript
                 self.saveTranscriptsToDisk()
+                print("✅ TranscriptManager: Updated transcript for renamed recording")
+                print("✅ Old URL: \(oldURL.lastPathComponent)")
+                print("✅ New URL: \(newURL.lastPathComponent)")
+                print("✅ New name: \(newRecordingName)")
             }
+        }
+    }
+    
+    func updateRecordingName(from oldName: String, to newName: String, recordingURL: URL) {
+        DispatchQueue.main.async {
+            if let index = self.transcripts.firstIndex(where: { $0.recordingURL == recordingURL }) {
+                var updatedTranscript = self.transcripts[index]
+                updatedTranscript = TranscriptData(
+                    recordingURL: updatedTranscript.recordingURL,
+                    recordingName: newName,
+                    recordingDate: updatedTranscript.recordingDate,
+                    segments: updatedTranscript.segments,
+                    speakerMappings: updatedTranscript.speakerMappings
+                )
+                self.transcripts[index] = updatedTranscript
+                self.saveTranscriptsToDisk()
+                print("✅ TranscriptManager: Updated recording name from '\(oldName)' to '\(newName)'")
+            }
+        }
+    }
+    
+    func fixMismatchedRecordingNames() {
+        print("🔧 TranscriptManager: Checking for mismatched recording names...")
+        var fixedCount = 0
+        
+        for (index, transcript) in transcripts.enumerated() {
+            let expectedName = transcript.recordingURL.deletingPathExtension().lastPathComponent
+            if transcript.recordingName != expectedName {
+                print("🔧 Fixing mismatched name: '\(transcript.recordingName)' → '\(expectedName)'")
+                var updatedTranscript = transcript
+                updatedTranscript = TranscriptData(
+                    recordingURL: transcript.recordingURL,
+                    recordingName: expectedName,
+                    recordingDate: transcript.recordingDate,
+                    segments: transcript.segments,
+                    speakerMappings: transcript.speakerMappings
+                )
+                transcripts[index] = updatedTranscript
+                fixedCount += 1
+            }
+        }
+        
+        if fixedCount > 0 {
+            saveTranscriptsToDisk()
+            print("✅ TranscriptManager: Fixed \(fixedCount) mismatched recording names")
+        } else {
+            print("ℹ️ TranscriptManager: No mismatched recording names found")
         }
     }
     
@@ -123,6 +175,15 @@ class TranscriptManager: ObservableObject {
             self.transcripts.removeAll()
             self.saveTranscriptsToDisk()
             print("✅ TranscriptManager: Cleared \(count) transcripts")
+        }
+    }
+    
+    // MARK: - Debug Methods
+    
+    func debugPrintTranscripts() {
+        print("📋 TranscriptManager: Current transcripts (\(transcripts.count) total):")
+        for (index, transcript) in transcripts.enumerated() {
+            print("  \(index): \(transcript.recordingName) - \(transcript.recordingURL.lastPathComponent)")
         }
     }
     

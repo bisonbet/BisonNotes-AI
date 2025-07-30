@@ -9,10 +9,89 @@ import Foundation
 import SwiftUI
 import os.log
 
+// MARK: - Logging Level Management
+
+enum LogLevel: Int, CaseIterable {
+    case error = 0
+    case warning = 1
+    case info = 2
+    case debug = 3
+    case verbose = 4
+    
+    var emoji: String {
+        switch self {
+        case .error: return "❌"
+        case .warning: return "⚠️"
+        case .info: return "ℹ️"
+        case .debug: return "🔍"
+        case .verbose: return "🔧"
+        }
+    }
+}
+
+class AppLogger {
+    static let shared = AppLogger()
+    
+    private let logger = Logger(subsystem: "com.audiojournal.app", category: "AppLogger")
+    private var currentLevel: LogLevel = .info
+    
+    private init() {
+        // Set default level based on build configuration
+        #if DEBUG
+        currentLevel = .debug
+        #else
+        currentLevel = .info
+        #endif
+    }
+    
+    func setLogLevel(_ level: LogLevel) {
+        currentLevel = level
+    }
+    
+    func log(_ message: String, level: LogLevel = .info, category: String = "General") {
+        guard level.rawValue <= currentLevel.rawValue else { return }
+        
+        let formattedMessage = "\(level.emoji) [\(category)]: \(message)"
+        
+        switch level {
+        case .error:
+            logger.error("\(formattedMessage)")
+        case .warning:
+            logger.warning("\(formattedMessage)")
+        case .info:
+            logger.info("\(formattedMessage)")
+        case .debug, .verbose:
+            logger.debug("\(formattedMessage)")
+        }
+    }
+    
+    // Convenience methods for different log levels
+    func error(_ message: String, category: String = "General") {
+        log(message, level: .error, category: category)
+    }
+    
+    func warning(_ message: String, category: String = "General") {
+        log(message, level: .warning, category: category)
+    }
+    
+    func info(_ message: String, category: String = "General") {
+        log(message, level: .info, category: category)
+    }
+    
+    func debug(_ message: String, category: String = "General") {
+        log(message, level: .debug, category: category)
+    }
+    
+    func verbose(_ message: String, category: String = "General") {
+        log(message, level: .verbose, category: category)
+    }
+}
+
 // MARK: - Performance Optimizer
 
 @MainActor
-class PerformanceOptimizer: ObservableObject {
+class PerformanceOptimizer: ObservableObject, Sendable {
+    @MainActor static let shared = PerformanceOptimizer()
     
     @Published var isProcessing = false
     @Published var processingProgress: Double = 0.0
@@ -49,7 +128,7 @@ class PerformanceOptimizer: ObservableObject {
     }
     
     deinit {
-        stopMemoryMonitoring()
+        // Timer will be automatically cleaned up when the object is deallocated
     }
     
     // MARK: - Chunked Processing
@@ -58,6 +137,7 @@ class PerformanceOptimizer: ObservableObject {
         
         let startTime = Date()
         processingStartTime = startTime
+        
         isProcessing = true
         processingProgress = 0.0
         
@@ -188,9 +268,7 @@ class PerformanceOptimizer: ObservableObject {
     // MARK: - Progress Tracking
     
     func trackProgress(for operation: String, progress: Double) {
-        DispatchQueue.main.async {
-            self.processingProgress = progress
-        }
+        processingProgress = progress
     }
     
     // MARK: - Private Helper Methods
@@ -336,17 +414,15 @@ class PerformanceOptimizer: ObservableObject {
     
     private func startMemoryMonitoring() {
         memoryMonitorTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
-            Task {
+            Task { @MainActor in
                 await self.updateMemoryUsage()
             }
         }
     }
     
-    nonisolated private func stopMemoryMonitoring() {
-        Task { @MainActor in
-            memoryMonitorTimer?.invalidate()
-            memoryMonitorTimer = nil
-        }
+    private func stopMemoryMonitoring() {
+        memoryMonitorTimer?.invalidate()
+        memoryMonitorTimer = nil
     }
     
     private func updateMemoryUsage() async {
@@ -381,16 +457,12 @@ class PerformanceOptimizer: ObservableObject {
         let processingTime = Date().timeIntervalSince(startTime)
         let wordsPerSecond = Double(textLength) / max(processingTime, 0.1)
         
-        Task {
-            await MainActor.run {
-                self.performanceMetrics = PerformanceMetrics(
-                    averageProcessingTime: processingTime,
-                    wordsPerSecond: wordsPerSecond,
-                    cacheHitRate: calculateCacheHitRate(),
-                    memoryEfficiency: calculateMemoryEfficiency()
-                )
-            }
-        }
+        performanceMetrics = PerformanceMetrics(
+            averageProcessingTime: processingTime,
+            wordsPerSecond: wordsPerSecond,
+            cacheHitRate: calculateCacheHitRate(),
+            memoryEfficiency: calculateMemoryEfficiency()
+        )
     }
     
     private func calculateCacheHitRate() -> Double {
@@ -401,6 +473,37 @@ class PerformanceOptimizer: ObservableObject {
     private func calculateMemoryEfficiency() -> Double {
         let currentUsage = memoryUsage.usedMemoryMB
         return max(0.0, 1.0 - (currentUsage / 200.0)) // Efficiency decreases as memory usage increases
+    }
+    
+    // MARK: - Logging Control Methods
+    
+    func optimizeStartupLogging() {
+        logger.info("Optimizing startup logging levels")
+        
+        // Reduce verbose logging during startup
+        #if DEBUG
+        // In debug builds, keep some debug info but reduce verbose messages
+        AppLogger.shared.setLogLevel(.debug)
+        #else
+        // In release builds, only show important messages
+        AppLogger.shared.setLogLevel(.info)
+        #endif
+    }
+    
+    nonisolated static func shouldLogEngineInitialization() -> Bool {
+        #if DEBUG
+        return false // Disable verbose engine initialization logs even in debug
+        #else
+        return false
+        #endif
+    }
+    
+    nonisolated static func shouldLogEngineAvailabilityChecks() -> Bool {
+        #if DEBUG
+        return false // Disable verbose availability check logs
+        #else
+        return false
+        #endif
     }
 }
 

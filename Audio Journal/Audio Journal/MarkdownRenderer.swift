@@ -83,44 +83,78 @@ struct MarkdownRenderer {
                 continue
             }
             
-            // Handle headers
+            // Handle headers with enhanced styling
             if trimmedLine.hasPrefix("### ") {
                 let text = String(trimmedLine.dropFirst(4))
                 var headerString = AttributedString(text)
-                headerString.font = .headline
+                headerString.font = .title3.weight(.semibold)
                 headerString.foregroundColor = .primary
+                
+                // Add a subtle background or border effect
+                attributedString.append(AttributedString("\n"))
                 attributedString.append(headerString)
+                attributedString.append(AttributedString("\n"))
+                
+                // Add a subtle separator line
+                var separatorString = AttributedString("─")
+                separatorString.font = .caption
+                separatorString.foregroundColor = .secondary
+                attributedString.append(separatorString)
                 attributedString.append(AttributedString("\n\n"))
+                
             } else if trimmedLine.hasPrefix("## ") {
                 let text = String(trimmedLine.dropFirst(3))
                 var headerString = AttributedString(text)
-                headerString.font = .title3
+                headerString.font = .title2.weight(.bold)
                 headerString.foregroundColor = .primary
                 attributedString.append(headerString)
                 attributedString.append(AttributedString("\n\n"))
+                
             } else if trimmedLine.hasPrefix("# ") {
                 let text = String(trimmedLine.dropFirst(2))
                 var headerString = AttributedString(text)
-                headerString.font = .title2
+                headerString.font = .title.weight(.bold)
                 headerString.foregroundColor = .primary
                 attributedString.append(headerString)
                 attributedString.append(AttributedString("\n\n"))
+                
             } else if trimmedLine.hasPrefix("**") && trimmedLine.hasSuffix("**") && trimmedLine.count > 4 {
                 // Bold text
                 let text = String(trimmedLine.dropFirst(2).dropLast(2))
                 var boldString = AttributedString(text)
-                boldString.font = .body.bold()
+                boldString.font = .body.weight(.semibold)
                 attributedString.append(boldString)
                 attributedString.append(AttributedString("\n\n"))
+                
             } else if trimmedLine.hasPrefix("- ") || trimmedLine.hasPrefix("* ") {
-                // Bullet point
+                // Bullet point with enhanced styling
                 let text = String(trimmedLine.dropFirst(2))
-                attributedString.append(AttributedString("• \(text)"))
+                var bulletString = AttributedString("• ")
+                bulletString.font = .body
+                bulletString.foregroundColor = .accentColor
+                attributedString.append(bulletString)
+                
+                var contentString = AttributedString(text)
+                contentString.font = .body
+                attributedString.append(contentString)
                 attributedString.append(AttributedString("\n"))
+                
             } else if trimmedLine.matches("^\\d+\\. ") {
-                // Numbered list
-                attributedString.append(AttributedString(trimmedLine))
+                // Numbered list with enhanced styling
+                let numberEndIndex = trimmedLine.firstIndex(of: " ") ?? trimmedLine.startIndex
+                let number = String(trimmedLine[..<numberEndIndex])
+                let text = String(trimmedLine[numberEndIndex...]).trimmingCharacters(in: .whitespaces)
+                
+                var numberString = AttributedString("\(number). ")
+                numberString.font = .body.weight(.medium)
+                numberString.foregroundColor = .accentColor
+                attributedString.append(numberString)
+                
+                var contentString = AttributedString(text)
+                contentString.font = .body
+                attributedString.append(contentString)
                 attributedString.append(AttributedString("\n"))
+                
             } else {
                 // Regular text - handle inline formatting
                 let formattedText = processInlineFormatting(trimmedLine)
@@ -148,9 +182,66 @@ struct MarkdownRenderer {
     
     /// Processes inline formatting like bold and italic text
     private static func processInlineFormatting(_ text: String) -> AttributedString {
-        // For now, just return the text as-is to avoid complex index manipulation
-        // The standard markdown parser should handle most inline formatting
-        return AttributedString(text)
+        var attributedString = AttributedString()
+        var currentIndex = text.startIndex
+        
+        while currentIndex < text.endIndex {
+            // Look for bold text first (double asterisks)
+            if let boldStart = text[currentIndex...].firstIndex(of: "*") {
+                let afterFirstAsterisk = text.index(after: boldStart)
+                if afterFirstAsterisk < text.endIndex && text[afterFirstAsterisk] == "*" {
+                    // Found double asterisk - look for closing double asterisk
+                    let afterSecondAsterisk = text.index(after: afterFirstAsterisk)
+                    if let boldEnd = text[afterSecondAsterisk...].firstIndex(of: "*") {
+                        let afterBoldEnd = text.index(after: boldEnd)
+                        if afterBoldEnd < text.endIndex && text[afterBoldEnd] == "*" {
+                            // Found closing double asterisk - create bold text
+                            let boldText = String(text[afterSecondAsterisk..<boldEnd])
+                            var boldString = AttributedString(boldText)
+                            boldString.font = .body.weight(.semibold)
+                            attributedString.append(boldString)
+                            
+                            // Move past the closing double asterisk
+                            currentIndex = text.index(after: afterBoldEnd)
+                            continue
+                        }
+                    }
+                }
+            }
+            
+            // Look for single asterisks for emphasis/italic
+            if let asteriskStart = text[currentIndex...].firstIndex(of: "*") {
+                // Add text before the asterisk
+                if asteriskStart > currentIndex {
+                    let beforeText = String(text[currentIndex..<asteriskStart])
+                    attributedString.append(AttributedString(beforeText))
+                }
+                
+                // Look for the closing asterisk
+                let afterAsterisk = text.index(after: asteriskStart)
+                if let asteriskEnd = text[afterAsterisk...].firstIndex(of: "*") {
+                    // Found matching asterisks - create italic text
+                    let italicText = String(text[afterAsterisk..<asteriskEnd])
+                    var italicString = AttributedString(italicText)
+                    italicString.font = .body.italic()
+                    attributedString.append(italicString)
+                    
+                    // Move past the closing asterisk
+                    currentIndex = text.index(after: asteriskEnd)
+                } else {
+                    // No closing asterisk found - treat as regular text
+                    attributedString.append(AttributedString("*"))
+                    currentIndex = text.index(after: asteriskStart)
+                }
+            } else {
+                // No more asterisks - add remaining text
+                let remainingText = String(text[currentIndex...])
+                attributedString.append(AttributedString(remainingText))
+                break
+            }
+        }
+        
+        return attributedString
     }
     
     /// Renders markdown text with minimal preprocessing for better compatibility
@@ -227,7 +318,7 @@ struct MarkdownRenderer {
         return markdown
     }
     
-    /// Converts AI-generated text to proper markdown format
+    /// Converts AI text to proper markdown format
     private static func convertAITextToMarkdown(_ text: String) -> String {
         var markdown = text
         
@@ -298,6 +389,15 @@ struct MarkdownRenderer {
         // Handle numbered lists
         cleaned = cleaned.replacingOccurrences(of: "([.!?])\\s*\\n\\s*\\d+\\. ", with: "$1\n\n$2", options: .regularExpression)
         
+        // Handle Google AI specific patterns
+        // Convert "• " to "- " for consistency
+        cleaned = cleaned.replacingOccurrences(of: "• ", with: "- ")
+        
+        // Ensure proper spacing after headers
+        cleaned = cleaned.replacingOccurrences(of: "(### .*?)\\n([^-\\*\\d])", with: "$1\n\n$2", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: "(## .*?)\\n([^-\\*\\d])", with: "$1\n\n$2", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: "(# .*?)\\n([^-\\*\\d])", with: "$1\n\n$2", options: .regularExpression)
+        
         // Remove excessive newlines (but preserve intentional paragraph breaks)
         cleaned = cleaned.replacingOccurrences(of: "\n{4,}", with: "\n\n", options: .regularExpression)
         
@@ -308,6 +408,202 @@ struct MarkdownRenderer {
         cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
         
         return cleaned
+    }
+    
+    /// Renders Google AI-generated content with enhanced styling
+    static func renderGoogleAIContent(_ content: String) -> AttributedString {
+        print("🔧 MarkdownRenderer: Starting to render Google AI content")
+        print("📝 Input content: \(content.prefix(200))...")
+        
+        // Clean and preprocess the content
+        let cleanedContent = cleanGoogleAIContent(content)
+        
+        // For Google AI content, prefer the custom formatter to ensure proper bold text handling
+        print("🔧 Using custom formatter for Google AI content")
+        return createGoogleAICustomFormattedString(from: cleanedContent)
+    }
+    
+    /// Cleans Google AI content for better rendering
+    private static func cleanGoogleAIContent(_ content: String) -> String {
+        var cleaned = content
+        
+        // Convert \n escape sequences to actual newlines first
+        cleaned = cleaned.replacingOccurrences(of: "\\n", with: "\n")
+        
+        // Handle unstructured content that comes as a single blob
+        cleaned = restructureUnstructuredContent(cleaned)
+        
+        // If content is still very unstructured (no line breaks), use aggressive restructuring
+        if !cleaned.contains("\n") {
+            cleaned = aggressivelyRestructureContent(cleaned)
+        }
+        
+        // Handle Google AI specific patterns
+        // Convert "• " to "- " for consistency
+        cleaned = cleaned.replacingOccurrences(of: "• ", with: "- ")
+        
+        // Ensure proper spacing around headers
+        cleaned = cleaned.replacingOccurrences(of: "\n###", with: "\n\n###")
+        cleaned = cleaned.replacingOccurrences(of: "\n##", with: "\n\n##")
+        cleaned = cleaned.replacingOccurrences(of: "\n#", with: "\n\n#")
+        
+        // Ensure proper spacing around bullet points
+        cleaned = cleaned.replacingOccurrences(of: "\n- ", with: "\n\n- ")
+        cleaned = cleaned.replacingOccurrences(of: "\n* ", with: "\n\n* ")
+        
+        // Handle patterns where bullet points follow text without proper spacing
+        cleaned = cleaned.replacingOccurrences(of: "([.!?])\\s*\\n\\s*- ", with: "$1\n\n- ", options: .regularExpression)
+        
+        // Remove excessive newlines
+        cleaned = cleaned.replacingOccurrences(of: "\n{4,}", with: "\n\n", options: .regularExpression)
+        
+        // Remove excessive spaces (but be careful not to break formatting)
+        cleaned = cleaned.replacingOccurrences(of: " {2,}", with: " ", options: .regularExpression)
+        
+        // Trim whitespace
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        return cleaned
+    }
+    
+    /// Restructures unstructured content that comes as a single blob
+    private static func restructureUnstructuredContent(_ content: String) -> String {
+        var restructured = content
+        
+        // First, try to identify and fix common patterns in unstructured content
+        
+        // Fix headers that are missing proper spacing
+        restructured = restructured.replacingOccurrences(of: "([^\\n])(## )", with: "$1\n\n$2", options: .regularExpression)
+        restructured = restructured.replacingOccurrences(of: "([^\\n])(### )", with: "$1\n\n$2", options: .regularExpression)
+        restructured = restructured.replacingOccurrences(of: "([^\\n])(# )", with: "$1\n\n$2", options: .regularExpression)
+        
+        // Fix bullet points that are missing proper spacing
+        restructured = restructured.replacingOccurrences(of: "([.!?])(\\s*)(• )", with: "$1\n\n$3", options: .regularExpression)
+        restructured = restructured.replacingOccurrences(of: "([.!?])(\\s*)(- )", with: "$1\n\n$3", options: .regularExpression)
+        restructured = restructured.replacingOccurrences(of: "([.!?])(\\s*)(\\* )", with: "$1\n\n$3", options: .regularExpression)
+        
+        // Add line breaks after sentences that are followed by headers or bullet points
+        restructured = restructured.replacingOccurrences(of: "([.!?])(\\s*)([A-Z][a-z]+)", with: "$1\n\n$3", options: .regularExpression)
+        
+        // Fix common patterns where text runs together (but be careful with bold text)
+        restructured = restructured.replacingOccurrences(of: "([a-z])([A-Z])(?![*])", with: "$1 $2", options: .regularExpression)
+        
+        // Clean up excessive spaces that might have been created
+        restructured = restructured.replacingOccurrences(of: " {2,}", with: " ", options: .regularExpression)
+        
+        return restructured
+    }
+    
+    /// Aggressively restructures very unstructured content that comes as a single blob
+    private static func aggressivelyRestructureContent(_ content: String) -> String {
+        var restructured = content
+        
+        // If the content has no line breaks at all, it's likely very unstructured
+        if !restructured.contains("\n") {
+            // Try to identify headers and add line breaks
+            restructured = restructured.replacingOccurrences(of: "(## [^\\s]+)", with: "\n\n$1", options: .regularExpression)
+            restructured = restructured.replacingOccurrences(of: "(### [^\\s]+)", with: "\n\n$1", options: .regularExpression)
+            restructured = restructured.replacingOccurrences(of: "(# [^\\s]+)", with: "\n\n$1", options: .regularExpression)
+            
+            // Try to identify bullet points and add line breaks
+            restructured = restructured.replacingOccurrences(of: "(• [^\\s]+)", with: "\n\n$1", options: .regularExpression)
+            restructured = restructured.replacingOccurrences(of: "(- [^\\s]+)", with: "\n\n$1", options: .regularExpression)
+            
+            // Add line breaks after sentences that end with periods
+            restructured = restructured.replacingOccurrences(of: "([.!?])(\\s+)([A-Z])", with: "$1\n\n$3", options: .regularExpression)
+            
+            // Fix common patterns where text runs together
+            restructured = restructured.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression)
+        }
+        
+        return restructured
+    }
+    
+    /// Creates custom formatted string specifically for Google AI content
+    private static func createGoogleAICustomFormattedString(from content: String) -> AttributedString {
+        var attributedString = AttributedString()
+        
+        let lines = content.components(separatedBy: .newlines)
+        
+        for (index, line) in lines.enumerated() {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            
+            if trimmedLine.isEmpty {
+                if index < lines.count - 1 {
+                    let nextLine = lines[index + 1].trimmingCharacters(in: .whitespaces)
+                    if !nextLine.isEmpty {
+                        attributedString.append(AttributedString("\n"))
+                    }
+                }
+                continue
+            }
+            
+            // Handle Google AI headers with enhanced styling
+            if trimmedLine.hasPrefix("### ") {
+                let text = String(trimmedLine.dropFirst(4))
+                var headerString = AttributedString(text)
+                headerString.font = .title3.weight(.semibold)
+                headerString.foregroundColor = .primary
+                
+                // Add spacing and visual separator
+                attributedString.append(AttributedString("\n"))
+                attributedString.append(headerString)
+                attributedString.append(AttributedString("\n"))
+                
+                // Add a subtle separator line
+                var separatorString = AttributedString("─")
+                separatorString.font = .caption
+                separatorString.foregroundColor = .secondary
+                attributedString.append(separatorString)
+                attributedString.append(AttributedString("\n\n"))
+                
+            } else if trimmedLine.hasPrefix("## ") {
+                let text = String(trimmedLine.dropFirst(3))
+                var headerString = AttributedString(text)
+                headerString.font = .title2.weight(.bold)
+                headerString.foregroundColor = .primary
+                attributedString.append(headerString)
+                attributedString.append(AttributedString("\n\n"))
+                
+            } else if trimmedLine.hasPrefix("# ") {
+                let text = String(trimmedLine.dropFirst(2))
+                var headerString = AttributedString(text)
+                headerString.font = .title.weight(.bold)
+                headerString.foregroundColor = .primary
+                attributedString.append(headerString)
+                attributedString.append(AttributedString("\n\n"))
+                
+            } else if trimmedLine.hasPrefix("- ") || trimmedLine.hasPrefix("* ") {
+                // Enhanced bullet points
+                let text = String(trimmedLine.dropFirst(2))
+                var bulletString = AttributedString("• ")
+                bulletString.font = .body
+                bulletString.foregroundColor = .accentColor
+                attributedString.append(bulletString)
+                
+                // Process inline formatting for bullet point content
+                let formattedContent = processInlineFormatting(text)
+                attributedString.append(formattedContent)
+                attributedString.append(AttributedString("\n"))
+                
+            } else {
+                // Regular text with enhanced inline formatting
+                let formattedText = processInlineFormatting(trimmedLine)
+                attributedString.append(formattedText)
+                
+                // Add appropriate spacing
+                if index < lines.count - 1 {
+                    let nextLine = lines[index + 1].trimmingCharacters(in: .whitespaces)
+                    if nextLine.isEmpty {
+                        attributedString.append(AttributedString("\n\n"))
+                    } else {
+                        attributedString.append(AttributedString("\n"))
+                    }
+                }
+            }
+        }
+        
+        return attributedString
     }
     
     // MARK: - Private Methods
@@ -392,6 +688,14 @@ extension View {
     func enhancedMarkdownText(_ markdown: String) -> some View {
         let cleanedMarkdown = MarkdownRenderer.cleanMarkdown(markdown)
         let attributedString = MarkdownRenderer.renderEnhancedMarkdown(cleanedMarkdown)
+        
+        return Text(attributedString)
+            .textSelection(.enabled)
+    }
+    
+    /// Displays Google AI content with enhanced styling for headers and bullet points
+    func googleAIContentText(_ content: String) -> some View {
+        let attributedString = MarkdownRenderer.renderGoogleAIContent(content)
         
         return Text(attributedString)
             .textSelection(.enabled)
