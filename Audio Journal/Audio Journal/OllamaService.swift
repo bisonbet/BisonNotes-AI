@@ -89,8 +89,8 @@ class OllamaService: ObservableObject {
         
         // Create a custom URLSession with longer timeout for Ollama requests
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 120.0  // 2 minutes
-        config.timeoutIntervalForResource = 300.0 // 5 minutes
+        config.timeoutIntervalForRequest = 1800.0  // 30 minutes
+        config.timeoutIntervalForResource = 1800.0 // 30 minutes
         self.session = URLSession(configuration: config)
     }
     
@@ -209,15 +209,15 @@ class OllamaService: ObservableObject {
         cleanedTitle = cleanedTitle.replacingOccurrences(of: "'", with: "")
         
         // Remove common prefixes/suffixes that might be added
-        let unwantedPrefixes = ["Title:", "Name:", "Generated Title:", "Conversation Title:", "The title is:", "Here's the title:", "Title is:"]
+        let unwantedPrefixes = ["Title:", "Name:", "Generated Title:", "Conversation Title:", "The title is:", "Here's the title:", "Title is:", "AI Title:", "Suggested Title:"]
         for prefix in unwantedPrefixes {
             if cleanedTitle.lowercased().hasPrefix(prefix.lowercased()) {
                 cleanedTitle = String(cleanedTitle.dropFirst(prefix.count))
             }
         }
         
-        // Remove word count patterns
-        let wordCountPattern = #"\s*\(\d+\s+words?\)\s*$"#
+        // Remove word count patterns (including character count patterns)
+        let wordCountPattern = #"\s*\(\d+[\s-]*(words?|characters?)\)\s*$"#
         cleanedTitle = cleanedTitle.replacingOccurrences(
             of: wordCountPattern,
             with: "",
@@ -228,30 +228,54 @@ class OllamaService: ObservableObject {
         cleanedTitle = cleanedTitle.replacingOccurrences(of: "**", with: "")
         cleanedTitle = cleanedTitle.replacingOccurrences(of: "*", with: "")
         cleanedTitle = cleanedTitle.replacingOccurrences(of: "#", with: "")
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "`", with: "")
         
-        // Remove extra punctuation at the end
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: #"\.+$"#, with: "", options: .regularExpression)
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: #"!+$"#, with: "", options: .regularExpression)
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: #"\?+$"#, with: "", options: .regularExpression)
+        // Remove ALL punctuation at the end (more comprehensive)
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: #"[.!?;:,]+$"#, with: "", options: .regularExpression)
         
         // Trim whitespace and newlines
         cleanedTitle = cleanedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Ensure title is not too long (max 50 characters)
-        if cleanedTitle.count > 50 {
-            cleanedTitle = String(cleanedTitle.prefix(50)).trimmingCharacters(in: .whitespacesAndNewlines)
+        // Ensure title is within proper length (20-50 characters)
+        if cleanedTitle.count < 20 {
+            // Too short, try to expand or use fallback
+            if cleanedTitle.count < 10 {
+                cleanedTitle = "Untitled Conversation"
+            }
+        } else if cleanedTitle.count > 50 {
+            // Too long, truncate at word boundaries
+            let words = cleanedTitle.components(separatedBy: .whitespaces)
+            var truncatedTitle = ""
+            
+            for word in words {
+                let testTitle = truncatedTitle.isEmpty ? word : "\(truncatedTitle) \(word)"
+                if testTitle.count <= 50 {
+                    truncatedTitle = testTitle
+                } else {
+                    break
+                }
+            }
+            
+            cleanedTitle = truncatedTitle.isEmpty ? String(cleanedTitle.prefix(50)) : truncatedTitle
         }
         
-        // Validate that the title makes sense (not just random characters or repeated words)
+        // Validate that the title makes sense
         let words = cleanedTitle.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-        if words.count < 2 || words.count > 6 {
+        if words.count < 2 || words.count > 8 {
             // If too few or too many words, it might be nonsensical
             cleanedTitle = "Untitled Conversation"
         }
         
         // Check for repeated words or nonsensical patterns
         let uniqueWords = Set(words.map { $0.lowercased() })
-        if uniqueWords.count < Int(Double(words.count) * 0.7) { // If more than 30% of words are repeated
+        if uniqueWords.count < Int(Double(words.count) * 0.6) { // If more than 40% of words are repeated
+            cleanedTitle = "Untitled Conversation"
+        }
+        
+        // Check for generic or meaningless titles
+        let genericTitles = ["title", "conversation", "meeting", "discussion", "talk", "chat", "recording", "audio", "transcript"]
+        let lowerTitle = cleanedTitle.lowercased()
+        if genericTitles.contains(lowerTitle) || genericTitles.contains(where: { lowerTitle.contains($0) && words.count <= 2 }) {
             cleanedTitle = "Untitled Conversation"
         }
         
@@ -285,30 +309,7 @@ class OllamaService: ObservableObject {
     }
     
     func generateTitle(from text: String) async throws -> String {
-        let prompt = """
-        Generate a concise, descriptive title for this conversation/transcript. The title should:
-        1. Be 2-5 words maximum
-        2. Capture the main topic or purpose
-        3. Be specific and meaningful
-        4. Work well as a file name or conversation title
-        5. Avoid generic terms like "Meeting" or "Conversation" unless truly appropriate
-        6. Focus on the most important subject or action mentioned
-
-        Examples of good titles:
-        - "Trump Scotland Visit"
-        - "Hong Kong Arrest Warrants" 
-        - "Texas Redistricting Debate"
-        - "Walmart Stabbing Investigation"
-        - "Harvard Funding Deal"
-        - "Project Budget Review"
-        - "Client Presentation Prep"
-        - "Team Strategy Meeting"
-
-        **IMPORTANT: Return ONLY the title, nothing else. No quotes, no explanation, no markdown formatting, no extra text.**
-
-        Transcript:
-        \(text)
-        """
+        let prompt = RecordingNameGenerator.generateStandardizedTitlePrompt(from: text)
         
         print("🔧 OllamaService: Sending title generation request")
         let response = try await generateResponse(prompt: prompt, model: config.modelName)
@@ -316,7 +317,7 @@ class OllamaService: ObservableObject {
         print("🔧 OllamaService: Generated title: \(response)")
         
         // Clean up the response and ensure it's a good title
-        let cleanedTitle = cleanTitleResponse(response)
+        let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(response)
         print("🔧 OllamaService: Cleaned title: \(cleanedTitle)")
         
         return cleanedTitle

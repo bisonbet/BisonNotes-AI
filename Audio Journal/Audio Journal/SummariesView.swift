@@ -6,7 +6,7 @@ import NaturalLanguage
 
 struct SummariesView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
-    @StateObject private var summaryManager = SummaryManager()
+    @StateObject private var summaryManager = SummaryManager.shared
     @StateObject private var transcriptManager = TranscriptManager.shared
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
@@ -41,10 +41,13 @@ struct SummariesView: View {
                 .onAppear {
                     loadRecordings()
                     // Configure the summary manager with the selected AI engine
-                    summaryManager.setEngine(recorderVM.selectedAIEngine)
+                    // Set the AI engine for summarization
+                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+                    summaryManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
                     
-                    // Ensure transcription manager is using the correct engine and stop unnecessary AWS checks
-                    enhancedTranscriptionManager.updateTranscriptionEngine(recorderVM.selectedTranscriptionEngine)
+                    // Configure the transcription manager with the selected engine
+                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+                    enhancedTranscriptionManager.updateTranscriptionEngine(selectedEngine)
                     
                     // Refresh file relationships
                     enhancedFileManager.refreshAllRelationships()
@@ -233,10 +236,18 @@ struct SummariesView: View {
 
     @ViewBuilder
     private func summaryButton(for recording: RecordingFile) -> some View {
-        let hasSummary = summaryManager.hasSummary(for: recording.url)
+        // Check both enhanced and legacy summaries for more reliable detection
+        let hasEnhancedSummary = summaryManager.hasEnhancedSummary(for: recording.url)
+        let hasLegacySummary = summaryManager.getSummary(for: recording.url) != nil
+        let hasSummary = hasEnhancedSummary || hasLegacySummary
         let isGenerating = isGeneratingSummary && selectedRecording?.url == recording.url
         
         Button(action: {
+            // Debug logging to help identify the issue
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Summary button state for \(recording.name): enhanced=\(hasEnhancedSummary), legacy=\(hasLegacySummary), total=\(hasSummary)", category: "SummariesView")
+            }
+            
             selectedRecording = recording
             
             if hasSummary {
@@ -277,8 +288,19 @@ struct SummariesView: View {
             AppLogger.shared.verbose("Forcing UI refresh", category: "SummariesView")
         }
         DispatchQueue.main.async {
+            // Trigger multiple refresh mechanisms
             self.refreshTrigger.toggle()
+            
+            // Reload recordings to ensure fresh data
             self.loadRecordings()
+            
+            // Force summary manager to refresh its state
+            self.summaryManager.objectWillChange.send()
+            
+            // Additional refresh after a short delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.refreshTrigger.toggle()
+            }
         }
     }
     
@@ -298,7 +320,7 @@ struct SummariesView: View {
             
             // Geocode locations for all recordings
             for recording in recordings {
-                geocodeLocationForRecording(recording)
+                loadLocationAddress(for: recording)
             }
         } catch {
             print("Error loading recordings: \(error)")
@@ -314,11 +336,13 @@ struct SummariesView: View {
         return locationData
     }
     
-    private func geocodeLocationForRecording(_ recording: RecordingFile) {
+    private func loadLocationAddress(for recording: RecordingFile) {
         guard let locationData = recording.locationData else { return }
         
         let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
-        recorderVM.locationManager.reverseGeocodeLocation(location) { address in
+        // Use a default location manager since AudioRecorderViewModel doesn't have one
+        let locationManager = LocationManager()
+        locationManager.reverseGeocodeLocation(location) { address in
             if let address = address {
                 locationAddresses[recording.url] = address
             }
@@ -490,13 +514,13 @@ struct SummariesView: View {
     
     private func performSpeechRecognition(for recording: RecordingFile) {
         print("🎙️ Starting speech recognition for: \(recording.name)")
-        print("🔧 Using transcription engine: \(recorderVM.selectedTranscriptionEngine.rawValue)")
+        print("🔧 Using transcription engine: Apple Intelligence")
         
         Task {
             do {
                 // Add timeout to prevent infinite CPU usage
-                let result = try await withTimeout(seconds: 300) { // 5 minute timeout
-                    try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url, using: recorderVM.selectedTranscriptionEngine)
+                let result = try await withTimeout(seconds: 1800) { // 30 minute timeout
+                    try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url, using: .appleIntelligence)
                 }
                 
                 print("📊 Transcription completed - Success: \(result.success), Text length: \(result.fullText.count)")
@@ -595,13 +619,19 @@ struct SummariesView: View {
     // MARK: - Summary Generation
     
     private func isValidTranscriptForSummarization(_ transcriptText: String) -> Bool {
-        // Check minimum length (at least 50 characters of meaningful content)
-        guard transcriptText.count >= 50 else {
-            print("📝 Transcript too short for summarization: \(transcriptText.count) characters")
-            return false
+        // Count words in the transcript
+        let words = transcriptText.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty && $0.count > 1 }
+        
+        print("📝 Transcript word count: \(words.count) words")
+        
+        // If transcript has 50 words or less, it's valid for summarization (will be shown as-is)
+        if words.count <= 50 {
+            print("📝 Transcript has 50 words or less (\(words.count) words) - will be shown as-is")
+            return true
         }
         
-        // Check for placeholder text patterns (including AWS transcription placeholders)
+        // For transcripts with more than 50 words, check for placeholder text patterns
         let lowercased = transcriptText.lowercased()
         let placeholderPatterns = [
             "transcription in progress",
@@ -609,7 +639,6 @@ struct SummariesView: View {
             "please wait",
             "transcribing",
             "loading",
-            "error",
             "failed to transcribe",
             "no audio detected",
             "silence detected",
@@ -622,17 +651,66 @@ struct SummariesView: View {
             "is running in background"
         ]
         
+        // Check for pure error messages (transcript consists mostly of error text)
+        let errorPatterns = [
+            "error",
+            "failed",
+            "exception",
+            "timeout"
+        ]
+        
+        // Count how many error words appear in the text
+        var errorWordCount = 0
+        
+        for word in words {
+            let lowercasedWord = word.lowercased()
+            for pattern in errorPatterns {
+                if lowercasedWord.contains(pattern) {
+                    errorWordCount += 1
+                    break
+                }
+            }
+        }
+        
+        // If more than 30% of words are error-related, it's likely an error message
+        let errorRatio = Double(errorWordCount) / Double(words.count)
+        if errorRatio > 0.3 {
+            print("📝 Transcript contains too many error words: \(errorWordCount)/\(words.count) (\(Int(errorRatio * 100))%)")
+            return false
+        }
+        
+        // Check for pure placeholder patterns - be more intelligent about it
         for pattern in placeholderPatterns {
             if lowercased.contains(pattern) {
+                // For single words like "loading", check if it's part of a larger placeholder phrase
+                if pattern == "loading" {
+                    // Check if "loading" appears in a context that suggests it's placeholder text
+                    let loadingContexts = [
+                        "loading transcription",
+                        "loading audio",
+                        "loading file",
+                        "loading please wait",
+                        "loading...",
+                        "loading -",
+                        "loading:"
+                    ]
+                    
+                    let isPlaceholderLoading = loadingContexts.contains { context in
+                        lowercased.contains(context)
+                    }
+                    
+                    if !isPlaceholderLoading {
+                        print("📝 Transcript contains 'loading' but appears to be legitimate content, allowing summarization")
+                        continue // Skip this pattern, it's likely legitimate content
+                    }
+                }
+                
                 print("📝 Transcript contains placeholder text: \(pattern)")
                 return false
             }
         }
         
-        // Check for meaningful word count (at least 10 actual words)
-        let words = transcriptText.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty && $0.count > 1 }
-        
+        // Check for meaningful word count (at least 10 actual words for longer transcripts)
         guard words.count >= 10 else {
             print("📝 Transcript has insufficient word count: \(words.count) words")
             return false
@@ -663,21 +741,22 @@ struct SummariesView: View {
             return false
         }
         
-        print("✅ Transcript validated for summarization: \(words.count) words, \(String(format: "%.1f", uniqueRatio * 100))% unique")
+        print("✅ Transcript validated for summarization: \(words.count) words, \(String(format: "%.1f", uniqueRatio * 100))% unique, error ratio: \(Int(errorRatio * 100))%")
         return true
     }
     
     private func generateSummaryFromTranscript(for recording: RecordingFile, transcriptText: String) {
         print("📋 Starting summary generation for: \(recording.name)")
         print("📝 Transcript length: \(transcriptText.count) characters")
-        print("🤖 Selected AI engine: \(recorderVM.selectedAIEngine)")
+        print("🤖 Selected AI engine: \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence")") // Use proper default instead of hardcoded "openai"
         
         Task {
             do {
                 // Ensure the correct AI engine is set before generating summary
                 await MainActor.run {
-                    summaryManager.setEngine(recorderVM.selectedAIEngine)
-                    print("🔧 AI engine set to: \(recorderVM.selectedAIEngine)")
+                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+                    summaryManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
+                    print("🔧 AI engine set to: \(defaultEngine)")
                 }
                 
                 print("🤖 Starting enhanced summarization...")
@@ -698,15 +777,27 @@ struct SummariesView: View {
                     
                     // Check if summary was saved properly
                     let hasSummary = summaryManager.hasSummary(for: recording.url)
-                    print("🔍 Summary saved check: \(hasSummary)")
+                    let hasEnhanced = summaryManager.hasEnhancedSummary(for: recording.url)
+                    print("🔍 Summary saved check: hasSummary=\(hasSummary), hasEnhanced=\(hasEnhanced)")
                     
                     // Force UI refresh by triggering state changes
                     self.isGeneratingSummary = false
+                    
+                    // Trigger multiple refresh mechanisms to ensure UI updates
+                    self.refreshTrigger.toggle()
+                    
+                    // Force a complete UI refresh
                     self.forceRefreshUI()
                     
                     // Small delay to ensure UI updates, then show summary
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        self.showSummary = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        // Double-check that summary is available before showing
+                        if self.summaryManager.hasSummary(for: recording.url) {
+                            self.showSummary = true
+                        } else {
+                            print("⚠️ Summary not found after generation, forcing another refresh")
+                            self.forceRefreshUI()
+                        }
                     }
                 }
             } catch {

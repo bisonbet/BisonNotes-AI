@@ -7,158 +7,24 @@
 
 import SwiftUI
 
-// Note: TranscriptionEngine enum is defined in ContentView.swift
-
-
 struct TranscriptionSettingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
-    @AppStorage("maxChunkDuration") private var maxChunkDuration: Double = 300 // 5 minutes
-    @AppStorage("maxTranscriptionTime") private var maxTranscriptionTime: Double = 600 // 10 minutes
-    @AppStorage("chunkOverlap") private var chunkOverlap: Double = 2.0 // 2 seconds
     @AppStorage("showTranscriptionProgress") private var showTranscriptionProgress: Bool = true
+    @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = TranscriptionEngine.appleIntelligence.rawValue
     
     @State private var showingAWSSettings = false
     @State private var showingWhisperSettings = false
     @State private var showingOpenAISettings = false
+    @State private var showingAppleIntelligenceSettings = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         NavigationView {
             Form {
-                Section {
-                    Picker("Engine", selection: $recorderVM.selectedTranscriptionEngine) {
-                        ForEach(TranscriptionEngine.allCases.filter { $0.isAvailable }, id: \.rawValue) { engine in
-                            VStack(alignment: .leading) {
-                                Text(engine.rawValue)
-                                Text(engine.description)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .tag(engine)
-                        }
-                    }
-                    .pickerStyle(.navigationLink)
-                    
-                    if recorderVM.selectedTranscriptionEngine == .awsTranscribe {
-                        Button("AWS Settings") {
-                            showingAWSSettings = true
-                        }
-                        .foregroundColor(.accentColor)
-                    }
-                    
-                    if recorderVM.selectedTranscriptionEngine == .whisper {
-                        Button("Whisper Settings") {
-                            showingWhisperSettings = true
-                        }
-                        .foregroundColor(.accentColor)
-                    }
-                    
-                    if recorderVM.selectedTranscriptionEngine == .openAI {
-                        Button("OpenAI Settings") {
-                            showingOpenAISettings = true
-                        }
-                        .foregroundColor(.accentColor)
-                    }
-                } header: {
-                    Text("Transcription Engine")
-                }
-                
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Max Chunk Duration")
-                            Spacer()
-                            Text(formatDuration(maxChunkDuration))
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Slider(value: $maxChunkDuration, in: 60...900, step: 30)
-                            .accentColor(.blue)
-                        
-                        Text("Larger chunks are more accurate but use more memory.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Chunk Overlap")
-                            Spacer()
-                            Text("\(chunkOverlap, specifier: "%.1f")s")
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Slider(value: $chunkOverlap, in: 0...5, step: 0.5)
-                            .accentColor(.blue)
-                        
-                        Text("Overlap helps maintain context between chunks.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                } header: {
-                    Text("Chunk Settings")
-                }
-                
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Max Transcription Time")
-                            Spacer()
-                            Text(formatDuration(maxTranscriptionTime))
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Slider(value: $maxTranscriptionTime, in: 300...3600, step: 60)
-                            .accentColor(.blue)
-                        
-                        Text("Maximum time to spend on transcription.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                } header: {
-                    Text("Transcription Limits")
-                }
-                
-
-                
-                Section {
-                    Toggle("Show Transcription Progress", isOn: $showTranscriptionProgress)
-                    
-                    Text("Display real-time transcription progress.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } header: {
-                    Text("Display Options")
-                }
-                
-                Section {
-                    TipRow(
-                        icon: "clock",
-                        title: "Chunk duration",
-                        description: "Use 3-5 minute chunks with 2-3 second overlap."
-                    )
-                    
-                    TipRow(
-                        icon: "wifi",
-                        title: "Network considerations",
-                        description: "Larger chunks require more network bandwidth."
-                    )
-                    
-                    TipRow(
-                        icon: "battery.100",
-                        title: "Battery optimization",
-                        description: "Smaller chunks use less battery but take longer."
-                    )
-                } header: {
-                    Text("Tips")
-                }
-                
-                Section {
-                    Button("Reset to Defaults") {
-                        resetToDefaults()
-                    }
-                    .foregroundColor(.red)
-                }
+                engineSection
+                displayOptionsSection
+                tipsSection
+                resetSection
             }
             .navigationTitle("Transcription Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -178,25 +44,155 @@ struct TranscriptionSettingsView: View {
             .sheet(isPresented: $showingOpenAISettings) {
                 OpenAISettingsView()
             }
+            .sheet(isPresented: $showingAppleIntelligenceSettings) {
+                AppleIntelligenceSettingsView()
+            }
         }
     }
     
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let formatter = DateComponentsFormatter()
-        formatter.unitsStyle = .abbreviated
-        formatter.allowedUnits = [.hour, .minute, .second]
-        formatter.zeroFormattingBehavior = .pad
-        
-        return formatter.string(from: duration) ?? "0s"
+    private var engineSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(TranscriptionEngine.allCases, id: \.self) { engine in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(engine.rawValue)
+                                    .font(.body)
+                                    .fontWeight(.medium)
+                                
+                                if !engine.isAvailable {
+                                    Text("(Coming Soon)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            
+                            Text(engine.description)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
+                        }
+                        
+                        Spacer()
+                        
+                        if engine.isAvailable {
+                            Button(action: {
+                                selectedTranscriptionEngine = engine.rawValue
+                            }) {
+                                Image(systemName: selectedTranscriptionEngine == engine.rawValue ? "checkmark.circle.fill" : "circle")
+                                    .foregroundColor(selectedTranscriptionEngine == engine.rawValue ? .accentColor : .secondary)
+                                    .font(.title2)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        } else {
+                            Image(systemName: "circle")
+                                .foregroundColor(.secondary)
+                                .font(.title2)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .padding(.vertical, 8)
+            
+            // Settings buttons for engines that require configuration
+            if let selectedEngine = TranscriptionEngine(rawValue: selectedTranscriptionEngine),
+               selectedEngine.requiresConfiguration {
+                Divider()
+                
+                VStack(spacing: 8) {
+                    Text("Engine Settings")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    if selectedEngine == .awsTranscribe {
+                        Button("AWS Settings") {
+                            showingAWSSettings = true
+                        }
+                        .foregroundColor(.accentColor)
+                    }
+                    
+                    if selectedEngine == .whisper {
+                        Button("Whisper Settings") {
+                            showingWhisperSettings = true
+                        }
+                        .foregroundColor(.accentColor)
+                    }
+                    
+                    if selectedEngine == .openAI {
+                        Button("OpenAI Settings") {
+                            showingOpenAISettings = true
+                        }
+                        .foregroundColor(.accentColor)
+                    }
+                    
+                    if selectedEngine == .appleIntelligence {
+                        Button("Apple Intelligence Settings") {
+                            showingAppleIntelligenceSettings = true
+                        }
+                        .foregroundColor(.accentColor)
+                    }
+                }
+            }
+        } header: {
+            Text("Transcription Engine")
+        }
     }
     
-    private func resetToDefaults() {
-        maxChunkDuration = 300
-        maxTranscriptionTime = 600
-        chunkOverlap = 2.0
-        showTranscriptionProgress = true
-        recorderVM.selectedTranscriptionEngine = .appleIntelligence
 
+    
+    private var displayOptionsSection: some View {
+        Section {
+            Toggle("Show Transcription Progress", isOn: $showTranscriptionProgress)
+            
+            Text("Display real-time transcription progress.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        } header: {
+            Text("Display Options")
+        }
+    }
+    
+    private var tipsSection: some View {
+        Section {
+            TipRow(
+                icon: "brain",
+                title: "Engine selection",
+                description: "Choose the engine that best fits your needs and available services."
+            )
+            
+            TipRow(
+                icon: "wifi",
+                title: "Network considerations",
+                description: "Cloud-based engines require internet connectivity."
+            )
+            
+            TipRow(
+                icon: "battery.100",
+                title: "Battery optimization",
+                description: "Local engines use more battery but work offline."
+            )
+        } header: {
+            Text("Tips")
+        }
+    }
+    
+    private var resetSection: some View {
+        Section {
+            Button("Reset to Defaults") {
+                resetToDefaults()
+            }
+            .foregroundColor(.red)
+        }
+    }
+    
+
+    
+    private func resetToDefaults() {
+        showTranscriptionProgress = true
+        selectedTranscriptionEngine = TranscriptionEngine.appleIntelligence.rawValue
     }
 }
 
@@ -234,3 +230,4 @@ struct TranscriptionSettingsView_Previews: PreviewProvider {
             .environmentObject(AudioRecorderViewModel())
     }
 }
+

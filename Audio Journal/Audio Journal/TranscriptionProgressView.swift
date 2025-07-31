@@ -11,6 +11,7 @@ struct TranscriptionProgressView: View {
     let progress: TranscriptionProgress
     let status: String
     let onCancel: () -> Void
+    let onDone: () -> Void
     
     var body: some View {
         VStack(spacing: 20) {
@@ -58,17 +59,33 @@ struct TranscriptionProgressView: View {
                 .padding(.horizontal, 20)
             }
             
-            // Cancel button
-            Button(action: onCancel) {
-                HStack {
-                    Image(systemName: "xmark.circle.fill")
-                    Text("Cancel Transcription")
+            // Action buttons
+            HStack(spacing: 12) {
+                // Cancel button
+                Button(action: onCancel) {
+                    HStack {
+                        Image(systemName: "xmark.circle.fill")
+                        Text("Cancel")
+                    }
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.red.opacity(0.1))
+                    .cornerRadius(8)
                 }
-                .foregroundColor(.red)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(Color.red.opacity(0.1))
-                .cornerRadius(8)
+                
+                // Done button (continue in background)
+                Button(action: onDone) {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                        Text("Done")
+                    }
+                    .foregroundColor(.green)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(8)
+                }
             }
         }
         .padding(24)
@@ -103,7 +120,8 @@ struct TranscriptionProgressView_Previews: PreviewProvider {
                 error: nil
             ),
             status: "Processing chunk 3 of 12...",
-            onCancel: {}
+            onCancel: {},
+            onDone: {}
         )
         .previewLayout(.sizeThatFits)
         .padding()

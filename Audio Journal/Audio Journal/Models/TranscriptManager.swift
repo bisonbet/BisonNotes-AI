@@ -14,6 +14,14 @@ class TranscriptManager: ObservableObject {
     
     func saveTranscript(_ transcript: TranscriptData) {
         print("💾 Saving transcript for: \(transcript.recordingName)")
+        print("📝 Transcript text preview: \(transcript.plainText.prefix(100))")
+        print("🔢 Number of segments: \(transcript.segments.count)")
+        
+        // Check for placeholder text in the transcript
+        if transcript.plainText.lowercased().contains("loading") {
+            print("⚠️ WARNING: Saving transcript with 'loading' text!")
+            print("📝 Full transcript text: \(transcript.plainText)")
+        }
         
         DispatchQueue.main.async {
             if let index = self.transcripts.firstIndex(where: { $0.recordingURL == transcript.recordingURL }) {
@@ -49,6 +57,47 @@ class TranscriptManager: ObservableObject {
         }
     }
     
+    func deleteTranscriptWithPlaceholderText(for recordingURL: URL) {
+        DispatchQueue.main.async {
+            // Find and remove transcripts that contain placeholder text
+            self.transcripts.removeAll { transcript in
+                transcript.recordingURL == recordingURL && 
+                (transcript.plainText.lowercased().contains("loading") ||
+                 transcript.plainText.lowercased().contains("error"))
+            }
+            self.saveTranscriptsToDisk()
+            print("🗑️ Removed transcript with placeholder/error text for: \(recordingURL.lastPathComponent)")
+        }
+    }
+    
+    func deleteTranscriptWithErrorText(for recordingURL: URL) {
+        DispatchQueue.main.async {
+            // Find and remove transcripts that contain error text
+            self.transcripts.removeAll { transcript in
+                transcript.recordingURL == recordingURL && 
+                transcript.plainText.lowercased().contains("error")
+            }
+            self.saveTranscriptsToDisk()
+            print("🗑️ Removed transcript with error text for: \(recordingURL.lastPathComponent)")
+        }
+    }
+    
+    func clearAllProblematicTranscripts() {
+        DispatchQueue.main.async {
+            let originalCount = self.transcripts.count
+            self.transcripts.removeAll { transcript in
+                let text = transcript.plainText.lowercased()
+                return text.contains("loading") || 
+                       text.contains("error") || 
+                       text.contains("failed") ||
+                       text.count < 50 // Too short to be meaningful
+            }
+            let removedCount = originalCount - self.transcripts.count
+            self.saveTranscriptsToDisk()
+            print("🗑️ Removed \(removedCount) problematic transcripts")
+        }
+    }
+    
     func getTranscript(for recordingURL: URL) -> TranscriptData? {
         let targetFilename = recordingURL.lastPathComponent
         let targetName = recordingURL.deletingPathExtension().lastPathComponent
@@ -76,6 +125,13 @@ class TranscriptManager: ObservableObject {
         }) {
             print("✅ Found name match: \(nameMatch.recordingName)")
             return nameMatch
+        }
+        
+        // Try to find orphaned transcripts that might match this recording
+        // This handles cases where the recording name was updated but transcript wasn't
+        if let orphanedMatch = findOrphanedTranscript(for: recordingURL) {
+            print("✅ Found orphaned transcript match: \(orphanedMatch.recordingName)")
+            return orphanedMatch
         }
         
         // Debug: Only log if no match found and we have transcripts
@@ -185,6 +241,36 @@ class TranscriptManager: ObservableObject {
         for (index, transcript) in transcripts.enumerated() {
             print("  \(index): \(transcript.recordingName) - \(transcript.recordingURL.lastPathComponent)")
         }
+    }
+    
+    // MARK: - Orphaned Transcript Handling
+    
+    private func findOrphanedTranscript(for recordingURL: URL) -> TranscriptData? {
+        // Look for transcripts where the recording file doesn't exist but we have a transcript
+        // This can happen when recording names are updated but transcripts aren't
+        let recordingExists = FileManager.default.fileExists(atPath: recordingURL.path)
+        
+        if !recordingExists {
+            // If the recording doesn't exist, look for any transcript that might be orphaned
+            // and could potentially match this recording based on content or metadata
+            for transcript in transcripts {
+                // Check if this transcript's recording file also doesn't exist
+                let transcriptRecordingExists = FileManager.default.fileExists(atPath: transcript.recordingURL.path)
+                
+                if !transcriptRecordingExists {
+                    // Both recordings are missing, this might be a match
+                    // We could add more sophisticated matching here based on:
+                    // - Similar recording dates
+                    // - Similar content patterns
+                    // - File size patterns
+                    // For now, we'll return the first orphaned transcript as a potential match
+                    print("🔍 Found potential orphaned transcript: \(transcript.recordingName)")
+                    return transcript
+                }
+            }
+        }
+        
+        return nil
     }
     
     // MARK: - Private Methods

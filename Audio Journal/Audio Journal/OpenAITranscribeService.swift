@@ -140,17 +140,20 @@ class OpenAITranscribeService: NSObject, ObservableObject {
     
     private let config: OpenAITranscribeConfig
     private let session: URLSession
+    // Add chunking service
+    private let chunkingService: AudioFileChunkingService
     
     // MARK: - Initialization
     
-    init(config: OpenAITranscribeConfig = .default) {
+    init(config: OpenAITranscribeConfig = .default, chunkingService: AudioFileChunkingService) {
         self.config = config
         
         // Create a custom URLSession with longer timeout for transcription requests
         let sessionConfig = URLSessionConfiguration.default
-        sessionConfig.timeoutIntervalForRequest = 300.0  // 5 minutes
-        sessionConfig.timeoutIntervalForResource = 600.0 // 10 minutes
+        sessionConfig.timeoutIntervalForRequest = 1800.0  // 30 minutes
+        sessionConfig.timeoutIntervalForResource = 1800.0 // 30 minutes
         self.session = URLSession(configuration: sessionConfig)
+        self.chunkingService = chunkingService
         
         super.init()
     }
@@ -201,31 +204,85 @@ class OpenAITranscribeService: NSObject, ObservableObject {
                 throw OpenAITranscribeError.fileNotFound
             }
             
-            // Check file size (OpenAI has a 25MB limit)
-            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            let fileSize = fileAttributes[.size] as? Int64 ?? 0
-            let maxSize: Int64 = 25 * 1024 * 1024 // 25MB
-            
-            guard fileSize <= maxSize else {
-                throw OpenAITranscribeError.fileTooLarge("File size \(fileSize / 1024 / 1024)MB exceeds 25MB limit")
+            // Use chunking service to check if chunking is needed
+            let needsChunking = try await chunkingService.shouldChunkFile(url, for: .openAI)
+            if needsChunking {
+                currentStatus = "Chunking audio file..."
+                progress = 0.05
+                let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .openAI)
+                let chunks = chunkingResult.chunks
+                var transcriptChunks: [TranscriptChunk] = []
+                var chunkIndex = 0
+                for audioChunk in chunks {
+                    currentStatus = "Transcribing chunk \(chunkIndex + 1) of \(chunks.count)..."
+                    progress = 0.05 + 0.85 * (Double(chunkIndex) / Double(chunks.count))
+                    let audioData = try Data(contentsOf: audioChunk.chunkURL)
+                    let startTime = Date()
+                    let result = try await performTranscription(audioData: audioData, fileName: audioChunk.chunkURL.lastPathComponent)
+                    let processingTime = Date().timeIntervalSince(startTime)
+                    // Wrap result in TranscriptChunk
+                    let transcriptChunk = TranscriptChunk(
+                        chunkId: audioChunk.id,
+                        sequenceNumber: audioChunk.sequenceNumber,
+                        transcript: result.transcriptText,
+                        segments: result.segments,
+                        startTime: audioChunk.startTime,
+                        endTime: audioChunk.endTime,
+                        processingTime: processingTime
+                    )
+                    transcriptChunks.append(transcriptChunk)
+                    chunkIndex += 1
+                }
+                // Reassemble transcript
+                let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+                let creationDate = (fileAttributes[.creationDate] as? Date) ?? Date()
+                let reassembly = try await chunkingService.reassembleTranscript(
+                    from: transcriptChunks,
+                    originalURL: url,
+                    recordingName: url.deletingPathExtension().lastPathComponent,
+                    recordingDate: creationDate
+                )
+                // Clean up chunk files
+                try await chunkingService.cleanupChunks(chunks)
+                currentStatus = "Transcription complete"
+                progress = 1.0
+                isTranscribing = false
+                // Return as OpenAITranscribeResult (flattened)
+                return OpenAITranscribeResult(
+                    transcriptText: reassembly.transcriptData.plainText,
+                    segments: reassembly.transcriptData.segments,
+                    processingTime: reassembly.reassemblyTime,
+                    usage: nil, // Usage is not aggregated for chunked
+                    success: true,
+                    error: nil
+                )
+            } else {
+                // Check file size (OpenAI has a 25MB limit)
+                let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+                let fileSize = fileAttributes[.size] as? Int64 ?? 0
+                let maxSize: Int64 = 25 * 1024 * 1024 // 25MB
+                
+                guard fileSize <= maxSize else {
+                    throw OpenAITranscribeError.fileTooLarge("File size \(fileSize / 1024 / 1024)MB exceeds 25MB limit")
+                }
+                
+                currentStatus = "Reading audio file..."
+                progress = 0.1
+                
+                let audioData = try Data(contentsOf: url)
+                print("📁 Audio file size: \(audioData.count) bytes")
+                
+                currentStatus = "Sending to OpenAI..."
+                progress = 0.2
+                
+                let result = try await performTranscription(audioData: audioData, fileName: url.lastPathComponent)
+                
+                currentStatus = "Transcription complete"
+                progress = 1.0
+                isTranscribing = false
+                
+                return result
             }
-            
-            currentStatus = "Reading audio file..."
-            progress = 0.1
-            
-            let audioData = try Data(contentsOf: url)
-            print("📁 Audio file size: \(audioData.count) bytes")
-            
-            currentStatus = "Sending to OpenAI..."
-            progress = 0.2
-            
-            let result = try await performTranscription(audioData: audioData, fileName: url.lastPathComponent)
-            
-            currentStatus = "Transcription complete"
-            progress = 1.0
-            isTranscribing = false
-            
-            return result
             
         } catch {
             isTranscribing = false

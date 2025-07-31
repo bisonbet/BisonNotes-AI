@@ -211,7 +211,7 @@ struct AWSSettingsView: View {
                     bucketName: bucketName
                 )
                 
-                let service = AWSTranscribeService(config: config)
+                let service = AWSTranscribeService(config: config, chunkingService: AudioFileChunkingService())
                 
                 // Test AWS connection by calling the test method
                 try await service.testConnection()

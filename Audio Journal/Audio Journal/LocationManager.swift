@@ -27,11 +27,15 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         // This avoids accessing authorizationStatus on the main thread during init
         locationStatus = .notDetermined
         
-        // Check authorization status on a background queue
-        DispatchQueue.global(qos: .utility).async {
-            let status = self.locationManager.authorizationStatus
-            DispatchQueue.main.async {
-                self.locationStatus = status
+        // Defer authorization status check to avoid potential crashes during init
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else { return }
+            // Check authorization status on a background queue
+            DispatchQueue.global(qos: .utility).async {
+                let status = self.locationManager.authorizationStatus
+                DispatchQueue.main.async {
+                    self.locationStatus = status
+                }
             }
         }
     }

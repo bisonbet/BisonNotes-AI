@@ -14,6 +14,7 @@ struct TranscriptsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @StateObject private var transcriptManager = TranscriptManager.shared
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
+    @StateObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
     @State private var recordings: [RecordingFile] = []
     @State private var selectedRecording: RecordingFile?
     @State private var isGeneratingTranscript = false
@@ -23,6 +24,8 @@ struct TranscriptsView: View {
     @State private var completedTranscriptionText = ""
     @State private var isCheckingForCompletions = false
     @State private var refreshTrigger = false
+    @State private var showingTranscriptionProgress = false
+    @AppStorage("showTranscriptionProgress") private var showTranscriptionProgress: Bool = true
     
     var body: some View {
         NavigationView {
@@ -87,10 +90,8 @@ struct TranscriptsView: View {
                                         if isGeneratingTranscript && selectedRecording?.url == recording.url {
                                             ProgressView()
                                                 .scaleEffect(0.8)
-                                            if let progress = enhancedTranscriptionManager.progress {
-                                                Text(progress.formattedProgress)
-                                                    .font(.caption2)
-                                            }
+                                            Text("Processing...")
+                                                .font(.caption2)
                                         } else {
                                             Image(systemName: transcriptManager.hasTranscript(for: recording.url) ? "text.bubble.fill" : "text.bubble")
                                             Text(transcriptManager.hasTranscript(for: recording.url) ? "Edit Transcript" : "Generate Transcript")
@@ -158,6 +159,23 @@ struct TranscriptsView: View {
         .sheet(item: $selectedLocationData) { locationData in
             LocationDetailView(locationData: locationData)
         }
+        .sheet(isPresented: $showingTranscriptionProgress) {
+            if let progress = enhancedTranscriptionManager.progress {
+                TranscriptionProgressView(
+                    progress: progress,
+                    status: enhancedTranscriptionManager.currentStatus,
+                    onCancel: {
+                        enhancedTranscriptionManager.cancelTranscription()
+                        showingTranscriptionProgress = false
+                        isGeneratingTranscript = false
+                    },
+                    onDone: {
+                        showingTranscriptionProgress = false
+                        // Transcription continues in background
+                    }
+                )
+            }
+        }
         .alert("Transcription Complete", isPresented: $showingTranscriptionCompletionAlert) {
             Button("OK") {
                 showingTranscriptionCompletionAlert = false
@@ -190,7 +208,7 @@ struct TranscriptsView: View {
             
             // Geocode locations for all recordings
             for recording in recordings {
-                geocodeLocationForRecording(recording)
+                loadLocationAddress(for: recording)
             }
         } catch {
             print("Error loading recordings: \(error)")
@@ -206,11 +224,13 @@ struct TranscriptsView: View {
         return locationData
     }
     
-    private func geocodeLocationForRecording(_ recording: RecordingFile) {
+    private func loadLocationAddress(for recording: RecordingFile) {
         guard let locationData = recording.locationData else { return }
         
         let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
-        recorderVM.locationManager.reverseGeocodeLocation(location) { address in
+        // Use a default location manager since AudioRecorderViewModel doesn't have one
+        let locationManager = LocationManager()
+        locationManager.reverseGeocodeLocation(location) { address in
             if let address = address {
                 locationAddresses[recording.url] = address
             }
@@ -257,36 +277,63 @@ struct TranscriptsView: View {
     
     private func performEnhancedTranscription(for recording: RecordingFile) {
         print("🚀 Starting enhanced transcription for: \(recording.name)")
+        
+        // Show progress sheet if enabled
+        if showTranscriptionProgress {
+            showingTranscriptionProgress = true
+        }
+        
         Task {
+            // Use the selected transcription engine
+            let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+            
             do {
-                let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url, using: recorderVM.selectedTranscriptionEngine)
+                // Start transcription job through BackgroundProcessingManager
+                try await backgroundProcessingManager.startTranscriptionJob(
+                    recordingURL: recording.url,
+                    recordingName: recording.name,
+                    engine: selectedEngine
+                )
                 
-                print("📊 Transcription result: success=\(result.success), textLength=\(result.fullText.count)")
+                print("✅ Transcription job started through BackgroundProcessingManager")
                 
-                if result.success && !result.fullText.isEmpty {
-                    print("✅ Creating transcript data...")
-                    // Create transcript data
-                    let transcriptData = TranscriptData(
-                        recordingURL: recording.url,
-                        recordingName: recording.name,
-                        recordingDate: recording.date,
-                        segments: result.segments
-                    )
-                    
-                    // Save the transcript
-                    self.transcriptManager.saveTranscript(transcriptData)
-                    print("💾 Transcript saved successfully")
-                    
-                    // Update the selected recording to show the editable view
-                    self.selectedRecording = recording
-                    
-                    // Force UI refresh to update button states
-                    self.forceRefreshUI()
-                } else {
-                    print("❌ Transcription failed or returned empty result")
-                }
+                // The job will be processed in the background and the UI will be updated
+                // through the BackgroundProcessingManager's published properties
+                
             } catch {
-                print("❌ Enhanced transcription error: \(error)")
+                print("❌ Failed to start transcription job: \(error)")
+                
+                // Fallback to direct transcription if background processing fails
+                print("🔄 Falling back to direct transcription...")
+                do {
+                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url, using: selectedEngine)
+                    
+                    print("📊 Transcription result: success=\(result.success), textLength=\(result.fullText.count)")
+                    
+                    if result.success && !result.fullText.isEmpty {
+                        print("✅ Creating transcript data...")
+                        // Create transcript data
+                        let transcriptData = TranscriptData(
+                            recordingURL: recording.url,
+                            recordingName: recording.name,
+                            recordingDate: recording.date,
+                            segments: result.segments
+                        )
+                        
+                        // Save the transcript
+                        self.transcriptManager.saveTranscript(transcriptData)
+                        print("💾 Transcript saved successfully")
+                        
+                                            // Don't automatically open the transcript view - let user choose when to edit
+                        
+                        // Force UI refresh to update button states
+                        self.forceRefreshUI()
+                    } else {
+                        print("❌ Transcription failed or returned empty result")
+                    }
+                } catch {
+                    print("❌ Fallback transcription also failed: \(error)")
+                }
             }
             
             await MainActor.run {
@@ -319,6 +366,31 @@ struct TranscriptsView: View {
                     to: newURL,
                     newName: newName
                 )
+            }
+        }
+        
+        // Set up completion handler for BackgroundProcessingManager
+        backgroundProcessingManager.onTranscriptionCompleted = { transcriptData, job in
+            Task { @MainActor in
+                print("🎉 Background processing transcription completed for: \(job.recordingName)")
+                
+                // Find the recording that matches this transcription
+                if let recording = recordings.first(where: { recording in
+                    return recording.url == job.recordingURL
+                }) {
+                    print("💾 Background transcript already saved by BackgroundProcessingManager")
+                    
+                    // Don't automatically open the transcript view - let user choose when to edit
+                    
+                    // Force UI refresh to update button states
+                    self.forceRefreshUI()
+                    
+                    // Show completion alert
+                    self.completedTranscriptionText = "Transcription completed for: \(recording.name)"
+                    self.showingTranscriptionCompletionAlert = true
+                } else {
+                    print("❌ Could not find recording for completed transcription")
+                }
             }
         }
         

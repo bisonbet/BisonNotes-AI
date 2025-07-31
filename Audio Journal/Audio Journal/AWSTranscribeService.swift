@@ -77,11 +77,14 @@ class AWSTranscribeService: NSObject, ObservableObject {
     private var s3Client: AWSS3?
     private var config: AWSTranscribeConfig
     private var currentJobName: String?
+    // Add chunking service
+    private let chunkingService: AudioFileChunkingService
     
     // MARK: - Initialization
     
-    init(config: AWSTranscribeConfig = .default) {
+    init(config: AWSTranscribeConfig = .default, chunkingService: AudioFileChunkingService) {
         self.config = config
+        self.chunkingService = chunkingService
         super.init()
         setupAWSServices()
     }
@@ -244,52 +247,70 @@ class AWSTranscribeService: NSObject, ObservableObject {
         }
     }
     
-    func transcribeAudioFile(at url: URL) async throws -> AWSTranscribeResult {
-        guard !config.accessKey.isEmpty && !config.secretKey.isEmpty else {
-            throw AWSTranscribeError.configurationMissing
-        }
-        
+    /// Transcribe audio file with chunking support for files >2 hours
+    func transcribeAudioFileWithChunking(at url: URL) async throws -> AWSTranscribeResult {
         isTranscribing = true
         currentStatus = "Preparing audio file..."
         progress = 0.0
-        
-        do {
-            // Step 1: Upload to S3
-            currentStatus = "Uploading to AWS S3..."
-            progress = 0.1
-            let s3Key = try await uploadToS3(fileURL: url)
-            
-            // Step 2: Start transcription job
-            currentStatus = "Starting transcription job..."
-            progress = 0.2
-            let jobName = try await startTranscriptionJob(s3Key: s3Key)
-            currentJobName = jobName
-            
-            // Step 3: Monitor job progress
-            currentStatus = "Transcribing audio..."
-            progress = 0.3
-            let result = try await monitorTranscriptionJob(jobName: jobName)
-            
-            // Step 4: Download and process results
-            currentStatus = "Processing results..."
-            progress = 0.8
-            let finalResult = try await processTranscriptionResult(result: result)
-            
-            // Step 5: Cleanup
-            currentStatus = "Cleaning up..."
-            progress = 0.9
-            try await cleanup(s3Key: s3Key, jobName: jobName)
-            
+        // Check if chunking is needed for AWS (2 hour limit)
+        let needsChunking = try await chunkingService.shouldChunkFile(url, for: .awsTranscribe)
+        if needsChunking {
+            currentStatus = "Chunking audio file..."
+            progress = 0.05
+            let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .awsTranscribe)
+            let chunks = chunkingResult.chunks
+            var transcriptChunks: [TranscriptChunk] = []
+            var chunkIndex = 0
+            for audioChunk in chunks {
+                currentStatus = "Transcribing chunk \(chunkIndex + 1) of \(chunks.count)..."
+                progress = 0.05 + 0.85 * (Double(chunkIndex) / Double(chunks.count))
+                // Transcribe each chunk (upload, start job, monitor, download, parse)
+                let s3Key = try await uploadToS3(fileURL: audioChunk.chunkURL)
+                let jobName = try await startTranscriptionJob(s3Key: s3Key)
+                let result = try await monitorTranscriptionJob(jobName: jobName)
+                let finalResult = try await processTranscriptionResult(result: result)
+                // Wrap result in TranscriptChunk
+                let transcriptChunk = TranscriptChunk(
+                    chunkId: audioChunk.id,
+                    sequenceNumber: audioChunk.sequenceNumber,
+                    transcript: finalResult.transcriptText,
+                    segments: finalResult.segments,
+                    startTime: audioChunk.startTime,
+                    endTime: audioChunk.endTime,
+                    processingTime: finalResult.processingTime
+                )
+                transcriptChunks.append(transcriptChunk)
+                // Clean up S3 for this chunk
+                try await cleanup(s3Key: s3Key, jobName: jobName)
+                chunkIndex += 1
+            }
+            // Reassemble transcript
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let creationDate = (fileAttributes[.creationDate] as? Date) ?? Date()
+            let reassembly = try await chunkingService.reassembleTranscript(
+                from: transcriptChunks,
+                originalURL: url,
+                recordingName: url.deletingPathExtension().lastPathComponent,
+                recordingDate: creationDate
+            )
+            // Clean up chunk files
+            try await chunkingService.cleanupChunks(chunks)
             currentStatus = "Transcription complete"
             progress = 1.0
             isTranscribing = false
-            
-            return finalResult
-            
-        } catch {
-            isTranscribing = false
-            currentStatus = "Transcription failed"
-            throw error
+            // Return as AWSTranscribeResult (flattened, use last chunk's jobName)
+            return AWSTranscribeResult(
+                transcriptText: reassembly.transcriptData.plainText,
+                segments: reassembly.transcriptData.segments,
+                confidence: 1.0, // Not aggregated, set to 1.0 for now
+                processingTime: reassembly.reassemblyTime,
+                jobName: transcriptChunks.last?.chunkId.uuidString ?? "chunked-job",
+                success: true,
+                error: nil
+            )
+        } else {
+            // No chunking needed, use single file method
+            return try await transcribeAudioFileWithChunking(at: url)
         }
     }
     

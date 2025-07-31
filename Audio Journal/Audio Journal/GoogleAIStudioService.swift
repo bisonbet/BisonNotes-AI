@@ -468,6 +468,116 @@ class GoogleAIStudioService: ObservableObject {
         return items
     }
     
+    // MARK: - Title Extraction
+    
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        print("🤖 GoogleAIStudioService: Starting title extraction")
+        
+        // Use the existing generateContent method with structured output
+        // This is more cost-effective than making separate calls
+        let response = try await generateContent(prompt: text, useStructuredOutput: true)
+        
+        // Parse the structured response to extract titles
+        // The structured response includes summary, tasks, reminders, and titles
+        let lines = response.components(separatedBy: .newlines)
+        var titles: [TitleItem] = []
+        
+        for line in lines {
+            if line.contains("SUGGESTED TITLES:") {
+                // Extract titles from the structured response
+                let titleLines = lines.dropFirst(lines.firstIndex(of: line) ?? 0 + 1)
+                    .prefix(while: { !$0.contains("CONTENT TYPE:") })
+                
+                for titleLine in titleLines {
+                    let cleanedLine = titleLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if cleanedLine.hasPrefix("• ") && cleanedLine.count > 3 {
+                        let titleText = String(cleanedLine.dropFirst(2))
+                        let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(titleText)
+                        if cleanedTitle != "Untitled Conversation" {
+                            titles.append(TitleItem(
+                                text: cleanedTitle,
+                                confidence: 0.8,
+                                category: .general
+                            ))
+                        }
+                    }
+                }
+                break
+            }
+        }
+        
+        return titles.isEmpty ? [] : titles
+    }
+    
+    private func parseTitlesFromJSON(_ jsonString: String) throws -> [TitleItem] {
+        let cleanedJSON = extractJSONFromResponse(jsonString)
+        
+        guard let data = cleanedJSON.data(using: .utf8) else {
+            throw SummarizationError.aiServiceUnavailable(service: "Invalid JSON data")
+        }
+        
+        struct TitleResponse: Codable {
+            let text: String
+            let category: String?
+            let confidence: Double?
+        }
+        
+        struct TitlesResponse: Codable {
+            let titles: [TitleResponse]
+        }
+        
+        do {
+            let response = try JSONDecoder().decode(TitlesResponse.self, from: data)
+            
+            return response.titles.map { titleResponse in
+                let category = TitleItem.TitleCategory(rawValue: titleResponse.category?.lowercased() ?? "general") ?? .general
+                return TitleItem(
+                    text: titleResponse.text,
+                    confidence: titleResponse.confidence ?? 0.8,
+                    category: category
+                )
+            }
+        } catch {
+            // Try parsing as a simple array
+            do {
+                let titles = try JSONDecoder().decode([TitleResponse].self, from: data)
+                return titles.map { titleResponse in
+                    let category = TitleItem.TitleCategory(rawValue: titleResponse.category?.lowercased() ?? "general") ?? .general
+                    return TitleItem(
+                        text: titleResponse.text,
+                        confidence: titleResponse.confidence ?? 0.8,
+                        category: category
+                    )
+                }
+            } catch {
+                throw SummarizationError.aiServiceUnavailable(service: "Failed to parse titles JSON: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    private func extractJSONFromResponse(_ response: String) -> String {
+        // Remove markdown code blocks if present
+        var cleaned = response
+        
+        if cleaned.contains("```json") {
+            if let start = cleaned.range(of: "```json") {
+                cleaned = String(cleaned[start.upperBound...])
+            }
+            if let end = cleaned.range(of: "```") {
+                cleaned = String(cleaned[..<end.lowerBound])
+            }
+        } else if cleaned.contains("```") {
+            if let start = cleaned.range(of: "```") {
+                cleaned = String(cleaned[start.upperBound...])
+            }
+            if let end = cleaned.range(of: "```") {
+                cleaned = String(cleaned[..<end.lowerBound])
+            }
+        }
+        
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
     // MARK: - Model Loading
     
     func loadAvailableModels() async throws -> [String] {

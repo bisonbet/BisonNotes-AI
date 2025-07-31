@@ -10,7 +10,6 @@ import AVFoundation
 import UIKit
 
 /// Enhanced audio session manager that supports mixed audio recording and background operations
-@MainActor
 class EnhancedAudioSessionManager: NSObject, ObservableObject {
     
     // MARK: - Published Properties
@@ -61,7 +60,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     // MARK: - Initialization
     override init() {
         super.init()
-        setupNotificationObservers()
+        // Defer notification observer setup to avoid potential crashes during init
+        DispatchQueue.main.async { [weak self] in
+            self?.setupNotificationObservers()
+        }
     }
     
     deinit {
@@ -162,6 +164,26 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
     }
     
+    /// Configure audio session for playback
+    func configurePlaybackSession() async throws {
+        do {
+            try session.setCategory(.playback, mode: .default)
+            try session.setActive(true)
+            
+            isMixedAudioEnabled = false
+            isBackgroundRecordingEnabled = false
+            currentConfiguration = AudioSessionConfig.standardRecording
+            isConfigured = true
+            
+            print("✅ Playback session configured successfully")
+            
+        } catch {
+            let audioError = AudioProcessingError.audioSessionConfigurationFailed("Playback configuration failed: \(error.localizedDescription)")
+            lastError = audioError
+            throw audioError
+        }
+    }
+    
     /// Set preferred audio input device
     func setPreferredInput(_ input: AVAudioSessionPortDescription) async throws {
         do {
@@ -237,8 +259,18 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             object: session,
             queue: .main
         ) { [weak self] notification in
+            // Capture the notification data we need before entering Task
+            let userInfo = notification.userInfo
+            let interruptionType = userInfo?[AVAudioSessionInterruptionTypeKey] as? AVAudioSession.InterruptionType
+            
             Task { @MainActor in
-                self?.handleAudioInterruption(notification)
+                guard let self = self else { return }
+                // Create a new notification with only the data we need
+                if let type = interruptionType {
+                    let newUserInfo: [String: Any] = [AVAudioSessionInterruptionTypeKey: type.rawValue]
+                    let newNotification = Notification(name: AVAudioSession.interruptionNotification, object: nil, userInfo: newUserInfo)
+                    self.handleAudioInterruption(newNotification)
+                }
             }
         }
         
@@ -248,8 +280,18 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             object: session,
             queue: .main
         ) { [weak self] notification in
+            // Capture the notification data we need before entering Task
+            let userInfo = notification.userInfo
+            let routeChangeReason = userInfo?[AVAudioSessionRouteChangeReasonKey] as? AVAudioSession.RouteChangeReason
+            
             Task { @MainActor in
-                self?.handleRouteChange(notification)
+                guard let self = self else { return }
+                // Create a new notification with only the data we need
+                if let reason = routeChangeReason {
+                    let newUserInfo: [String: Any] = [AVAudioSessionRouteChangeReasonKey: reason.rawValue]
+                    let newNotification = Notification(name: AVAudioSession.routeChangeNotification, object: nil, userInfo: newUserInfo)
+                    self.handleRouteChange(newNotification)
+                }
             }
         }
     }
@@ -274,18 +316,21 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         
         switch type {
         case .began:
-            print("🔇 Audio interruption began")
+            EnhancedLogger.shared.logAudioSessionInterruption(type)
             // Audio session was interrupted (e.g., phone call)
             // Recording will be automatically paused by the system
             
         case .ended:
-            print("🔊 Audio interruption ended")
+            EnhancedLogger.shared.logAudioSessionInterruption(type)
             // Attempt to restore audio session
-            Task {
+            Task { [weak self] in
+                guard let self = self else { return }
                 do {
-                    try await restoreAudioSession()
+                    try await self.restoreAudioSession()
+                    EnhancedLogger.shared.logAudioSession("Audio session restored after interruption", level: .info)
                 } catch {
-                    print("❌ Failed to restore audio session after interruption: \(error)")
+                    EnhancedLogger.shared.logAudioSession("Failed to restore audio session after interruption: \(error.localizedDescription)", level: .error)
+                    await EnhancedErrorHandler().handleAudioProcessingError(.audioSessionConfigurationFailed(error.localizedDescription), context: "Interruption Recovery")
                 }
             }
             
@@ -303,16 +348,16 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         
         switch reason {
         case .newDeviceAvailable:
-            print("🎧 New audio device available")
+            EnhancedLogger.shared.logAudioSessionRouteChange(reason)
             
         case .oldDeviceUnavailable:
-            print("🎧 Audio device disconnected")
+            EnhancedLogger.shared.logAudioSessionRouteChange(reason)
             
         case .categoryChange:
-            print("🔄 Audio category changed")
+            EnhancedLogger.shared.logAudioSessionRouteChange(reason)
             
         default:
-            print("🔄 Audio route changed: \(reason)")
+            EnhancedLogger.shared.logAudioSession("Audio route changed: \(reason)", level: .info)
         }
     }
 }
@@ -326,6 +371,10 @@ enum AudioProcessingError: Error, LocalizedError {
     case iCloudSyncFailed(String)
     case backgroundProcessingFailed(String)
     case fileRelationshipError(String)
+    case recordingFailed(String)
+    case playbackFailed(String)
+    case formatConversionFailed(String)
+    case metadataExtractionFailed(String)
     
     var errorDescription: String? {
         switch self {
@@ -341,6 +390,14 @@ enum AudioProcessingError: Error, LocalizedError {
             return "Background processing failed: \(message)"
         case .fileRelationshipError(let message):
             return "File relationship error: \(message)"
+        case .recordingFailed(let message):
+            return "Audio recording failed: \(message)"
+        case .playbackFailed(let message):
+            return "Audio playback failed: \(message)"
+        case .formatConversionFailed(let message):
+            return "Audio format conversion failed: \(message)"
+        case .metadataExtractionFailed(let message):
+            return "Audio metadata extraction failed: \(message)"
         }
     }
     
@@ -358,6 +415,14 @@ enum AudioProcessingError: Error, LocalizedError {
             return "Try processing the file again when the app is in the foreground."
         case .fileRelationshipError:
             return "Try refreshing the file list or restarting the app."
+        case .recordingFailed:
+            return "Check microphone permissions and try recording again."
+        case .playbackFailed:
+            return "Check audio output settings and try playing again."
+        case .formatConversionFailed:
+            return "Try a different audio format or check file integrity."
+        case .metadataExtractionFailed:
+            return "Try refreshing the file or check if the file is corrupted."
         }
     }
 }

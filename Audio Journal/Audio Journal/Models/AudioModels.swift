@@ -9,13 +9,13 @@ import Foundation
 import AVFoundation
 
 enum AudioQuality: String, CaseIterable {
-    case low = "Low Quality"
-    case medium = "Medium Quality"
+    case regular = "Regular Quality"
     case high = "High Quality"
+    case maximum = "Maximum Quality"
     
     var settings: [String: Any] {
         switch self {
-        case .low:
+        case .regular:
             return [
                 AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
                 AVSampleRateKey: 22050,
@@ -23,7 +23,7 @@ enum AudioQuality: String, CaseIterable {
                 AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
                 AVEncoderBitRateKey: 64000
             ]
-        case .medium:
+        case .high:
             return [
                 AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
                 AVSampleRateKey: 44100,
@@ -31,25 +31,25 @@ enum AudioQuality: String, CaseIterable {
                 AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
                 AVEncoderBitRateKey: 128000
             ]
-        case .high:
+        case .maximum:
             return [
                 AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
                 AVSampleRateKey: 48000,
                 AVNumberOfChannelsKey: 1,
                 AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-                AVEncoderBitRateKey: 256000
+                AVEncoderBitRateKey: 192000
             ]
         }
     }
     
     var description: String {
         switch self {
-        case .low:
+        case .regular:
             return "64 kbps, 22.05 kHz - Good for voice, smaller files"
-        case .medium:
-            return "128 kbps, 44.1 kHz - Balanced quality and file size"
         case .high:
-            return "256 kbps, 48 kHz - High fidelity, larger files"
+            return "128 kbps, 44.1 kHz - Balanced quality and file size"
+        case .maximum:
+            return "192 kbps, 48 kHz - High fidelity, larger files"
         }
     }
 }

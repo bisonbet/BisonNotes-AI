@@ -179,7 +179,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
     
     private func updateConfiguration() {
         let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
-        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt35Turbo.rawValue
+        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAISummarizationBaseURL") ?? "https://api.openai.com/v1"
         let temperature = UserDefaults.standard.double(forKey: "openAISummarizationTemperature")
         let maxTokens = UserDefaults.standard.integer(forKey: "openAISummarizationMaxTokens")
@@ -190,7 +190,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
             model = predefinedModel
         } else {
             // Use a default model for dynamic models, but pass the actual model string to the service
-            model = .gpt35Turbo
+            model = .gpt41Mini
         }
         
         let newConfig = OpenAISummarizationConfig(
@@ -198,7 +198,8 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
             model: model,
             baseURL: baseURL,
             temperature: temperature > 0 ? temperature : 0.1,
-            maxTokens: maxTokens > 0 ? maxTokens : nil,
+            maxTokens: maxTokens > 0 ? maxTokens : 2048,
+            timeout: 30.0,
             dynamicModelId: modelString // Pass the actual model ID for dynamic models
         )
         
@@ -347,29 +348,12 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
             return false
         }
         
-        do {
-            try await service.testConnection()
+        let connectionResult = await service.testConnection()
+        if connectionResult {
             print("✅ OpenAISummarizationEngine: Connection test successful")
             return true
-        } catch {
-            print("❌ OpenAISummarizationEngine: Connection test failed: \(error)")
-            
-            // Provide specific error messages based on error type
-            if let summarizationError = error as? SummarizationError {
-                switch summarizationError {
-                case .aiServiceUnavailable(let service):
-                    print("🔍 OpenAISummarizationEngine: Service unavailable: \(service)")
-                case .processingTimeout:
-                    print("🔍 OpenAISummarizationEngine: Request timed out")
-                case .invalidInput:
-                    print("🔍 OpenAISummarizationEngine: Invalid input provided")
-                default:
-                    print("🔍 OpenAISummarizationEngine: Unknown error: \(summarizationError)")
-                }
-            } else {
-                print("🔍 OpenAISummarizationEngine: Network or configuration error: \(error)")
-            }
-            
+        } else {
+            print("❌ OpenAISummarizationEngine: Connection test failed")
             return false
         }
     }
@@ -405,8 +389,8 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
     let description: String = "Advanced AI summaries using OpenAI API compatible models"
     let version: String = "1.0"
     
-    private var service: OpenAICompatibleService?
-    private var currentConfig: OpenAICompatibleConfig?
+    private var service: OpenAISummarizationService?
+    private var currentConfig: OpenAISummarizationConfig?
     
     var isAvailable: Bool {
         // Check if API key is configured
@@ -547,12 +531,12 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
             return false
         }
         
-        do {
-            try await service.testConnection()
+        let connectionResult = await service.testConnection()
+        if connectionResult {
             print("✅ OpenAICompatibleEngine: Connection test successful")
             return true
-        } catch {
-            print("❌ OpenAICompatibleEngine: Connection test failed: \(error)")
+        } else {
+            print("❌ OpenAICompatibleEngine: Connection test failed")
             return false
         }
     }
@@ -566,12 +550,15 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
         let temperature = UserDefaults.standard.double(forKey: "openAICompatibleTemperature")
         let maxTokens = UserDefaults.standard.integer(forKey: "openAICompatibleMaxTokens")
         
-        let newConfig = OpenAICompatibleConfig(
+        let model = OpenAISummarizationModel(rawValue: modelId) ?? .gpt41Mini
+        let newConfig = OpenAISummarizationConfig(
             apiKey: apiKey,
-            modelId: modelId,
+            model: model,
             baseURL: baseURL,
             temperature: temperature > 0 ? temperature : 0.1,
-            maxTokens: maxTokens > 0 ? maxTokens : 2048
+            maxTokens: maxTokens > 0 ? maxTokens : 2048,
+            timeout: 30.0,
+            dynamicModelId: modelId // Pass the actual model ID for dynamic models
         )
         
         // Only create a new service if the configuration has actually changed
@@ -582,7 +569,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
             }
             
             self.currentConfig = newConfig
-            self.service = OpenAICompatibleService(config: newConfig)
+            self.service = OpenAISummarizationService(config: newConfig)
             
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {

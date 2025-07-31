@@ -12,7 +12,7 @@ struct SummaryDetailView: View {
     @State private var showingRegenerationAlert = false
     @State private var regenerationError: String?
     @State private var showingDeleteConfirmation = false
-    @StateObject private var summaryManager = SummaryManager()
+    @StateObject private var summaryManager = SummaryManager.shared
     @StateObject private var transcriptManager = TranscriptManager.shared
     
     // Convert legacy summary data to enhanced format for better display

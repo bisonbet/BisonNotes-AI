@@ -11,7 +11,10 @@ struct RecordingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @StateObject private var importManager = FileImportManager()
     @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
+    @StateObject private var processingManager = BackgroundProcessingManager.shared
+    @State private var recordings: [AudioRecordingFile] = []
     @State private var showingRecordingsList = false
+    @State private var showingBackgroundProcessing = false
     
     var body: some View {
         GeometryReader { geometry in
@@ -36,7 +39,7 @@ struct RecordingsView: View {
                     
                     VStack(spacing: 16) {
                         if recorderVM.isRecording {
-                            Text(recorderVM.formatDuration(recorderVM.recordingDuration))
+                            Text(recorderVM.formatTime(recorderVM.recordingTime))
                                 .font(.title)
                                 .fontWeight(.bold)
                                 .foregroundColor(.accentColor)
@@ -69,6 +72,11 @@ struct RecordingsView: View {
                         }
                         .scaleEffect(recorderVM.isRecording ? 1.05 : 1.0)
                         .animation(.easeInOut(duration: 0.2), value: recorderVM.isRecording)
+                        
+                        // Background processing status indicator
+                        if !processingManager.activeJobs.isEmpty {
+                            backgroundProcessingIndicator
+                        }
                         
                         Button(action: {
                             showingRecordingsList = true
@@ -132,23 +140,15 @@ struct RecordingsView: View {
                                         .font(.subheadline)
                                 }
                                 
-                                if let locationData = recorderVM.recordingLocation {
+                                // Background recording indicator
+                                if recorderVM.isRecording {
                                     HStack {
-                                        Image(systemName: "location.fill")
+                                        Image(systemName: "arrow.up.circle.fill")
+                                            .foregroundColor(.green)
                                             .font(.caption)
-                                            .foregroundColor(.accentColor)
-                                        Text("Location captured: \(locationData.coordinateString)")
+                                        Text("Background recording enabled")
                                             .font(.caption)
-                                            .foregroundColor(.accentColor)
-                                    }
-                                } else if recorderVM.locationManager.locationError != nil {
-                                    HStack {
-                                        Image(systemName: "location.slash")
-                                            .font(.caption)
-                                            .foregroundColor(.orange)
-                                        Text("Location unavailable")
-                                            .font(.caption)
-                                            .foregroundColor(.orange)
+                                            .foregroundColor(.green)
                                     }
                                 }
                             }
@@ -167,6 +167,47 @@ struct RecordingsView: View {
             .sheet(isPresented: $documentPickerCoordinator.isShowingPicker) {
                 AudioDocumentPicker(isPresented: $documentPickerCoordinator.isShowingPicker, coordinator: documentPickerCoordinator)
             }
+            .sheet(isPresented: $showingBackgroundProcessing) {
+                BackgroundProcessingView()
+            }
         }
+    }
+    
+    private var backgroundProcessingIndicator: some View {
+        Button(action: {
+            showingBackgroundProcessing = true
+        }) {
+            HStack {
+                Image(systemName: "gear.circle.fill")
+                    .font(.title3)
+                    .foregroundColor(.blue)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Background Processing")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                    
+                    let activeJobs = processingManager.activeJobs.filter { $0.status == .processing }.count
+                    let completedJobs = processingManager.activeJobs.filter { $0.status == .completed }.count
+                    Text("\(activeJobs) active, \(completedJobs) completed")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.blue.opacity(0.1))
+            )
+            .padding(.horizontal, 40)
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }

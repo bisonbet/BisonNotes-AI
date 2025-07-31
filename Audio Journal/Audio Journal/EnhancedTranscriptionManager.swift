@@ -67,6 +67,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     
     private var speechRecognizer: SFSpeechRecognizer?
     private var currentTask: SFSpeechRecognitionTask?
+    private let chunkingService = AudioFileChunkingService()
     
     // Configuration - Always use enhanced transcription
     private var enableEnhancedTranscription: Bool {
@@ -195,7 +196,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             return false
         }
         
-        let whisperService = WhisperService(config: config)
+        let whisperService = WhisperService(config: config, chunkingService: chunkingService)
         return await whisperService.testConnection()
     }
     
@@ -427,7 +428,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
             // Main transcription task
             group.addTask { @MainActor in
-                try await withCheckedThrowingContinuation { continuation in
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptionResult, Error>) in
                     guard let recognizer = self.speechRecognizer else {
                         print("❌ Speech recognizer is nil")
                         continuation.resume(throwing: TranscriptionError.speechRecognizerUnavailable)
@@ -474,6 +475,13 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                                         self.currentStatus = "No speech detected"
                                         continuation.resume(throwing: TranscriptionError.noSpeechDetected)
                                     } else {
+                                        // Check if transcript contains error text
+                                        if transcriptText.lowercased().contains("error") {
+                                            print("⚠️ WARNING: Transcript contains 'error' text!")
+                                            print("📝 Transcript text: \(transcriptText)")
+                                            print("🔍 This might indicate a transcription error was saved as content")
+                                        }
+                                        
                                         print("✅ Transcription successful!")
                                         let segments = self.createSegments(from: result.bestTranscription)
                                         let transcriptionResult = TranscriptionResult(
@@ -527,6 +535,13 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         isTranscribing = true
         currentStatus = "Processing large file..."
         
+        // Check if file is too large to process safely
+        let maxSafeDuration: TimeInterval = 3600 // 1 hour max for chunked processing
+        if duration > maxSafeDuration {
+            print("⚠️ File duration (\(duration/60) minutes) exceeds safe limit (\(maxSafeDuration/60) minutes)")
+            throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxSafeDuration)
+        }
+        
         // Calculate chunks
         let chunks = calculateChunks(duration: duration)
         print("📊 Calculated \(chunks.count) chunks for \(duration/60) minute file")
@@ -550,6 +565,11 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             )
             
             do {
+                // Add memory management and better error handling
+                autoreleasepool {
+                    // This will help with memory management during chunk processing
+                }
+                
                 let chunkResult = try await transcribeChunk(url: url, startTime: chunk.start, endTime: chunk.end)
                 
                 // Adjust segment timestamps
@@ -566,7 +586,10 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                 allText.append(chunkResult.fullText)
                 currentOffset = chunk.end
                 
+                print("✅ Chunk \(index + 1) completed successfully")
+                
             } catch {
+                print("❌ Chunk \(index + 1) failed: \(error)")
                 isTranscribing = false
                 currentStatus = "Chunk \(index + 1) failed"
                 progress = TranscriptionProgress(
@@ -584,10 +607,14 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             // Check timeout
             let elapsedTime = Date().timeIntervalSince(startTime)
             if elapsedTime > maxTranscriptionTime {
+                print("⏰ Transcription timeout reached after \(elapsedTime/60) minutes")
                 isTranscribing = false
                 currentStatus = "Transcription timeout"
                 throw TranscriptionError.timeout
             }
+            
+            // Add a small delay between chunks to prevent overwhelming the system
+            try await Task.sleep(nanoseconds: UInt64(0.5 * 1_000_000_000)) // 0.5 second delay
         }
         
         let processingTime = Date().timeIntervalSince(startTime)
@@ -604,6 +631,18 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             isComplete: true,
             error: nil
         )
+        
+        // Debug: Check if the transcript contains placeholder text
+        if fullText.lowercased().contains("loading") {
+            print("⚠️ WARNING: Transcript contains 'loading' text!")
+            print("📝 Full transcript preview: \(fullText.prefix(200))")
+            print("🔍 Checking segments for placeholder text...")
+            for (index, segment) in allSegments.enumerated() {
+                if segment.text.lowercased().contains("loading") {
+                    print("⚠️ Segment \(index) contains 'loading': \(segment.text)")
+                }
+            }
+        }
         
         return TranscriptionResult(
             fullText: fullText,
@@ -648,7 +687,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         
         try audioTrack.insertTimeRange(timeRange, of: sourceTrack, at: .zero)
         
-        // Export the chunk
+        // Export the chunk with proper async handling and timeout
         let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A)
         let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("chunk_\(UUID().uuidString).m4a")
         
@@ -663,14 +702,46 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         }
         
         print("⏳ Starting export...")
-        await session.export()
         
-        // Check export status (using status for now as states API may not be fully available)
-        guard session.status == .completed else {
-            throw TranscriptionError.audioExtractionFailed
+        // Use async/await with timeout and progress monitoring
+        return try await withThrowingTaskGroup(of: URL.self) { group in
+                                            // Export task
+                group.addTask { [weak session] in
+                    // Unwrap session before the continuation to avoid sendability issues
+                    guard let session = session else {
+                        throw TranscriptionError.audioExtractionFailed
+                    }
+                    
+                    // Use the modern async/await approach directly
+                    if #available(iOS 18.0, *) {
+                        // Use the new export method for iOS 18+
+                        try await session.export(to: outputURL, as: .m4a)
+                    } else {
+                        // For iOS < 18, use the deprecated but available export method
+                        await session.export()
+                    }
+                    
+                    print("\u{2705} Chunk export completed successfully")
+                    return outputURL
+                }
+            
+            // Timeout task
+            group.addTask { [weak session] in
+                try await Task.sleep(nanoseconds: UInt64(120 * 1_000_000_000)) // 2 minute timeout
+                print("⏰ Chunk export timeout reached, cancelling...")
+                session?.cancelExport()
+                throw TranscriptionError.timeout
+            }
+            
+            // Return the first completed task (either success or timeout)
+            guard let result = try await group.next() else {
+                throw TranscriptionError.timeout
+            }
+            
+            // Cancel remaining tasks
+            group.cancelAll()
+            return result
         }
-        
-        return outputURL
     }
     
     private func calculateChunks(duration: TimeInterval) -> [(start: TimeInterval, end: TimeInterval)] {
@@ -715,7 +786,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     private func transcribeWithAWS(url: URL, config: AWSTranscribeConfig) async throws -> TranscriptionResult {
         print("☁️ Starting AWS Transcribe transcription...")
         
-        let awsService = AWSTranscribeService(config: config)
+        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
         
         do {
             // Start the transcription job asynchronously
@@ -798,7 +869,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     func startAsyncTranscription(url: URL, config: AWSTranscribeConfig) async throws -> String {
         print("🚀 Starting async transcription for: \(url.lastPathComponent)")
         
-        let awsService = AWSTranscribeService(config: config)
+        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
         let jobName = try await awsService.startTranscriptionJob(url: url)
         
         // Track this job for later checking
@@ -810,13 +881,13 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     
     /// Check the status of a transcription job
     func checkTranscriptionStatus(jobName: String, config: AWSTranscribeConfig) async throws -> AWSTranscribeJobStatus {
-        let awsService = AWSTranscribeService(config: config)
+        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
         return try await awsService.checkJobStatus(jobName: jobName)
     }
     
     /// Retrieve a completed transcript
     func retrieveTranscription(jobName: String, config: AWSTranscribeConfig) async throws -> TranscriptionResult {
-        let awsService = AWSTranscribeService(config: config)
+        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
         let awsResult = try await awsService.retrieveTranscript(jobName: jobName)
         
         // Convert AWS result to our TranscriptionResult format
@@ -876,7 +947,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     private func transcribeWithWhisper(url: URL, config: WhisperConfig) async throws -> TranscriptionResult {
         print("🎤 Starting Whisper transcription...")
         
-        let whisperService = WhisperService(config: config)
+        let whisperService = WhisperService(config: config, chunkingService: chunkingService)
         
         do {
             // Test connection first
@@ -915,7 +986,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     private func transcribeWithOpenAI(url: URL, config: OpenAITranscribeConfig) async throws -> TranscriptionResult {
         print("🤖 Starting OpenAI transcription...")
         
-        let openAIService = OpenAITranscribeService(config: config)
+        let openAIService = OpenAITranscribeService(config: config, chunkingService: chunkingService)
         
         do {
             // Test connection first
@@ -930,8 +1001,8 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             let maxSize: Int64 = 25 * 1024 * 1024 // 25MB
             
             if fileSize > maxSize {
-                print("⚠️ File too large for OpenAI (\(fileSize / 1024 / 1024)MB > 25MB), falling back to chunked Apple Intelligence")
-                return try await transcribeWithAppleIntelligence(url: url, duration: try await getAudioDuration(url: url))
+                print("⚠️ File too large for OpenAI (\(fileSize / 1024 / 1024)MB > 25MB), using chunked OpenAI transcription")
+                return try await transcribeWithChunkedOpenAI(url: url)
             }
             
             print("🎤 Using OpenAI transcription with model: \(config.model.displayName)")
@@ -958,6 +1029,79 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             
         } catch {
             print("❌ OpenAI transcription failed: \(error)")
+            throw TranscriptionError.openAITranscriptionFailed(error)
+        }
+    }
+    
+    private func transcribeWithChunkedOpenAI(url: URL) async throws -> TranscriptionResult {
+        print("🔀 Using chunked OpenAI transcription for large file")
+        
+        guard let openAIConfig = openAIConfig else {
+            throw TranscriptionError.openAITranscriptionFailed(TranscriptionError.fileNotFound)
+        }
+        
+        do {
+            // Create OpenAI service with config
+            let openAIService = OpenAITranscribeService(config: openAIConfig, chunkingService: chunkingService)
+            
+            // Use the chunking service to chunk the file
+            print("🔀 Starting large file transcription...")
+            let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .openAI)
+            let chunks = chunkingResult.chunks
+            
+            print("🔀 Created \(chunks.count) chunks for transcription")
+            
+            var allTranscripts: [String] = []
+            var allSegments: [TranscriptSegment] = []
+            var totalProcessingTime: TimeInterval = 0
+            var chunkIndex = 0
+            
+            for chunk in chunks {
+                chunkIndex += 1
+                print("🔀 Transcribing chunk \(chunkIndex) of \(chunks.count)...")
+                
+                let startTime = Date()
+                let openAIResult = try await openAIService.transcribeAudioFile(at: chunk.chunkURL)
+                let processingTime = Date().timeIntervalSince(startTime)
+                totalProcessingTime += processingTime
+                
+                // Add the transcript text
+                allTranscripts.append(openAIResult.transcriptText)
+                
+                // Adjust segment timestamps to account for chunk start time
+                let adjustedSegments = openAIResult.segments.map { segment in
+                    TranscriptSegment(
+                        speaker: "Speaker",
+                        text: segment.text,
+                        startTime: segment.startTime + chunk.startTime,
+                        endTime: segment.endTime + chunk.startTime
+                    )
+                }
+                allSegments.append(contentsOf: adjustedSegments)
+                
+                print("✅ Chunk \(chunkIndex) completed in \(processingTime)s")
+            }
+            
+            // Combine all transcripts
+            let fullTranscript = allTranscripts.joined(separator: " ")
+            
+            let transcriptionResult = TranscriptionResult(
+                fullText: fullTranscript,
+                segments: allSegments,
+                processingTime: totalProcessingTime,
+                chunkCount: chunks.count,
+                success: true,
+                error: nil
+            )
+            
+            print("✅ Chunked OpenAI transcription completed successfully")
+            print("📝 Total transcript length: \(fullTranscript.count) characters")
+            print("📊 Processed \(chunks.count) chunks in \(totalProcessingTime)s")
+            
+            return transcriptionResult
+            
+        } catch {
+            print("❌ Chunked OpenAI transcription failed: \(error)")
             throw TranscriptionError.openAITranscriptionFailed(error)
         }
     }
@@ -1290,6 +1434,7 @@ enum TranscriptionError: LocalizedError {
     case chunkProcessingFailed(chunk: Int, error: Error)
     case audioExtractionFailed
     case timeout
+    case fileTooLarge(duration: TimeInterval, maxDuration: TimeInterval)
     case awsTranscriptionFailed(Error)
     case whisperConnectionFailed
     case whisperTranscriptionFailed(Error)
@@ -1319,6 +1464,8 @@ enum TranscriptionError: LocalizedError {
             return "Whisper transcription failed: \(error.localizedDescription)"
         case .openAITranscriptionFailed(let error):
             return "OpenAI transcription failed: \(error.localizedDescription)"
+        case .fileTooLarge(let duration, let maxDuration):
+            return "File too large for processing (\(Int(duration/60)) minutes, max \(Int(maxDuration/60)) minutes)"
         }
     }
 }

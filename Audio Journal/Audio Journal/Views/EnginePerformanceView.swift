@@ -9,117 +9,186 @@ import SwiftUI
 import Charts
 
 struct EnginePerformanceView: View {
-    @ObservedObject var summaryManager: SummaryManager
-    @State private var selectedTimeRange: TimeRange = .week
-    @State private var selectedEngine: String?
-    @State private var showingClearDataAlert = false
-    
-    enum TimeRange: String, CaseIterable {
-        case day = "24 Hours"
-        case week = "7 Days"
-        case month = "30 Days"
-        case all = "All Time"
-        
-        var dateInterval: DateInterval {
-            let now = Date()
-            let calendar = Calendar.current
-            
-            switch self {
-            case .day:
-                let start = calendar.date(byAdding: .day, value: -1, to: now) ?? now
-                return DateInterval(start: start, duration: 24 * 3600)
-            case .week:
-                let start = calendar.date(byAdding: .day, value: -7, to: now) ?? now
-                return DateInterval(start: start, duration: 7 * 24 * 3600)
-            case .month:
-                let start = calendar.date(byAdding: .day, value: -30, to: now) ?? now
-                return DateInterval(start: start, duration: 30 * 24 * 3600)
-            case .all:
-                let start = calendar.date(byAdding: .year, value: -1, to: now) ?? now
-                return DateInterval(start: start, duration: 365 * 24 * 3600)
-            }
-        }
-    }
+    @StateObject private var summaryManager = SummaryManager.shared
+    @StateObject private var performanceOptimizer = PerformanceOptimizer.shared
+    @StateObject private var performanceMonitor = EnginePerformanceMonitor()
     
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 20) {
-                    // Header with controls
-                    headerSection
+                    // Performance Monitoring Status
+                    PerformanceMonitoringSection()
                     
-                    // Engine Statistics Overview
-                    engineStatisticsSection
+                    // Battery and Memory Status
+                    BatteryMemorySection()
                     
-                    // Performance Trends
-                    performanceTrendsSection
+                    // Optimization Status
+                    OptimizationStatusSection()
                     
-                    // Usage Analytics
-                    usageAnalyticsSection
+                    // Engine Statistics
+                    EngineStatisticsSection()
                     
                     // Recent Performance
-                    recentPerformanceSection
+                    RecentPerformanceSection()
                     
-                    // Engine Comparison
-                    engineComparisonSection
+                    // Performance Trends
+                    PerformanceTrendsSection()
+                    
+                    // Usage Analytics
+                    UsageAnalyticsSection()
                 }
                 .padding()
             }
-            .navigationTitle("Engine Performance")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Clear Data") {
-                        showingClearDataAlert = true
-                    }
-                    .foregroundColor(.red)
+            .navigationTitle("Performance Monitor")
+            .navigationBarTitleDisplayMode(.large)
+        }
+    }
+}
+
+// MARK: - Performance Monitoring Section
+
+struct PerformanceMonitoringSection: View {
+    @StateObject private var summaryManager = SummaryManager.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .foregroundColor(.blue)
+                Text("Performance Monitoring")
+                    .font(.headline)
+                Spacer()
+                Circle()
+                    .fill(summaryManager.isPerformanceMonitoringEnabled() ? Color.green : Color.red)
+                    .frame(width: 12, height: 12)
+                Text(summaryManager.isPerformanceMonitoringEnabled() ? "Active" : "Inactive")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Text("Track engine performance, memory usage, and battery efficiency")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+}
+
+// MARK: - Battery and Memory Section
+
+struct BatteryMemorySection: View {
+    @StateObject private var performanceOptimizer = PerformanceOptimizer.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "battery.100")
+                    .foregroundColor(.green)
+                Text("System Resources")
+                    .font(.headline)
+                Spacer()
+            }
+            
+            // Battery Status
+            HStack {
+                Image(systemName: batteryIcon)
+                    .foregroundColor(batteryColor)
+                Text("Battery: \(performanceOptimizer.batteryInfo.formattedLevel)")
+                    .font(.subheadline)
+                Spacer()
+                if performanceOptimizer.batteryInfo.isLowPowerMode {
+                    Text("Low Power Mode")
+                        .font(.caption)
+                        .foregroundColor(.orange)
                 }
             }
-            .alert("Clear Performance Data", isPresented: $showingClearDataAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Clear", role: .destructive) {
-                    summaryManager.clearPerformanceData()
-                }
-            } message: {
-                Text("This will permanently delete all performance tracking data. This action cannot be undone.")
+            
+            // Memory Usage
+            HStack {
+                Image(systemName: "memorychip")
+                    .foregroundColor(memoryColor)
+                Text("Memory: \(performanceOptimizer.memoryUsage.formattedUsage)")
+                    .font(.subheadline)
+                Spacer()
+                Text(performanceOptimizer.memoryUsage.usageLevel.description)
+                    .font(.caption)
+                    .foregroundColor(performanceOptimizer.memoryUsage.usageLevel.color)
             }
+            
+            // Memory Progress Bar
+            ProgressView(value: min(performanceOptimizer.memoryUsage.usedMemoryMB / 200.0, 1.0))
+                .progressViewStyle(LinearProgressViewStyle(tint: memoryColor))
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+    
+    private var batteryIcon: String {
+        let level = performanceOptimizer.batteryInfo.level
+        switch level {
+        case 0.0..<0.2: return "battery.0"
+        case 0.2..<0.4: return "battery.25"
+        case 0.4..<0.6: return "battery.50"
+        case 0.6..<0.8: return "battery.75"
+        default: return "battery.100"
         }
     }
     
-    // MARK: - Header Section
+    private var batteryColor: Color {
+        if performanceOptimizer.batteryInfo.isLowBattery {
+            return .red
+        } else if performanceOptimizer.batteryInfo.shouldOptimizeForBattery {
+            return .orange
+        } else {
+            return .green
+        }
+    }
     
-    private var headerSection: some View {
-        VStack(spacing: 12) {
+    private var memoryColor: Color {
+        performanceOptimizer.memoryUsage.usageLevel.color
+    }
+}
+
+// MARK: - Optimization Status Section
+
+struct OptimizationStatusSection: View {
+    @StateObject private var performanceOptimizer = PerformanceOptimizer.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Time Range")
+                Image(systemName: "gearshape.2")
+                    .foregroundColor(.blue)
+                Text("Optimization Status")
                     .font(.headline)
-                
                 Spacer()
-                
-                Picker("Time Range", selection: $selectedTimeRange) {
-                    ForEach(TimeRange.allCases, id: \.self) { range in
-                        Text(range.rawValue).tag(range)
-                    }
-                }
-                .pickerStyle(.menu)
             }
             
+            // Current Optimization Level
             HStack {
-                Text("Monitoring Status")
+                Image(systemName: optimizationIcon)
+                    .foregroundColor(optimizationColor)
+                Text("Mode: \(performanceOptimizer.optimizationLevel.description)")
                     .font(.subheadline)
+                Spacer()
+            }
+            
+            // Optimization Details
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Current Settings:")
+                    .font(.caption)
                     .foregroundColor(.secondary)
                 
-                Spacer()
-                
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(summaryManager.isPerformanceMonitoringEnabled() ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
-                    
-                    Text(summaryManager.isPerformanceMonitoringEnabled() ? "Active" : "Inactive")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                Text("• Cache Size: \(cacheSizeDescription)")
+                    .font(.caption)
+                Text("• Processing QoS: \(qosDescription)")
+                    .font(.caption)
+                Text("• Sync Interval: \(syncIntervalDescription)")
+                    .font(.caption)
             }
         }
         .padding()
@@ -127,14 +196,63 @@ struct EnginePerformanceView: View {
         .cornerRadius(12)
     }
     
-    // MARK: - Engine Statistics Section
+    private var optimizationIcon: String {
+        switch performanceOptimizer.optimizationLevel {
+        case .balanced: return "equal.circle"
+        case .batteryOptimized: return "battery.25"
+        case .memoryOptimized: return "memorychip"
+        }
+    }
     
-    private var engineStatisticsSection: some View {
+    private var optimizationColor: Color {
+        switch performanceOptimizer.optimizationLevel {
+        case .balanced: return .blue
+        case .batteryOptimized: return .orange
+        case .memoryOptimized: return .purple
+        }
+    }
+    
+    private var cacheSizeDescription: String {
+        switch performanceOptimizer.optimizationLevel {
+        case .balanced: return "Standard (50 items)"
+        case .batteryOptimized: return "Reduced (25 items)"
+        case .memoryOptimized: return "Minimal (30 items)"
+        }
+    }
+    
+    private var qosDescription: String {
+        switch performanceOptimizer.optimizationLevel {
+        case .balanced: return "User Initiated"
+        case .batteryOptimized: return "Utility"
+        case .memoryOptimized: return "User Initiated"
+        }
+    }
+    
+    private var syncIntervalDescription: String {
+        switch performanceOptimizer.optimizationLevel {
+        case .balanced: return "3 minutes"
+        case .batteryOptimized: return "10 minutes"
+        case .memoryOptimized: return "5 minutes"
+        }
+    }
+}
+
+// MARK: - Engine Statistics Section
+
+struct EngineStatisticsSection: View {
+    @StateObject private var performanceMonitor = EnginePerformanceMonitor()
+    
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Engine Statistics")
-                .font(.headline)
+            HStack {
+                Image(systemName: "chart.bar")
+                    .foregroundColor(.blue)
+                Text("Engine Statistics")
+                    .font(.headline)
+                Spacer()
+            }
             
-            let statistics = summaryManager.getEnginePerformanceStatistics()
+            let statistics = performanceMonitor.engineStatistics
             
             if statistics.isEmpty {
                 Text("No performance data available")
@@ -157,15 +275,59 @@ struct EnginePerformanceView: View {
         .background(Color(.systemGray6))
         .cornerRadius(12)
     }
+}
+
+// MARK: - Recent Performance Section
+
+struct RecentPerformanceSection: View {
+    @StateObject private var performanceMonitor = EnginePerformanceMonitor()
     
-    // MARK: - Performance Trends Section
-    
-    private var performanceTrendsSection: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Performance Trends")
-                .font(.headline)
+            HStack {
+                Image(systemName: "clock")
+                    .foregroundColor(.blue)
+                Text("Recent Performance")
+                    .font(.headline)
+                Spacer()
+            }
             
-            let trends = summaryManager.getPerformanceTrends()
+            let recentData = performanceMonitor.recentPerformance
+            
+            if recentData.isEmpty {
+                Text("No recent performance data")
+                    .foregroundColor(.secondary)
+                    .italic()
+            } else {
+                LazyVStack(spacing: 8) {
+                    ForEach(recentData.prefix(10)) { data in
+                        RecentPerformanceRow(data: data)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+}
+
+// MARK: - Performance Trends Section
+
+struct PerformanceTrendsSection: View {
+    @StateObject private var performanceMonitor = EnginePerformanceMonitor()
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .foregroundColor(.blue)
+                Text("Performance Trends")
+                    .font(.headline)
+                Spacer()
+            }
+            
+            let trends = performanceMonitor.performanceTrends
             
             if trends.isEmpty {
                 Text("No trend data available")
@@ -183,15 +345,24 @@ struct EnginePerformanceView: View {
         .background(Color(.systemGray6))
         .cornerRadius(12)
     }
+}
+
+// MARK: - Usage Analytics Section
+
+struct UsageAnalyticsSection: View {
+    @StateObject private var performanceMonitor = EnginePerformanceMonitor()
     
-    // MARK: - Usage Analytics Section
-    
-    private var usageAnalyticsSection: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Usage Analytics")
-                .font(.headline)
+            HStack {
+                Image(systemName: "chart.pie")
+                    .foregroundColor(.blue)
+                Text("Usage Analytics")
+                    .font(.headline)
+                Spacer()
+            }
             
-            if let analytics = summaryManager.getUsageAnalytics() {
+            if let analytics = performanceMonitor.usageAnalytics {
                 VStack(spacing: 16) {
                     // Usage Distribution
                     VStack(alignment: .leading, spacing: 8) {
@@ -272,84 +443,6 @@ struct EnginePerformanceView: View {
         .background(Color(.systemGray6))
         .cornerRadius(12)
     }
-    
-    // MARK: - Recent Performance Section
-    
-    private var recentPerformanceSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Recent Performance")
-                .font(.headline)
-            
-            let recentData = summaryManager.getRecentPerformanceData()
-            
-            if recentData.isEmpty {
-                Text("No recent performance data")
-                    .foregroundColor(.secondary)
-                    .italic()
-            } else {
-                LazyVStack(spacing: 8) {
-                    ForEach(recentData.prefix(10)) { data in
-                        RecentPerformanceRow(data: data)
-                    }
-                }
-            }
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-    }
-    
-    // MARK: - Engine Comparison Section
-    
-    private var engineComparisonSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Engine Comparison")
-                .font(.headline)
-            
-            let comparison = summaryManager.getEngineComparisonData(timeRange: selectedTimeRange.dateInterval)
-            
-            if comparison.engines.isEmpty {
-                Text("No comparison data available")
-                    .foregroundColor(.secondary)
-                    .italic()
-            } else {
-                VStack(spacing: 16) {
-                    // Best Engine
-                    if let bestEngine = comparison.bestEngine {
-                        ComparisonMetricRow(
-                            title: "Best Quality",
-                            value: bestEngine,
-                            icon: "star.fill",
-                            color: .yellow
-                        )
-                    }
-                    
-                    // Fastest Engine
-                    if let fastestEngine = comparison.fastestEngine {
-                        ComparisonMetricRow(
-                            title: "Fastest Processing",
-                            value: fastestEngine,
-                            icon: "speedometer",
-                            color: .green
-                        )
-                    }
-                    
-                    // Most Reliable Engine
-                    if let mostReliableEngine = comparison.mostReliableEngine {
-                        ComparisonMetricRow(
-                            title: "Most Reliable",
-                            value: mostReliableEngine,
-                            icon: "checkmark.circle.fill",
-                            color: .blue
-                        )
-                    }
-                }
-            }
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-    }
 }
 
 // MARK: - Supporting Views
@@ -365,65 +458,74 @@ struct EngineStatsCard: View {
             
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("Success Rate")
+                    Text("Success Rate:")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
                     Spacer()
-                    
                     Text(statistics.formattedSuccessRate)
                         .font(.caption)
                         .fontWeight(.medium)
                 }
                 
                 HStack {
-                    Text("Avg Time")
+                    Text("Avg Time:")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
                     Spacer()
-                    
                     Text(statistics.formattedAverageProcessingTime)
                         .font(.caption)
                         .fontWeight(.medium)
                 }
                 
                 HStack {
-                    Text("Quality")
+                    Text("Total Uses:")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
                     Spacer()
-                    
-                    Text(statistics.formattedAverageQualityScore)
+                    Text("\(statistics.totalRuns)")
                         .font(.caption)
                         .fontWeight(.medium)
                 }
-            }
-            
-            // Performance level indicator
-            HStack {
-                Circle()
-                    .fill(performanceColor)
-                    .frame(width: 8, height: 8)
-                
-                Text(statistics.performanceLevel.rawValue)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
             }
         }
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(.systemGray4), lineWidth: 1)
+        )
     }
+}
+
+struct RecentPerformanceRow: View {
+    let data: EnginePerformanceData
     
-    private var performanceColor: Color {
-        switch statistics.performanceLevel {
-        case .excellent: return .green
-        case .good: return .blue
-        case .fair: return .orange
-        case .poor: return .red
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(data.engineName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Text("Processing")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(data.formattedProcessingTime)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Text(data.timestamp, style: .relative)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
+        .padding(.vertical, 4)
     }
 }
 
@@ -432,10 +534,13 @@ struct TrendRow: View {
     
     var body: some View {
         HStack {
+            Image(systemName: trendIcon)
+                .foregroundColor(trendColor)
+                .frame(width: 20)
+            
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(trend.engineName) - \(trend.metric)")
                     .font(.subheadline)
-                    .fontWeight(.medium)
                 
                 Text("Average: \(trend.formattedAverageValue)")
                     .font(.caption)
@@ -449,14 +554,12 @@ struct TrendRow: View {
                     .foregroundColor(trendColor)
                 
                 Text(trend.trend.rawValue)
-                    .font(.caption)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
                     .foregroundColor(trendColor)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(.systemBackground))
-        .cornerRadius(8)
+        .padding(.vertical, 4)
     }
     
     private var trendIcon: String {
@@ -473,40 +576,6 @@ struct TrendRow: View {
         case .declining: return .red
         case .stable: return .blue
         }
-    }
-}
-
-struct RecentPerformanceRow: View {
-    let data: EnginePerformanceData
-    
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(data.engineName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                
-                Text(data.timestamp, style: .relative)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-            
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(data.formattedProcessingTime)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                
-                Text(data.success ? "Success" : "Failed")
-                    .font(.caption2)
-                    .foregroundColor(data.success ? .green : .red)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(.systemBackground))
-        .cornerRadius(8)
     }
 }
 

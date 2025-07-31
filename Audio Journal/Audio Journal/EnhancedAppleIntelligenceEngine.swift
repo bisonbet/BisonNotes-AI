@@ -41,8 +41,8 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
             throw SummarizationError.transcriptTooShort
         }
         
-        guard wordCount <= 10000 else {
-            throw SummarizationError.transcriptTooLong(maxLength: 10000)
+        guard wordCount <= 50000 else {
+            throw SummarizationError.transcriptTooLong(maxLength: 50000)
         }
         
         // Check for timeout
@@ -81,6 +81,7 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     func extractTitles(from text: String) async throws -> [TitleItem] {
         print("🍎 EnhancedAppleIntelligenceEngine: Starting title extraction")
         
+        // Use standardized title generation approach
         let sentences = ContentAnalyzer.extractSentences(from: text)
         var allTitles: [TitleItem] = []
         
@@ -92,6 +93,18 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         
         // Remove duplicates and sort by confidence
         let uniqueTitles = Array(Set(allTitles)).sorted { $0.confidence > $1.confidence }
+        
+        // Apply standardized title cleaning to the best title
+        if let bestTitle = uniqueTitles.first(where: { $0.confidence >= 0.7 }) {
+            let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(bestTitle.text)
+            if cleanedTitle != "Untitled Conversation" {
+                return [TitleItem(
+                    text: cleanedTitle,
+                    confidence: bestTitle.confidence,
+                    category: bestTitle.category
+                )]
+            }
+        }
         
         print("📝 Final title count: \(uniqueTitles.count)")
         
@@ -345,21 +358,28 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     private func isValidTranscriptContent(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Check minimum length
-        guard trimmed.count >= 50 else {
-            print("⚠️ Transcript too short: \(trimmed.count) characters")
-            return false
+        // Count words in the transcript
+        let words = trimmed.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty && $0.count > 1 }
+        
+        print("⚠️ Transcript word count: \(words.count) words")
+        
+        // If transcript has 50 words or less, it's valid for summarization (will be shown as-is)
+        if words.count <= 50 {
+            print("⚠️ Transcript has 50 words or less (\(words.count) words) - will be shown as-is")
+            return true
         }
         
-        // Check for placeholder patterns
+        // For transcripts with more than 50 words, check for placeholder patterns
         let lowercased = trimmed.lowercased()
+        
+        // Patterns that indicate the transcript is just a placeholder/error message
         let placeholderPatterns = [
             "transcription in progress",
             "processing audio",
             "please wait",
             "transcribing",
             "loading",
-            "error",
             "failed to transcribe",
             "no audio detected",
             "silence detected",
@@ -367,23 +387,72 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
             "whisper-based transcription coming soon"
         ]
         
+        // Check for pure error messages (transcript consists mostly of error text)
+        let errorPatterns = [
+            "error",
+            "failed",
+            "exception",
+            "timeout"
+        ]
+        
+        // Count how many error words appear in the text
+        var errorWordCount = 0
+        
+        for word in words {
+            let lowercasedWord = word.lowercased()
+            for pattern in errorPatterns {
+                if lowercasedWord.contains(pattern) {
+                    errorWordCount += 1
+                    break
+                }
+            }
+        }
+        
+        // If more than 30% of words are error-related, it's likely an error message
+        let errorRatio = Double(errorWordCount) / Double(words.count)
+        if errorRatio > 0.3 {
+            print("⚠️ Transcript contains too many error words: \(errorWordCount)/\(words.count) (\(Int(errorRatio * 100))%)")
+            return false
+        }
+        
+        // Check for pure placeholder patterns - be more intelligent about it
         for pattern in placeholderPatterns {
             if lowercased.contains(pattern) {
+                // For single words like "loading", check if it's part of a larger placeholder phrase
+                if pattern == "loading" {
+                    // Check if "loading" appears in a context that suggests it's placeholder text
+                    let loadingContexts = [
+                        "loading transcription",
+                        "loading audio",
+                        "loading file",
+                        "loading please wait",
+                        "loading...",
+                        "loading -",
+                        "loading:"
+                    ]
+                    
+                    let isPlaceholderLoading = loadingContexts.contains { context in
+                        lowercased.contains(context)
+                    }
+                    
+                    if !isPlaceholderLoading {
+                        print("⚠️ Transcript contains 'loading' but appears to be legitimate content, allowing summarization")
+                        continue // Skip this pattern, it's likely legitimate content
+                    }
+                }
+                
                 print("⚠️ Transcript contains placeholder: \(pattern)")
                 return false
             }
         }
         
-        // Check word count
-        let words = trimmed.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty && $0.count > 1 }
-        
+        // Check word count (at least 10 actual words for longer transcripts)
         guard words.count >= 10 else {
             print("⚠️ Insufficient word count: \(words.count) words")
             return false
         }
         
-        print("✅ Transcript validated: \(words.count) words")
+        print("✅ Transcript validated: \(words.count) words, error ratio: \(Int(errorRatio * 100))%")
         return true
     }
     

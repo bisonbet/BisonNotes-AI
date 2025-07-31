@@ -209,7 +209,7 @@ struct OpenAISettingsView: View {
                     baseURL: baseURL
                 )
                 
-                let service = OpenAITranscribeService(config: config)
+                let service = OpenAITranscribeService(config: config, chunkingService: AudioFileChunkingService())
                 try await service.testConnection()
                 
                 await MainActor.run {

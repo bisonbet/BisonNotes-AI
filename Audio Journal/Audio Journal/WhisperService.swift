@@ -109,6 +109,8 @@ struct LanguageDetectionResponse: Codable {
 class WhisperService: ObservableObject {
     private let config: WhisperConfig
     private let session: URLSession
+    // Add chunking service
+    private let chunkingService: AudioFileChunkingService
     
     @Published var isConnected: Bool = false
     @Published var connectionError: String?
@@ -116,14 +118,15 @@ class WhisperService: ObservableObject {
     @Published var currentStatus = ""
     @Published var progress: Double = 0.0
     
-    init(config: WhisperConfig = .default) {
+    init(config: WhisperConfig = .default, chunkingService: AudioFileChunkingService) {
         self.config = config
         
         // Create a custom URLSession with longer timeout for Whisper requests
         let sessionConfig = URLSessionConfiguration.default
-        sessionConfig.timeoutIntervalForRequest = 300.0  // 5 minutes
-        sessionConfig.timeoutIntervalForResource = 600.0 // 10 minutes
+        sessionConfig.timeoutIntervalForRequest = 1800.0  // 30 minutes
+        sessionConfig.timeoutIntervalForResource = 1800.0 // 30 minutes
         self.session = URLSession(configuration: sessionConfig)
+        self.chunkingService = chunkingService
     }
     
     // MARK: - Connection Management
@@ -270,7 +273,7 @@ class WhisperService: ObservableObject {
         }
         
         // Send request with timeout
-        let (data, response) = try await withTimeout(seconds: 300) { [self] in
+        let (data, response) = try await withTimeout(seconds: 1800) { [self] in
             try await session.data(for: request)
         }
         
@@ -388,10 +391,67 @@ class WhisperService: ObservableObject {
     
     // MARK: - Chunked Transcription (for large files)
     
-    func transcribeAudioInChunks(url: URL, chunkDuration: TimeInterval = 300) async throws -> TranscriptionResult {
-        // For now, we'll use the single file transcription
-        // In the future, we could implement chunking if needed
-        return try await transcribeAudio(url: url)
+    func transcribeAudioInChunks(url: URL, chunkDuration: TimeInterval = 3600) async throws -> TranscriptionResult {
+        // Check if chunking is needed for Whisper (2 hour limit)
+        let needsChunking = try await chunkingService.shouldChunkFile(url, for: .whisper)
+        if needsChunking {
+            await MainActor.run {
+                self.isTranscribing = true
+                self.currentStatus = "Chunking audio file..."
+                self.progress = 0.05
+            }
+            let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .whisper)
+            let chunks = chunkingResult.chunks
+            var transcriptChunks: [TranscriptChunk] = []
+            var chunkIndex = 0
+            for audioChunk in chunks {
+                await MainActor.run {
+                    self.currentStatus = "Transcribing chunk \(chunkIndex + 1) of \(chunks.count)..."
+                    self.progress = 0.05 + 0.85 * (Double(chunkIndex) / Double(chunks.count))
+                }
+                let result = try await transcribeAudio(url: audioChunk.chunkURL)
+                // Wrap result in TranscriptChunk
+                let transcriptChunk = TranscriptChunk(
+                    chunkId: audioChunk.id,
+                    sequenceNumber: audioChunk.sequenceNumber,
+                    transcript: result.fullText,
+                    segments: result.segments,
+                    startTime: audioChunk.startTime,
+                    endTime: audioChunk.endTime,
+                    processingTime: result.processingTime
+                )
+                transcriptChunks.append(transcriptChunk)
+                chunkIndex += 1
+            }
+            // Reassemble transcript
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let creationDate = (fileAttributes[.creationDate] as? Date) ?? Date()
+            let reassembly = try await chunkingService.reassembleTranscript(
+                from: transcriptChunks,
+                originalURL: url,
+                recordingName: url.deletingPathExtension().lastPathComponent,
+                recordingDate: creationDate
+            )
+            // Clean up chunk files
+            try await chunkingService.cleanupChunks(chunks)
+            await MainActor.run {
+                self.currentStatus = "Transcription complete"
+                self.progress = 1.0
+                self.isTranscribing = false
+            }
+            // Return as TranscriptionResult (flattened)
+            return TranscriptionResult(
+                fullText: reassembly.transcriptData.plainText,
+                segments: reassembly.transcriptData.segments,
+                processingTime: reassembly.reassemblyTime,
+                chunkCount: chunks.count,
+                success: true,
+                error: nil
+            )
+        } else {
+            // No chunking needed, use single file method
+            return try await transcribeAudio(url: url)
+        }
     }
     
     // MARK: - Language Detection

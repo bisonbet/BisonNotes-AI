@@ -30,7 +30,7 @@ struct WhisperSettingsView: View {
             port: effectivePort
         )
         
-        _whisperService = State(initialValue: WhisperService(config: config))
+        _whisperService = State(initialValue: WhisperService(config: config, chunkingService: AudioFileChunkingService()))
     }
     
     var body: some View {
@@ -224,7 +224,7 @@ struct WhisperSettingsView: View {
             serverURL: serverURL,
             port: port
         )
-        whisperService = WhisperService(config: config)
+        whisperService = WhisperService(config: config, chunkingService: AudioFileChunkingService())
     }
     
     private func testConnection() {

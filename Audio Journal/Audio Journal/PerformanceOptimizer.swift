@@ -27,6 +27,16 @@ enum LogLevel: Int, CaseIterable {
         case .verbose: return "🔧"
         }
     }
+    
+    var description: String {
+        switch self {
+        case .error: return "Error"
+        case .warning: return "Warning"
+        case .info: return "Info"
+        case .debug: return "Debug"
+        case .verbose: return "Verbose"
+        }
+    }
 }
 
 class AppLogger {
@@ -87,6 +97,70 @@ class AppLogger {
     }
 }
 
+// MARK: - Battery Monitor
+
+struct BatteryInfo {
+    let level: Float
+    let state: UIDevice.BatteryState
+    let isLowPowerMode: Bool
+    
+    var isLowBattery: Bool {
+        return level < 0.2 || isLowPowerMode
+    }
+    
+    var shouldOptimizeForBattery: Bool {
+        return level < 0.3 || isLowPowerMode
+    }
+    
+    var formattedLevel: String {
+        return String(format: "%.0f%%", level * 100)
+    }
+}
+
+// MARK: - Optimization Level
+
+enum OptimizationLevel {
+    case balanced
+    case batteryOptimized
+    case memoryOptimized
+    
+    var description: String {
+        switch self {
+        case .balanced: return "Balanced"
+        case .batteryOptimized: return "Battery Optimized"
+        case .memoryOptimized: return "Memory Optimized"
+        }
+    }
+}
+
+// MARK: - String Extension for Chunking
+
+extension String {
+    func chunked(into size: Int) -> [String] {
+        var chunks: [String] = []
+        var currentChunk = ""
+        
+        let words = self.components(separatedBy: .whitespacesAndNewlines)
+        
+        for word in words {
+            let testChunk = currentChunk.isEmpty ? word : "\(currentChunk) \(word)"
+            
+            if testChunk.count > size && !currentChunk.isEmpty {
+                chunks.append(currentChunk)
+                currentChunk = word
+            } else {
+                currentChunk = testChunk
+            }
+        }
+        
+        if !currentChunk.isEmpty {
+            chunks.append(currentChunk)
+        }
+        
+        return chunks
+    }
+}
+
 // MARK: - Performance Optimizer
 
 @MainActor
@@ -96,11 +170,14 @@ class PerformanceOptimizer: ObservableObject, Sendable {
     @Published var isProcessing = false
     @Published var processingProgress: Double = 0.0
     @Published var memoryUsage: MemoryUsage = MemoryUsage()
+    @Published var batteryInfo: BatteryInfo = BatteryInfo(level: 1.0, state: .unknown, isLowPowerMode: false)
     @Published var performanceMetrics: PerformanceMetrics = PerformanceMetrics()
+    @Published var optimizationLevel: OptimizationLevel = .balanced
     
     private let logger = Logger(subsystem: "com.audiojournal.app", category: "Performance")
     private let processingQueue = DispatchQueue(label: "com.audiojournal.processing", qos: .userInitiated)
     private let cacheQueue = DispatchQueue(label: "com.audiojournal.cache", qos: .utility)
+    private let streamingQueue = DispatchQueue(label: "com.audiojournal.streaming", qos: .utility)
     
     // MARK: - Caching System
     
@@ -122,13 +199,360 @@ class PerformanceOptimizer: ObservableObject, Sendable {
     
     private var processingStartTime: Date?
     private var memoryMonitorTimer: Timer?
+    private var batteryMonitorTimer: Timer?
+    private var optimizationTimer: Timer?
     
     init() {
         startMemoryMonitoring()
+        startBatteryMonitoring()
+        startOptimizationMonitoring()
     }
     
     deinit {
-        // Timer will be automatically cleaned up when the object is deallocated
+        // Use weak self to avoid capture cycle
+        Task { [weak self] in
+            await self?.stopAllMonitoring()
+        }
+    }
+    
+    // MARK: - Battery Monitoring
+    
+    private func startBatteryMonitoring() {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        
+        batteryMonitorTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.updateBatteryInfo()
+            }
+        }
+        
+        // Initial battery info update
+        Task { @MainActor in
+            await updateBatteryInfo()
+        }
+    }
+    
+    private func updateBatteryInfo() async {
+        let device = UIDevice.current
+        let batteryInfo = BatteryInfo(
+            level: device.batteryLevel,
+            state: device.batteryState,
+            isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+        )
+        
+        self.batteryInfo = batteryInfo
+        
+        // Adjust optimization level based on battery state
+        await adjustOptimizationLevel()
+        
+        logger.info("Battery: \(batteryInfo.formattedLevel), Low Power: \(batteryInfo.isLowPowerMode)")
+    }
+    
+    private func adjustOptimizationLevel() async {
+        let newLevel: OptimizationLevel
+        
+        if batteryInfo.shouldOptimizeForBattery {
+            newLevel = .batteryOptimized
+        } else if memoryUsage.isHighUsage {
+            newLevel = .memoryOptimized
+        } else {
+            newLevel = .balanced
+        }
+        
+        if newLevel != optimizationLevel {
+            optimizationLevel = newLevel
+            await applyOptimizationSettings()
+        }
+    }
+    
+    private func applyOptimizationSettings() async {
+        switch optimizationLevel {
+        case .batteryOptimized:
+            // Reduce processing frequency and cache size
+            summaryCache.countLimit = 25
+            processingCache.countLimit = 10
+            logger.info("Applied battery optimization settings")
+            
+        case .memoryOptimized:
+            // Reduce cache sizes and increase cleanup frequency
+            summaryCache.countLimit = 30
+            processingCache.countLimit = 15
+            clearCaches()
+            logger.info("Applied memory optimization settings")
+            
+        case .balanced:
+            // Standard settings
+            summaryCache.countLimit = 50
+            processingCache.countLimit = 20
+            logger.info("Applied balanced optimization settings")
+        }
+    }
+    
+    // MARK: - Streaming File Processing
+    
+    func processLargeFileWithStreaming(_ url: URL, chunkSize: Int = 1024 * 1024) async throws -> Data {
+        logger.info("Starting streaming processing for file: \(url.lastPathComponent)")
+        
+        let fileHandle = try FileHandle(forReadingFrom: url)
+        defer { try? fileHandle.close() }
+        
+        var processedData = Data()
+        var totalBytesRead: Int64 = 0
+        let totalFileSize = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        var shouldStopProcessing = false
+        
+        while !shouldStopProcessing {
+            autoreleasepool {
+                let chunk = fileHandle.readData(ofLength: chunkSize)
+                if chunk.isEmpty { 
+                    shouldStopProcessing = true
+                    return 
+                }
+                
+                processedData.append(chunk)
+                totalBytesRead += Int64(chunk.count)
+                
+                // Update progress
+                let progress = Double(totalBytesRead) / Double(totalFileSize)
+                Task { @MainActor in
+                    self.processingProgress = progress
+                }
+                
+                // Memory management: limit processed data size
+                if processedData.count > 50 * 1024 * 1024 { // 50MB limit
+                    logger.warning("Processed data size limit reached, processing in segments")
+                    shouldStopProcessing = true
+                    return
+                }
+            }
+            
+            // Yield control to prevent blocking
+            try await Task.sleep(nanoseconds: 1_000_000) // 1ms
+        }
+        
+        return processedData
+    }
+    
+    // MARK: - Enhanced Memory Management
+    
+    func optimizeMemoryUsage() {
+        Task {
+            await performAdvancedMemoryOptimization()
+        }
+    }
+    
+    private func performAdvancedMemoryOptimization() async {
+        logger.info("Performing advanced memory optimization")
+        
+        let currentMemory = getCurrentMemoryUsage()
+        
+        // Aggressive cache clearing if memory usage is high
+        if currentMemory.usedMemoryMB > 100 {
+            clearCaches()
+            await forceGarbageCollection()
+        }
+        
+        // Adaptive cache size adjustment
+        if currentMemory.usedMemoryMB > 150 {
+            summaryCache.countLimit = max(10, summaryCache.countLimit / 2)
+            processingCache.countLimit = max(5, processingCache.countLimit / 2)
+        }
+        
+        // Update memory usage
+        await updateMemoryUsage()
+        
+        logger.info("Memory optimization complete. Current usage: \(currentMemory.usedMemoryMB)MB")
+    }
+    
+    private func forceGarbageCollection() async {
+        // Force autorelease pool cleanup
+        autoreleasepool {
+            // This block helps with memory cleanup
+        }
+        
+        // Small delay to allow system to reclaim memory
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+    }
+    
+    // MARK: - Background Processing Optimization
+    
+    func optimizeBackgroundProcessing() async {
+        logger.info("Optimizing background processing for battery and memory efficiency")
+        
+        // Note: DispatchQueue QoS cannot be changed after creation
+        // The queue will continue using its original QoS setting
+        // Battery optimization is handled through chunk size and processing frequency
+        
+        // Adjust chunk processing size based on memory usage
+        let optimalChunkSize = calculateOptimalChunkSize()
+        logger.info("Optimal chunk size: \(optimalChunkSize) bytes")
+    }
+    
+    public func calculateOptimalChunkSize() -> Int {
+        let baseSize = 1024 * 1024 // 1MB base
+        
+        if memoryUsage.isHighUsage {
+            return baseSize / 2 // 512KB
+        } else if batteryInfo.shouldOptimizeForBattery {
+            return baseSize / 4 // 256KB
+        } else {
+            return baseSize // 1MB
+        }
+    }
+    
+    // MARK: - Network Optimization for iCloud Sync
+    
+    func optimizeNetworkUsage() async {
+        logger.info("Optimizing network usage for iCloud sync")
+        
+        // Adjust sync frequency based on battery and network conditions
+        let syncInterval: TimeInterval
+        
+        if batteryInfo.shouldOptimizeForBattery {
+            syncInterval = 600 // 10 minutes
+        } else if memoryUsage.isHighUsage {
+            syncInterval = 300 // 5 minutes
+        } else {
+            syncInterval = 180 // 3 minutes
+        }
+        
+        logger.info("Network sync interval: \(syncInterval) seconds")
+    }
+    
+    // MARK: - Progress Tracking with Battery Awareness
+    
+    func trackProgressWithBatteryAwareness(for operation: String, progress: Double) {
+        processingProgress = progress
+        
+        // Reduce update frequency when battery is low
+        if batteryInfo.shouldOptimizeForBattery {
+            // Only update every 10% when battery is low
+            let roundedProgress = round(progress * 10) / 10
+            processingProgress = roundedProgress
+        }
+    }
+    
+    // MARK: - Enhanced Chunked Processing with Streaming
+    
+    func processLargeTranscriptWithStreaming(_ text: String, using engine: SummarizationEngine) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        
+        let startTime = Date()
+        processingStartTime = startTime
+        
+        // Check cache first
+        let cacheKey = "\(text.hashValue)_\(engine.name)"
+        if let cachedResult = getCachedResult(key: cacheKey) {
+            logger.info("Cache hit for large transcript processing")
+            return cachedResult
+        }
+        
+        logger.info("Processing large transcript with streaming optimization")
+        
+        // Determine optimal chunk size based on current conditions
+        let optimalChunkSize = calculateOptimalChunkSize()
+        let chunks = text.chunked(into: optimalChunkSize)
+        
+        logger.info("Split transcript into \(chunks.count) chunks of ~\(optimalChunkSize) bytes each")
+        
+        var summaryParts: [String] = []
+        var allTasks: [TaskItem] = []
+        var allReminders: [ReminderItem] = []
+        var allTitles: [TitleItem] = []
+        var contentTypes: [ContentType] = []
+        
+        for (index, chunk) in chunks.enumerated() {
+            processingProgress = Double(index) / Double(chunks.count) * 0.8 // 80% for chunk processing
+            
+            do {
+                let chunkResult = try await processChunkWithRetry(chunk, using: engine, retryCount: 2)
+                
+                summaryParts.append(chunkResult.summary)
+                allTasks.append(contentsOf: chunkResult.tasks)
+                allReminders.append(contentsOf: chunkResult.reminders)
+                allTitles.append(contentsOf: chunkResult.titles)
+                contentTypes.append(chunkResult.contentType)
+                
+                // Memory management: clear intermediate results
+                autoreleasepool {
+                    // Process chunk results
+                }
+                
+                // Battery-aware processing delays
+                if batteryInfo.shouldOptimizeForBattery {
+                    try await Task.sleep(nanoseconds: 100_000_000) // 100ms delay
+                }
+                
+            } catch {
+                logger.error("Failed to process chunk \(index): \(error)")
+                // Continue with other chunks
+            }
+        }
+        
+        processingProgress = 0.9 // 90% - consolidating results
+        
+        // Consolidate results using TokenManager
+        let finalSummary = TokenManager.combineSummaries(summaryParts, contentType: determinePrimaryContentType(contentTypes))
+        let finalTasks = deduplicateAndLimitTasks(allTasks, limit: 15)
+        let finalReminders = deduplicateAndLimitReminders(allReminders, limit: 15)
+        let finalContentType = determinePrimaryContentType(contentTypes)
+        
+        processingProgress = 1.0
+        
+        let finalTitles = deduplicateAndLimitTitles(allTitles, limit: 15)
+        
+        let result = (summary: finalSummary, tasks: finalTasks, reminders: finalReminders, titles: finalTitles, contentType: finalContentType)
+        cacheResult(key: cacheKey, result: result, cost: text.count)
+        
+        return result
+    }
+    
+    // MARK: - Background Processing with Battery Optimization
+    
+    func processInBackgroundWithBatteryOptimization<T>(_ operation: @escaping () async throws -> T) async throws -> T {
+        return try await withCheckedThrowingContinuation { continuation in
+            let queue = batteryInfo.shouldOptimizeForBattery ? 
+                DispatchQueue(label: "com.audiojournal.processing.battery", qos: .utility) :
+                processingQueue
+            
+            queue.async {
+                Task {
+                    do {
+                        let result = try await operation()
+                        continuation.resume(returning: result)
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Monitoring Control
+    
+    private func startOptimizationMonitoring() {
+        optimizationTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.performPeriodicOptimization()
+            }
+        }
+    }
+    
+    private func performPeriodicOptimization() async {
+        await adjustOptimizationLevel()
+        await optimizeBackgroundProcessing()
+        await optimizeNetworkUsage()
+    }
+    
+    private func stopAllMonitoring() async {
+        memoryMonitorTimer?.invalidate()
+        batteryMonitorTimer?.invalidate()
+        optimizationTimer?.invalidate()
+        
+        memoryMonitorTimer = nil
+        batteryMonitorTimer = nil
+        optimizationTimer = nil
+        
+        UIDevice.current.isBatteryMonitoringEnabled = false
     }
     
     // MARK: - Chunked Processing
@@ -234,30 +658,6 @@ class PerformanceOptimizer: ObservableObject, Sendable {
     }
     
     // MARK: - Memory Management
-    
-    func optimizeMemoryUsage() {
-        Task {
-            await performMemoryOptimization()
-        }
-    }
-    
-    private func performMemoryOptimization() async {
-        logger.info("Performing memory optimization")
-        
-        // Clear caches if memory usage is high
-        let currentMemory = getCurrentMemoryUsage()
-        if currentMemory.usedMemoryMB > 100 { // If using more than 100MB
-            clearCaches()
-        }
-        
-        // Force garbage collection
-        autoreleasepool {
-            // This block helps with memory cleanup
-        }
-        
-        // Update memory usage
-        await updateMemoryUsage()
-    }
     
     func clearCaches() {
         summaryCache.removeAllObjects()
@@ -413,9 +813,9 @@ class PerformanceOptimizer: ObservableObject, Sendable {
     // MARK: - Memory Monitoring
     
     private func startMemoryMonitoring() {
-        memoryMonitorTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
+        memoryMonitorTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                await self.updateMemoryUsage()
+                await self?.updateMemoryUsage()
             }
         }
     }

@@ -96,14 +96,12 @@ BisonNotes AI supports Google's Gemini models for advanced AI processing.
 #### **Setup Instructions**
 1. **Get API Key**: Visit [Google AI Studio](https://aistudio.google.com) to obtain an API key
 2. **Configure in App**: Go to Settings → AI Settings → Google AI Studio
-3. **Select Model**: Choose from Gemini 2.5 Flash, 2.5 Pro, 1.5 Flash, or 1.5 Pro
+3. **Select Model**: Choose from Gemini 2.5 Flash or 2.5 Flash Lite
 4. **Test Connection**: Verify your configuration
 
 #### **Available Models**
 - **Gemini 2.5 Flash**: Fast and efficient for most tasks
-- **Gemini 2.5 Pro**: Most powerful with advanced capabilities
-- **Gemini 1.5 Flash**: Good balance of speed and quality
-- **Gemini 1.5 Pro**: High quality with comprehensive analysis
+- **Gemini 2.5 Flash Lite**: Lightweight version optimized for speed and cost efficiency
 
 ### **Whisper Integration**
 

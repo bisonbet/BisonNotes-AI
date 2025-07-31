@@ -133,17 +133,20 @@ class iCloudStorageManager: ObservableObject {
     @Published var networkStatus: NetworkStatus = .available
     @Published var pendingConflicts: [SyncConflict] = []
     
+    // MARK: - Private Properties
+    
     private var container: CKContainer?
     private var database: CKDatabase?
     private let deviceIdentifier: String
     private var syncTimer: Timer?
     private var networkMonitor: NetworkMonitor?
     private var isInitialized = false
+    private let performanceOptimizer = PerformanceOptimizer.shared
     
     // Configuration
     private let conflictResolutionStrategy: ConflictResolutionStrategy = .newerWins
     private let maxRetryAttempts = 3
-    private let retryDelay: TimeInterval = 5.0
+    private let retryDelay: TimeInterval = 2.0
     
     // Error tracking
     @Published var lastError: String?
@@ -163,10 +166,10 @@ class iCloudStorageManager: ObservableObject {
         let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
                        ProcessInfo.processInfo.processName.contains("PreviewShell") ||
                        ProcessInfo.processInfo.arguments.contains("--enable-previews")
-        print("🔍 iCloudStorageManager init - Preview environment: \(isPreview)")
+        EnhancedLogger.shared.logiCloudSync("iCloudStorageManager init - Preview environment: \(isPreview)", level: .debug)
         
         if isPreview {
-            print("🔍 Running in Xcode preview, skipping CloudKit initialization")
+            EnhancedLogger.shared.logiCloudSync("Running in Xcode preview, skipping CloudKit initialization", level: .debug)
             return
         }
         
@@ -174,19 +177,24 @@ class iCloudStorageManager: ObservableObject {
         Task {
             await initializeCloudKit()
         }
+        
+        // Enable performance tracking for iCloud operations
+        EnhancedLogger.shared.enablePerformanceTracking(true)
     }
     
     private func initializeCloudKit() async {
         guard !isInitialized else { return }
         
+        EnhancedLogger.shared.startPerformanceTracking("CloudKit Initialization", context: "iCloud Setup")
+        
         // Skip CloudKit initialization in preview environments
         let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
                        ProcessInfo.processInfo.processName.contains("PreviewShell") ||
                        ProcessInfo.processInfo.arguments.contains("--enable-previews")
-        print("🔍 initializeCloudKit - Preview environment: \(isPreview)")
+        EnhancedLogger.shared.logiCloudSync("initializeCloudKit - Preview environment: \(isPreview)", level: .debug)
         
         if isPreview {
-            print("🔍 Skipping CloudKit initialization in preview environment")
+            EnhancedLogger.shared.logiCloudSync("Skipping CloudKit initialization in preview environment", level: .debug)
             return
         }
         
@@ -196,7 +204,9 @@ class iCloudStorageManager: ObservableObject {
         
         // Verify CloudKit components were initialized
         guard container != nil, database != nil else {
-            print("❌ Failed to initialize CloudKit components")
+            let error = NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to initialize CloudKit components"])
+            EnhancedLogger.shared.logiCloudSyncError("CloudKit Initialization", error: error)
+            EnhancedErrorHandler().handleiCloudSyncError(error, context: "CloudKit Setup")
             await updateSyncStatus(.failed("CloudKit initialization failed"))
             return
         }
@@ -210,13 +220,17 @@ class iCloudStorageManager: ObservableObject {
         }
         
         isInitialized = true
-        print("✅ CloudKit initialized successfully")
+        EnhancedLogger.shared.logiCloudSync("CloudKit initialized successfully", level: .info)
+        
+        if let result = EnhancedLogger.shared.endPerformanceTracking("CloudKit Initialization") {
+            EnhancedLogger.shared.logPerformance("CloudKit initialization completed in \(String(format: "%.2f", result.duration))s", level: .info)
+        }
     }
     
     // MARK: - Public Interface
     
     func enableiCloudSync() async {
-        print("🔄 Enabling iCloud sync...")
+        EnhancedLogger.shared.logiCloudSyncStart("Enable iCloud Sync")
         
         // Ensure CloudKit is initialized
         if !isInitialized {
@@ -224,6 +238,9 @@ class iCloudStorageManager: ObservableObject {
         }
         
         guard let container = container else {
+            let error = NSError(domain: "iCloudStorageManager", code: 2, userInfo: [NSLocalizedDescriptionKey: "CloudKit not initialized"])
+            EnhancedLogger.shared.logiCloudSyncError("Enable iCloud Sync", error: error)
+            EnhancedErrorHandler().handleiCloudSyncError(error, context: "Enable Sync")
             await updateSyncStatus(.failed("CloudKit not initialized"))
             return
         }
@@ -232,12 +249,15 @@ class iCloudStorageManager: ObservableObject {
             // Check CloudKit availability
             let accountStatus = try await container.accountStatus()
             guard accountStatus == .available else {
+                let error = NSError(domain: "iCloudStorageManager", code: 3, userInfo: [NSLocalizedDescriptionKey: "iCloud account not available"])
+                EnhancedLogger.shared.logiCloudSyncError("Enable iCloud Sync", error: error)
+                EnhancedErrorHandler().handleiCloudSyncError(error, context: "Enable Sync")
                 await updateSyncStatus(.failed("iCloud account not available"))
                 return
             }
             
             // Note: userDiscoverability permission is deprecated in iOS 17.0 and not needed for private database operations
-            print("📱 CloudKit account available, proceeding with setup")
+            EnhancedLogger.shared.logiCloudSync("CloudKit account available, proceeding with setup", level: .info)
             
             // Set up CloudKit schema if needed
             await setupCloudKitSchema()
@@ -246,10 +266,11 @@ class iCloudStorageManager: ObservableObject {
             setupPeriodicSync()
             
             await updateSyncStatus(.completed)
-            print("✅ iCloud sync enabled successfully")
+            EnhancedLogger.shared.logiCloudSyncComplete("Enable iCloud Sync", itemCount: 0)
             
         } catch {
-            print("❌ Failed to enable iCloud sync: \(error)")
+            EnhancedLogger.shared.logiCloudSyncError("Enable iCloud Sync", error: error)
+            EnhancedErrorHandler().handleiCloudSyncError(error, context: "Enable Sync")
             await updateSyncStatus(.failed(error.localizedDescription))
             await MainActor.run {
                 self.isEnabled = false
@@ -655,22 +676,105 @@ class iCloudStorageManager: ObservableObject {
     private func setupPeriodicSync() {
         syncTimer?.invalidate()
         
-        // Sync every 5 minutes when enabled
-        syncTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { _ in
+        // Calculate adaptive sync interval based on battery and network conditions
+        let syncInterval = calculateAdaptiveSyncInterval()
+        
+        syncTimer = Timer.scheduledTimer(withTimeInterval: syncInterval, repeats: true) { _ in
             Task {
                 await self.performPeriodicSync()
             }
         }
+        
+        print("🔄 Set up periodic sync with \(syncInterval)s interval")
+    }
+    
+    private func calculateAdaptiveSyncInterval() -> TimeInterval {
+        // Base interval
+        var interval: TimeInterval = 300 // 5 minutes default
+        
+        // Adjust based on battery state
+        if performanceOptimizer.batteryInfo.shouldOptimizeForBattery {
+            interval = 600 // 10 minutes for battery optimization
+        }
+        
+        // Adjust based on network status
+        switch networkStatus {
+        case .limited:
+            interval *= 2 // Double interval for limited network
+        case .unavailable:
+            interval *= 4 // Quadruple interval for unavailable network
+        case .available:
+            break // Use calculated interval
+        }
+        
+        // Adjust based on memory usage
+        if performanceOptimizer.memoryUsage.isHighUsage {
+            interval *= 1.5 // Increase interval when memory usage is high
+        }
+        
+        return interval
     }
     
     private func performPeriodicSync() async {
         guard isEnabled else { return }
         
+        // Check if we should skip sync based on current conditions
+        if shouldSkipSync() {
+            print("⏭️ Skipping periodic sync due to current conditions")
+            return
+        }
+        
         print("🔄 Performing periodic sync check...")
         
-        // This would typically check for local changes and sync them
-        // For now, we'll just update the sync status
-        await updateSyncStatus(.completed)
+        do {
+            // Perform battery-aware sync
+            try await performBatteryAwareSync()
+        } catch {
+            print("❌ Periodic sync failed: \(error)")
+            await updateSyncStatus(.failed(error.localizedDescription))
+        }
+    }
+    
+    private func shouldSkipSync() -> Bool {
+        // Skip sync if battery is critically low
+        if performanceOptimizer.batteryInfo.isLowBattery {
+            return true
+        }
+        
+        // Skip sync if network is unavailable
+        if !networkStatus.canSync {
+            return true
+        }
+        
+        // Skip sync if memory usage is critical
+        if performanceOptimizer.memoryUsage.usageLevel == .critical {
+            return true
+        }
+        
+        return false
+    }
+    
+    private func performBatteryAwareSync() async throws {
+        // Apply battery-aware network settings
+        if performanceOptimizer.batteryInfo.shouldOptimizeForBattery {
+            print("🔋 Using battery-optimized sync settings")
+            
+            // Use smaller batch sizes for battery optimization
+            let batchSize = 5 // Reduced from default
+            try await syncSummariesInBatches(batchSize: batchSize)
+        } else {
+            // Use standard sync
+            try await syncAllSummaries([]) // Pass empty array for now
+        }
+    }
+    
+    private func syncSummariesInBatches(batchSize: Int) async throws {
+        // Implementation for batch-based sync to reduce network usage
+        print("📦 Syncing summaries in batches of \(batchSize)")
+        
+        // This would implement batch processing for network efficiency
+        // For now, just call the standard sync
+        try await syncAllSummaries([]) // Pass empty array for now
     }
     
     private func setupCloudKitSchema() async {

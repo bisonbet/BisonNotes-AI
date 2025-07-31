@@ -60,45 +60,68 @@ class ErrorHandler: ObservableObject {
         var issues: [ValidationIssue] = []
         var warnings: [ValidationWarning] = []
         
+        print("🔍 [ErrorHandlingSystem] Validating transcript for summarization...")
+        print("📝 Text length: \(text.count) characters")
+        
         // Check if text is empty
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            print("❌ [ErrorHandlingSystem] Transcript is empty")
             issues.append(.emptyTranscript)
             return ValidationResult(isValid: false, issues: issues, warnings: warnings)
         }
         
         // Check minimum length
         let wordCount = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
+        print("📊 [ErrorHandlingSystem] Word count: \(wordCount)")
+        
+        // If transcript has 50 words or less, it's valid (will be shown as-is)
+        if wordCount <= 50 {
+            print("✅ [ErrorHandlingSystem] Transcript has 50 words or less (\(wordCount) words) - will be shown as-is")
+            return ValidationResult(isValid: true, issues: issues, warnings: warnings)
+        }
+        
+        // For longer transcripts, check minimum length
         if wordCount < 10 {
+            print("❌ [ErrorHandlingSystem] Transcript too short: \(wordCount) words")
             issues.append(.transcriptTooShort(wordCount: wordCount))
             return ValidationResult(isValid: false, issues: issues, warnings: warnings)
         }
         
-        // Check maximum length
-        if wordCount > 10000 {
-            issues.append(.transcriptTooLong(wordCount: wordCount, maxWords: 10000))
+        // Check maximum length - increased to allow chunking system to handle large transcripts
+        if wordCount > 50000 {
+            print("❌ [ErrorHandlingSystem] Transcript too long: \(wordCount) words")
+            issues.append(.transcriptTooLong(wordCount: wordCount, maxWords: 50000))
             return ValidationResult(isValid: false, issues: issues, warnings: warnings)
         }
         
-        // Add warnings for potential issues
-        if wordCount < 50 {
-            warnings.append(.shortTranscript(wordCount: wordCount))
+        // Add warnings for potential issues (only for transcripts longer than 50 words)
+        if wordCount > 10000 {
+            warnings.append(.longTranscript(wordCount: wordCount))
+            print("⚠️ [ErrorHandlingSystem] Long transcript warning: \(wordCount) words")
         }
         
-        if wordCount > 5000 {
+        if wordCount > 10000 {
             warnings.append(.longTranscript(wordCount: wordCount))
+            print("⚠️ [ErrorHandlingSystem] Long transcript warning: \(wordCount) words")
         }
         
         // Check for repetitive content
-        if isContentRepetitive(text) {
+        let isRepetitive = isContentRepetitive(text)
+        if isRepetitive {
             warnings.append(.repetitiveContent)
+            print("⚠️ [ErrorHandlingSystem] Content appears repetitive")
         }
         
         // Check for low-quality transcription indicators
-        if hasLowQualityIndicators(text) {
+        let hasLowQuality = hasLowQualityIndicators(text)
+        if hasLowQuality {
             warnings.append(.lowQualityTranscription)
+            print("⚠️ [ErrorHandlingSystem] Low quality transcription indicators detected")
         }
         
-        return ValidationResult(isValid: true, issues: issues, warnings: warnings)
+        let result = ValidationResult(isValid: true, issues: issues, warnings: warnings)
+        print("✅ [ErrorHandlingSystem] Validation passed with \(warnings.count) warnings")
+        return result
     }
     
     func validateSummaryQuality(_ summary: EnhancedSummaryData) -> SummaryQualityReport {
@@ -523,6 +546,9 @@ enum StorageError: LocalizedError {
 
 enum SystemError: LocalizedError {
     case memoryPressure
+    case memoryError
+    case networkError
+    case storageError
     case unknown(underlying: Error, context: String)
     case configurationError(message: String)
     
@@ -530,6 +556,12 @@ enum SystemError: LocalizedError {
         switch self {
         case .memoryPressure:
             return "System is low on memory"
+        case .memoryError:
+            return "Memory allocation error"
+        case .networkError:
+            return "Network connectivity error"
+        case .storageError:
+            return "Storage access error"
         case .unknown(let error, let context):
             return "Unexpected error in \(context): \(error.localizedDescription)"
         case .configurationError(let message):
@@ -541,6 +573,12 @@ enum SystemError: LocalizedError {
         switch self {
         case .memoryPressure:
             return "Close other apps and try again"
+        case .memoryError:
+            return "Restart the app to free memory"
+        case .networkError:
+            return "Check your internet connection"
+        case .storageError:
+            return "Check available storage space"
         case .unknown:
             return "Please try again or contact support if the problem persists"
         case .configurationError:

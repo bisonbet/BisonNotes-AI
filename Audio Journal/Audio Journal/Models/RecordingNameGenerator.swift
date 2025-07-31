@@ -8,29 +8,25 @@ class RecordingNameGenerator {
     
     static func generateRecordingNameFromTranscript(_ transcript: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) -> String {
         // Try different strategies to generate a good name from the full transcript
-        let maxLength = 35
+        let minLength = 20
+        let maxLength = 50
         
         // Strategy 0: Use AI-generated title if available (for Ollama and other AI engines)
         if let aiGeneratedTitle = UserDefaults.standard.string(forKey: "lastGeneratedTitle"),
            !aiGeneratedTitle.isEmpty,
            aiGeneratedTitle != "Untitled Conversation" {
             // Clean up the title and ensure it's within length limits
-            let cleanedTitle = aiGeneratedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            if cleanedTitle.count <= maxLength {
+            let cleanedTitle = cleanAndValidateTitle(aiGeneratedTitle, minLength: minLength, maxLength: maxLength)
+            if !cleanedTitle.isEmpty {
                 // Clear the stored title after using it
                 UserDefaults.standard.removeObject(forKey: "lastGeneratedTitle")
                 return cleanedTitle
-            } else {
-                // Truncate if too long
-                let truncatedTitle = String(cleanedTitle.prefix(maxLength)).trimmingCharacters(in: .whitespacesAndNewlines)
-                UserDefaults.standard.removeObject(forKey: "lastGeneratedTitle")
-                return truncatedTitle
             }
         }
         
         // Strategy 1: Use the first high-confidence title from the titles array
         if let bestTitle = titles.first(where: { $0.confidence >= 0.8 }) {
-            let titleName = generateNameFromTitle(bestTitle, maxLength: maxLength)
+            let titleName = generateNameFromTitle(bestTitle, minLength: minLength, maxLength: maxLength)
             if !titleName.isEmpty {
                 return titleName
             }
@@ -38,7 +34,7 @@ class RecordingNameGenerator {
         
         // Strategy 2: Use any title from the titles array (even lower confidence)
         if let anyTitle = titles.first {
-            let titleName = generateNameFromTitle(anyTitle, maxLength: maxLength)
+            let titleName = generateNameFromTitle(anyTitle, minLength: minLength, maxLength: maxLength)
             if !titleName.isEmpty {
                 return titleName
             }
@@ -46,37 +42,48 @@ class RecordingNameGenerator {
         
         // Strategy 3: Use the first task if it's high priority
         if let highPriorityTask = tasks.first(where: { $0.priority == .high }) {
-            let taskName = generateNameFromTask(highPriorityTask, maxLength: maxLength)
+            let taskName = generateNameFromTask(highPriorityTask, minLength: minLength, maxLength: maxLength)
             if !taskName.isEmpty {
                 return taskName
             }
         }
         
-        // Strategy 4: Use the first urgent reminder
-        if let urgentReminder = reminders.first(where: { $0.urgency == .immediate || $0.urgency == .today }) {
-            let reminderName = generateNameFromReminder(urgentReminder, maxLength: maxLength)
+        // Strategy 4: Use any task
+        if let anyTask = tasks.first {
+            let taskName = generateNameFromTask(anyTask, minLength: minLength, maxLength: maxLength)
+            if !taskName.isEmpty {
+                return taskName
+            }
+        }
+        
+        // Strategy 5: Use the first reminder if it's urgent
+        if let urgentReminder = reminders.first(where: { $0.urgency == .immediate }) {
+            let reminderName = generateNameFromReminder(urgentReminder, minLength: minLength, maxLength: maxLength)
             if !reminderName.isEmpty {
                 return reminderName
             }
         }
         
-        // Strategy 5: Extract key phrases from the full transcript
-        let transcriptName = generateNameFromTranscript(transcript, contentType: contentType, maxLength: maxLength)
-        if !transcriptName.isEmpty {
-            return transcriptName
+        // Strategy 6: Use any reminder
+        if let anyReminder = reminders.first {
+            let reminderName = generateNameFromReminder(anyReminder, minLength: minLength, maxLength: maxLength)
+            if !reminderName.isEmpty {
+                return reminderName
+            }
         }
         
-        // Strategy 6: Use content type with date
-        return generateFallbackName(contentType: contentType, maxLength: maxLength)
+        // Strategy 7: Generate from transcript content
+        return generateNameFromTranscript(transcript, contentType: contentType, minLength: minLength, maxLength: maxLength)
     }
     
     static func generateRecordingName(from summary: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem]) -> String {
         // Try different strategies to generate a good name
-        let maxLength = 35
+        let minLength = 20
+        let maxLength = 50
         
         // Strategy 1: Use the first task if it's high priority
         if let highPriorityTask = tasks.first(where: { $0.priority == .high }) {
-            let taskName = generateNameFromTask(highPriorityTask, maxLength: maxLength)
+            let taskName = generateNameFromTask(highPriorityTask, minLength: minLength, maxLength: maxLength)
             if !taskName.isEmpty {
                 return taskName
             }
@@ -84,20 +91,20 @@ class RecordingNameGenerator {
         
         // Strategy 2: Use the first urgent reminder
         if let urgentReminder = reminders.first(where: { $0.urgency == .immediate || $0.urgency == .today }) {
-            let reminderName = generateNameFromReminder(urgentReminder, maxLength: maxLength)
+            let reminderName = generateNameFromReminder(urgentReminder, minLength: minLength, maxLength: maxLength)
             if !reminderName.isEmpty {
                 return reminderName
             }
         }
         
         // Strategy 3: Extract key phrases from summary
-        let summaryName = generateNameFromSummary(summary, contentType: contentType, maxLength: maxLength)
+        let summaryName = generateNameFromSummary(summary, contentType: contentType, minLength: minLength, maxLength: maxLength)
         if !summaryName.isEmpty {
             return summaryName
         }
         
         // Strategy 4: Use content type with date
-        return generateFallbackName(contentType: contentType, maxLength: maxLength)
+        return generateFallbackName(contentType: contentType, minLength: minLength, maxLength: maxLength)
     }
     
     static func validateAndFixRecordingName(_ name: String, originalName: String) -> String {
@@ -141,13 +148,192 @@ class RecordingNameGenerator {
         return cleanedName.isEmpty ? originalName : cleanedName
     }
     
+    // MARK: - Standardized Title Generation (Matching Ollama Logic)
+    
+    static func generateStandardizedTitlePrompt(from text: String) -> String {
+        let prompt = """
+        Generate a concise, descriptive title for this conversation/transcript. The title should:
+        1. Be 20-50 characters long (approximately 3-8 words)
+        2. Capture the main topic, purpose, or key subject
+        3. Be specific and meaningful - avoid generic terms
+        4. Work well as a file name or conversation title
+        5. Focus on the most important subject, person, or action mentioned
+        6. Be logical and sensical - make it clear what the content is about
+        7. Use proper capitalization (Title Case)
+        8. Never end with punctuation marks
+
+        Examples of good titles:
+        - "Trump Scotland Visit"
+        - "Hong Kong Arrest Warrants" 
+        - "Texas Redistricting Debate"
+        - "Walmart Stabbing Investigation"
+        - "Harvard Funding Deal"
+        - "Project Budget Review"
+        - "Client Presentation Prep"
+        - "Team Strategy Meeting"
+        - "Quarterly Sales Report"
+        - "Product Launch Planning"
+        - "Customer Feedback Analysis"
+        - "Technical Architecture Review"
+
+        **IMPORTANT: Return ONLY the title, nothing else. No quotes, no explanation, no markdown formatting, no extra text, no punctuation at the end.**
+
+        Transcript:
+        \(text)
+        """
+        
+        return prompt
+    }
+    
+    static func cleanStandardizedTitleResponse(_ response: String) -> String {
+        // Remove <think> tags and their content
+        let thinkPattern = #"<think>[\s\S]*?</think>"#
+        var cleanedTitle = response.replacingOccurrences(
+            of: thinkPattern,
+            with: "",
+            options: .regularExpression
+        )
+        
+        // Remove quotes if present
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "\"", with: "")
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "'", with: "")
+        
+        // Remove common prefixes/suffixes that might be added
+        let unwantedPrefixes = ["Title:", "Name:", "Generated Title:", "Conversation Title:", "The title is:", "Here's the title:", "Title is:", "AI Title:", "Suggested Title:"]
+        for prefix in unwantedPrefixes {
+            if cleanedTitle.lowercased().hasPrefix(prefix.lowercased()) {
+                cleanedTitle = String(cleanedTitle.dropFirst(prefix.count))
+            }
+        }
+        
+        // Remove word count patterns (including character count patterns)
+        let wordCountPattern = #"\s*\(\d+[\s-]*(words?|characters?)\)\s*$"#
+        cleanedTitle = cleanedTitle.replacingOccurrences(
+            of: wordCountPattern,
+            with: "",
+            options: .regularExpression
+        )
+        
+        // Remove markdown formatting
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "**", with: "")
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "*", with: "")
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "#", with: "")
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "`", with: "")
+        
+        // Remove ALL punctuation at the end (more comprehensive)
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: #"[.!?;:,]+$"#, with: "", options: .regularExpression)
+        
+        // Trim whitespace and newlines
+        cleanedTitle = cleanedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Ensure title is within proper length (20-50 characters)
+        if cleanedTitle.count < 20 {
+            // Too short, try to expand or use fallback
+            if cleanedTitle.count < 10 {
+                cleanedTitle = "Untitled Conversation"
+            }
+        } else if cleanedTitle.count > 50 {
+            // Too long, truncate at word boundaries
+            let words = cleanedTitle.components(separatedBy: .whitespaces)
+            var truncatedTitle = ""
+            
+            for word in words {
+                let testTitle = truncatedTitle.isEmpty ? word : "\(truncatedTitle) \(word)"
+                if testTitle.count <= 50 {
+                    truncatedTitle = testTitle
+                } else {
+                    break
+                }
+            }
+            
+            cleanedTitle = truncatedTitle.isEmpty ? String(cleanedTitle.prefix(50)) : truncatedTitle
+        }
+        
+        // Validate that the title makes sense
+        let words = cleanedTitle.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        if words.count < 2 || words.count > 8 {
+            // If too few or too many words, it might be nonsensical
+            cleanedTitle = "Untitled Conversation"
+        }
+        
+        // Check for repeated words or nonsensical patterns
+        let uniqueWords = Set(words.map { $0.lowercased() })
+        if uniqueWords.count < Int(Double(words.count) * 0.6) { // If more than 40% of words are repeated
+            cleanedTitle = "Untitled Conversation"
+        }
+        
+        // Check for generic or meaningless titles
+        let genericTitles = ["title", "conversation", "meeting", "discussion", "talk", "chat", "recording", "audio", "transcript"]
+        let lowerTitle = cleanedTitle.lowercased()
+        if genericTitles.contains(lowerTitle) || genericTitles.contains(where: { lowerTitle.contains($0) && words.count <= 2 }) {
+            cleanedTitle = "Untitled Conversation"
+        }
+        
+        // Ensure title is not empty
+        if cleanedTitle.isEmpty {
+            cleanedTitle = "Untitled Conversation"
+        }
+        
+        return cleanedTitle
+    }
+    
     // MARK: - Private Helper Methods
     
-    private static func generateNameFromTask(_ task: TaskItem, maxLength: Int) -> String {
+    private static func cleanAndValidateTitle(_ title: String, minLength: Int, maxLength: Int) -> String {
+        var cleanedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Remove punctuation at the end
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: #"[.!?;:,]+$"#, with: "", options: .regularExpression)
+        
+        // Remove quotes and extra formatting
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "\"", with: "")
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "'", with: "")
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "**", with: "")
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "*", with: "")
+        cleanedTitle = cleanedTitle.replacingOccurrences(of: "#", with: "")
+        
+        // Ensure proper length
+        if cleanedTitle.count < minLength {
+            return "" // Too short, try other strategies
+        }
+        
+        if cleanedTitle.count > maxLength {
+            // Try to truncate at word boundaries
+            let words = cleanedTitle.components(separatedBy: .whitespaces)
+            var truncatedTitle = ""
+            
+            for word in words {
+                let testTitle = truncatedTitle.isEmpty ? word : "\(truncatedTitle) \(word)"
+                if testTitle.count <= maxLength {
+                    truncatedTitle = testTitle
+                } else {
+                    break
+                }
+            }
+            
+            cleanedTitle = truncatedTitle.isEmpty ? String(cleanedTitle.prefix(maxLength)) : truncatedTitle
+        }
+        
+        // Validate that the title makes sense
+        let words = cleanedTitle.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        if words.count < 2 || words.count > 8 {
+            return "" // Too few or too many words
+        }
+        
+        // Check for repeated words or nonsensical patterns
+        let uniqueWords = Set(words.map { $0.lowercased() })
+        if uniqueWords.count < Int(Double(words.count) * 0.6) { // If more than 40% of words are repeated
+            return ""
+        }
+        
+        return cleanedTitle.isEmpty ? "" : cleanedTitle
+    }
+    
+    private static func generateNameFromTask(_ task: TaskItem, minLength: Int, maxLength: Int) -> String {
         let taskText = task.text.lowercased()
         
         // Extract action and object
-        let actionKeywords = ["call", "email", "meet", "buy", "get", "do", "make", "see", "visit", "go", "come", "take", "bring", "send", "schedule", "book", "order", "pick up", "drop off", "return", "check", "review", "update"]
+        let actionKeywords = ["call", "email", "meet", "buy", "get", "do", "make", "see", "visit", "go", "come", "take", "bring", "send", "schedule", "book", "order", "pick up", "drop off", "return", "check", "review", "update", "prepare", "create", "develop", "implement", "analyze", "research", "present", "discuss", "plan", "organize"]
         
         for action in actionKeywords {
             if taskText.contains(action) {
@@ -156,57 +342,85 @@ class RecordingNameGenerator {
                     let afterAction = String(taskText[actionRange.upperBound...])
                     let words = afterAction.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
                     
-                    if let firstWord = words.first {
+                    if let firstWord = words.first, let secondWord = words.dropFirst().first {
+                        let name = "\(action.capitalized) \(firstWord.capitalized) \(secondWord.capitalized)"
+                        if name.count >= minLength && name.count <= maxLength {
+                            return name
+                        }
+                    } else if let firstWord = words.first {
                         let name = "\(action.capitalized) \(firstWord.capitalized)"
-                        return name.count <= maxLength ? name : String(name.prefix(maxLength))
-                    } else {
-                        let name = action.capitalized
-                        return name.count <= maxLength ? name : String(name.prefix(maxLength))
+                        if name.count >= minLength && name.count <= maxLength {
+                            return name
+                        }
                     }
                 }
             }
         }
         
-        // If no action found, use first few words
+        // If no action found, use first few meaningful words
         let words = taskText.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-        if let firstWord = words.first, let secondWord = words.dropFirst().first {
-            let name = "\(firstWord.capitalized) \(secondWord.capitalized)"
-            return name.count <= maxLength ? name : String(name.prefix(maxLength))
-        } else if let firstWord = words.first {
-            let name = firstWord.capitalized
-            return name.count <= maxLength ? name : String(name.prefix(maxLength))
-        }
-        
-        return ""
-    }
-    
-    private static func generateNameFromReminder(_ reminder: ReminderItem, maxLength: Int) -> String {
-        let reminderText = reminder.text.lowercased()
-        
-        // Look for appointment, meeting, deadline keywords
-        let eventKeywords = ["appointment", "meeting", "deadline", "call", "email", "visit", "check"]
-        
-        for event in eventKeywords {
-            if reminderText.contains(event) {
-                let name = event.capitalized
-                return name.count <= maxLength ? name : String(name.prefix(maxLength))
+        if words.count >= 3 {
+            let keyWords = words.prefix(3).map { $0.capitalized }
+            let name = keyWords.joined(separator: " ")
+            if name.count >= minLength && name.count <= maxLength {
+                return name
+            }
+        } else if words.count >= 2 {
+            let keyWords = words.prefix(2).map { $0.capitalized }
+            let name = keyWords.joined(separator: " ")
+            if name.count >= minLength && name.count <= maxLength {
+                return name
             }
         }
         
-        // Use first few words
+        return ""
+    }
+    
+    private static func generateNameFromReminder(_ reminder: ReminderItem, minLength: Int, maxLength: Int) -> String {
+        let reminderText = reminder.text.lowercased()
+        
+        // Look for appointment, meeting, deadline keywords
+        let eventKeywords = ["appointment", "meeting", "deadline", "call", "email", "visit", "check", "review", "presentation", "interview", "consultation", "follow-up", "check-in"]
+        
+        for event in eventKeywords {
+            if reminderText.contains(event) {
+                // Try to add context to make it more descriptive
+                let words = reminderText.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                if words.count >= 2 {
+                    let keyWords = words.prefix(2).map { $0.capitalized }
+                    let name = "\(event.capitalized) \(keyWords.joined(separator: " "))"
+                    if name.count >= minLength && name.count <= maxLength {
+                        return name
+                    }
+                } else {
+                    let name = event.capitalized
+                    if name.count >= minLength && name.count <= maxLength {
+                        return name
+                    }
+                }
+            }
+        }
+        
+        // Use first few meaningful words
         let words = reminderText.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-        if let firstWord = words.first, let secondWord = words.dropFirst().first {
-            let name = "\(firstWord.capitalized) \(secondWord.capitalized)"
-            return name.count <= maxLength ? name : String(name.prefix(maxLength))
-        } else if let firstWord = words.first {
-            let name = firstWord.capitalized
-            return name.count <= maxLength ? name : String(name.prefix(maxLength))
+        if words.count >= 3 {
+            let keyWords = words.prefix(3).map { $0.capitalized }
+            let name = keyWords.joined(separator: " ")
+            if name.count >= minLength && name.count <= maxLength {
+                return name
+            }
+        } else if words.count >= 2 {
+            let keyWords = words.prefix(2).map { $0.capitalized }
+            let name = keyWords.joined(separator: " ")
+            if name.count >= minLength && name.count <= maxLength {
+                return name
+            }
         }
         
         return ""
     }
     
-    private static func generateNameFromTranscript(_ transcript: String, contentType: ContentType, maxLength: Int) -> String {
+    private static func generateNameFromTranscript(_ transcript: String, contentType: ContentType, minLength: Int, maxLength: Int) -> String {
         // Use advanced NLP to extract meaningful titles from the full transcript
         let sentences = transcript.components(separatedBy: CharacterSet(charactersIn: ".!?"))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -215,7 +429,7 @@ class RecordingNameGenerator {
         guard !sentences.isEmpty else { return "" }
         
         // Strategy 1: Look for meeting/event titles in the first few sentences
-        let titleKeywords = ["meeting about", "discussion on", "call about", "talk about", "conversation about", "presentation on", "review of", "planning for", "discussion of"]
+        let titleKeywords = ["meeting about", "discussion on", "call about", "talk about", "conversation about", "presentation on", "review of", "planning for", "discussion of", "interview with", "consultation about", "briefing on", "update on", "report on"]
         
         for sentence in sentences.prefix(3) {
             let lowerSentence = sentence.lowercased()
@@ -223,9 +437,10 @@ class RecordingNameGenerator {
                 if let range = lowerSentence.range(of: keyword) {
                     let afterKeyword = String(sentence[range.upperBound...])
                     let words = afterKeyword.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-                    if let firstWord = words.first, let secondWord = words.dropFirst().first {
-                        let title = "\(firstWord.capitalized) \(secondWord.capitalized)"
-                        if title.count <= maxLength {
+                    if words.count >= 2 {
+                        let keyWords = words.prefix(3).map { $0.capitalized }
+                        let title = keyWords.joined(separator: " ")
+                        if title.count >= minLength && title.count <= maxLength {
                             return title
                         }
                     }
@@ -237,13 +452,18 @@ class RecordingNameGenerator {
         let keyPhrases = extractKeyPhrasesFromTranscript(transcript, maxPhrases: 3)
         if let bestPhrase = keyPhrases.first {
             let words = bestPhrase.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-            let keyWords = words.prefix(3).map { $0.capitalized }
-            let title = keyWords.joined(separator: " ")
-            if title.count <= maxLength {
-                return title
-            } else {
-                let shortTitle = keyWords.prefix(2).joined(separator: " ")
-                return shortTitle.count <= maxLength ? shortTitle : String(shortTitle.prefix(maxLength))
+            if words.count >= 2 {
+                let keyWords = words.prefix(4).map { $0.capitalized }
+                let title = keyWords.joined(separator: " ")
+                if title.count >= minLength && title.count <= maxLength {
+                    return title
+                } else if title.count > maxLength {
+                    // Try with fewer words
+                    let shortTitle = keyWords.prefix(3).joined(separator: " ")
+                    if shortTitle.count >= minLength && shortTitle.count <= maxLength {
+                        return shortTitle
+                    }
+                }
             }
         }
         
@@ -254,39 +474,50 @@ class RecordingNameGenerator {
         
         if let bestSentence = scoredSentences.max(by: { $0.score < $1.score }) {
             let words = bestSentence.sentence.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-            let keyWords = words.prefix(3).map { $0.capitalized }
-            let title = keyWords.joined(separator: " ")
-            if title.count <= maxLength {
-                return title
-            } else {
-                let shortTitle = keyWords.prefix(2).joined(separator: " ")
-                return shortTitle.count <= maxLength ? shortTitle : String(shortTitle.prefix(maxLength))
+            if words.count >= 2 {
+                let keyWords = words.prefix(4).map { $0.capitalized }
+                let title = keyWords.joined(separator: " ")
+                if title.count >= minLength && title.count <= maxLength {
+                    return title
+                } else if title.count > maxLength {
+                    // Try with fewer words
+                    let shortTitle = keyWords.prefix(3).joined(separator: " ")
+                    if shortTitle.count >= minLength && shortTitle.count <= maxLength {
+                        return shortTitle
+                    }
+                }
             }
         }
         
         return ""
     }
     
-    private static func generateNameFromSummary(_ summary: String, contentType: ContentType, maxLength: Int) -> String {
+    private static func generateNameFromSummary(_ summary: String, contentType: ContentType, minLength: Int, maxLength: Int) -> String {
         let sentences = summary.components(separatedBy: CharacterSet(charactersIn: ".!?"))
         guard let firstSentence = sentences.first else { return "" }
         
         let words = firstSentence.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
         
         // Try to find key nouns and verbs
-        let keyWords = words.prefix(4).map { $0.capitalized }
-        let name = keyWords.joined(separator: " ")
-        
-        if name.count <= maxLength {
-            return name
-        } else {
-            // Try with fewer words
-            let shortName = keyWords.prefix(2).joined(separator: " ")
-            return shortName.count <= maxLength ? shortName : String(shortName.prefix(maxLength))
+        if words.count >= 3 {
+            let keyWords = words.prefix(4).map { $0.capitalized }
+            let name = keyWords.joined(separator: " ")
+            
+            if name.count >= minLength && name.count <= maxLength {
+                return name
+            } else if name.count > maxLength {
+                // Try with fewer words
+                let shortName = keyWords.prefix(3).joined(separator: " ")
+                if shortName.count >= minLength && shortName.count <= maxLength {
+                    return shortName
+                }
+            }
         }
+        
+        return ""
     }
     
-    private static func generateFallbackName(contentType: ContentType, maxLength: Int) -> String {
+    private static func generateFallbackName(contentType: ContentType, minLength: Int, maxLength: Int) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d"
         let dateString = formatter.string(from: Date())
@@ -300,25 +531,31 @@ class RecordingNameGenerator {
         }
         
         let name = "\(typeString) \(dateString)"
-        return name.count <= maxLength ? name : String(name.prefix(maxLength))
+        return name.count >= minLength && name.count <= maxLength ? name : String(name.prefix(maxLength))
     }
     
     // MARK: - Helper Functions for Title Generation
     
-    private static func generateNameFromTitle(_ title: TitleItem, maxLength: Int) -> String {
+    private static func generateNameFromTitle(_ title: TitleItem, minLength: Int, maxLength: Int) -> String {
         let words = title.text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
         
         // Take the first few meaningful words
-        let keyWords = words.prefix(4).map { $0.capitalized }
-        let name = keyWords.joined(separator: " ")
-        
-        if name.count <= maxLength {
-            return name
-        } else {
-            // Try with fewer words
-            let shortName = keyWords.prefix(2).joined(separator: " ")
-            return shortName.count <= maxLength ? shortName : String(shortName.prefix(maxLength))
+        if words.count >= 2 {
+            let keyWords = words.prefix(4).map { $0.capitalized }
+            let name = keyWords.joined(separator: " ")
+            
+            if name.count >= minLength && name.count <= maxLength {
+                return name
+            } else if name.count > maxLength {
+                // Try with fewer words
+                let shortName = keyWords.prefix(3).joined(separator: " ")
+                if shortName.count >= minLength && shortName.count <= maxLength {
+                    return shortName
+                }
+            }
         }
+        
+        return ""
     }
     
     private static func extractKeyPhrasesFromTranscript(_ transcript: String, maxPhrases: Int) -> [String] {

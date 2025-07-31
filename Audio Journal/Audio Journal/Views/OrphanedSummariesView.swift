@@ -2,7 +2,7 @@ import SwiftUI
 
 struct OrphanedSummariesView: View {
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
-    @StateObject private var summaryManager = SummaryManager()
+    @StateObject private var summaryManager = SummaryManager.shared
     @Environment(\.dismiss) private var dismiss
     
     @State private var orphanedSummaries: [FileRelationships] = []

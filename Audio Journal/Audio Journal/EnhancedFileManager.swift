@@ -118,7 +118,7 @@ class EnhancedFileManager: ObservableObject {
             if let manager = _summaryManager {
                 return manager
             }
-            let manager = await MainActor.run { SummaryManager() }
+            let manager = await MainActor.run { SummaryManager.shared }
             _summaryManager = manager
             return manager
         }
@@ -154,16 +154,27 @@ class EnhancedFileManager: ObservableObject {
         let recordingName = url.deletingPathExtension().lastPathComponent
         let recordingDate = getRecordingDate(for: url)
         
-        let relationships = FileRelationships(
-            recordingURL: recordingExists ? url : nil,
-            recordingName: recordingName,
-            recordingDate: recordingDate,
-            transcriptExists: transcriptExists,
-            summaryExists: summaryExists,
-            iCloudSynced: iCloudSynced
-        )
-        
-        await updateFileRelationships(for: url, relationships: relationships)
+        // Only create relationships if we have some data to work with
+        // or if the recording actually exists
+        if recordingExists || transcriptExists || summaryExists {
+            let relationships = FileRelationships(
+                recordingURL: recordingExists ? url : nil,
+                recordingName: recordingName,
+                recordingDate: recordingDate,
+                transcriptExists: transcriptExists,
+                summaryExists: summaryExists,
+                iCloudSynced: iCloudSynced
+            )
+            
+            await updateFileRelationships(for: url, relationships: relationships)
+        } else {
+            // If nothing exists for this URL, remove it from relationships
+            await MainActor.run {
+                fileRelationships.removeValue(forKey: url)
+                saveFileRelationships()
+            }
+            print("🧹 Cleaned up non-existent file relationship for: \(url.lastPathComponent)")
+        }
     }
     
     func refreshAllRelationships() {
@@ -345,6 +356,12 @@ class EnhancedFileManager: ObservableObject {
     // MARK: - Utility Methods
     
     private func getRecordingDate(for url: URL) -> Date {
+        // Check if file exists before trying to get its creation date
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            print("⚠️ File does not exist, using current date for: \(url.lastPathComponent)")
+            return Date()
+        }
+        
         do {
             let resourceValues = try url.resourceValues(forKeys: [.creationDateKey])
             return resourceValues.creationDate ?? Date()
@@ -402,6 +419,10 @@ class EnhancedFileManager: ObservableObject {
 enum FileManagementError: Error, LocalizedError {
     case relationshipNotFound
     case fileNotFound
+    case permissionDenied
+    case insufficientSpace
+    case corruptedFile
+    case relationshipError
     case deletionFailed(String)
     case persistenceError(String)
     
@@ -411,6 +432,14 @@ enum FileManagementError: Error, LocalizedError {
             return "File relationship not found"
         case .fileNotFound:
             return "File not found"
+        case .permissionDenied:
+            return "Permission denied for file operation"
+        case .insufficientSpace:
+            return "Insufficient storage space"
+        case .corruptedFile:
+            return "File is corrupted or invalid"
+        case .relationshipError:
+            return "Error with file relationships"
         case .deletionFailed(let message):
             return "Deletion failed: \(message)"
         case .persistenceError(let message):

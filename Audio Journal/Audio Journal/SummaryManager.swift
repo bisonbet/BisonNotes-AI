@@ -38,6 +38,9 @@ struct EngineAvailabilityStatus {
 
 @MainActor
 class SummaryManager: ObservableObject {
+    // MARK: - Shared Instance
+    static let shared = SummaryManager()
+    
     @Published var summaries: [SummaryData] = []
     @Published var enhancedSummaries: [EnhancedSummaryData] = []
     
@@ -78,7 +81,7 @@ class SummaryManager: ObservableObject {
         return iCloudStorageManager()
     }()
     
-    init() {
+    private init() {
         loadSummaries()
         loadEnhancedSummaries()
         initializeEngines()
@@ -437,11 +440,7 @@ class SummaryManager: ObservableObject {
             }
             successfullyInitialized += 1
             
-            // Set the first available engine as the current engine
-            if currentEngine == nil && engine.isAvailable {
-                currentEngine = engine
-                logger.info("Set \(engine.name) as default engine", category: "SummaryManager")
-            }
+            // Don't set any engine as current during initialization - wait for UserDefaults restoration
         }
         
         // Log only essential initialization summary
@@ -453,18 +452,27 @@ class SummaryManager: ObservableObject {
             logger.verbose("Coming soon engines: \(getComingSoonEngines())", category: "SummaryManager")
         }
         
-        // Only restore from UserDefaults if no engine is currently set
-        if currentEngine == nil {
-            if let savedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine"),
-               let savedEngine = availableEngines[savedEngineName],
-               savedEngine.isAvailable {
-                currentEngine = savedEngine
-                logger.info("Restored previously selected engine: \(savedEngine.name)", category: "SummaryManager")
-            }
+        // Now restore the user's selected engine from UserDefaults or set default
+        if let savedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine"),
+           let savedEngine = availableEngines[savedEngineName],
+           savedEngine.isAvailable {
+            currentEngine = savedEngine
+            logger.info("Restored previously selected engine: \(savedEngine.name)", category: "SummaryManager")
         } else {
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                logger.verbose("Keeping current engine: \(currentEngine?.name ?? "none")", category: "SummaryManager")
+            // Set Enhanced Apple Intelligence as the default if no saved engine or saved engine is not available
+            if let defaultEngine = availableEngines["Enhanced Apple Intelligence"], defaultEngine.isAvailable {
+                currentEngine = defaultEngine
+                UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
+                logger.info("Set Enhanced Apple Intelligence as default engine", category: "SummaryManager")
+            } else {
+                // Fallback: create Enhanced Apple Intelligence if not in available engines
+                let defaultEngine = AIEngineFactory.createEngine(type: .enhancedAppleIntelligence)
+                if defaultEngine.isAvailable {
+                    availableEngines[defaultEngine.name] = defaultEngine
+                    currentEngine = defaultEngine
+                    UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
+                    logger.info("Created and set Enhanced Apple Intelligence as default engine", category: "SummaryManager")
+                }
             }
         }
         
@@ -1051,7 +1059,38 @@ class SummaryManager: ObservableObject {
         
         let startTime = Date()
         
-        // Validate input before processing
+        // Count words in the transcript
+        let words = text.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty && $0.count > 1 }
+        
+        // If transcript has 50 words or less, return it as-is as the summary
+        if words.count <= 50 {
+            AppLogger.shared.info("Transcript has 50 words or less (\(words.count) words) - returning transcript as-is", category: "SummaryManager")
+            
+            let shortTranscriptSummary = EnhancedSummaryData(
+                recordingURL: recordingURL,
+                recordingName: recordingName,
+                recordingDate: recordingDate,
+                summary: "## Transcript\n\n\(text)",
+                tasks: [],
+                reminders: [],
+                titles: [],
+                contentType: .general,
+                aiMethod: "Short Transcript (Displayed As-Is)",
+                originalLength: words.count,
+                processingTime: Date().timeIntervalSince(startTime)
+            )
+            
+            // Save the short transcript summary on the main thread
+            await MainActor.run {
+                saveEnhancedSummary(shortTranscriptSummary)
+            }
+            
+            AppLogger.shared.info("Short transcript summary created and saved", category: "SummaryManager")
+            return shortTranscriptSummary
+        }
+        
+        // Validate input before processing for longer transcripts
         let validationResult = errorHandler.validateTranscriptForSummarization(text)
         if !validationResult.isValid {
             let validationError = SummarizationError.insufficientContent
@@ -1166,7 +1205,38 @@ class SummaryManager: ObservableObject {
         
         let startTime = Date()
         
-        // Validate input for basic processing
+        // Count words in the transcript
+        let words = text.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty && $0.count > 1 }
+        
+        // If transcript has 50 words or less, return it as-is as the summary
+        if words.count <= 50 {
+            AppLogger.shared.info("Transcript has 50 words or less (\(words.count) words) - returning transcript as-is", category: "SummaryManager")
+            
+            let shortTranscriptSummary = EnhancedSummaryData(
+                recordingURL: recordingURL,
+                recordingName: recordingName,
+                recordingDate: recordingDate,
+                summary: "## Transcript\n\n\(text)",
+                tasks: [],
+                reminders: [],
+                titles: [],
+                contentType: .general,
+                aiMethod: "Short Transcript (Displayed As-Is)",
+                originalLength: words.count,
+                processingTime: Date().timeIntervalSince(startTime)
+            )
+            
+            // Save the short transcript summary on the main thread
+            await MainActor.run {
+                saveEnhancedSummary(shortTranscriptSummary)
+            }
+            
+            AppLogger.shared.info("Short transcript summary created and saved", category: "SummaryManager")
+            return shortTranscriptSummary
+        }
+        
+        // Validate input for basic processing for longer transcripts
         let validationResult = errorHandler.validateTranscriptForSummarization(text)
         if !validationResult.isValid {
             let validationError = SummarizationError.insufficientContent

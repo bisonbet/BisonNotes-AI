@@ -68,6 +68,15 @@ enum ChunkingStrategy {
     static let whisper = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let aws = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let appleIntelligence = ChunkingStrategy.duration(maxSeconds: 15 * 60) // 15 minutes
+    
+    var description: String {
+        switch self {
+        case .fileSize(let maxBytes):
+            return "File size limit: \(maxBytes / 1024 / 1024) MB"
+        case .duration(let maxSeconds):
+            return "Duration limit: \(Int(maxSeconds / 60)) minutes"
+        }
+    }
 }
 
 // MARK: - Chunking Configuration

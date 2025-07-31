@@ -34,7 +34,7 @@ final class AISettingsViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     init() {
-        let sharedSummaryManager = SummaryManager()
+        let sharedSummaryManager = SummaryManager.shared
         self.summaryManager = sharedSummaryManager
         self.regenerationManager = SummaryRegenerationManager(
             summaryManager: sharedSummaryManager,
@@ -54,7 +54,9 @@ final class AISettingsViewModel: ObservableObject {
 
     /// Moves the engine selection logic into the view model.
     func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) -> (shouldPrompt: Bool, oldEngine: String, error: String?) {
-        let oldEngine = recorderVM.selectedAIEngine
+        // Note: AudioRecorderViewModel doesn't have selectedAIEngine property
+        // Use the actual current engine from UserDefaults
+        let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
         let newEngine = engineType.rawValue
 
         guard oldEngine != newEngine else {
@@ -70,7 +72,8 @@ final class AISettingsViewModel: ObservableObject {
         // Allow selection even if not available - user can configure it
         // Only return error if the engine is completely invalid, not just unavailable
 
-        recorderVM.selectedAIEngine = newEngine
+        // Note: Cannot set recorderVM.selectedAIEngine since it doesn't exist
+        // Just update the summary manager
         self.summaryManager.setEngine(newEngine)
         self.regenerationManager.setEngine(newEngine)
         
@@ -98,7 +101,10 @@ struct AISettingsView: View {
     // No custom init is needed anymore, which solves the compiler error.
     
     private var currentEngineType: AIEngineType? {
-        AIEngineType.allCases.first(where: { $0.rawValue == recorderVM.selectedAIEngine })
+        // Note: AudioRecorderViewModel doesn't have selectedAIEngine property
+        // Use the actual current engine from UserDefaults
+        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+        return AIEngineType.allCases.first { $0.rawValue == currentEngineName }
     }
     
     private func refreshEngineStatuses() {
@@ -125,21 +131,11 @@ struct AISettingsView: View {
                     currentConfigurationSection
                     engineSelectionSection
                     
-                    if recorderVM.selectedAIEngine == AIEngineType.localLLM.rawValue {
-                        ollamaConfigurationSection
-                    }
-                    
-                    if recorderVM.selectedAIEngine == AIEngineType.openAI.rawValue {
-                        openAIConfigurationSection
-                    }
-                    
-                    if recorderVM.selectedAIEngine == AIEngineType.openAICompatible.rawValue {
-                        openAICompatibleConfigurationSection
-                    }
-                    
-                    if recorderVM.selectedAIEngine == AIEngineType.googleAIStudio.rawValue {
-                        googleAIStudioConfigurationSection
-                    }
+                    // Show configuration sections for available engines
+                    ollamaConfigurationSection
+                    openAIConfigurationSection
+                    openAICompatibleConfigurationSection
+                    googleAIStudioConfigurationSection
                     
                     if viewModel.summaryManager.enhancedSummaries.count > 0 {
                         summaryManagementSection
@@ -166,7 +162,25 @@ struct AISettingsView: View {
                 Task { await viewModel.regenerationManager.regenerateAllSummaries() }
             }
         } message: {
-            Text("You've switched from \(previousEngine) to \(recorderVM.selectedAIEngine). Would you like to regenerate your \(viewModel.summaryManager.enhancedSummaries.count) existing summaries with the new AI engine?")
+            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"). Would you like to regenerate your \(viewModel.summaryManager.enhancedSummaries.count) existing summaries with the new AI engine?")
+                .font(.headline)
+                .padding()
+            
+            HStack {
+                Button("Cancel") {
+                    showingEngineChangePrompt = false
+                }
+                .buttonStyle(.bordered)
+                
+                Button("Regenerate") {
+                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+                    viewModel.summaryManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
+                    viewModel.regenerationManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
+                    showingEngineChangePrompt = false
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.horizontal)
         }
         .alert("Regeneration Complete", isPresented: $viewModel.regenerationManager.showingRegenerationAlert) {
             Button("OK") { viewModel.regenerationManager.regenerationResults = nil }
@@ -174,8 +188,8 @@ struct AISettingsView: View {
             Text(viewModel.regenerationManager.regenerationResults?.summary ?? "Regeneration process finished.")
         }
         .onAppear {
-            viewModel.summaryManager.setEngine(recorderVM.selectedAIEngine)
-            viewModel.regenerationManager.setEngine(recorderVM.selectedAIEngine)
+            viewModel.summaryManager.setEngine("OpenAI") // Use proper engine name
+            viewModel.regenerationManager.setEngine("OpenAI") // Use proper engine name
             self.refreshEngineStatuses()
         }
         .alert("Error", isPresented: $errorHandler.showingErrorAlert) {
@@ -250,7 +264,7 @@ private extension AISettingsView {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     
-                    Text(recorderVM.selectedAIEngine)
+                    Text(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence") // Use actual current engine instead of hardcoded "openai"
                         .font(.caption)
                         .fontWeight(.medium)
                     
@@ -403,8 +417,8 @@ private extension AISettingsView {
     var openAIConfigurationSection: some View {
         // FIX: Logic moved outside the ViewBuilder closure.
         let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
-        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt35Turbo.rawValue
-        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt35Turbo
+        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
+        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt41Mini
         
         // The return statement is now required because the property contains more than a single expression.
         return VStack(alignment: .leading, spacing: 16) {
@@ -691,7 +705,7 @@ private extension AISettingsView {
     @ViewBuilder
     func engineRow(for engineType: AIEngineType) -> some View {
         let engineStatus = self.engineStatuses[engineType.rawValue]
-        let isCurrentEngine = self.recorderVM.selectedAIEngine == engineType.rawValue
+        let isCurrentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") == engineType.rawValue // Use actual current engine
         
         VStack(alignment: .leading, spacing: 4) {
             HStack {
