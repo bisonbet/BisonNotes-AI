@@ -2,7 +2,7 @@ import SwiftUI
 
 struct OrphanedSummariesView: View {
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
-    @StateObject private var summaryManager = SummaryManager.shared
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @Environment(\.dismiss) private var dismiss
     
     @State private var orphanedSummaries: [FileRelationships] = []
@@ -132,7 +132,7 @@ struct OrphanedSummariesView: View {
                 HStack(spacing: 12) {
                     // View summary button
                     let recordingURL = relationships.recordingURL ?? createPlaceholderURL(for: relationships.recordingName)
-                    if let summaryData = summaryManager.getBestAvailableSummary(for: recordingURL) {
+                    if let summaryData = appCoordinator.getBestAvailableSummary(for: recordingURL) {
                         let recordingFile = createRecordingFile(from: relationships, url: recordingURL)
                         NavigationLink(destination: EnhancedSummaryDetailView(recording: recordingFile, summaryData: summaryData)) {
                             Image(systemName: "doc.text")

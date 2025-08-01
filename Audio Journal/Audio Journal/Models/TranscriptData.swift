@@ -18,25 +18,50 @@ struct TranscriptSegment: Codable, Identifiable {
     }
 }
 
-struct TranscriptData: Codable, Identifiable {
-    let id: UUID
+public struct TranscriptData: Codable, Identifiable {
+    public let id: UUID
+    var recordingId: UUID? // For unified architecture
     let recordingURL: URL
     let recordingName: String
     let recordingDate: Date
     let segments: [TranscriptSegment]
     let speakerMappings: [String: String] // Maps "Speaker 1" -> "John Doe"
+    let engine: TranscriptionEngine?
     let createdAt: Date
     let lastModified: Date
+    let processingTime: TimeInterval
+    let confidence: Double
     
+    // Legacy initializer for backward compatibility
     init(recordingURL: URL, recordingName: String, recordingDate: Date, segments: [TranscriptSegment], speakerMappings: [String: String] = [:]) {
         self.id = UUID()
+        self.recordingId = nil
         self.recordingURL = recordingURL
         self.recordingName = recordingName
         self.recordingDate = recordingDate
         self.segments = segments
         self.speakerMappings = speakerMappings
+        self.engine = nil
         self.createdAt = Date()
         self.lastModified = Date()
+        self.processingTime = 0
+        self.confidence = 0.5
+    }
+    
+    // New initializer for unified architecture
+    init(recordingId: UUID, recordingURL: URL, recordingName: String, recordingDate: Date, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) {
+        self.id = UUID()
+        self.recordingId = recordingId
+        self.recordingURL = recordingURL
+        self.recordingName = recordingName
+        self.recordingDate = recordingDate
+        self.segments = segments
+        self.speakerMappings = speakerMappings
+        self.engine = engine
+        self.createdAt = Date()
+        self.lastModified = Date()
+        self.processingTime = processingTime
+        self.confidence = confidence
     }
     
     var fullText: String {
@@ -50,13 +75,21 @@ struct TranscriptData: Codable, Identifiable {
         return segments.map { $0.text }.joined(separator: " ")
     }
     
+    var wordCount: Int {
+        return plainText.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
+    }
+    
     func updatedTranscript(segments: [TranscriptSegment], speakerMappings: [String: String]) -> TranscriptData {
         return TranscriptData(
+            recordingId: self.recordingId ?? UUID(),
             recordingURL: self.recordingURL,
             recordingName: self.recordingName,
             recordingDate: self.recordingDate,
             segments: segments,
-            speakerMappings: speakerMappings
+            speakerMappings: speakerMappings,
+            engine: self.engine,
+            processingTime: self.processingTime,
+            confidence: self.confidence
         )
     }
 }

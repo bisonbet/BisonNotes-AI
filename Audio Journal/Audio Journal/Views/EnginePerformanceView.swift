@@ -9,7 +9,7 @@ import SwiftUI
 import Charts
 
 struct EnginePerformanceView: View {
-    @StateObject private var summaryManager = SummaryManager.shared
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var performanceOptimizer = PerformanceOptimizer.shared
     @StateObject private var performanceMonitor = EnginePerformanceMonitor()
     
@@ -49,7 +49,7 @@ struct EnginePerformanceView: View {
 // MARK: - Performance Monitoring Section
 
 struct PerformanceMonitoringSection: View {
-    @StateObject private var summaryManager = SummaryManager.shared
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -60,9 +60,9 @@ struct PerformanceMonitoringSection: View {
                     .font(.headline)
                 Spacer()
                 Circle()
-                    .fill(summaryManager.isPerformanceMonitoringEnabled() ? Color.green : Color.red)
+                    .fill(appCoordinator.registryManager.isPerformanceMonitoringEnabled() ? Color.green : Color.red)
                     .frame(width: 12, height: 12)
-                Text(summaryManager.isPerformanceMonitoringEnabled() ? "Active" : "Inactive")
+                Text(appCoordinator.registryManager.isPerformanceMonitoringEnabled() ? "Active" : "Inactive")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

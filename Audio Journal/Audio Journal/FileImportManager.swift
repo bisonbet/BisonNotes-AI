@@ -90,13 +90,26 @@ class FileImportManager: NSObject, ObservableObject {
             throw ImportError.fileAlreadyExists(filename)
         }
         
-        // Copy file to documents directory
-        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+        // Copy file to documents directory with error handling for thumbnail issues
+        do {
+            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+        } catch {
+            // Check if this is a thumbnail-related error that we can ignore
+            let errorDescription = error.localizedDescription
+            if errorDescription.contains("QLThumbnailErrorDomain") || 
+               errorDescription.contains("GSLibraryErrorDomain") ||
+               errorDescription.contains("Generation not found") {
+                print("⚠️ Thumbnail generation warning (can be ignored): \(errorDescription)")
+                // Continue with import even if thumbnail generation fails
+            } else {
+                throw ImportError.copyFailed(error.localizedDescription)
+            }
+        }
         
         // Validate the copied file
         try validateAudioFile(at: destinationURL)
         
-        print("Successfully imported: \(filename)")
+        print("✅ Successfully imported: \(filename)")
     }
     
     private func generateUniqueFilename(for sourceURL: URL) -> String {

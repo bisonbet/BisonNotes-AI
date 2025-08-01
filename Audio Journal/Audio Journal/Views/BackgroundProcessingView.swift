@@ -29,6 +29,16 @@ struct BackgroundProcessingView: View {
             }
             .navigationTitle("Background Processing")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Remove Completed") {
+                        Task {
+                            await processingManager.removeCompletedJobs()
+                        }
+                    }
+                    .foregroundColor(.orange)
+                }
+            }
             .sheet(isPresented: $showingJobDetails) {
                 if let job = selectedJob {
                     JobDetailView(job: job)
@@ -232,7 +242,7 @@ struct JobCard: View {
                     
                     Spacer()
                     
-                    StatusBadge(status: job.status)
+                    StatusBadge(status: convertJobStatus(job.status))
                 }
                 
                 // Progress bar
@@ -278,7 +288,7 @@ struct StatusBadge: View {
     let status: ProcessingStatus
     
     var body: some View {
-        Text(status.displayName)
+        Text(status.description)
             .font(.caption)
             .fontWeight(.medium)
             .foregroundColor(.white)
@@ -292,6 +302,8 @@ struct StatusBadge: View {
     
     private var statusColor: Color {
         switch status {
+        case .notStarted:
+            return .gray
         case .queued:
             return .orange
         case .processing:
@@ -300,6 +312,8 @@ struct StatusBadge: View {
             return .green
         case .failed:
             return .red
+        case .cancelled:
+            return .gray
         }
     }
 }
@@ -329,7 +343,7 @@ struct JobDetailView: View {
                             .font(.headline)
                         
                         HStack {
-                            StatusBadge(status: job.status)
+                            StatusBadge(status: convertJobStatus(job.status))
                             Spacer()
                         }
                         
@@ -422,6 +436,21 @@ struct JobDetailView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Helper Functions
+
+private func convertJobStatus(_ jobStatus: JobProcessingStatus) -> ProcessingStatus {
+    switch jobStatus {
+    case .queued:
+        return .queued
+    case .processing:
+        return .processing
+    case .completed:
+        return .completed
+    case .failed:
+        return .failed
     }
 }
 

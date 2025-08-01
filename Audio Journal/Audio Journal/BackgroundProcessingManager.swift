@@ -17,7 +17,7 @@ struct ProcessingJob: Identifiable, Codable {
     let type: JobType
     let recordingURL: URL
     let recordingName: String
-    let status: ProcessingStatus
+    let status: JobProcessingStatus
     let progress: Double
     let startTime: Date
     let completionTime: Date?
@@ -37,7 +37,7 @@ struct ProcessingJob: Identifiable, Codable {
         self.error = nil
     }
     
-    func withStatus(_ status: ProcessingStatus) -> ProcessingJob {
+    func withStatus(_ status: JobProcessingStatus) -> ProcessingJob {
         ProcessingJob(
             id: self.id,
             type: self.type,
@@ -67,7 +67,7 @@ struct ProcessingJob: Identifiable, Codable {
         )
     }
     
-    private init(id: UUID, type: JobType, recordingURL: URL, recordingName: String, status: ProcessingStatus, progress: Double, startTime: Date, completionTime: Date?, chunks: [AudioChunk]?, error: String?) {
+    private init(id: UUID, type: JobType, recordingURL: URL, recordingName: String, status: JobProcessingStatus, progress: Double, startTime: Date, completionTime: Date?, chunks: [AudioChunk]?, error: String?) {
         self.id = id
         self.type = type
         self.recordingURL = recordingURL
@@ -137,7 +137,7 @@ enum JobType: Codable {
     }
 }
 
-enum ProcessingStatus: Codable, Equatable {
+enum JobProcessingStatus: Codable, Equatable {
     case queued
     case processing
     case completed
@@ -179,7 +179,7 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - Published Properties
     
     @Published var activeJobs: [ProcessingJob] = []
-    @Published var processingStatus: ProcessingStatus = .queued
+    @Published var processingStatus: JobProcessingStatus = .queued
     @Published var currentJob: ProcessingJob?
     
     // MARK: - Completion Handlers
@@ -284,7 +284,7 @@ class BackgroundProcessingManager: ObservableObject {
         await persistJobs()
     }
     
-    func getJobStatus(_ jobId: UUID) -> ProcessingStatus {
+    func getJobStatus(_ jobId: UUID) -> JobProcessingStatus {
         if let job = activeJobs.first(where: { $0.id == jobId }) {
             return job.status
         }
@@ -532,8 +532,8 @@ class BackgroundProcessingManager: ObservableObject {
             await saveTranscript(transcriptData)
         }
         
-        // Post-processing: Generate title automatically
-        await performPostProcessing(for: job, transcriptText: transcriptChunks.first?.transcript ?? "")
+        // Post-processing: Generate title automatically - REMOVED for transcription jobs
+        // await performPostProcessing(for: job, transcriptText: transcriptChunks.first?.transcript ?? "")
         
         // Complete the job
         let completedJob = job.withStatus(.completed).withProgress(1.0)
@@ -626,8 +626,10 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func saveTranscript(_ transcriptData: TranscriptData) async {
-        // Save transcript using the TranscriptManager
+        // Save transcript using the coordinator
         await MainActor.run {
+            // Note: This should be updated to use the coordinator when available
+            // For now, we'll keep using TranscriptManager.shared for backward compatibility
             TranscriptManager.shared.saveTranscript(transcriptData)
         }
         print("💾 Saved transcript: \(transcriptData.segments.count) segments, \(transcriptData.fullText.count) characters")
@@ -904,7 +906,7 @@ class BackgroundProcessingManager: ObservableObject {
     
     // MARK: - Job Status Management
     
-    private func updateJobStatus(_ jobId: UUID, status: ProcessingStatus) async {
+    private func updateJobStatus(_ jobId: UUID, status: JobProcessingStatus) async {
         await MainActor.run {
             if let index = activeJobs.firstIndex(where: { $0.id == jobId }) {
                 activeJobs[index] = activeJobs[index].withStatus(status)

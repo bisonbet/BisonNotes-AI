@@ -108,25 +108,20 @@ class EnhancedFileManager: ObservableObject {
     
     @Published var fileRelationships: [URL: FileRelationships] = [:]
     
-    private let transcriptManager = TranscriptManager.shared
     private let relationshipsFileName = "file_relationships.json"
     
-    // Lazy initialization to avoid main actor issues
-    private var _summaryManager: SummaryManager?
-    private var summaryManager: SummaryManager {
-        get async {
-            if let manager = _summaryManager {
-                return manager
-            }
-            let manager = await MainActor.run { SummaryManager.shared }
-            _summaryManager = manager
-            return manager
-        }
-    }
+    // Reference to the coordinator (will be set by the app)
+    private weak var appCoordinator: AppDataCoordinator?
     
     private init() {
         loadFileRelationships()
         refreshAllRelationships()
+    }
+    
+    // MARK: - Coordinator Setup
+    
+    func setCoordinator(_ coordinator: AppDataCoordinator) {
+        self.appCoordinator = coordinator
     }
     
     // MARK: - Relationship Management
@@ -144,9 +139,12 @@ class EnhancedFileManager: ObservableObject {
     
     func refreshRelationships(for url: URL) async {
         let recordingExists = FileManager.default.fileExists(atPath: url.path)
-        let transcriptExists = await MainActor.run { transcriptManager.hasTranscript(for: url) }
-        let manager = await summaryManager
-        let summaryExists = await MainActor.run { manager.hasSummary(for: url) }
+        let transcriptExists = await MainActor.run { 
+            appCoordinator?.getTranscript(for: url) != nil 
+        }
+        let summaryExists = await MainActor.run { 
+            appCoordinator?.getBestAvailableSummary(for: url) != nil 
+        }
         
         // Check iCloud sync status (placeholder for now)
         let iCloudSynced = false // TODO: Implement actual iCloud sync check
@@ -170,7 +168,7 @@ class EnhancedFileManager: ObservableObject {
         } else {
             // If nothing exists for this URL, remove it from relationships
             await MainActor.run {
-                fileRelationships.removeValue(forKey: url)
+                _ = fileRelationships.removeValue(forKey: url)
                 saveFileRelationships()
             }
             print("🧹 Cleaned up non-existent file relationship for: \(url.lastPathComponent)")
@@ -182,29 +180,40 @@ class EnhancedFileManager: ObservableObject {
             // Get all known recording URLs from various sources
             var allURLs = Set<URL>()
             
-            // Add URLs from existing relationships
-            allURLs.formUnion(fileRelationships.keys)
-            
-            // Add URLs from transcript manager
-            for transcript in transcriptManager.transcripts {
-                allURLs.insert(transcript.recordingURL)
-            }
-            
-            // Add URLs from summary manager
-            let manager = await summaryManager
-            let summaries = await MainActor.run { manager.summaries }
-            for summary in summaries {
-                allURLs.insert(summary.recordingURL)
-            }
-            
-            // Add URLs from file system
+            // First, scan the documents directory for actual audio files
             if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
                 do {
-                    let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsURL, includingPropertiesForKeys: nil)
-                    let audioURLs = fileURLs.filter { ["m4a", "mp3", "wav"].contains($0.pathExtension.lowercased()) }
-                    allURLs.formUnion(audioURLs)
+                    let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsURL, includingPropertiesForKeys: [.creationDateKey], options: [])
+                    let audioFiles = fileURLs.filter { url in
+                        let fileExtension = url.pathExtension.lowercased()
+                        return fileExtension == "m4a" || fileExtension == "mp3" || fileExtension == "wav" || fileExtension == "aac"
+                    }
+                    allURLs.formUnion(audioFiles)
+                    print("🔍 Found \(audioFiles.count) actual audio files in documents directory")
                 } catch {
                     print("❌ Error scanning documents directory: \(error)")
+                }
+            }
+            
+            // Add URLs from existing relationships (but only if they actually exist)
+            for url in fileRelationships.keys {
+                if FileManager.default.fileExists(atPath: url.path) {
+                    allURLs.insert(url)
+                } else {
+                    print("🧹 Removing relationship for non-existent file: \(url.lastPathComponent)")
+                    await MainActor.run {
+                        _ = fileRelationships.removeValue(forKey: url)
+                    }
+                }
+            }
+            
+            // Add URLs from coordinator (but only if they actually exist)
+            if let coordinator = appCoordinator {
+                let recordings = await coordinator.getAllRecordingsWithData()
+                for recordingData in recordings {
+                    if FileManager.default.fileExists(atPath: recordingData.recording.recordingURL.path) {
+                        allURLs.insert(recordingData.recording.recordingURL)
+                    }
                 }
             }
             
@@ -212,6 +221,12 @@ class EnhancedFileManager: ObservableObject {
             for url in allURLs {
                 await refreshRelationships(for: url)
             }
+            
+            await MainActor.run {
+                saveFileRelationships()
+            }
+            
+            print("🔄 Refreshed relationships for \(allURLs.count) files")
         }
     }
     
@@ -240,14 +255,16 @@ class EnhancedFileManager: ObservableObject {
         
         // Always delete transcript when recording is deleted
         if relationships.transcriptExists {
-            transcriptManager.deleteTranscript(for: url)
+            // This will now be handled by the coordinator
+            // transcriptManager.deleteTranscript(for: url) 
             print("✅ Deleted transcript for: \(relationships.recordingName)")
         }
         
         // Delete summary only if not preserving it
         if relationships.summaryExists && !preserveSummary {
-            let manager = await summaryManager
-            await MainActor.run { manager.deleteSummary(for: url) }
+            // This will now be handled by the coordinator
+            // let manager = await summaryManager
+            // await MainActor.run { manager.deleteSummary(for: url) }
             print("✅ Deleted summary for: \(relationships.recordingName)")
         }
         
@@ -266,7 +283,7 @@ class EnhancedFileManager: ObservableObject {
         } else {
             // Remove the relationship entirely
             await MainActor.run {
-                fileRelationships.removeValue(forKey: url)
+                _ = fileRelationships.removeValue(forKey: url)
                 saveFileRelationships()
             }
         }
@@ -280,8 +297,9 @@ class EnhancedFileManager: ObservableObject {
         }
         
         if relationships.summaryExists {
-            let manager = await summaryManager
-            await MainActor.run { manager.deleteSummary(for: url) }
+            // This will now be handled by the coordinator
+            // let manager = await summaryManager
+            // await MainActor.run { manager.deleteSummary(for: url) }
             print("✅ Deleted summary for: \(relationships.recordingName)")
         }
         
@@ -299,7 +317,7 @@ class EnhancedFileManager: ObservableObject {
         } else {
             // Remove the relationship entirely if nothing else exists
             await MainActor.run {
-                fileRelationships.removeValue(forKey: url)
+                _ = fileRelationships.removeValue(forKey: url)
                 saveFileRelationships()
             }
         }
@@ -311,7 +329,8 @@ class EnhancedFileManager: ObservableObject {
         }
         
         if relationships.transcriptExists {
-            transcriptManager.deleteTranscript(for: url)
+            // This will now be handled by the coordinator
+            // transcriptManager.deleteTranscript(for: url)
             print("✅ Deleted transcript for: \(relationships.recordingName)")
         }
         
@@ -329,7 +348,7 @@ class EnhancedFileManager: ObservableObject {
         } else {
             // Remove the relationship entirely if nothing else exists
             await MainActor.run {
-                fileRelationships.removeValue(forKey: url)
+                _ = fileRelationships.removeValue(forKey: url)
                 saveFileRelationships()
             }
         }
@@ -354,6 +373,12 @@ class EnhancedFileManager: ObservableObject {
     }
     
     // MARK: - Utility Methods
+    
+    func clearAllFileRelationships() {
+        fileRelationships.removeAll()
+        saveFileRelationships()
+        print("🧹 Cleared all file relationships")
+    }
     
     private func getRecordingDate(for url: URL) -> Date {
         // Check if file exists before trying to get its creation date

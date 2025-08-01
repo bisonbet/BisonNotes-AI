@@ -6,14 +6,13 @@ struct EnhancedSummaryDetailView: View {
     let recording: RecordingFile
     @State private var summaryData: EnhancedSummaryData
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
     @State private var expandedSections: Set<String> = ["summary", "metadata"]
     @State private var isRegenerating = false
     @State private var showingRegenerationAlert = false
     @State private var regenerationError: String?
     @State private var showingDeleteConfirmation = false
-    @StateObject private var summaryManager = SummaryManager.shared
-    @StateObject private var transcriptManager = TranscriptManager.shared
     
     init(recording: RecordingFile, summaryData: EnhancedSummaryData) {
         self.recording = recording
@@ -86,8 +85,10 @@ struct EnhancedSummaryDetailView: View {
                 }
             }
                     .onAppear {
-                // Refresh summary data from SummaryManager to get the latest version
-                if let latestSummary = summaryManager.getEnhancedSummary(for: recording.url) {
+                // Refresh summary data from coordinator to get the latest version
+                if let recordingEntry = appCoordinator.getRecording(url: recording.url),
+                   let completeData = appCoordinator.getCompleteRecordingData(id: recordingEntry.id),
+                   let latestSummary = completeData.summary {
                     summaryData = latestSummary
                 }
                 
@@ -401,7 +402,7 @@ struct EnhancedSummaryDetailView: View {
     
     private func deleteSummary() {
         // Delete the summary from the manager
-        summaryManager.deleteSummary(for: recording.url)
+        appCoordinator.deleteSummary(for: recording.url)
         
         // Dismiss the view
         dismiss()
@@ -418,7 +419,7 @@ struct EnhancedSummaryDetailView: View {
         
         do {
             // Get the transcript for this recording
-            guard let transcript = transcriptManager.getTranscript(for: recording.url) else {
+            guard let transcript = appCoordinator.getTranscript(for: recording.url) else {
                 await MainActor.run {
                     regenerationError = "No transcript found for this recording. Please generate a transcript first."
                     showingRegenerationAlert = true
@@ -429,10 +430,10 @@ struct EnhancedSummaryDetailView: View {
             
             // Set the current AI engine to use the currently selected engine from settings
             let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
-            summaryManager.setEngine(selectedEngine)
+            appCoordinator.setEngine(selectedEngine)
             
             // Generate new enhanced summary
-            let newSummary = try await summaryManager.generateEnhancedSummary(
+            let newSummary = try await appCoordinator.generateEnhancedSummary(
                 from: transcript.plainText,
                 for: recording.url,
                 recordingName: recording.name,

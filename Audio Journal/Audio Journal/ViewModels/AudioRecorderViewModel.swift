@@ -25,6 +25,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     @Published var currentLocationData: LocationData?
     @Published var isLocationTrackingEnabled: Bool = false
     
+    // Reference to the app coordinator for adding recordings to registry
+    private var appCoordinator: AppDataCoordinator?
+    
     private var audioRecorder: AVAudioRecorder?
     private var audioPlayer: AVAudioPlayer?
     private var recordingTimer: Timer?
@@ -44,6 +47,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         
         // Setup notification observers after super.init()
         setupNotificationObservers()
+    }
+    
+    /// Set the app coordinator reference
+    func setAppCoordinator(_ coordinator: AppDataCoordinator) {
+        self.appCoordinator = coordinator
     }
     
     /// Initialize the view model asynchronously to ensure proper setup
@@ -349,11 +357,45 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
            let quality = AudioQuality(rawValue: savedQuality) {
             return quality
         }
-        return .high // Default to high quality (128 kbps)
+        return .regular // Default to regular quality (64 kbps) to minimize space usage
     }
     
     static func getCurrentAudioSettings() -> [String: Any] {
         return getCurrentAudioQuality().settings
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func getFileSize(url: URL) -> Int64 {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            return attributes[.size] as? Int64 ?? 0
+        } catch {
+            return 0
+        }
+    }
+    
+    private func getRecordingDuration(url: URL) -> TimeInterval {
+        let asset = AVURLAsset(url: url)
+        
+        // Use async loading for duration (required for iOS 16+)
+        let semaphore = DispatchSemaphore(value: 0)
+        var loadedDuration: TimeInterval = 0
+        
+        Task {
+            do {
+                let loadedDurationValue = try await asset.load(.duration)
+                loadedDuration = CMTimeGetSeconds(loadedDurationValue)
+            } catch {
+                print("⚠️ Failed to load duration for \(url.lastPathComponent): \(error.localizedDescription)")
+            }
+            semaphore.signal()
+        }
+        
+        // Wait for the async loading to complete (with timeout)
+        _ = semaphore.wait(timeout: .now() + 2.0)
+        
+        return loadedDuration
     }
 }
 
@@ -365,6 +407,26 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                     print("Recording finished successfully")
                     if let recordingURL = recordingURL {
                         saveLocationData(for: recordingURL)
+                        
+                        // Add recording to registry
+                        if let coordinator = appCoordinator {
+                            let fileSize = getFileSize(url: recordingURL)
+                            let duration = getRecordingDuration(url: recordingURL)
+                            let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+                            
+                            let recordingId = coordinator.addRecording(
+                                url: recordingURL,
+                                name: recordingURL.deletingPathExtension().lastPathComponent,
+                                date: Date(),
+                                fileSize: fileSize,
+                                duration: duration,
+                                quality: quality
+                            )
+                            
+                            print("✅ Recording added to registry with ID: \(recordingId)")
+                        } else {
+                            print("⚠️ AppCoordinator not set, recording not added to registry")
+                        }
                     }
                 } else {
                     errorMessage = "Recording failed"

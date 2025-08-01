@@ -8,7 +8,7 @@
 import Foundation
 import AVFoundation
 
-enum AudioQuality: String, CaseIterable {
+public enum AudioQuality: String, CaseIterable, Codable {
     case regular = "Regular Quality"
     case high = "High Quality"
     case maximum = "Maximum Quality"
@@ -54,7 +54,7 @@ enum AudioQuality: String, CaseIterable {
     }
 }
 
-enum SummaryMethod: String, CaseIterable {
+public enum SummaryMethod: String, CaseIterable {
     case appleIntelligence = "Apple Intelligence (Basic)"
     case localServer = "Local Server (Ollama)"
     case openAI = "OpenAI (GPT-4.1)"
@@ -83,7 +83,7 @@ enum SummaryMethod: String, CaseIterable {
     }
 }
 
-enum TranscriptionEngine: String, CaseIterable {
+public enum TranscriptionEngine: String, CaseIterable, Codable {
     case appleIntelligence = "Apple Intelligence (Limited)"
     case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
@@ -120,6 +120,34 @@ enum TranscriptionEngine: String, CaseIterable {
             return false
         case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible:
             return true
+        }
+    }
+}
+
+// MARK: - Engine Validation Result
+
+public enum EngineValidationResult {
+    case available
+    case unavailable(String)
+    case requiresConfiguration(String)
+    
+    var isAvailable: Bool {
+        switch self {
+        case .available:
+            return true
+        case .unavailable, .requiresConfiguration:
+            return false
+        }
+    }
+    
+    var message: String {
+        switch self {
+        case .available:
+            return "Engine is available"
+        case .unavailable(let reason):
+            return "Engine unavailable: \(reason)"
+        case .requiresConfiguration(let requirement):
+            return "Configuration required: \(requirement)"
         }
     }
 }

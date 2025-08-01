@@ -13,15 +13,11 @@ typealias AudioRecordingFile = RecordingFile
 struct RecordingsListView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
-    @StateObject private var importManager = FileImportManager()
-    @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
-    @StateObject private var transcriptManager = TranscriptManager.shared
-    @StateObject private var summaryManager = SummaryManager.shared
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
     @State private var recordings: [AudioRecordingFile] = []
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
-    @State private var showingDocumentPicker = false
     @State private var recordingToDelete: AudioRecordingFile?
     @State private var showingDeleteConfirmation = false
     @State private var preserveSummaryOnDelete = false
@@ -31,12 +27,17 @@ struct RecordingsListView: View {
     var body: some View {
         NavigationView {
             VStack {
-                importButtonSection
-                importProgressSection
                 recordingsContent
             }
             .navigationTitle("Recordings")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
             .alert("Delete Recording", isPresented: $showingDeleteConfirmation) {
                 Button("Cancel", role: .cancel) { }
                 Button("Delete", role: .destructive) {
@@ -76,52 +77,9 @@ struct RecordingsListView: View {
         }
     }
     
-    private var importButtonSection: some View {
-        HStack {
-            Spacer()
-            Button(action: {
-                documentPickerCoordinator.selectAudioFiles { urls in
-                    if !urls.isEmpty {
-                        Task {
-                            await importManager.importAudioFiles(from: urls)
-                            loadRecordings() // Reload recordings after import
-                        }
-                    }
-                }
-            }) {
-                HStack {
-                    Image(systemName: "plus.circle.fill")
-                    Text("Import Audio Files")
-                }
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(Color.accentColor)
-                .cornerRadius(8)
-            }
-            .disabled(importManager.isImporting)
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 10)
-    }
+
     
-    private var importProgressSection: some View {
-        Group {
-            if importManager.isImporting {
-                VStack(spacing: 8) {
-                    ProgressView(value: importManager.importProgress)
-                        .progressViewStyle(LinearProgressViewStyle())
-                        .padding(.horizontal, 20)
-                    
-                    Text(importManager.progressText)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.vertical, 10)
-            }
-        }
-    }
+
     
     private var recordingsContent: some View {
         Group {

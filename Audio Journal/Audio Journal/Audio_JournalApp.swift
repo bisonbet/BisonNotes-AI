@@ -10,6 +10,7 @@ import SwiftUI
 @main
 struct Audio_JournalApp: App {
     let persistenceController = PersistenceController.shared
+    @StateObject private var appCoordinator = AppDataCoordinator()
     
     init() {
         // Initialize performance optimization and logging
@@ -19,6 +20,7 @@ struct Audio_JournalApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(appCoordinator)
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
         }
     }

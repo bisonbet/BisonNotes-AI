@@ -12,11 +12,11 @@ import CoreLocation
 
 struct TranscriptsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
-    @StateObject private var transcriptManager = TranscriptManager.shared
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @StateObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
-    @State private var recordings: [RecordingFile] = []
-    @State private var selectedRecording: RecordingFile?
+    @State private var recordings: [(recording: RegistryRecordingEntry, transcript: TranscriptData?)] = []
+    @State private var selectedRecording: RegistryRecordingEntry?
     @State private var isGeneratingTranscript = false
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
@@ -26,132 +26,16 @@ struct TranscriptsView: View {
     @State private var refreshTrigger = false
     @State private var showingTranscriptionProgress = false
     @AppStorage("showTranscriptionProgress") private var showTranscriptionProgress: Bool = true
+    @State private var refreshTimer: Timer?
+    @State private var isShowingAlert = false
     
     var body: some View {
         NavigationView {
-            VStack {
-                if recordings.isEmpty {
-                    VStack(spacing: 16) {
-                        Image(systemName: "text.bubble")
-                            .font(.system(size: 60))
-                            .foregroundColor(.secondary)
-                        
-                        Text("No Recordings Found")
-                            .font(.title2)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                        
-                        Text("Record some audio first to generate transcripts")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List(recordings, id: \.url) { recording in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(recording.name)
-                                        .font(.headline)
-                                        .foregroundColor(.primary)
-                                    Text(recording.dateString)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    if let locationData = recording.locationData {
-                                        Button(action: {
-                                            selectedLocationData = locationData
-                                        }) {
-                                            HStack {
-                                                Image(systemName: "location.fill")
-                                                    .font(.caption2)
-                                                    .foregroundColor(.accentColor)
-                                                Text(locationAddresses[recording.url] ?? locationData.coordinateString)
-                                                    .font(.caption2)
-                                                    .foregroundColor(.accentColor)
-                                            }
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                    }
-                                }
-                                Spacer()
-                                Button(action: {
-                                    selectedRecording = recording
-                                    if transcriptManager.hasTranscript(for: recording.url) {
-                                        // Show existing transcript for editing
-                                        // This will be handled by the sheet
-                                    } else {
-                                        // Generate new transcript
-                                        generateTranscript(for: recording)
-                                    }
-                                }) {
-                                    HStack {
-                                        if isGeneratingTranscript && selectedRecording?.url == recording.url {
-                                            ProgressView()
-                                                .scaleEffect(0.8)
-                                            Text("Processing...")
-                                                .font(.caption2)
-                                        } else {
-                                            Image(systemName: transcriptManager.hasTranscript(for: recording.url) ? "text.bubble.fill" : "text.bubble")
-                                            Text(transcriptManager.hasTranscript(for: recording.url) ? "Edit Transcript" : "Generate Transcript")
-                                        }
-                                    }
-                                    .font(.caption)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(transcriptManager.hasTranscript(for: recording.url) ? Color.green : Color.accentColor)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(8)
-                                }
-                                .disabled(isGeneratingTranscript)
-                                .id("\(recording.url.absoluteString)-\(transcriptManager.hasTranscript(for: recording.url))-\(refreshTrigger)")
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-            }
-            .navigationTitle("Transcripts")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        isCheckingForCompletions = true
-                        Task {
-                            await enhancedTranscriptionManager.checkForCompletedTranscriptions()
-                            await MainActor.run {
-                                isCheckingForCompletions = false
-                            }
-                        }
-                    }) {
-                        HStack {
-                            if isCheckingForCompletions {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                            }
-                            Text("Check Status")
-                        }
-                    }
-                    .disabled(isCheckingForCompletions)
-                }
-            }
-            .onAppear {
-                loadRecordings()
-                setupTranscriptionCompletionCallback()
-                // Force UI refresh to ensure transcript states are properly displayed
-                DispatchQueue.main.async {
-                    self.refreshTrigger.toggle()
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
-                // Refresh recordings list when a recording is renamed
-                print("🔄 TranscriptViews: Received recording renamed notification, refreshing list")
-                loadRecordings()
-            }
+            mainContentView
         }
         .sheet(item: $selectedRecording) { recording in
-            if let transcript = transcriptManager.getTranscript(for: recording.url) {
-                EditableTranscriptView(recording: recording, transcript: transcript, transcriptManager: transcriptManager)
+            if let transcript = TranscriptManager.shared.getTranscript(for: recording.recordingURL) {
+                EditableTranscriptView(recording: recording, transcript: transcript, transcriptManager: TranscriptManager.shared)
             } else {
                 TranscriptDetailView(recording: recording, transcriptText: "")
             }
@@ -176,12 +60,22 @@ struct TranscriptsView: View {
                 )
             }
         }
+        .onDisappear {
+            // Ensure transcription progress sheet is dismissed when view disappears
+            if showingTranscriptionProgress {
+                showingTranscriptionProgress = false
+            }
+        }
         .alert("Transcription Complete", isPresented: $showingTranscriptionCompletionAlert) {
             Button("OK") {
                 showingTranscriptionCompletionAlert = false
+                isShowingAlert = false
             }
         } message: {
             Text(completedTranscriptionText.isEmpty ? "A background transcription has completed. The transcript is now available for editing." : completedTranscriptionText)
+        }
+        .onChange(of: showingTranscriptionCompletionAlert) { _, newValue in
+            isShowingAlert = newValue
         }
         .alert("Whisper Fallback", isPresented: $enhancedTranscriptionManager.showingWhisperFallbackAlert) {
             Button("OK") {
@@ -192,30 +86,221 @@ struct TranscriptsView: View {
         }
     }
     
+    private var mainContentView: some View {
+        VStack {
+            if recordings.isEmpty {
+                emptyStateView
+            } else {
+                recordingsListView
+            }
+        }
+        .navigationTitle("Transcripts")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    isCheckingForCompletions = true
+                    Task {
+                        await enhancedTranscriptionManager.checkForCompletedTranscriptions()
+                        await MainActor.run {
+                            isCheckingForCompletions = false
+                        }
+                    }
+                }) {
+                    HStack {
+                        if isCheckingForCompletions {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        }
+                        Text("Check Status")
+                    }
+                }
+                .disabled(isCheckingForCompletions)
+            }
+        }
+        .onAppear {
+            loadRecordings()
+            setupTranscriptionCompletionCallback()
+            // Force UI refresh to ensure transcript states are properly displayed
+            DispatchQueue.main.async {
+                self.refreshTrigger.toggle()
+            }
+            
+            // Start periodic refresh timer
+            refreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
+                DispatchQueue.main.async {
+                    self.loadRecordings()
+                }
+            }
+        }
+        .onDisappear {
+            refreshTimer?.invalidate()
+            refreshTimer = nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
+            // Refresh recordings list when a recording is renamed
+            print("🔄 TranscriptViews: Received recording renamed notification, refreshing list")
+            loadRecordings()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionCompleted"))) { _ in
+            // Refresh recordings list when transcription completes
+            print("🔄 TranscriptViews: Received transcription completed notification, refreshing list")
+            DispatchQueue.main.async {
+                self.loadRecordings()
+                self.refreshTrigger.toggle()
+            }
+        }
+    }
+    
+    private var emptyStateView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "text.bubble")
+                .font(.system(size: 60))
+                .foregroundColor(.secondary)
+            
+            Text("No Recordings Found")
+                .font(.title2)
+                .fontWeight(.medium)
+                .foregroundColor(.primary)
+            
+            Text("Record some audio first to generate transcripts")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private var recordingsListView: some View {
+        List {
+            ForEach(recordings, id: \.recording.id) { recordingData in
+                recordingRowView(recordingData)
+            }
+        }
+    }
+    
+    private func recordingRowView(_ recordingData: (recording: RegistryRecordingEntry, transcript: TranscriptData?)) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                recordingInfoView(recordingData)
+                Spacer()
+                transcriptButtonView(recordingData)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+    
+    private func recordingInfoView(_ recordingData: (recording: RegistryRecordingEntry, transcript: TranscriptData?)) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(recordingData.recording.recordingName)
+                .font(.headline)
+                .foregroundColor(.primary)
+            Text(recordingData.recording.recordingDate, style: .date)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            if let locationData = loadLocationDataForRecording(url: recordingData.recording.recordingURL) {
+                locationButtonView(locationData, recordingURL: recordingData.recording.recordingURL)
+            }
+        }
+    }
+    
+    private func locationButtonView(_ locationData: LocationData, recordingURL: URL) -> some View {
+        Button(action: {
+            selectedLocationData = locationData
+        }) {
+            HStack {
+                Image(systemName: "location.fill")
+                    .font(.caption2)
+                    .foregroundColor(.accentColor)
+                Text(locationAddresses[recordingURL] ?? locationData.coordinateString)
+                    .font(.caption2)
+                    .foregroundColor(.accentColor)
+            }
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private func transcriptButtonView(_ recordingData: (recording: RegistryRecordingEntry, transcript: TranscriptData?)) -> some View {
+        Button(action: {
+            selectedRecording = recordingData.recording
+            if recordingData.transcript != nil {
+                // Show existing transcript for editing
+                // This will be handled by the sheet
+            } else {
+                // Generate new transcript
+                generateTranscript(for: recordingData.recording)
+            }
+        }) {
+            HStack {
+                if isGeneratingTranscript && selectedRecording?.id == recordingData.recording.id {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("Processing...")
+                        .font(.caption2)
+                } else {
+                    Image(systemName: recordingData.transcript != nil ? "text.bubble.fill" : "text.bubble")
+                    Text(recordingData.transcript != nil ? "Edit Transcript" : "Generate Transcript")
+                }
+            }
+            .font(.caption)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(recordingData.transcript != nil ? Color.green : Color.accentColor)
+            .foregroundColor(.white)
+            .cornerRadius(8)
+        }
+        .disabled(isGeneratingTranscript)
+        .id("\(recordingData.recording.id)-\(recordingData.transcript != nil)-\(refreshTrigger)")
+
+    }
+    
     private func loadRecordings() {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         do {
             let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
-            recordings = fileURLs
-                .filter { ["m4a", "mp3", "wav"].contains($0.pathExtension.lowercased()) }
-                .compactMap { url -> RecordingFile? in
-                    guard let creationDate = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate else { return nil }
-                    let duration = getRecordingDuration(url: url)
-                    let locationData = loadLocationDataForRecording(url: url)
-                    return RecordingFile(url: url, name: url.deletingPathExtension().lastPathComponent, date: creationDate, duration: duration, locationData: locationData)
-                }
-                .sorted { $0.date > $1.date }
+            
+            // Step 1: Filter audio files
+            let audioFiles = fileURLs.filter { ["m4a", "mp3", "wav"].contains($0.pathExtension.lowercased()) }
+            
+            // Step 2: Process each file into recording data
+            var processedRecordings: [(recording: RegistryRecordingEntry, transcript: TranscriptData?)] = []
+            
+            for url in audioFiles {
+                guard let creationDate = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate else { continue }
+                
+                let duration = getRecordingDuration(url: url)
+                let fileSize = getFileSize(url: url)
+                let transcript = TranscriptManager.shared.getTranscript(for: url)
+                
+                let recording = RegistryRecordingEntry(
+                    recordingURL: url,
+                    recordingName: url.deletingPathExtension().lastPathComponent,
+                    recordingDate: creationDate,
+                    fileSize: fileSize,
+                    duration: duration,
+                    audioQuality: AudioRecorderViewModel.getCurrentAudioQuality()
+                )
+                
+                processedRecordings.append((recording: recording, transcript: transcript))
+            }
+            
+            // Step 3: Sort by date
+            recordings = processedRecordings.sorted { $0.recording.recordingDate > $1.recording.recordingDate }
             
             // Geocode locations for all recordings
             for recording in recordings {
-                loadLocationAddress(for: recording)
+                loadLocationAddress(for: recording.recording)
             }
         } catch {
             print("Error loading recordings: \(error)")
         }
     }
     
-    private func loadLocationDataForRecording(url: URL) -> LocationData? {
+    func loadLocationDataForRecording(url: URL) -> LocationData? {
+        return Self.loadLocationDataForRecording(url: url)
+    }
+    
+    static func loadLocationDataForRecording(url: URL) -> LocationData? {
         let locationURL = url.deletingPathExtension().appendingPathExtension("location")
         guard let data = try? Data(contentsOf: locationURL),
               let locationData = try? JSONDecoder().decode(LocationData.self, from: data) else {
@@ -224,15 +309,20 @@ struct TranscriptsView: View {
         return locationData
     }
     
-    private func loadLocationAddress(for recording: RecordingFile) {
-        guard let locationData = recording.locationData else { return }
+    private func loadLocationAddress(for recording: RegistryRecordingEntry) {
+        // Check if there's a location file for this recording
+        let locationURL = recording.recordingURL.deletingPathExtension().appendingPathExtension("location")
+        guard let data = try? Data(contentsOf: locationURL),
+              let locationData = try? JSONDecoder().decode(LocationData.self, from: data) else {
+            return
+        }
         
         let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
         // Use a default location manager since AudioRecorderViewModel doesn't have one
         let locationManager = LocationManager()
         locationManager.reverseGeocodeLocation(location) { address in
             if let address = address {
-                locationAddresses[recording.url] = address
+                locationAddresses[recording.recordingURL] = address
             }
         }
     }
@@ -255,7 +345,17 @@ struct TranscriptsView: View {
         }
     }
     
-    private func generateTranscript(for recording: RecordingFile) {
+    private func getFileSize(url: URL) -> Int64 {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            return attributes[.size] as? Int64 ?? 0
+        } catch {
+            print("Error getting file size: \(error)")
+            return 0
+        }
+    }
+    
+    private func generateTranscript(for recording: RegistryRecordingEntry) {
         isGeneratingTranscript = true
         
         // First request speech recognition permission
@@ -275,8 +375,8 @@ struct TranscriptsView: View {
         }
     }
     
-    private func performEnhancedTranscription(for recording: RecordingFile) {
-        print("🚀 Starting enhanced transcription for: \(recording.name)")
+    private func performEnhancedTranscription(for recording: RegistryRecordingEntry) {
+        print("🚀 Starting enhanced transcription for: \(recording.recordingName)")
         
         // Show progress sheet if enabled
         if showTranscriptionProgress {
@@ -290,8 +390,8 @@ struct TranscriptsView: View {
             do {
                 // Start transcription job through BackgroundProcessingManager
                 try await backgroundProcessingManager.startTranscriptionJob(
-                    recordingURL: recording.url,
-                    recordingName: recording.name,
+                    recordingURL: recording.recordingURL,
+                    recordingName: recording.recordingName,
                     engine: selectedEngine
                 )
                 
@@ -306,7 +406,7 @@ struct TranscriptsView: View {
                 // Fallback to direct transcription if background processing fails
                 print("🔄 Falling back to direct transcription...")
                 do {
-                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url, using: selectedEngine)
+                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.recordingURL, using: selectedEngine)
                     
                     print("📊 Transcription result: success=\(result.success), textLength=\(result.fullText.count)")
                     
@@ -314,14 +414,14 @@ struct TranscriptsView: View {
                         print("✅ Creating transcript data...")
                         // Create transcript data
                         let transcriptData = TranscriptData(
-                            recordingURL: recording.url,
-                            recordingName: recording.name,
-                            recordingDate: recording.date,
+                            recordingURL: recording.recordingURL,
+                            recordingName: recording.recordingName,
+                            recordingDate: recording.recordingDate,
                             segments: result.segments
                         )
                         
                         // Save the transcript
-                        self.transcriptManager.saveTranscript(transcriptData)
+                        TranscriptManager.shared.saveTranscript(transcriptData)
                         print("💾 Transcript saved successfully")
                         
                                             // Don't automatically open the transcript view - let user choose when to edit
@@ -376,7 +476,7 @@ struct TranscriptsView: View {
                 
                 // Find the recording that matches this transcription
                 if let recording = recordings.first(where: { recording in
-                    return recording.url == job.recordingURL
+                    return recording.recording.recordingURL == job.recordingURL
                 }) {
                     print("💾 Background transcript already saved by BackgroundProcessingManager")
                     
@@ -385,9 +485,22 @@ struct TranscriptsView: View {
                     // Force UI refresh to update button states
                     self.forceRefreshUI()
                     
-                    // Show completion alert
-                    self.completedTranscriptionText = "Transcription completed for: \(recording.name)"
-                    self.showingTranscriptionCompletionAlert = true
+                    // Send notification for other views to refresh
+                    NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
+                    
+                    // Dismiss progress sheet first if it's showing
+                    if self.showingTranscriptionProgress {
+                        self.showingTranscriptionProgress = false
+                        // Add a small delay to ensure the sheet is dismissed before showing the alert
+                        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                    }
+                    
+                    // Only show alert if not already showing one
+                    if !self.isShowingAlert {
+                        // Show completion alert
+                        self.completedTranscriptionText = "Transcription completed for: \(recording.recording.recordingName)"
+                        self.showingTranscriptionCompletionAlert = true
+                    }
                 } else {
                     print("❌ Could not find recording for completed transcription")
                 }
@@ -401,36 +514,49 @@ struct TranscriptsView: View {
                 print("🔍 Looking for recording with URL: \(jobInfo.recordingURL)")
                 print("📋 Available recordings: \(recordings.count)")
                 for (index, recording) in recordings.enumerated() {
-                    print("📋 Recording \(index): \(recording.name) - \(recording.url)")
+                    print("📋 Recording \(index): \(recording.recording.recordingName) - \(recording.recording.recordingURL)")
                 }
                 
                 // Find the recording that matches this transcription
                 if let recording = recordings.first(where: { recording in
-                    return recording.url == jobInfo.recordingURL
+                    return recording.recording.recordingURL == jobInfo.recordingURL
                 }) {
                     // Create transcript data and save it
                     let transcriptData = TranscriptData(
-                        recordingURL: recording.url,
-                        recordingName: recording.name,
-                        recordingDate: recording.date,
+                        recordingURL: recording.recording.recordingURL,
+                        recordingName: recording.recording.recordingName,
+                        recordingDate: recording.recording.recordingDate,
                         segments: result.segments
                     )
                     
-                    self.transcriptManager.saveTranscript(transcriptData)
-                    print("💾 Background transcript saved for: \(recording.name)")
+                    TranscriptManager.shared.saveTranscript(transcriptData)
+                    print("💾 Background transcript saved for: \(recording.recording.recordingName)")
                     
                     // Force UI refresh to update button states
                     self.forceRefreshUI()
                     
-                    // Show completion alert
-                    self.completedTranscriptionText = "Transcription completed for: \(recording.name)"
-                    self.showingTranscriptionCompletionAlert = true
+                    // Send notification for other views to refresh
+                    NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
+                    
+                    // Dismiss progress sheet first if it's showing
+                    if self.showingTranscriptionProgress {
+                        self.showingTranscriptionProgress = false
+                        // Add a small delay to ensure the sheet is dismissed before showing the alert
+                        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                    }
+                    
+                    // Only show alert if not already showing one
+                    if !self.isShowingAlert {
+                        // Show completion alert
+                        self.completedTranscriptionText = "Transcription completed for: \(recording.recording.recordingName)"
+                        self.showingTranscriptionCompletionAlert = true
+                    }
                 } else {
                     print("❌ No matching recording found for job: \(jobInfo.recordingName)")
                     print("❌ Job URL: \(jobInfo.recordingURL)")
                     print("❌ Available recording URLs:")
                     for recording in self.recordings {
-                        print("❌   - \(recording.url)")
+                        print("❌   - \(recording.recording.recordingURL)")
                     }
                 }
             }
@@ -439,7 +565,7 @@ struct TranscriptsView: View {
 }
 
 struct EditableTranscriptView: View {
-    let recording: RecordingFile
+    let recording: RegistryRecordingEntry
     let transcript: TranscriptData
     let transcriptManager: TranscriptManager
     @Environment(\.dismiss) private var dismiss
@@ -448,7 +574,7 @@ struct EditableTranscriptView: View {
     @State private var speakerMappings: [String: String]
     @State private var showingSpeakerEditor = false
     
-    init(recording: RecordingFile, transcript: TranscriptData, transcriptManager: TranscriptManager) {
+    init(recording: RegistryRecordingEntry, transcript: TranscriptData, transcriptManager: TranscriptManager) {
         self.recording = recording
         self.transcript = transcript
         self.transcriptManager = transcriptManager
@@ -677,7 +803,7 @@ struct SpeakerEditorView: View {
 }
 
 struct TranscriptDetailView: View {
-    let recording: RecordingFile
+    let recording: RegistryRecordingEntry
     let transcriptText: String
     @Environment(\.dismiss) private var dismiss
     @State private var locationAddress: String?
@@ -697,16 +823,16 @@ struct TranscriptDetailView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
-                            Text(recording.name)
+                            Text(recording.recordingName)
                                 .font(.title2)
                                 .fontWeight(.bold)
                                 .foregroundColor(.primary)
                             
-                            Text(recording.dateString)
+                            Text(recording.recordingDate, style: .date)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             
-                            if let locationData = recording.locationData {
+                            if let locationData = TranscriptsView.loadLocationDataForRecording(url: recording.recordingURL) {
                                 HStack {
                                     Image(systemName: "location.fill")
                                         .font(.caption)
@@ -738,7 +864,7 @@ struct TranscriptDetailView: View {
                 }
             }
             .onAppear {
-                if let locationData = recording.locationData {
+                if let locationData = TranscriptsView.loadLocationDataForRecording(url: recording.recordingURL) {
                     let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
                     let tempLocationManager = LocationManager()
                     tempLocationManager.reverseGeocodeLocation(location) { address in

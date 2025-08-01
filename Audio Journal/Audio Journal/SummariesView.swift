@@ -6,12 +6,11 @@ import NaturalLanguage
 
 struct SummariesView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
-    @StateObject private var summaryManager = SummaryManager.shared
-    @StateObject private var transcriptManager = TranscriptManager.shared
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
-    @State private var recordings: [RecordingFile] = []
-    @State private var selectedRecording: RecordingFile?
+    @State private var recordings: [(recording: RegistryRecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = []
+    @State private var selectedRecording: RegistryRecordingEntry?
     @State private var isGeneratingSummary = false
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
@@ -27,40 +26,21 @@ struct SummariesView: View {
         NavigationView {
             mainContentView
                 .navigationTitle("Summaries")
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button(action: {
-                            showOrphanedSummaries = true
-                        }) {
-                            Image(systemName: "doc.text.magnifyingglass")
-                                .foregroundColor(.orange)
-                        }
-                        .help("View orphaned summaries")
-                    }
-                }
                 .onAppear {
                     loadRecordings()
-                    // Configure the summary manager with the selected AI engine
-                    // Set the AI engine for summarization
-                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
-                    summaryManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
-                    
                     // Configure the transcription manager with the selected engine
                     let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
                     enhancedTranscriptionManager.updateTranscriptionEngine(selectedEngine)
-                    
                     // Refresh file relationships
                     enhancedFileManager.refreshAllRelationships()
                 }
-                .onReceive(summaryManager.objectWillChange) { _ in
-                    // Refresh the view when summary manager changes
-                    // Only log if verbose logging is enabled
+                .onReceive(appCoordinator.objectWillChange) { _ in
+                    // Refresh the view when coordinator changes
                     if PerformanceOptimizer.shouldLogEngineInitialization() {
-                        AppLogger.shared.verbose("Received summary manager change notification", category: "SummariesView")
+                        AppLogger.shared.verbose("Received coordinator change notification", category: "SummariesView")
                     }
                     DispatchQueue.main.async {
                         self.refreshTrigger.toggle()
-                        // Only log if verbose logging is enabled
                         if PerformanceOptimizer.shouldLogEngineInitialization() {
                             AppLogger.shared.verbose("Toggled refresh trigger to \(self.refreshTrigger)", category: "SummariesView")
                         }
@@ -72,7 +52,6 @@ struct SummariesView: View {
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
                     // Refresh recordings list when a recording is renamed
-                    // Only log if verbose logging is enabled
                     if PerformanceOptimizer.shouldLogEngineInitialization() {
                         AppLogger.shared.verbose("Received recording renamed notification, refreshing list", category: "SummariesView")
                     }
@@ -82,734 +61,454 @@ struct SummariesView: View {
         .sheet(isPresented: $showSummary) {
             if let recording = selectedRecording {
                 // Try to get enhanced summary first, fallback to legacy
-                if let enhancedSummary = summaryManager.getBestAvailableSummary(for: recording.url) {
-                    EnhancedSummaryDetailView(recording: recording, summaryData: enhancedSummary)
-                } else if let summaryData = summaryManager.getSummary(for: recording.url) {
-                    SummaryDetailView(recording: recording, summaryData: summaryData)
+                if let enhancedSummary = appCoordinator.getCompleteRecordingData(id: recording.id)?.summary {
+                    EnhancedSummaryDetailView(
+                        recording: RecordingFile(
+                            url: recording.recordingURL,
+                            name: recording.recordingName,
+                            date: recording.recordingDate,
+                            duration: recording.duration,
+                            locationData: nil
+                        ),
+                        summaryData: enhancedSummary
+                    )
+                } else {
+                    // FIX: Provide a View for the 'else' case to satisfy the ViewBuilder.
+                    VStack(spacing: 16) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 50))
+                            .foregroundColor(.secondary)
+                        Text("Summary Not Available")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                        Text("A summary for this recording could not be found.")
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
                 }
             }
         }
         .onChange(of: showSummary) { _, newValue in
             if !newValue {
                 // Sheet was dismissed, refresh the view
-                // Only log if verbose logging is enabled
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
                     AppLogger.shared.verbose("Summary sheet dismissed, refreshing UI", category: "SummariesView")
                 }
-                
                 // Force a UI refresh to update button states
                 DispatchQueue.main.async {
-                    // Additional check to ensure summary state is updated
-                    if let recording = self.selectedRecording {
-                        let hasSummary = self.summaryManager.hasSummary(for: recording.url)
-                        // Only log if verbose logging is enabled
-                        if PerformanceOptimizer.shouldLogEngineInitialization() {
-                            AppLogger.shared.verbose("After sheet dismissal - hasSummary for \(recording.name): \(hasSummary)", category: "SummariesView")
-                        }
-                    }
-                    
-                    // Force complete UI refresh
-                    self.forceRefreshUI()
+                    self.refreshTrigger.toggle()
                 }
             }
         }
-        .sheet(item: $selectedLocationData) { locationData in
-            LocationDetailView(locationData: locationData)
+        .alert("Error", isPresented: $showErrorAlert) {
+            Button("OK") { }
+        } message: {
+            Text(errorMessage)
         }
         .sheet(isPresented: $showOrphanedSummaries) {
             OrphanedSummariesView()
         }
-        .alert("Summary Generation Error", isPresented: $showErrorAlert) {
-            Button("OK") {
-                showErrorAlert = false
-            }
-        } message: {
-            Text(errorMessage)
-        }
-        .alert("Whisper Fallback", isPresented: $enhancedTranscriptionManager.showingWhisperFallbackAlert) {
-            Button("OK") {
-                enhancedTranscriptionManager.showingWhisperFallbackAlert = false
-            }
-        } message: {
-            Text(enhancedTranscriptionManager.whisperFallbackMessage)
-        }
     }
-
-    // MARK: - View Components
-
-    @ViewBuilder
+    
+    // MARK: - Main Content View
+    
     private var mainContentView: some View {
         VStack {
-            if recordings.isEmpty {
-                emptyStateView
-            } else {
-                recordingsListView
+            // Debug buttons at the top
+            debugButtonsView
+            
+            // Main content
+            Group {
+                if recordings.isEmpty {
+                    emptyStateView
+                } else {
+                    recordingsListView
+                }
             }
         }
     }
     
-    @ViewBuilder
+    private var debugButtonsView: some View {
+        HStack {
+            Menu("Debug") {
+                Button("Remove Duplicates") {
+                    appCoordinator.removeDuplicateRecordings()
+                    loadRecordings()
+                }
+                
+                Button("Update Durations") {
+                    appCoordinator.updateRecordingDurations()
+                    loadRecordings()
+                }
+                
+                Button("Debug Transcripts") {
+                    appCoordinator.debugTranscriptStatus()
+                    appCoordinator.forceReloadTranscripts()
+                    loadRecordings()
+                }
+                
+                Button("Debug Linking") {
+                    appCoordinator.debugTranscriptLinking()
+                }
+                
+                Button("Cleanup Duplicates") {
+                    appCoordinator.cleanupDuplicateSummaries()
+                    loadRecordings()
+                }
+                
+                Button("Debug Summaries") {
+                    debugSummaries()
+                }
+                
+                Button("Fix Summary Links") {
+                    appCoordinator.fixSummariesWithNilRecordingId()
+                    loadRecordings()
+                }
+                
+                Button("Link Summaries") {
+                    appCoordinator.linkSummariesToRecordings()
+                    loadRecordings()
+                }
+                
+                Button("Link to Transcripts") {
+                    appCoordinator.linkSummariesToRecordingsWithTranscripts()
+                    loadRecordings()
+                }
+                
+                Button("Recover Transcripts") {
+                    appCoordinator.debugTranscriptRecovery()
+                    loadRecordings()
+                }
+                
+                Button("Recover From Disk") {
+                    appCoordinator.recoverTranscriptsFromDisk()
+                    loadRecordings()
+                }
+                
+                Button("Refresh Recordings from Disk") {
+                    appCoordinator.refreshRecordingsFromDisk()
+                    loadRecordings()
+                }
+            }
+            
+            Button("Refresh") {
+                loadRecordings()
+            }
+            
+            Button("Orphaned") {
+                showOrphanedSummaries = true
+            }
+            
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.top, 8)
+    }
+    
+    // MARK: - Empty State
+    
     private var emptyStateView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 20) {
             Image(systemName: "doc.text.magnifyingglass")
                 .font(.system(size: 60))
                 .foregroundColor(.secondary)
             
-            Text("No Recordings Found")
+            Text("No Summaries Yet")
                 .font(.title2)
-                .fontWeight(.medium)
-                .foregroundColor(.primary)
+                .fontWeight(.semibold)
             
-            Text("Record some audio first to generate summaries")
-                .font(.body)
-                .foregroundColor(.secondary)
+            Text("Record some audio and generate summaries to see them here.")
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+                .foregroundColor(.secondary)
+                .padding(.horizontal)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
-    @ViewBuilder
+    // MARK: - Recordings List View
+    
     private var recordingsListView: some View {
-        List(recordings, id: \.url) { recording in
-            recordingRow(for: recording)
+        List {
+            ForEach(recordings, id: \.recording.id) { recordingData in
+                recordingRowView(recordingData)
+            }
+        }
+        .listStyle(PlainListStyle())
+        .refreshable {
+            loadRecordings()
         }
     }
     
-    @ViewBuilder
-    private func recordingRow(for recording: RecordingFile) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    // MARK: - Recording Row View
+    
+    private func recordingRowView(_ recordingData: (recording: RegistryRecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)) -> some View {
+        let recording = recordingData.recording
+        let transcript = recordingData.transcript
+        let summary = recordingData.summary
+        
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(recording.name)
+                    Text(recording.recordingName)
                         .font(.headline)
                         .foregroundColor(.primary)
-                    Text(recording.dateString)
+                    
+                    Text(recording.recordingDate, style: .date)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
-                    // File availability indicator
-                    if let relationships = enhancedFileManager.getFileRelationships(for: recording.url) {
-                        FileAvailabilityIndicator(
-                            status: relationships.availabilityStatus,
-                            showLabel: true,
-                            size: .small
-                        )
-                        
-                        // Show warning if audio source is no longer available
-                        if relationships.isOrphaned {
-                            HStack {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.caption2)
-                                    .foregroundColor(.orange)
-                                Text("Audio source no longer available")
-                                    .font(.caption2)
-                                    .foregroundColor(.orange)
-                            }
-                        }
-                    }
-                    
-                    if let locationData = recording.locationData {
-                        Button(action: {
-                            selectedLocationData = locationData
-                        }) {
-                            HStack {
-                                Image(systemName: "location.fill")
-                                    .font(.caption2)
-                                    .foregroundColor(.accentColor)
-                                Text(locationAddresses[recording.url] ?? locationData.coordinateString)
-                                    .font(.caption2)
-                                    .foregroundColor(.accentColor)
-                            }
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
                 }
+                
                 Spacer()
                 
-                // Summary button
-                summaryButton(for: recording)
-            }
-        }
-        .padding(.vertical, 4)
-    }
+                VStack(alignment: .trailing, spacing: 4) {
+                    statusIndicator(for: recording)
+                    
+                    if summary != nil {
+                        Button(action: {
+                            selectedRecording = recording
+                            showSummary = true
+                        }) {
+                            HStack {
+                                Image(systemName: "doc.text.magnifyingglass.fill")
+                                Text("View Summary")
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+                    } else if recording.summaryStatus == .processing {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                            Text("Processing...")
+                                .font(.caption2)
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.orange)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    } else {
+                        Button(action: {
+                            print("🔘 Generate Summary button pressed for: \(recording.recordingName)")
+                            generateSummary(for: recording)
+                        }) {
+                            HStack {
+                                Image(systemName: "doc.text.magnifyingglass")
+                                Text("Generate Summary")
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.accentColor)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+                        .disabled(isGeneratingSummary)
+                        .onAppear {
+                            print("🔍 Button state - isGeneratingSummary: \(isGeneratingSummary)")
+                        }
+                        .allowsHitTesting(true)
 
-    @ViewBuilder
-    private func summaryButton(for recording: RecordingFile) -> some View {
-        // Check both enhanced and legacy summaries for more reliable detection
-        let hasEnhancedSummary = summaryManager.hasEnhancedSummary(for: recording.url)
-        let hasLegacySummary = summaryManager.getSummary(for: recording.url) != nil
-        let hasSummary = hasEnhancedSummary || hasLegacySummary
-        let isGenerating = isGeneratingSummary && selectedRecording?.url == recording.url
-        
-        Button(action: {
-            // Debug logging to help identify the issue
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Summary button state for \(recording.name): enhanced=\(hasEnhancedSummary), legacy=\(hasLegacySummary), total=\(hasSummary)", category: "SummariesView")
-            }
-            
-            selectedRecording = recording
-            
-            if hasSummary {
-                // Show existing summary
-                showSummary = true
-            } else {
-                // Generate new summary
-                Task {
-                    await generateTranscriptAndSummary(for: recording)
+                    }
                 }
             }
-        }) {
-            HStack {
-                if isGenerating {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                } else {
-                    Image(systemName: hasSummary ? "eye" : "doc.text.magnifyingglass")
-                }
-                Text(hasSummary ? "View Summary" : "Generate Summary")
+            
+            if let transcript = transcript {
+                Text(transcript.plainText)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(3)
+                    .padding(.top, 4)
             }
-            .font(.caption)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(hasSummary ? Color.green : Color.accentColor)
-            .foregroundColor(.white)
-            .cornerRadius(8)
         }
-        .disabled(isGeneratingSummary)
-        .id("\(recording.url.absoluteString)-\(hasSummary)-\(refreshTrigger)") // Force re-evaluation when state changes
-    }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
 
-    // MARK: - Data Handling
+    }
     
-    private func forceRefreshUI() {
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("Forcing UI refresh", category: "SummariesView")
-        }
-        DispatchQueue.main.async {
-            // Trigger multiple refresh mechanisms
-            self.refreshTrigger.toggle()
+    // MARK: - Status Indicator
+    
+    private func statusIndicator(for recording: RegistryRecordingEntry) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: recording.hasTranscript ? "checkmark.circle.fill" : "circle")
+                .foregroundColor(recording.hasTranscript ? .green : .gray)
+                .font(.caption)
             
-            // Reload recordings to ensure fresh data
-            self.loadRecordings()
-            
-            // Force summary manager to refresh its state
-            self.summaryManager.objectWillChange.send()
-            
-            // Additional refresh after a short delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.refreshTrigger.toggle()
-            }
+            Image(systemName: recording.hasSummary ? "doc.text.magnifyingglass.fill" : "doc.text.magnifyingglass")
+                .foregroundColor(recording.hasSummary ? .blue : .gray)
+                .font(.caption)
         }
     }
+    
+    // MARK: - Helper Methods
     
     private func loadRecordings() {
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        do {
-            let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
-            recordings = fileURLs
-                .filter { ["m4a", "mp3", "wav"].contains($0.pathExtension.lowercased()) }
-                .compactMap { url -> RecordingFile? in
-                    guard let creationDate = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate else { return nil }
-                    let duration = getRecordingDuration(url: url)
-                    let locationData = loadLocationDataForRecording(url: url)
-                    return RecordingFile(url: url, name: url.deletingPathExtension().lastPathComponent, date: creationDate, duration: duration, locationData: locationData)
-                }
-                .sorted { $0.date > $1.date }
-            
-            // Geocode locations for all recordings
-            for recording in recordings {
-                loadLocationAddress(for: recording)
-            }
-        } catch {
-            print("Error loading recordings: \(error)")
-        }
-    }
-    
-    private func loadLocationDataForRecording(url: URL) -> LocationData? {
-        let locationURL = url.deletingPathExtension().appendingPathExtension("location")
-        guard let data = try? Data(contentsOf: locationURL),
-              let locationData = try? JSONDecoder().decode(LocationData.self, from: data) else {
-            return nil
-        }
-        return locationData
-    }
-    
-    private func loadLocationAddress(for recording: RecordingFile) {
-        guard let locationData = recording.locationData else { return }
+        print("🔄 loadRecordings() called in SummariesView")
         
-        let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
-        // Use a default location manager since AudioRecorderViewModel doesn't have one
-        let locationManager = LocationManager()
-        locationManager.reverseGeocodeLocation(location) { address in
-            if let address = address {
-                locationAddresses[recording.url] = address
-            }
-        }
-    }
-    
-    private func getRecordingDuration(url: URL) -> TimeInterval {
-        do {
-            let player = try AVAudioPlayer(contentsOf: url)
-            return player.duration
-        } catch {
-            AppLogger.shared.error("Error getting duration: \(error)", category: "SummariesView")
-            return 0
-        }
-    }
-    
-    private func generateTranscriptAndSummary(for recording: RecordingFile) async {
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("Starting generateTranscriptAndSummary for: \(recording.name)", category: "SummariesView")
-            AppLogger.shared.verbose("Looking for transcript with URL: \(recording.url)", category: "SummariesView")
-            AppLogger.shared.verbose("Total transcripts in manager: \(transcriptManager.transcripts.count)", category: "SummariesView")
+        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        print("📊 Total recordings from coordinator: \(recordingsWithData.count)")
+        
+        // Debug: Print each recording and its transcript status
+        for (index, recordingData) in recordingsWithData.enumerated() {
+            let recording = recordingData.recording
+            let transcript = recordingData.transcript
+            let summary = recordingData.summary
             
-            // Debug: Print all stored transcript URLs
-            for (index, transcript) in transcriptManager.transcripts.enumerated() {
-                AppLogger.shared.verbose("Transcript \(index): \(transcript.recordingName) - \(transcript.recordingURL)", category: "SummariesView")
+            print("   \(index): \(recording.recordingName)")
+            print("      - Has transcript: \(transcript != nil)")
+            print("      - Has summary: \(summary != nil)")
+            if let summary = summary {
+                print("      - Summary AI Method: \(summary.aiMethod)")
+                print("      - Summary Generated At: \(summary.generatedAt)")
+            }
+            print("      - Recording has transcript flag: \(recording.hasTranscript)")
+            print("      - Recording has summary flag: \(recording.hasSummary)")
+        }
+        
+        // Filter to show recordings that have transcripts (so summaries can be generated)
+        recordings = recordingsWithData.compactMap { recordingData in
+            let recording = recordingData.recording
+            let transcript = recordingData.transcript
+            let summary = recordingData.summary
+            
+            // Include recordings that have transcripts (so summaries can be generated)
+            if transcript != nil {
+                print("✅ Including recording with transcript: \(recording.recordingName)")
+                return (recording: recording, transcript: transcript, summary: summary)
+            } else {
+                print("❌ Excluding recording without transcript: \(recording.recordingName)")
+                return nil
             }
         }
+        
+        print("📊 Final result: \(recordings.count) recordings with transcripts out of \(recordingsWithData.count) total recordings")
+    }
+    
+    private func generateSummary(for recording: RegistryRecordingEntry) {
+        print("🚀 generateSummary called for recording: \(recording.recordingName)")
+        print("📁 Recording URL: \(recording.recordingURL)")
+        print("📅 Recording date: \(recording.recordingDate)")
         
         isGeneratingSummary = true
         
-        // Check if transcript already exists
-        if let existingTranscript = transcriptManager.getTranscript(for: recording.url) {
-            print("📄 Found existing transcript, checking validity...")
-            print("📄 Existing transcript name: \(existingTranscript.recordingName)")
-            print("📄 Existing transcript URL: \(existingTranscript.recordingURL)")
-            // Validate that we have actual transcript content, not a placeholder
-            let transcriptText = existingTranscript.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            // Check for placeholder text or insufficient content
-            if isValidTranscriptForSummarization(transcriptText) {
-                print("✅ Transcript is valid, generating summary...")
-                generateSummaryFromTranscript(for: recording, transcriptText: transcriptText)
-            } else {
-                print("⚠️ Transcript exists but is not suitable for summarization: \(transcriptText.prefix(100))")
-                
-                // Check if this is a pending AWS transcription
-                if isPendingAWSTranscription(transcriptText) {
-                    print("⏳ Detected pending AWS transcription, waiting for completion...")
-                    await waitForTranscriptionCompletion(for: recording)
-                } else {
-                    await MainActor.run {
-                        self.isGeneratingSummary = false
-                        self.showErrorAlert = true
-                        self.errorMessage = "No valid transcript found. Please generate a transcript first by clicking 'Generate Transcript' in the Recordings tab."
-                    }
-                }
-            }
-        } else {
-            print("📄 No existing transcript found, starting transcription...")
-            performSpeechRecognition(for: recording)
-        }
-    }
-    
-    // MARK: - Pending Transcription Handling
-    
-    private func isPendingAWSTranscription(_ transcriptText: String) -> Bool {
-        let lowercased = transcriptText.lowercased()
-        let pendingPatterns = [
-            "transcription job started:",
-            "job is running in background",
-            "check status later to retrieve results",
-            "transcription job",
-            "is running in background"
-        ]
-        
-        for pattern in pendingPatterns {
-            if lowercased.contains(pattern) {
-                print("🔍 Detected pending AWS transcription pattern: \(pattern)")
-                return true
-            }
-        }
-        return false
-    }
-    
-    private func waitForTranscriptionCompletion(for recording: RecordingFile) async {
-        print("⏳ Waiting for transcription completion for: \(recording.name)")
-        
-        // Set up a completion handler for when transcription finishes
-        enhancedTranscriptionManager.onTranscriptionCompleted = { result, jobInfo in
-            Task { @MainActor in
-                
-                print("🎉 Transcription completed for: \(jobInfo.recordingName)")
-                print("🔍 Checking if this matches our recording: \(recording.name)")
-                
-                // Check if this completed transcription matches our recording
-                if jobInfo.recordingURL == recording.url {
-                    print("✅ Matched transcription completion with our recording")
-                    
-                    // Validate the completed transcript
-                    let transcriptText = result.fullText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    
-                    if self.isValidTranscriptForSummarization(transcriptText) {
-                        print("✅ Completed transcript is valid, generating summary...")
-                        
-                        // Create transcript data and save it
-                        let transcriptData = TranscriptData(
-                            recordingURL: recording.url,
-                            recordingName: recording.name,
-                            recordingDate: recording.date,
-                            segments: result.segments
-                        )
-                        
-                        self.transcriptManager.saveTranscript(transcriptData)
-                        print("💾 Completed transcript saved successfully")
-                        
-                        // Generate summary from the completed transcript
-                        self.generateSummaryFromTranscript(for: recording, transcriptText: transcriptText)
-                    } else {
-                        print("❌ Completed transcript is not valid for summarization")
-                        self.isGeneratingSummary = false
-                        self.showErrorAlert = true
-                        self.errorMessage = "Transcription completed but the content is not suitable for summarization. Please try again or check your audio quality."
-                    }
-                } else {
-                    print("❌ Completed transcription doesn't match our recording")
-                    print("❌ Expected: \(recording.url)")
-                    print("❌ Got: \(jobInfo.recordingURL)")
-                }
-            }
-        }
-        
-        // Start background checking for completed transcriptions
-        print("🔍 Starting background check for completed transcriptions...")
-        await enhancedTranscriptionManager.checkForCompletedTranscriptions()
-        
-        // Set up a timer to periodically check for completion
-        let maxWaitTime: TimeInterval = 3600 // 1 hour max wait
-        let checkInterval: TimeInterval = 10 // Check every 10 seconds
-        let startTime = Date()
-        
-        while Date().timeIntervalSince(startTime) < maxWaitTime {
-            // Check if we now have a valid transcript
-            if let updatedTranscript = transcriptManager.getTranscript(for: recording.url) {
-                let transcriptText = updatedTranscript.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                if isValidTranscriptForSummarization(transcriptText) && !isPendingAWSTranscription(transcriptText) {
-                    print("✅ Found valid completed transcript, generating summary...")
-                    generateSummaryFromTranscript(for: recording, transcriptText: transcriptText)
-                    return
-                }
-            }
-            
-            // Wait before checking again
-            try? await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
-            
-            // Also trigger a manual check for completed transcriptions
-            await enhancedTranscriptionManager.checkForCompletedTranscriptions()
-        }
-        
-        // If we reach here, the transcription timed out
-        print("⏰ Transcription wait timed out")
-        await MainActor.run {
-            self.isGeneratingSummary = false
-            self.showErrorAlert = true
-            self.errorMessage = "Transcription is taking longer than expected. Please check the status in the Transcripts tab or try again later."
-        }
-    }
-    
-    private func performSpeechRecognition(for recording: RecordingFile) {
-        print("🎙️ Starting speech recognition for: \(recording.name)")
-        print("🔧 Using transcription engine: Apple Intelligence")
+        // Check engine status first
+        print("🔧 Checking engine status...")
+        appCoordinator.registryManager.checkEngineStatus()
         
         Task {
             do {
-                // Add timeout to prevent infinite CPU usage
-                let result = try await withTimeout(seconds: 1800) { // 30 minute timeout
-                    try await enhancedTranscriptionManager.transcribeAudioFile(at: recording.url, using: .appleIntelligence)
-                }
+                print("🔍 Starting summary generation for recording: \(recording.recordingName)")
                 
-                print("📊 Transcription completed - Success: \(result.success), Text length: \(result.fullText.count)")
-                
-                if result.success && !result.fullText.isEmpty {
-                    // Validate transcript quality before proceeding
-                    let transcriptText = result.fullText.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Get the transcript for this recording using the unified system
+                print("🔍 Looking for transcript...")
+                if let transcript = appCoordinator.getTranscript(for: recording.recordingURL) {
+                    print("✅ Found transcript with \(transcript.segments.count) segments")
+                    print("📝 Transcript text: \(transcript.plainText.prefix(100))...")
                     
-                    // Check if this is a pending AWS transcription
-                    if isPendingAWSTranscription(transcriptText) {
-                        print("⏳ Detected pending AWS transcription, waiting for completion...")
+                    // Generate summary using the app coordinator
+                    print("🔧 Calling generateEnhancedSummary...")
+                    let summary = try await appCoordinator.generateEnhancedSummary(
+                        from: transcript.plainText,
+                        for: recording.recordingURL,
+                        recordingName: recording.recordingName,
+                        recordingDate: recording.recordingDate
+                    )
+                    
+                    print("✅ Summary generated successfully")
+                    
+                    // Add the summary to the coordinator
+                    await MainActor.run {
+                        print("📝 Adding summary to coordinator...")
+                        print("   - Summary AI Method: \(summary.aiMethod)")
+                        print("   - Summary Generated At: \(summary.generatedAt)")
+                        print("   - Summary Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
+                        appCoordinator.addSummary(summary)
+                        isGeneratingSummary = false
                         
-                        // Save the placeholder transcript so we can track it
-                        let transcriptData = TranscriptData(
-                            recordingURL: recording.url,
-                            recordingName: recording.name,
-                            recordingDate: recording.date,
-                            segments: result.segments
-                        )
-                        
-                        self.transcriptManager.saveTranscript(transcriptData)
-                        print("💾 Placeholder transcript saved for tracking")
-                        
-                        // Wait for the actual transcription to complete
-                        await waitForTranscriptionCompletion(for: recording)
-                    } else if isValidTranscriptForSummarization(transcriptText) {
-                        print("✅ Transcript validation passed, saving and generating summary...")
-                        // Create transcript data
-                        let transcriptData = TranscriptData(
-                            recordingURL: recording.url,
-                            recordingName: recording.name,
-                            recordingDate: recording.date,
-                            segments: result.segments
-                        )
-                        
-                        // Save the transcript
-                        self.transcriptManager.saveTranscript(transcriptData)
-                        print("💾 Transcript saved successfully")
-                        
-                        // Generate summary from validated transcript
-                        self.generateSummaryFromTranscript(for: recording, transcriptText: transcriptText)
-                    } else {
-                        print("⚠️ Transcription completed but content is not suitable for summarization")
-                        await MainActor.run {
-                            self.isGeneratingSummary = false
-                            self.showErrorAlert = true
-                            self.errorMessage = "No valid transcript could be generated. Please try generating a transcript first in the Recordings tab, or check that your audio contains clear speech."
+                        // Force a UI refresh
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            loadRecordings() // Refresh the list
+                            print("✅ Summary added to coordinator and UI refreshed")
                         }
                     }
                 } else {
-                    print("⚠️ Transcription failed or returned empty content - Success: \(result.success), Error: \(result.error?.localizedDescription ?? "None")")
+                    print("❌ No transcript found for recording: \(recording.recordingName)")
+                    print("🔍 Checking if recording exists in coordinator...")
+                    let allRecordings = appCoordinator.getAllRecordingsWithData()
+                    print("📊 Total recordings in coordinator: \(allRecordings.count)")
+                    for (index, recData) in allRecordings.enumerated() {
+                        print("   \(index): \(recData.recording.recordingName) - has transcript: \(recData.transcript != nil)")
+                    }
+                    
                     await MainActor.run {
-                        self.isGeneratingSummary = false
-                        self.showErrorAlert = true
-                        self.errorMessage = "Transcription failed. Please try generating a transcript first in the Recordings tab, or check that your audio contains clear speech."
+                        errorMessage = "No transcript available for this recording"
+                        showErrorAlert = true
+                        isGeneratingSummary = false
                     }
                 }
             } catch {
-                print("❌ Enhanced transcription error: \(error)")
+                print("❌ Error generating summary: \(error)")
+                print("🔍 Error details: \(error)")
                 await MainActor.run {
-                    self.isGeneratingSummary = false
-                    self.showErrorAlert = true
-                    self.errorMessage = "Transcription error: \(error.localizedDescription). Please try generating a transcript first in the Recordings tab."
+                    errorMessage = "Failed to generate summary: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    isGeneratingSummary = false
                 }
             }
         }
     }
     
-    // Helper function to add timeout to async operations
-    private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
-        return try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
-            }
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    private func debugSummaries() {
+        print("🔍 Debugging summaries...")
+        
+        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        print("📊 Total recordings: \(recordingsWithData.count)")
+        
+        for (index, recordingData) in recordingsWithData.enumerated() {
+            let recording = recordingData.recording
+            let summary = recordingData.summary
             
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw TimeoutError()
-            }
+            print("   \(index): \(recording.recordingName)")
+            print("      - Recording ID: \(recording.id)")
+            print("      - Has summary: \(summary != nil)")
             
-            guard let result = try await group.next() else {
-                throw TimeoutError()
+            if let summary = summary {
+                print("      - Summary AI Method: \(summary.aiMethod)")
+                print("      - Summary Generated At: \(summary.generatedAt)")
+                print("      - Summary Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
+                print("      - Summary ID: \(summary.id)")
             }
-            
-            group.cancelAll()
-            return result
+        }
+        
+        // Also check all summaries in the registry
+        print("📊 All summaries in registry:")
+        let allSummaries = appCoordinator.registryManager.enhancedSummaries
+        for (index, summary) in allSummaries.enumerated() {
+            print("   \(index): \(summary.recordingName)")
+            print("      - AI Method: \(summary.aiMethod)")
+            print("      - Generated At: \(summary.generatedAt)")
+            print("      - Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
+            print("      - Summary ID: \(summary.id)")
         }
     }
-    
-    struct TimeoutError: Error {
-        var localizedDescription: String {
-            return "Operation timed out"
-        }
-    }
-    
-    // MARK: - Summary Generation
-    
-    private func isValidTranscriptForSummarization(_ transcriptText: String) -> Bool {
-        // Count words in the transcript
-        let words = transcriptText.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty && $0.count > 1 }
-        
-        print("📝 Transcript word count: \(words.count) words")
-        
-        // If transcript has 50 words or less, it's valid for summarization (will be shown as-is)
-        if words.count <= 50 {
-            print("📝 Transcript has 50 words or less (\(words.count) words) - will be shown as-is")
-            return true
-        }
-        
-        // For transcripts with more than 50 words, check for placeholder text patterns
-        let lowercased = transcriptText.lowercased()
-        let placeholderPatterns = [
-            "transcription in progress",
-            "processing audio",
-            "please wait",
-            "transcribing",
-            "loading",
-            "failed to transcribe",
-            "no audio detected",
-            "silence detected",
-            "aws transcription coming soon",
-            "openai api compatible summaries coming soon",
-            "transcription job started:",
-            "job is running in background",
-            "check status later to retrieve results",
-            "transcription job",
-            "is running in background"
-        ]
-        
-        // Check for pure error messages (transcript consists mostly of error text)
-        let errorPatterns = [
-            "error",
-            "failed",
-            "exception",
-            "timeout"
-        ]
-        
-        // Count how many error words appear in the text
-        var errorWordCount = 0
-        
-        for word in words {
-            let lowercasedWord = word.lowercased()
-            for pattern in errorPatterns {
-                if lowercasedWord.contains(pattern) {
-                    errorWordCount += 1
-                    break
-                }
-            }
-        }
-        
-        // If more than 30% of words are error-related, it's likely an error message
-        let errorRatio = Double(errorWordCount) / Double(words.count)
-        if errorRatio > 0.3 {
-            print("📝 Transcript contains too many error words: \(errorWordCount)/\(words.count) (\(Int(errorRatio * 100))%)")
-            return false
-        }
-        
-        // Check for pure placeholder patterns - be more intelligent about it
-        for pattern in placeholderPatterns {
-            if lowercased.contains(pattern) {
-                // For single words like "loading", check if it's part of a larger placeholder phrase
-                if pattern == "loading" {
-                    // Check if "loading" appears in a context that suggests it's placeholder text
-                    let loadingContexts = [
-                        "loading transcription",
-                        "loading audio",
-                        "loading file",
-                        "loading please wait",
-                        "loading...",
-                        "loading -",
-                        "loading:"
-                    ]
-                    
-                    let isPlaceholderLoading = loadingContexts.contains { context in
-                        lowercased.contains(context)
-                    }
-                    
-                    if !isPlaceholderLoading {
-                        print("📝 Transcript contains 'loading' but appears to be legitimate content, allowing summarization")
-                        continue // Skip this pattern, it's likely legitimate content
-                    }
-                }
-                
-                print("📝 Transcript contains placeholder text: \(pattern)")
-                return false
-            }
-        }
-        
-        // Check for meaningful word count (at least 10 actual words for longer transcripts)
-        guard words.count >= 10 else {
-            print("📝 Transcript has insufficient word count: \(words.count) words")
-            return false
-        }
-        
-        // Check for repetitive content (might indicate transcription errors)
-        let uniqueWords = Set(words.map { $0.lowercased() })
-        let uniqueRatio = Double(uniqueWords.count) / Double(words.count)
-        
-        // Lower threshold for repetitive content to allow song lyrics, poetry, etc.
-        // Also check if content appears to be song lyrics or artistic content
-        let transcriptLowercased = transcriptText.lowercased()
-        let isLikelySongLyrics = transcriptLowercased.contains("looking good") ||
-                                transcriptLowercased.contains("you know") ||
-                                transcriptLowercased.contains("all right") ||
-                                transcriptLowercased.contains("what was i thinking") ||
-                                transcriptLowercased.contains("um") ||
-                                transcriptLowercased.contains("uh")
-        
-        let minimumRatio = isLikelySongLyrics ? 0.15 : 0.3 // Lower threshold for song-like content
-        
-        guard uniqueRatio > minimumRatio else {
-            print("📝 Transcript appears too repetitive: \(String(format: "%.1f", uniqueRatio * 100))% unique words (threshold: \(String(format: "%.1f", minimumRatio * 100))%)")
-            if isLikelySongLyrics {
-                print("🎵 Content appears to be song lyrics or artistic content - allowing summarization")
-                return true
-            }
-            return false
-        }
-        
-        print("✅ Transcript validated for summarization: \(words.count) words, \(String(format: "%.1f", uniqueRatio * 100))% unique, error ratio: \(Int(errorRatio * 100))%")
-        return true
-    }
-    
-    private func generateSummaryFromTranscript(for recording: RecordingFile, transcriptText: String) {
-        print("📋 Starting summary generation for: \(recording.name)")
-        print("📝 Transcript length: \(transcriptText.count) characters")
-        print("🤖 Selected AI engine: \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence")") // Use proper default instead of hardcoded "openai"
-        
-        Task {
-            do {
-                // Ensure the correct AI engine is set before generating summary
-                await MainActor.run {
-                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
-                    summaryManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
-                    print("🔧 AI engine set to: \(defaultEngine)")
-                }
-                
-                print("🤖 Starting enhanced summarization...")
-                
-                // Use the enhanced AI engine for better summarization
-                let enhancedSummary = try await summaryManager.generateEnhancedSummary(
-                    from: transcriptText,
-                    for: recording.url,
-                    recordingName: recording.name,
-                    recordingDate: recording.date
-                )
-                
-                await MainActor.run {
-                    print("✅ Enhanced summarization completed successfully")
-                    print("📄 Summary length: \(enhancedSummary.summary.count) characters")
-                    print("📋 Tasks found: \(enhancedSummary.tasks.count)")
-                    print("🔔 Reminders found: \(enhancedSummary.reminders.count)")
-                    
-                    // Check if summary was saved properly
-                    let hasSummary = summaryManager.hasSummary(for: recording.url)
-                    let hasEnhanced = summaryManager.hasEnhancedSummary(for: recording.url)
-                    print("🔍 Summary saved check: hasSummary=\(hasSummary), hasEnhanced=\(hasEnhanced)")
-                    
-                    // Force UI refresh by triggering state changes
-                    self.isGeneratingSummary = false
-                    
-                    // Trigger multiple refresh mechanisms to ensure UI updates
-                    self.refreshTrigger.toggle()
-                    
-                    // Force a complete UI refresh
-                    self.forceRefreshUI()
-                    
-                    // Small delay to ensure UI updates, then show summary
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        // Double-check that summary is available before showing
-                        if self.summaryManager.hasSummary(for: recording.url) {
-                            self.showSummary = true
-                        } else {
-                            print("⚠️ Summary not found after generation, forcing another refresh")
-                            self.forceRefreshUI()
-                        }
-                    }
-                }
-            } catch {
-                print("❌ Enhanced summary generation failed: \(error)")
-                
-                await MainActor.run {
-                    self.isGeneratingSummary = false
-                    self.forceRefreshUI()
-                    self.showErrorAlert = true
-                    self.errorMessage = error.localizedDescription
-                }
-            }
-        }
-    }
+}
+
+// MARK: - Preview
+
+#Preview {
+    SummariesView()
+        .environmentObject(AppDataCoordinator())
+        .environmentObject(AudioRecorderViewModel())
 }

@@ -6,18 +6,17 @@ struct SummaryDetailView: View {
     let recording: RecordingFile
     let summaryData: SummaryData
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
     @State private var expandedSections: Set<String> = ["summary", "metadata"]
     @State private var isRegenerating = false
     @State private var showingRegenerationAlert = false
     @State private var regenerationError: String?
     @State private var showingDeleteConfirmation = false
-    @StateObject private var summaryManager = SummaryManager.shared
-    @StateObject private var transcriptManager = TranscriptManager.shared
     
     // Convert legacy summary data to enhanced format for better display
     private var enhancedData: EnhancedSummaryData {
-        return summaryManager.convertLegacyToEnhanced(summaryData)
+        return appCoordinator.convertLegacyToEnhanced(summaryData)
     }
     
     var body: some View {
@@ -49,7 +48,7 @@ struct SummaryDetailView: View {
                     }
                 }
                 
-                // Enhanced Summary Content
+                // Summary Content
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         // Header Section
@@ -60,15 +59,6 @@ struct SummaryDetailView: View {
                         
                         // Summary Section (Expandable)
                         summarySection
-                        
-                        // Tasks Section (Expandable)
-                        tasksSection
-                        
-                        // Reminders Section (Expandable)
-                        remindersSection
-                        
-                        // Titles Section (Expandable)
-                        titlesSection
                         
                         // Regenerate Button Section
                         regenerateSection
@@ -376,7 +366,7 @@ struct SummaryDetailView: View {
     
     private func deleteSummary() {
         // Delete the summary from the manager
-        summaryManager.deleteSummary(for: recording.url)
+        appCoordinator.deleteSummary(for: recording.url)
         
         // Dismiss the view
         dismiss()
@@ -393,7 +383,7 @@ struct SummaryDetailView: View {
         
         do {
             // Get the transcript for this recording
-            guard let transcript = transcriptManager.getTranscript(for: recording.url) else {
+            guard let transcript = appCoordinator.getTranscript(for: recording.url) else {
                 await MainActor.run {
                     regenerationError = "No transcript found for this recording. Please generate a transcript first."
                     showingRegenerationAlert = true
@@ -403,10 +393,10 @@ struct SummaryDetailView: View {
             }
             
             // Set the current AI engine
-            summaryManager.setEngine(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence")
+            appCoordinator.setEngine(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence")
             
             // Generate new enhanced summary
-            _ = try await summaryManager.generateEnhancedSummary(
+            _ = try await appCoordinator.generateEnhancedSummary(
                 from: transcript.plainText,
                 for: recording.url,
                 recordingName: recording.name,

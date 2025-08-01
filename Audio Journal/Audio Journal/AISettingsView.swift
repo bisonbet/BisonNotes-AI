@@ -28,28 +28,31 @@ struct AppSettingsKeys {
 @MainActor
 final class AISettingsViewModel: ObservableObject {
     // The managers are now published properties of the ViewModel.
-    @Published var summaryManager: SummaryManager
+    @Published var appCoordinator: AppDataCoordinator
     @Published var regenerationManager: SummaryRegenerationManager
 
     private var cancellables = Set<AnyCancellable>()
 
-    init() {
-        let sharedSummaryManager = SummaryManager.shared
-        self.summaryManager = sharedSummaryManager
+    init(appCoordinator: AppDataCoordinator) {
+        self.appCoordinator = appCoordinator
         self.regenerationManager = SummaryRegenerationManager(
-            summaryManager: sharedSummaryManager,
+            summaryManager: SummaryManager.shared,
             transcriptManager: TranscriptManager.shared
         )
         
-        // We need to observe changes on the managers to republish them
+        // We need to observe changes on the coordinator to republish them
         // so the view updates correctly.
-        summaryManager.objectWillChange.sink { [weak self] _ in
+        appCoordinator.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
         
         regenerationManager.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
+    }
+    
+    func updateCoordinator(_ coordinator: AppDataCoordinator) {
+        self.appCoordinator = coordinator
     }
 
     /// Moves the engine selection logic into the view model.
@@ -64,17 +67,23 @@ final class AISettingsViewModel: ObservableObject {
         }
         
         // Validate engine availability before switching
-        let validation = summaryManager.validateEngineAvailability(newEngine)
-        guard validation.isValid else {
-            return (shouldPrompt: false, oldEngine: "", error: validation.errorMessage)
+        let validation = appCoordinator.registryManager.validateEngineAvailability(newEngine)
+        switch validation {
+        case .available:
+            break // proceed
+        case .unavailable(let error):
+            return (shouldPrompt: false, oldEngine: "", error: error)
+        case .requiresConfiguration(_):
+            // Allow selection even if configuration is required
+            break // proceed
         }
         
         // Allow selection even if not available - user can configure it
         // Only return error if the engine is completely invalid, not just unavailable
 
         // Note: Cannot set recorderVM.selectedAIEngine since it doesn't exist
-        // Just update the summary manager
-        self.summaryManager.setEngine(newEngine)
+        // Just update the coordinator
+        self.appCoordinator.setEngine(newEngine)
         self.regenerationManager.setEngine(newEngine)
         
         let shouldPrompt = self.regenerationManager.shouldPromptForRegeneration(oldEngine: oldEngine, newEngine: newEngine)
@@ -84,8 +93,9 @@ final class AISettingsViewModel: ObservableObject {
 
 
 struct AISettingsView: View {
-    @StateObject private var viewModel = AISettingsViewModel()
+    @StateObject private var viewModel: AISettingsViewModel
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var errorHandler = ErrorHandler()
     
     @Environment(\.dismiss) private var dismiss
@@ -98,7 +108,10 @@ struct AISettingsView: View {
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     
-    // No custom init is needed anymore, which solves the compiler error.
+    init() {
+        // Initialize with a placeholder coordinator - will be replaced by environment
+        self._viewModel = StateObject(wrappedValue: AISettingsViewModel(appCoordinator: AppDataCoordinator()))
+    }
     
     private var currentEngineType: AIEngineType? {
         // Note: AudioRecorderViewModel doesn't have selectedAIEngine property
@@ -113,8 +126,8 @@ struct AISettingsView: View {
                 isRefreshingStatus = true
             }
             
-            // Get engine statuses from SummaryManager
-            let statuses = viewModel.summaryManager.getEngineAvailabilityStatus()
+            // Get engine statuses from coordinator
+            let statuses = appCoordinator.registryManager.getEngineAvailabilityStatus()
             
             await MainActor.run {
                 engineStatuses = statuses
@@ -127,6 +140,12 @@ struct AISettingsView: View {
         NavigationView {
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 24) {
+                    // Update the coordinator when the view appears
+                    Color.clear
+                        .onAppear {
+                            viewModel.updateCoordinator(appCoordinator)
+                        }
+                    
                     headerSection
                     currentConfigurationSection
                     engineSelectionSection
@@ -137,7 +156,7 @@ struct AISettingsView: View {
                     openAICompatibleConfigurationSection
                     googleAIStudioConfigurationSection
                     
-                    if viewModel.summaryManager.enhancedSummaries.count > 0 {
+                    if viewModel.appCoordinator.registryManager.enhancedSummaries.count > 0 {
                         summaryManagementSection
                     }
                     
@@ -162,7 +181,7 @@ struct AISettingsView: View {
                 Task { await viewModel.regenerationManager.regenerateAllSummaries() }
             }
         } message: {
-            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"). Would you like to regenerate your \(viewModel.summaryManager.enhancedSummaries.count) existing summaries with the new AI engine?")
+            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"). Would you like to regenerate your \(viewModel.appCoordinator.registryManager.enhancedSummaries.count) existing summaries with the new AI engine?")
                 .font(.headline)
                 .padding()
             
@@ -174,7 +193,7 @@ struct AISettingsView: View {
                 
                 Button("Regenerate") {
                     let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
-                    viewModel.summaryManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
+                    viewModel.appCoordinator.registryManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
                     viewModel.regenerationManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
                     showingEngineChangePrompt = false
                 }
@@ -188,7 +207,7 @@ struct AISettingsView: View {
             Text(viewModel.regenerationManager.regenerationResults?.summary ?? "Regeneration process finished.")
         }
         .onAppear {
-            viewModel.summaryManager.setEngine("OpenAI") // Use proper engine name
+            viewModel.appCoordinator.registryManager.setEngine("OpenAI") // Use proper engine name
             viewModel.regenerationManager.setEngine("OpenAI") // Use proper engine name
             self.refreshEngineStatuses()
         }
@@ -280,7 +299,7 @@ private extension AISettingsView {
                 }
                 .padding(.horizontal, 24)
                 
-                if viewModel.summaryManager.enhancedSummaries.count > 0 {
+                if viewModel.appCoordinator.registryManager.enhancedSummaries.count > 0 {
                     HStack {
                         Image(systemName: "doc.text")
                             .foregroundColor(.blue)
@@ -290,7 +309,7 @@ private extension AISettingsView {
                             .font(.caption)
                             .foregroundColor(.secondary)
                         
-                        Text("\(viewModel.summaryManager.enhancedSummaries.count)")
+                        Text("\(viewModel.appCoordinator.registryManager.enhancedSummaries.count)")
                             .font(.caption)
                             .fontWeight(.medium)
                     }

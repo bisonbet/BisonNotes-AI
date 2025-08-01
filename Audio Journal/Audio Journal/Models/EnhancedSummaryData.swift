@@ -216,8 +216,10 @@ struct TitleItem: Codable, Identifiable, Equatable, Hashable {
 
 // MARK: - Enhanced Summary Data
 
-struct EnhancedSummaryData: Codable, Identifiable {
-    let id: UUID
+public struct EnhancedSummaryData: Codable, Identifiable {
+    public let id: UUID
+    let recordingId: UUID? // For unified architecture
+    let transcriptId: UUID? // Optional link to transcript used for generation
     let recordingURL: URL
     let recordingName: String
     let recordingDate: Date
@@ -241,8 +243,39 @@ struct EnhancedSummaryData: Codable, Identifiable {
     let confidence: Double
     let processingTime: TimeInterval
     
+    // Legacy initializer for backward compatibility
     init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiMethod: String, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
+        self.recordingId = nil
+        self.transcriptId = nil
+        self.recordingURL = recordingURL
+        self.recordingName = recordingName
+        self.recordingDate = recordingDate
+        self.summary = summary
+        self.tasks = tasks.sorted { $0.priority.sortOrder < $1.priority.sortOrder }
+        self.reminders = reminders.sorted { $0.urgency.sortOrder < $1.urgency.sortOrder }
+        self.titles = titles.sorted { $0.confidence > $1.confidence }
+        self.contentType = contentType
+        self.aiMethod = aiMethod
+        self.generatedAt = Date()
+        self.version = 1
+        self.wordCount = summary.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
+        self.originalLength = originalLength
+        self.compressionRatio = originalLength > 0 ? Double(self.wordCount) / Double(originalLength) : 0.0
+        self.processingTime = processingTime
+        
+        // Calculate confidence after all properties are initialized
+        let taskConfidence = tasks.isEmpty ? 0.5 : tasks.map { $0.confidence }.reduce(0, +) / Double(tasks.count)
+        let reminderConfidence = reminders.isEmpty ? 0.5 : reminders.map { $0.confidence }.reduce(0, +) / Double(reminders.count)
+        let titleConfidence = titles.isEmpty ? 0.5 : titles.map { $0.confidence }.reduce(0, +) / Double(titles.count)
+        self.confidence = (taskConfidence + reminderConfidence + titleConfidence) / 3.0
+    }
+    
+    // New initializer for unified architecture
+    init(recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiMethod: String, originalLength: Int, processingTime: TimeInterval = 0) {
+        self.id = UUID()
+        self.recordingId = recordingId
+        self.transcriptId = transcriptId
         self.recordingURL = recordingURL
         self.recordingName = recordingName
         self.recordingDate = recordingDate

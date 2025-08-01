@@ -10,6 +10,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var recorderVM = AudioRecorderViewModel()
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var selectedTab = 0
     @State private var isInitialized = false
     @State private var initializationError: String?
@@ -20,6 +21,7 @@ struct ContentView: View {
                 TabView(selection: $selectedTab) {
                     RecordingsView()
                         .environmentObject(recorderVM)
+                        .environmentObject(appCoordinator)
                         .tabItem {
                             Image(systemName: "mic.fill")
                             Text("Record")
@@ -28,6 +30,7 @@ struct ContentView: View {
                     
                     SummariesView()
                         .environmentObject(recorderVM)
+                        .environmentObject(appCoordinator)
                         .tabItem {
                             Image(systemName: "doc.text.magnifyingglass")
                             Text("Summaries")
@@ -36,6 +39,7 @@ struct ContentView: View {
                     
                     TranscriptsView()
                         .environmentObject(recorderVM)
+                        .environmentObject(appCoordinator)
                         .tabItem {
                             Image(systemName: "text.bubble.fill")
                             Text("Transcripts")
@@ -44,6 +48,7 @@ struct ContentView: View {
                     
                     SettingsView()
                         .environmentObject(recorderVM)
+                        .environmentObject(appCoordinator)
                         .tabItem {
                             Image(systemName: "gearshape.fill")
                             Text("Settings")
@@ -87,6 +92,12 @@ struct ContentView: View {
                     // Initialize the recorder view model on main thread
                     await recorderVM.initialize()
                     
+                    // Set the app coordinator for the recorder
+                    recorderVM.setAppCoordinator(appCoordinator)
+                    
+                    // Set up the enhanced file manager with the coordinator
+                    EnhancedFileManager.shared.setCoordinator(appCoordinator)
+                    
                     // Add a small delay to ensure everything is properly set up
                     try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
                     
@@ -102,5 +113,6 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
+        .environmentObject(AppDataCoordinator())
         .environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
 }

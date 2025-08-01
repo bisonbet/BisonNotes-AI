@@ -35,7 +35,7 @@ enum SyncStatus: Equatable {
 // MARK: - CloudKit Summary Record
 
 struct CloudKitSummaryRecord {
-    static let recordType = "EnhancedSummary"
+    static let recordType = "CD_EnhancedSummary"
     
     // CloudKit record fields
     static let recordingURLField = "recordingURL"

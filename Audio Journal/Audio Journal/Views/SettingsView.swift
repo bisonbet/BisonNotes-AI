@@ -11,8 +11,7 @@ import CoreLocation
 
 struct SettingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
-    @StateObject private var summaryManager = SummaryManager.shared
-    @StateObject private var transcriptManager = TranscriptManager.shared
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var regenerationManager: SummaryRegenerationManager
     @StateObject private var errorHandler = ErrorHandler()
     @ObservedObject private var iCloudManager: iCloudStorageManager
@@ -23,27 +22,28 @@ struct SettingsView: View {
     @State private var showingPerformanceView = false
     @State private var showingClearSummariesAlert = false
     @State private var showingCleanupAlert = false
+    @State private var showingResetRegistryAlert = false
     @State private var isPerformingCleanup = false
     @State private var cleanupResults: CleanupResults?
     @State private var showingBackgroundProcessing = false
 
-    @State private var selectedAudioQuality: AudioQuality = .high
+    @State private var selectedAudioQuality: AudioQuality = .regular
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "Enhanced Apple Intelligence"
     
     init() {
-        let summaryMgr = SummaryManager.shared
-        let transcriptMgr = TranscriptManager.shared
-        self._summaryManager = StateObject(wrappedValue: summaryMgr)
-        self._transcriptManager = StateObject(wrappedValue: transcriptMgr)
-        self._regenerationManager = StateObject(wrappedValue: SummaryRegenerationManager(summaryManager: summaryMgr, transcriptManager: transcriptMgr))
-        self.iCloudManager = summaryMgr.getiCloudManager()
+        // Initialize regeneration manager with the coordinator's registry manager
+        self._regenerationManager = StateObject(wrappedValue: SummaryRegenerationManager(
+            summaryManager: SummaryManager.shared,
+            transcriptManager: TranscriptManager.shared
+        ))
+        self.iCloudManager = iCloudStorageManager()
         
         // Load saved audio quality setting
         if let savedQuality = UserDefaults.standard.string(forKey: "SelectedAudioQuality"),
            let quality = AudioQuality(rawValue: savedQuality) {
             self._selectedAudioQuality = State(initialValue: quality)
         } else {
-            self._selectedAudioQuality = State(initialValue: .high)
+            self._selectedAudioQuality = State(initialValue: .regular)
         }
     }
     
@@ -79,14 +79,13 @@ struct SettingsView: View {
             }
             Button("Regenerate") {
                 Task {
-                    summaryManager.setEngine(selectedAIEngine)
                     regenerationManager.setEngine(selectedAIEngine)
                     await regenerationManager.regenerateAllSummaries()
                 }
                 showingEngineChangePrompt = false
             }
         } message: {
-            Text("You've switched from \(previousEngine) to \(selectedAIEngine). Would you like to regenerate your \(summaryManager.enhancedSummaries.count) existing summaries with the new AI engine?")
+            Text("You've switched from \(previousEngine) to \(selectedAIEngine). Would you like to regenerate your existing summaries with the new AI engine?")
         }
         .onAppear {
             refreshEngineStatuses()
@@ -118,6 +117,17 @@ struct SettingsView: View {
             }
         } message: {
             Text("This will remove summaries and transcripts for recordings that no longer exist. This action cannot be undone.")
+        }
+        .alert("Reset Registry", isPresented: $showingResetRegistryAlert) {
+            Button("Cancel") {
+                showingResetRegistryAlert = false
+            }
+            Button("Reset", role: .destructive) {
+                appCoordinator.clearAndReloadRegistry()
+                showingResetRegistryAlert = false
+            }
+        } message: {
+            Text("This will completely clear all registry data and reload from disk only. All UserDefaults data will be lost. This action cannot be undone.")
         }
     }
     
@@ -287,7 +297,7 @@ struct SettingsView: View {
                         .font(.body)
                         .foregroundColor(.secondary)
                     
-                    let engineStatus = summaryManager.getEngineAvailabilityStatus()[selectedAIEngine]
+                    let engineStatus = appCoordinator.registryManager.getEngineAvailabilityStatus()[selectedAIEngine]
                     let statusColor: Color = engineStatus?.isAvailable == true ? .green : .red
                     let statusText = engineStatus?.isAvailable == true ? "Available" : "Unavailable"
                     
@@ -324,7 +334,7 @@ struct SettingsView: View {
                 
                 Button(action: {
                     Task {
-                        await summaryManager.refreshEngineAvailability()
+                        await appCoordinator.registryManager.refreshEngineAvailability()
                     }
                 }) {
                     Image(systemName: "arrow.clockwise")
@@ -673,6 +683,33 @@ struct SettingsView: View {
                     }
                     .padding(.top, 8)
                 }
+                
+                // Registry Reset Button
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Reset Registry")
+                            .font(.body)
+                            .foregroundColor(.primary)
+                        Text("Clear all registry data and reload from disk")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: {
+                        showingResetRegistryAlert = true
+                    }) {
+                        Text("Reset")
+                            .font(.caption)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.red)
+                            )
+                    }
+                }
+                .padding(.top, 12)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 12)
@@ -840,8 +877,7 @@ struct SettingsView: View {
     }
     
     private func clearAllSummaries() {
-        summaryManager.clearAllSummaries()
-        transcriptManager.clearAllTranscripts()
+        // This function is no longer needed as summaries are managed by the coordinator
     }
     
     // MARK: - Cleanup Functions
@@ -866,27 +902,40 @@ struct SettingsView: View {
     private func cleanupOrphanedData() async throws -> CleanupResults {
         print("🧹 Starting orphaned data cleanup...")
         
-        // Get all current active recordings
-        let activeRecordings = getActiveRecordings()
-        print("📁 Found \(activeRecordings.count) active recordings")
+        // Get all recordings from the unified registry
+        let allRecordings = appCoordinator.registryManager.recordings
+        print("📁 Found \(allRecordings.count) recordings in registry")
         
         // Get all stored summaries and transcripts
-        let enhancedSummaries = Array(summaryManager.enhancedSummaries)
-        let regularSummaries = Array(summaryManager.summaries)
-        let allTranscripts = transcriptManager.transcripts
+        let enhancedSummaries = Array(appCoordinator.registryManager.enhancedSummaries)
+        let allTranscripts = appCoordinator.registryManager.transcripts
         
-        print("📊 Found \(enhancedSummaries.count + regularSummaries.count) stored summaries and \(allTranscripts.count) stored transcripts")
+        print("📊 Found \(enhancedSummaries.count) stored summaries and \(allTranscripts.count) stored transcripts")
         
         var orphanedSummaries = 0
         var orphanedTranscripts = 0
         var freedSpaceBytes: Int64 = 0
         
+        // Create a set of valid recording URLs for quick lookup
+        let validRecordingURLs = Set(allRecordings.map { $0.recordingURL })
+        let validRecordingIds = Set(allRecordings.map { $0.id })
+        
+        print("🔍 Valid recording URLs: \(validRecordingURLs.count)")
+        print("🔍 Valid recording IDs: \(validRecordingIds.count)")
+        
         // Check for orphaned enhanced summaries
         for summary in enhancedSummaries {
             let recordingURL = summary.recordingURL
-            if !isRecordingActive(recordingURL, in: activeRecordings) {
+            let recordingId = summary.recordingId
+            
+            // Check if the recording URL exists in the registry
+            let hasValidURL = validRecordingURLs.contains(recordingURL)
+            let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
+            
+            if !hasValidURL && !hasValidID {
                 print("🗑️ Found orphaned enhanced summary for: \(recordingURL.lastPathComponent)")
-                summaryManager.deleteSummary(for: recordingURL)
+                print("   URL exists: \(hasValidURL), ID exists: \(hasValidID)")
+                appCoordinator.registryManager.deleteSummary(for: recordingURL)
                 orphanedSummaries += 1
                 
                 // Calculate freed space (rough estimate)
@@ -894,30 +943,59 @@ struct SettingsView: View {
             }
         }
         
-        // Check for orphaned regular summaries
-        for summary in regularSummaries {
-            let recordingURL = summary.recordingURL
-            if !isRecordingActive(recordingURL, in: activeRecordings) {
-                print("🗑️ Found orphaned regular summary for: \(recordingURL.lastPathComponent)")
-                summaryManager.deleteSummary(for: recordingURL)
-                orphanedSummaries += 1
-                
-                // Calculate freed space (rough estimate)
-                freedSpaceBytes += Int64(summary.summary.count * 2) // Approximate UTF-8 bytes
-            }
-        }
-        
-        // Check for orphaned transcripts
+        // Check for orphaned transcripts - BE MORE CAREFUL HERE
         for transcript in allTranscripts {
             let recordingURL = transcript.recordingURL
-            if !isRecordingActive(recordingURL, in: activeRecordings) {
+            let recordingId = transcript.recordingId
+            
+            // Check if the recording URL exists in the registry
+            let hasValidURL = validRecordingURLs.contains(recordingURL)
+            let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
+            
+            // Only remove if BOTH URL and ID are invalid
+            if !hasValidURL && !hasValidID {
                 print("🗑️ Found orphaned transcript for: \(recordingURL.lastPathComponent)")
-                transcriptManager.deleteTranscript(for: recordingURL)
+                print("   URL exists: \(hasValidURL), ID exists: \(hasValidID)")
+                appCoordinator.registryManager.deleteTranscript(for: recordingURL)
                 orphanedTranscripts += 1
                 
                 // Calculate freed space
                 let transcriptText = transcript.segments.map { $0.text }.joined(separator: " ")
                 freedSpaceBytes += Int64(transcriptText.count * 2) // Approximate UTF-8 bytes
+            } else {
+                // Log when we find a transcript that's actually valid
+                print("✅ Found valid transcript for: \(recordingURL.lastPathComponent)")
+                print("   URL exists: \(hasValidURL), ID exists: \(hasValidID)")
+            }
+        }
+        
+        // Check for transcripts where the recording file doesn't exist on disk
+        // BUT be more careful - only remove if the recording is also not in the registry
+        for transcript in allTranscripts {
+            let recordingURL = transcript.recordingURL
+            let recordingId = transcript.recordingId
+            
+            // Check if the recording file exists on disk
+            let fileExists = FileManager.default.fileExists(atPath: recordingURL.path)
+            
+            // Check if the recording exists in the registry
+            let hasValidURL = validRecordingURLs.contains(recordingURL)
+            let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
+            
+            // Only remove if the file doesn't exist AND it's not in the registry
+            if !fileExists && !hasValidURL && !hasValidID {
+                print("🗑️ Found transcript for non-existent recording file: \(recordingURL.lastPathComponent)")
+                print("   File exists: \(fileExists), URL in registry: \(hasValidURL), ID in registry: \(hasValidID)")
+                appCoordinator.registryManager.deleteTranscript(for: recordingURL)
+                orphanedTranscripts += 1
+                
+                // Calculate freed space
+                let transcriptText = transcript.segments.map { $0.text }.joined(separator: " ")
+                freedSpaceBytes += Int64(transcriptText.count * 2) // Approximate UTF-8 bytes
+            } else if !fileExists {
+                // Log when file doesn't exist but recording is in registry
+                print("⚠️  File not found on disk but recording exists in registry: \(recordingURL.lastPathComponent)")
+                print("   File exists: \(fileExists), URL in registry: \(hasValidURL), ID in registry: \(hasValidID)")
             }
         }
         
@@ -928,6 +1006,9 @@ struct SettingsView: View {
         print("   • Removed \(orphanedTranscripts) orphaned transcripts")
         print("   • Freed \(String(format: "%.1f", freedSpaceMB)) MB of space")
         
+        // Refresh the TranscriptManager to reflect the changes
+        TranscriptManager.shared.reloadTranscripts()
+        
         return CleanupResults(
             orphanedSummaries: orphanedSummaries,
             orphanedTranscripts: orphanedTranscripts,
@@ -935,45 +1016,11 @@ struct SettingsView: View {
         )
     }
     
-    private func getActiveRecordings() -> [URL] {
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        
-        do {
-            let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
-            return fileURLs.filter { ["m4a", "mp3", "wav"].contains($0.pathExtension.lowercased()) }
-        } catch {
-            print("Error loading active recordings: \(error)")
-            return []
-        }
-    }
-    
-    private func isRecordingActive(_ recordingURL: URL, in activeRecordings: [URL]) -> Bool {
-        let targetFilename = recordingURL.lastPathComponent
-        let targetName = recordingURL.deletingPathExtension().lastPathComponent
-        
-        // Check for exact URL match
-        if activeRecordings.contains(recordingURL) {
-            return true
-        }
-        
-        // Check for filename match
-        if activeRecordings.contains(where: { $0.lastPathComponent == targetFilename }) {
-            return true
-        }
-        
-        // Check for name match (without extension)
-        if activeRecordings.contains(where: { $0.deletingPathExtension().lastPathComponent == targetName }) {
-            return true
-        }
-        
-        return false
-    }
-    
     // MARK: - iCloud Sync Functions
     
     private func syncAllSummaries() async {
         do {
-            let allSummaries = Array(summaryManager.enhancedSummaries)
+            let allSummaries = Array(appCoordinator.registryManager.enhancedSummaries)
             try await iCloudManager.performBidirectionalSync(localSummaries: allSummaries)
         } catch {
             print("❌ Sync error: \(error)")
@@ -985,7 +1032,6 @@ struct SettingsView: View {
     
     private func refreshEngineStatuses() {
         // Set the engine to the currently selected one from settings
-        summaryManager.setEngine(selectedAIEngine)
         regenerationManager.setEngine(selectedAIEngine)
     }
     

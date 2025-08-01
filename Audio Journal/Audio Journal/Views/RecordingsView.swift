@@ -73,10 +73,10 @@ struct RecordingsView: View {
                         .scaleEffect(recorderVM.isRecording ? 1.05 : 1.0)
                         .animation(.easeInOut(duration: 0.2), value: recorderVM.isRecording)
                         
-                        // Background processing status indicator
-                        if !processingManager.activeJobs.isEmpty {
-                            backgroundProcessingIndicator
-                        }
+                        // Background processing status indicator - REMOVED from main view
+                        // if !processingManager.activeJobs.isEmpty {
+                        //     backgroundProcessingIndicator
+                        // }
                         
                         Button(action: {
                             showingRecordingsList = true

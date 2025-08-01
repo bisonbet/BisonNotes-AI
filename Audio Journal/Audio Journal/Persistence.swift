@@ -14,10 +14,12 @@ struct PersistenceController {
     static let preview: PersistenceController = {
         let result = PersistenceController(inMemory: true)
         let viewContext = result.container.viewContext
-        for _ in 0..<10 {
-            let newItem = Item(context: viewContext)
-            newItem.timestamp = Date()
-        }
+        // Note: Core Data entities are RecordingEntry, SummaryEntry, and TranscriptEntry
+        // This preview code is not used in the actual app
+        // for _ in 0..<10 {
+        //     let newItem = Item(context: viewContext)
+        //     newItem.timestamp = Date()
+        // }
         do {
             try viewContext.save()
         } catch {

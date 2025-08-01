@@ -234,6 +234,12 @@ class TranscriptManager: ObservableObject {
         }
     }
     
+    func reloadTranscripts() {
+        print("🔄 TranscriptManager: Reloading transcripts from disk...")
+        loadTranscripts()
+        print("✅ TranscriptManager: Reloaded \(transcripts.count) transcripts")
+    }
+    
     // MARK: - Debug Methods
     
     func debugPrintTranscripts() {
