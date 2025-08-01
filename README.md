@@ -4,7 +4,7 @@
 
 ## 🎯 Overview
 
-Audio Journal is your personal AI assistant for capturing, transcribing, and analyzing audio recordings. Whether you're in meetings, brainstorming sessions, or personal reflections, the app automatically extracts key information, identifies actionable tasks, and creates intelligent summaries with location context. The app features advanced background processing, performance optimization, and comprehensive error handling.
+Audio Journal is your personal AI assistant for capturing, transcribing, and analyzing audio recordings. Whether you're in meetings, brainstorming sessions, or personal reflections, the app automatically extracts key information, identifies actionable tasks, and creates intelligent summaries with location context. The app features advanced background processing, performance optimization, comprehensive error handling, and a unified data registry system.
 
 ## ✨ Key Features
 
@@ -17,6 +17,15 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **Smart Duration Management**: Auto-stop at 2 hours with real-time duration display
 - **File Import**: Import existing audio files with progress tracking
 - **Enhanced Audio Session Management**: Robust audio interruption handling
+- **Automatic Registry Integration**: New recordings are automatically added to the unified data registry
+
+### 🗄️ **Unified Data Registry System**
+- **Centralized Data Management**: Unified registry for recordings, transcripts, and summaries
+- **Automatic Recording Registration**: New recordings are automatically added to the registry with proper metadata
+- **Refresh from Disk**: Scan and add missing recordings that exist on disk but aren't in the registry
+- **Data Integrity**: Maintains relationships between recordings, transcripts, and summaries
+- **Debug Tools**: Comprehensive debugging and recovery tools for data management
+- **Registry Coordination**: Seamless coordination between all data components
 
 ### 🤖 **AI-Powered Intelligence**
 - **Enhanced Apple Intelligence Engine**: Advanced natural language processing using Apple's NLTagger with semantic analysis
@@ -69,6 +78,7 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **Comprehensive Settings**: Fine-tune every aspect of the app
 - **Engine Monitoring**: Automatic availability checking and recovery
 - **Performance Optimization**: Battery and memory-aware processing
+- **Registry Management**: Debug tools for managing the unified data registry
 
 ### 🔧 **Performance & Background Processing**
 - **Background Processing Manager**: Comprehensive job queuing and management
@@ -85,6 +95,7 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **Orphaned File Detection**: Identifies and manages orphaned files
 - **iCloud Storage Manager**: CloudKit synchronization with conflict resolution
 - **Enhanced File Manager**: Comprehensive file operations with error handling
+- **Registry Integration**: All file operations are coordinated through the unified registry
 
 ## 🔧 AI Integration Setup
 
@@ -234,25 +245,28 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **URLSession**: REST API communication for various AI services
 - **Background Processing**: Comprehensive job management
 - **Performance Optimization**: Battery and memory-aware processing
+- **Unified Registry System**: Centralized data management for recordings, transcripts, and summaries
 
 ### **AI Processing Pipeline**
 1. **Audio Capture** → High-quality recording with location metadata
-2. **Speech Recognition** → Real-time transcription with speaker detection
-3. **Content Analysis** → Natural language processing and classification
-4. **Intelligent Extraction** → Task and reminder identification
-5. **Summary Generation** → Context-aware summarization
-6. **Metadata Enrichment** → Confidence scoring and quality metrics
-7. **Background Processing** → Asynchronous job processing
-8. **Performance Optimization** → Resource-aware processing
+2. **Registry Integration** → Automatic recording registration in unified data system
+3. **Speech Recognition** → Real-time transcription with speaker detection
+4. **Content Analysis** → Natural language processing and classification
+5. **Intelligent Extraction** → Task and reminder identification
+6. **Summary Generation** → Context-aware summarization
+7. **Metadata Enrichment** → Confidence scoring and quality metrics
+8. **Background Processing** → Asynchronous job processing
+9. **Performance Optimization** → Resource-aware processing
 
 ### **Data Models**
-- **RecordingFile**: Audio file with metadata and location data
+- **RegistryRecordingEntry**: Central recording data with metadata and processing status
 - **TranscriptData**: Structured transcript with speaker segments
 - **SummaryData**: Enhanced summaries with tasks and reminders
 - **EnhancedSummaryData**: Advanced summaries with AI metadata
 - **LocationData**: GPS coordinates with reverse geocoding
 - **ProcessingJob**: Background job management
 - **AudioChunk**: Chunked audio processing for large files
+- **AppDataCoordinator**: Unified data coordination and registry management
 
 ## 🚀 Getting Started
 
@@ -279,6 +293,7 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 5. **View Transcripts**: Access detailed transcripts in the Transcripts tab
 6. **Customize Settings**: Adjust audio quality, AI engines, and preferences
 7. **Monitor Performance**: Use the performance monitoring features to optimize usage
+8. **Registry Management**: Use debug tools to manage the unified data registry if needed
 
 ## 📱 User Interface
 
@@ -300,6 +315,7 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **Background Processing View**: Job queue and processing status
 - **Error Recovery View**: Comprehensive error handling and recovery
 - **Debug View**: Advanced debugging and diagnostics
+- **Registry Debug Tools**: Tools for managing the unified data registry
 
 ## 🔧 Configuration Options
 
@@ -322,6 +338,12 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **Queue Management**: Monitor job queue and processing status
 - **Performance Monitoring**: Real-time performance metrics
 - **Error Recovery**: Comprehensive error handling and recovery
+
+### **Registry Management**
+- **Refresh Recordings**: Scan and add missing recordings from disk
+- **Debug Tools**: Comprehensive debugging and recovery tools
+- **Data Integrity**: Maintain relationships between recordings, transcripts, and summaries
+- **Registry Coordination**: Seamless coordination between all data components
 
 ### **OpenAI Settings**
 - **API Configuration**: Secure API key input with validation
@@ -374,6 +396,7 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **Battery Optimization**: Efficient location and audio processing
 - **Storage Management**: Automatic cleanup of temporary files
 - **Background Processing**: Asynchronous job processing for better UX
+- **Registry Optimization**: Efficient data management and coordination
 
 ## 🔒 Privacy & Security
 
@@ -383,6 +406,7 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **Optional Location**: GPS tracking can be disabled
 - **Permission Control**: Granular control over microphone and location access
 - **Background Processing**: Secure job management with data protection
+- **Registry Privacy**: All registry data remains local and private
 
 ### **Privacy Features**
 - **Local Storage**: All data remains on your device
@@ -424,6 +448,8 @@ Audio Journal/
 ├── EnhancedErrorRecoverySystem.swift # Error recovery
 ├── EnhancedLoggingSystem.swift     # Logging system
 ├── Models/
+│   ├── AppDataCoordinator.swift    # Unified data coordination
+│   ├── RecordingRegistry.swift     # Unified registry system
 │   ├── AudioModels.swift           # Core data models
 │   ├── SummarizationEngine.swift   # AI engine protocols
 │   ├── EnhancedSummaryData.swift   # Enhanced summary models
@@ -431,7 +457,7 @@ Audio Journal/
 │   ├── EnginePerformanceData.swift # Performance data
 │   └── RecordingNameGenerator.swift # Name generation
 ├── ViewModels/
-│   └── AudioRecorderViewModel.swift # Recording logic
+│   └── AudioRecorderViewModel.swift # Recording logic with registry integration
 ├── Views/
 │   ├── RecordingsView.swift        # Main recording interface
 │   ├── RecordingsListView.swift    # Recording list with deletion
@@ -447,7 +473,9 @@ Audio Journal/
 ```
 
 ### **Key Components**
-- **AudioRecorderViewModel**: Manages recording, playback, and audio settings
+- **AppDataCoordinator**: Unified data coordination and registry management
+- **RecordingRegistry**: Centralized registry for recordings, transcripts, and summaries
+- **AudioRecorderViewModel**: Manages recording, playback, audio settings, and registry integration
 - **SummaryManager**: Handles summary generation and storage
 - **TranscriptManager**: Manages transcript creation and editing
 - **LocationManager**: Handles GPS and geocoding services
@@ -462,6 +490,14 @@ Audio Journal/
 - **AWSTranscribeService**: AWS Transcribe API communication
 
 ## 🔮 Recent Enhancements
+
+### **Unified Data Registry System (Latest)**
+- **Centralized Data Management**: Unified registry for recordings, transcripts, and summaries
+- **Automatic Recording Registration**: New recordings are automatically added to the registry with proper metadata
+- **Refresh from Disk**: Scan and add missing recordings that exist on disk but aren't in the registry
+- **Data Integrity**: Maintains relationships between recordings, transcripts, and summaries
+- **Debug Tools**: Comprehensive debugging and recovery tools for data management
+- **Registry Coordination**: Seamless coordination between all data components
 
 ### **Performance Optimization (Task 11)**
 - **Streaming File Processing**: Memory-efficient handling of large files
@@ -563,4 +599,4 @@ For support, questions, or feature requests:
 
 ---
 
-**Audio Journal** - Transform your spoken words into actionable intelligence with advanced AI processing and performance optimization. 🎯✨
+**Audio Journal** - Transform your spoken words into actionable intelligence with advanced AI processing, performance optimization, and unified data management. 🎯✨
