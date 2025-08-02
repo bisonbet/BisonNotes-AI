@@ -125,6 +125,9 @@ class WhisperService: ObservableObject {
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.timeoutIntervalForRequest = 1800.0  // 30 minutes
         sessionConfig.timeoutIntervalForResource = 1800.0 // 30 minutes
+        sessionConfig.waitsForConnectivity = true
+        sessionConfig.allowsConstrainedNetworkAccess = true
+        sessionConfig.allowsExpensiveNetworkAccess = true
         self.session = URLSession(configuration: sessionConfig)
         self.chunkingService = chunkingService
     }

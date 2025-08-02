@@ -10,6 +10,7 @@ import Speech
 import AVFoundation
 import Combine
 import SwiftUI // Added for @AppStorage
+import UIKit
 
 // MARK: - Transcription Progress
 
@@ -68,6 +69,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     private var speechRecognizer: SFSpeechRecognizer?
     private var currentTask: SFSpeechRecognitionTask?
     private let chunkingService = AudioFileChunkingService()
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     
     // Configuration - Always use enhanced transcription
     private var enableEnhancedTranscription: Bool {
@@ -248,7 +250,23 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         speechRecognizer = nil
         print("🧹 EnhancedTranscriptionManager deallocated")
     }
-    
+
+    // MARK: - Background Task Management
+
+    private func beginBackgroundTask() {
+        guard backgroundTaskID == .invalid else { return }
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WhisperTranscription") { [weak self] in
+            self?.endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        if backgroundTaskID != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTaskID)
+            backgroundTaskID = .invalid
+        }
+    }
+
     // MARK: - Memory Management
     
     private func checkMemoryPressure() {
@@ -1165,8 +1183,11 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     // MARK: - Whisper Transcription
     
     private func transcribeWithWhisper(url: URL, config: WhisperConfig) async throws -> TranscriptionResult {
+        beginBackgroundTask()
+        defer { endBackgroundTask() }
+
         print("🎤 Starting Whisper transcription...")
-        
+
         let whisperService = WhisperService(config: config, chunkingService: chunkingService)
         
         do {
