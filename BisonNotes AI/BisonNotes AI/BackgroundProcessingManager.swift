@@ -678,12 +678,14 @@ class BackgroundProcessingManager: ObservableObject {
             let config = getWhisperConfig()
             let service = WhisperService(config: config, chunkingService: chunkingService)
             return try await service.transcribeAudio(url: chunk.chunkURL, recordingId: recordingId)
-            
+
         case .awsTranscribe:
-            // AWS Transcribe works differently - it's async, so we need to adapt it
-            // For now, throw an error indicating it needs special handling
-            throw BackgroundProcessingError.processingFailed("AWS Transcribe requires async job handling - use EnhancedTranscriptionManager instead")
-            
+            // AWS Transcribe requires asynchronous job handling. Use the
+            // EnhancedTranscriptionManager which manages the lifecycle of AWS
+            // transcription jobs and polling for results.
+            let manager = EnhancedTranscriptionManager()
+            return try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .awsTranscribe)
+
         case .appleIntelligence:
             // Apple Intelligence uses Speech framework which has different limits
             // Use the EnhancedTranscriptionManager for proper handling
