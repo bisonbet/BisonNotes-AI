@@ -25,7 +25,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app uses your location to add location data to your audio recordings.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>This app requires access to the microphone to record audio journals.</string>
+	<string>This app requires access to the microphone to record audio notes.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>This app uses speech recognition to generate transcripts of your audio recordings.</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
@@ -46,7 +46,7 @@
 			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
 			<false/>
 			<key>NSUbiquitousContainerName</key>
-			<string>Audio Journal</string>
+			<string>BisonNotes AI</string>
 			<key>NSUbiquitousContainerSupportedFolderLevels</key>
 			<string>Any</string>
 		</dict>

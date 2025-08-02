@@ -74,7 +74,7 @@ let recording = appCoordinator.getRecording(id: recordingId)
 - `Models/AppDataCoordinator.swift` - Main coordinator
 
 ### Modified Files:
-- `Audio_JournalApp.swift` - Uses new coordinator
+- `BisonNotesAIApp.swift` - Uses new coordinator
 - `Audio_Journal.xcdatamodeld` - Updated Core Data schema
 
 This architecture provides a solid foundation for reliable data management and sync across all your audio journal features.

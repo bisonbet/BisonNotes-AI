@@ -1,13 +1,13 @@
 //
-//  Audio_JournalUITestsLaunchTests.swift
-//  Audio JournalUITests
+//  BisonNotesAIUITestsLaunchTests.swift
+//  BisonNotes AIUITests
 //
 //  Created by Tim Champ on 7/26/25.
 //
 
 import XCTest
 
-final class Audio_JournalUITestsLaunchTests: XCTestCase {
+final class BisonNotesAIUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true
@@ -17,12 +17,11 @@ final class Audio_JournalUITestsLaunchTests: XCTestCase {
         continueAfterFailure = false
     }
 
-    @MainActor
     func testLaunch() throws {
         let app = XCUIApplication()
         app.launch()
 
-        // Insert steps here to perform after app launch but before taking a screenshot,
+        // Insert assertions here to perform after app launch but before taking a screenshot,
         // such as logging into a test account or navigating somewhere in the app
 
         let attachment = XCTAttachment(screenshot: app.screenshot())

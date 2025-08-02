@@ -216,7 +216,7 @@ class OpenAISummarizationService: ObservableObject {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        urlRequest.setValue("Audio Journal iOS App", forHTTPHeaderField: "User-Agent")
+        		urlRequest.setValue("BisonNotes AI iOS App", forHTTPHeaderField: "User-Agent")
         
         do {
             let encoder = JSONEncoder()

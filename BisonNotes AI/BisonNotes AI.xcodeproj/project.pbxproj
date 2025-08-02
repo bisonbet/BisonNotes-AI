@@ -20,50 +20,50 @@
 			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 14DBC83C2E34F7B500DAD442;
-			remoteInfo = "Audio Journal";
+			remoteInfo = "BisonNotes AI";
 		};
 		14DBC85A2E34F7B600DAD442 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 14DBC83C2E34F7B500DAD442;
-			remoteInfo = "Audio Journal";
+			remoteInfo = "BisonNotes AI";
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BisonNotes AI.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		14DBC84F2E34F7B600DAD442 /* Audio JournalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Audio JournalTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		14DBC8592E34F7B600DAD442 /* Audio JournalUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Audio JournalUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		14DBC84F2E34F7B600DAD442 /* BisonNotes AITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		14DBC8592E34F7B600DAD442 /* BisonNotes AIUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AIUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		14DBC8812E34FE1800DAD442 /* Exceptions for "Audio Journal" folder in "Audio Journal" target */ = {
+		14DBC8812E34FE1800DAD442 /* Exceptions for "BisonNotes AI" folder in "BisonNotes AI" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 14DBC83C2E34F7B500DAD442 /* Audio Journal */;
+			target = 14DBC83C2E34F7B500DAD442 /* BisonNotes AI */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		14DBC83F2E34F7B500DAD442 /* Audio Journal */ = {
+		14DBC83F2E34F7B500DAD442 /* BisonNotes AI */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				14DBC8812E34FE1800DAD442 /* Exceptions for "Audio Journal" folder in "Audio Journal" target */,
+				14DBC8812E34FE1800DAD442 /* Exceptions for "BisonNotes AI" folder in "BisonNotes AI" target */,
 			);
-			path = "Audio Journal";
+			path = "BisonNotes AI";
 			sourceTree = "<group>";
 		};
-		14DBC8522E34F7B600DAD442 /* Audio JournalTests */ = {
+		14DBC8522E34F7B600DAD442 /* BisonNotes AITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "Audio JournalTests";
+			path = "BisonNotes AITests";
 			sourceTree = "<group>";
 		};
-		14DBC85C2E34F7B600DAD442 /* Audio JournalUITests */ = {
+		14DBC85C2E34F7B600DAD442 /* BisonNotes AIUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "Audio JournalUITests";
+			path = "BisonNotes AIUITests";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -101,9 +101,9 @@
 		14DBC8342E34F7B500DAD442 = {
 			isa = PBXGroup;
 			children = (
-				14DBC83F2E34F7B500DAD442 /* Audio Journal */,
-				14DBC8522E34F7B600DAD442 /* Audio JournalTests */,
-				14DBC85C2E34F7B600DAD442 /* Audio JournalUITests */,
+				14DBC83F2E34F7B500DAD442 /* BisonNotes AI */,
+				14DBC8522E34F7B600DAD442 /* BisonNotes AITests */,
+				14DBC85C2E34F7B600DAD442 /* BisonNotes AIUITests */,
 				14DBC83E2E34F7B500DAD442 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -112,8 +112,8 @@
 			isa = PBXGroup;
 			children = (
 				14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */,
-				14DBC84F2E34F7B600DAD442 /* Audio JournalTests.xctest */,
-				14DBC8592E34F7B600DAD442 /* Audio JournalUITests.xctest */,
+				14DBC84F2E34F7B600DAD442 /* BisonNotes AITests.xctest */,
+				14DBC8592E34F7B600DAD442 /* BisonNotes AIUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -121,9 +121,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		14DBC83C2E34F7B500DAD442 /* Audio Journal */ = {
+		14DBC83C2E34F7B500DAD442 /* BisonNotes AI */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 14DBC8632E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "Audio Journal" */;
+			buildConfigurationList = 14DBC8632E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AI" */;
 			buildPhases = (
 				14DBC8392E34F7B500DAD442 /* Sources */,
 				14DBC83A2E34F7B500DAD442 /* Frameworks */,
@@ -134,9 +134,9 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				14DBC83F2E34F7B500DAD442 /* Audio Journal */,
+				14DBC83F2E34F7B500DAD442 /* BisonNotes AI */,
 			);
-			name = "Audio Journal";
+			name = "BisonNotes AI";
 			packageProductDependencies = (
 				14C3B9502E35BCD300C0B6CA /* AWSCore */,
 				14C3B9522E35BCD300C0B6CA /* AWSMachineLearning */,
@@ -144,13 +144,13 @@
 				14C3B9562E35BCD300C0B6CA /* AWSTranscribe */,
 				14C3B9582E35BCD300C0B6CA /* AWSTranscribeStreaming */,
 			);
-			productName = "Audio Journal";
+			productName = "BisonNotes AI";
 			productReference = 14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */;
 			productType = "com.apple.product-type.application";
 		};
-		14DBC84E2E34F7B600DAD442 /* Audio JournalTests */ = {
+		14DBC84E2E34F7B600DAD442 /* BisonNotes AITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 14DBC8662E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "Audio JournalTests" */;
+			buildConfigurationList = 14DBC8662E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AITests" */;
 			buildPhases = (
 				14DBC84B2E34F7B600DAD442 /* Sources */,
 				14DBC84C2E34F7B600DAD442 /* Frameworks */,
@@ -162,18 +162,18 @@
 				14DBC8512E34F7B600DAD442 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				14DBC8522E34F7B600DAD442 /* Audio JournalTests */,
+				14DBC8522E34F7B600DAD442 /* BisonNotes AITests */,
 			);
-			name = "Audio JournalTests";
+			name = "BisonNotes AITests";
 			packageProductDependencies = (
 			);
-			productName = "Audio JournalTests";
-			productReference = 14DBC84F2E34F7B600DAD442 /* Audio JournalTests.xctest */;
+			productName = "BisonNotes AITests";
+			productReference = 14DBC84F2E34F7B600DAD442 /* BisonNotes AITests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		14DBC8582E34F7B600DAD442 /* Audio JournalUITests */ = {
+		14DBC8582E34F7B600DAD442 /* BisonNotes AIUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 14DBC8692E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "Audio JournalUITests" */;
+			buildConfigurationList = 14DBC8692E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AIUITests" */;
 			buildPhases = (
 				14DBC8552E34F7B600DAD442 /* Sources */,
 				14DBC8562E34F7B600DAD442 /* Frameworks */,
@@ -185,13 +185,13 @@
 				14DBC85B2E34F7B600DAD442 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				14DBC85C2E34F7B600DAD442 /* Audio JournalUITests */,
+				14DBC85C2E34F7B600DAD442 /* BisonNotes AIUITests */,
 			);
-			name = "Audio JournalUITests";
+			name = "BisonNotes AIUITests";
 			packageProductDependencies = (
 			);
-			productName = "Audio JournalUITests";
-			productReference = 14DBC8592E34F7B600DAD442 /* Audio JournalUITests.xctest */;
+			productName = "BisonNotes AIUITests";
+			productReference = 14DBC8592E34F7B600DAD442 /* BisonNotes AIUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -217,7 +217,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 14DBC8382E34F7B500DAD442 /* Build configuration list for PBXProject "Audio Journal" */;
+			buildConfigurationList = 14DBC8382E34F7B500DAD442 /* Build configuration list for PBXProject "BisonNotes AI" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -234,9 +234,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				14DBC83C2E34F7B500DAD442 /* Audio Journal */,
-				14DBC84E2E34F7B600DAD442 /* Audio JournalTests */,
-				14DBC8582E34F7B600DAD442 /* Audio JournalUITests */,
+				14DBC83C2E34F7B500DAD442 /* BisonNotes AI */,
+				14DBC84E2E34F7B600DAD442 /* BisonNotes AITests */,
+				14DBC8582E34F7B600DAD442 /* BisonNotes AIUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -292,12 +292,12 @@
 /* Begin PBXTargetDependency section */
 		14DBC8512E34F7B600DAD442 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 14DBC83C2E34F7B500DAD442 /* Audio Journal */;
+			target = 14DBC83C2E34F7B500DAD442 /* BisonNotes AI */;
 			targetProxy = 14DBC8502E34F7B600DAD442 /* PBXContainerItemProxy */;
 		};
 		14DBC85B2E34F7B600DAD442 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 14DBC83C2E34F7B500DAD442 /* Audio Journal */;
+			target = 14DBC83C2E34F7B500DAD442 /* BisonNotes AI */;
 			targetProxy = 14DBC85A2E34F7B600DAD442 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -430,13 +430,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
-				CODE_SIGN_ENTITLEMENTS = "Audio Journal/Audio Journal.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI/BisonNotes AI.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				"INFOPLIST_FILE[sdk=iphone*]" = "Audio Journal/Info.plist";
+				"INFOPLIST_FILE[sdk=iphone*]" = "BisonNotes AI/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -467,13 +467,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
-				CODE_SIGN_ENTITLEMENTS = "Audio Journal/Audio Journal.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI/BisonNotes AI.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				"INFOPLIST_FILE[sdk=iphone*]" = "Audio Journal/Info.plist";
+				"INFOPLIST_FILE[sdk=iphone*]" = "BisonNotes AI/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -513,7 +513,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Audio Journal.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Audio Journal";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BisonNotes AI.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BisonNotes AI";
 			};
 			name = Debug;
 		};
@@ -532,7 +532,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Audio Journal.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Audio Journal";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BisonNotes AI.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BisonNotes AI";
 			};
 			name = Release;
 		};
@@ -549,7 +549,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = "Audio Journal";
+				TEST_TARGET_NAME = "BisonNotes AI";
 			};
 			name = Debug;
 		};
@@ -566,14 +566,14 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = "Audio Journal";
+				TEST_TARGET_NAME = "BisonNotes AI";
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		14DBC8382E34F7B500DAD442 /* Build configuration list for PBXProject "Audio Journal" */ = {
+		14DBC8382E34F7B500DAD442 /* Build configuration list for PBXProject "BisonNotes AI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				14DBC8612E34F7B600DAD442 /* Debug */,
@@ -582,7 +582,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		14DBC8632E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "Audio Journal" */ = {
+		14DBC8632E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				14DBC8642E34F7B600DAD442 /* Debug */,
@@ -591,7 +591,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		14DBC8662E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "Audio JournalTests" */ = {
+		14DBC8662E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				14DBC8672E34F7B600DAD442 /* Debug */,
@@ -600,7 +600,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		14DBC8692E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "Audio JournalUITests" */ = {
+		14DBC8692E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AIUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				14DBC86A2E34F7B600DAD442 /* Debug */,

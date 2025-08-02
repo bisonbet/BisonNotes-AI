@@ -82,7 +82,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
         
         let reminder = EKReminder(eventStore: eventStore)
         reminder.title = task.text
-        reminder.notes = "Created from Audio Journal recording: \(recordingName)"
+        			reminder.notes = "Created from BisonNotes AI recording: \(recordingName)"
         reminder.priority = task.priority.ekPriority
         reminder.calendar = eventStore.defaultCalendarForNewReminders()
         
@@ -125,7 +125,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
         
         let event = EKEvent(eventStore: eventStore)
         event.title = task.text
-        event.notes = "Created from Audio Journal recording: \(recordingName)"
+        event.notes = "Created from BisonNotes AI recording: \(recordingName)"
         event.calendar = eventStore.defaultCalendarForNewEvents
         
         // Set start and end times
@@ -178,7 +178,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
         
         let ekReminder = EKReminder(eventStore: eventStore)
         ekReminder.title = reminder.text
-        ekReminder.notes = "Created from Audio Journal recording: \(recordingName)"
+        ekReminder.notes = "Created from BisonNotes AI recording: \(recordingName)"
         ekReminder.priority = reminder.urgency.ekPriority
         ekReminder.calendar = eventStore.defaultCalendarForNewReminders()
         
@@ -226,7 +226,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
         
         let event = EKEvent(eventStore: eventStore)
         event.title = reminder.text
-        event.notes = "Created from Audio Journal recording: \(recordingName)"
+        event.notes = "Created from BisonNotes AI recording: \(recordingName)"
         event.calendar = eventStore.defaultCalendarForNewEvents
         
         // Set start and end times

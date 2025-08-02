@@ -1,13 +1,13 @@
 //
 //  TestHelpers.swift
-//  Audio JournalTests
+//  BisonNotes AITests
 //
-//  Test helpers and mock data for audio processing enhancement tests
+//  Created by Tim Champ on 7/26/25.
 //
 
 import Foundation
 import AVFoundation
-@testable import Audio_Journal
+@testable import BisonNotes_AI
 
 // MARK: - Mock Data Generators
 
