@@ -144,37 +144,20 @@ class TokenManager {
         return results
     }
     
-    /// Combine multiple summaries into a final summary
-    static func combineSummaries(_ summaries: [String], contentType: ContentType) -> String {
+    /// Combine multiple summaries into a cohesive meta-summary using Ollama
+    static func combineSummaries(
+        _ summaries: [String],
+        contentType: ContentType,
+        service: OllamaService
+    ) async throws -> String {
         guard !summaries.isEmpty else { return "" }
-        
-        if summaries.count == 1 {
-            return summaries[0]
-        }
-        
-        // Combine all summaries
+
+        // Join all summaries into one text block
         let combinedText = summaries.joined(separator: " ")
-        
-        // If the combined text is too long, create a meta-summary
-        if getTokenCount(combinedText) > maxTokensForFinalSummary {
-            return createMetaSummary(from: summaries, contentType: contentType)
-        }
-        
-        return combinedText
-    }
-    
-    /// Create a meta-summary from multiple summaries
-    private static func createMetaSummary(from summaries: [String], contentType: ContentType) -> String {
-        let sentences = summaries.flatMap { summary in
-            summary.components(separatedBy: CharacterSet(charactersIn: ".!?"))
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        }
-        
-        // Select the most important sentences
-        let importantSentences = sentences.prefix(3)
-        let metaSummary = importantSentences.joined(separator: ". ") + "."
-        
+
+        // Generate meta-summary ensuring context limits are respected
+        let metaSummary = try await generateMetaSummary(from: combinedText, service: service)
+
         switch contentType {
         case .meeting:
             return "Meeting Summary: \(metaSummary)"
@@ -185,6 +168,29 @@ class TokenManager {
         case .general:
             return "Summary: \(metaSummary)"
         }
+    }
+
+    /// Recursively generate a meta-summary that fits within the model's context window
+    private static func generateMetaSummary(from text: String, service: OllamaService) async throws -> String {
+        let maxTokens = service.maxContextTokens
+
+        // If text fits within context window, summarize directly
+        if getTokenCount(text) <= maxTokens {
+            return try await service.generateSummary(from: text)
+        }
+
+        // Otherwise, chunk the text and summarize each piece
+        let chunks = chunkText(text, maxTokens: maxTokens)
+        var intermediateSummaries: [String] = []
+
+        for chunk in chunks {
+            let summary = try await service.generateSummary(from: chunk)
+            intermediateSummaries.append(summary)
+        }
+
+        // Recursively summarize the combined intermediate summaries
+        let reducedText = intermediateSummaries.joined(separator: " ")
+        return try await generateMetaSummary(from: reducedText, service: service)
     }
 }
 
@@ -197,9 +203,9 @@ struct ChunkedProcessingResult {
     let contentType: ContentType
     let totalChunks: Int
     let processingTime: TimeInterval
-    
-    var combinedSummary: String {
-        return TokenManager.combineSummaries(summaries, contentType: contentType)
+
+    func combinedSummary(using service: OllamaService) async throws -> String {
+        return try await TokenManager.combineSummaries(summaries, contentType: contentType, service: service)
     }
     
     var deduplicatedTasks: [TaskItem] {

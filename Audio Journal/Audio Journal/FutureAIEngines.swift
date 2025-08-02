@@ -486,8 +486,12 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             }
         }
         
-        // Combine results
-        let combinedSummary = TokenManager.combineSummaries(allSummaries, contentType: contentType)
+        // Combine results using AI-generated meta-summary
+        let combinedSummary = try await TokenManager.combineSummaries(
+            allSummaries,
+            contentType: contentType,
+            service: service
+        )
         
         // Deduplicate tasks, reminders, and titles
         let uniqueTasks = deduplicateTasks(allTasks)

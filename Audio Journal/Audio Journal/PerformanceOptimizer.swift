@@ -453,12 +453,16 @@ class PerformanceOptimizer: ObservableObject, Sendable {
         let chunks = text.chunked(into: optimalChunkSize)
         
         logger.info("Split transcript into \(chunks.count) chunks of ~\(optimalChunkSize) bytes each")
-        
+
         var summaryParts: [String] = []
         var allTasks: [TaskItem] = []
         var allReminders: [ReminderItem] = []
         var allTitles: [TitleItem] = []
         var contentTypes: [ContentType] = []
+
+        // Initialize Ollama service for meta-summary generation
+        let ollamaService = OllamaService()
+        _ = await ollamaService.testConnection()
         
         for (index, chunk) in chunks.enumerated() {
             processingProgress = Double(index) / Double(chunks.count) * 0.8 // 80% for chunk processing
@@ -490,8 +494,12 @@ class PerformanceOptimizer: ObservableObject, Sendable {
         
         processingProgress = 0.9 // 90% - consolidating results
         
-        // Consolidate results using TokenManager
-        let finalSummary = TokenManager.combineSummaries(summaryParts, contentType: determinePrimaryContentType(contentTypes))
+        // Consolidate results using TokenManager with AI-generated meta-summary
+        let finalSummary = try await TokenManager.combineSummaries(
+            summaryParts,
+            contentType: determinePrimaryContentType(contentTypes),
+            service: ollamaService
+        )
         let finalTasks = deduplicateAndLimitTasks(allTasks, limit: 15)
         let finalReminders = deduplicateAndLimitReminders(allReminders, limit: 15)
         let finalContentType = determinePrimaryContentType(contentTypes)
@@ -598,6 +606,10 @@ class PerformanceOptimizer: ObservableObject, Sendable {
         var allTitles: [TitleItem] = []
         var summaryParts: [String] = []
         var contentTypes: [ContentType] = []
+
+        // Initialize Ollama service for meta-summary generation
+        let ollamaService = OllamaService()
+        _ = await ollamaService.testConnection()
         
         for (index, chunk) in chunks.enumerated() {
             processingProgress = Double(index) / Double(chunks.count) * 0.8 // 80% for chunk processing
@@ -624,8 +636,12 @@ class PerformanceOptimizer: ObservableObject, Sendable {
         
         processingProgress = 0.9 // 90% - consolidating results
         
-        // Consolidate results using TokenManager
-        let finalSummary = TokenManager.combineSummaries(summaryParts, contentType: determinePrimaryContentType(contentTypes))
+        // Consolidate results using TokenManager with AI-generated meta-summary
+        let finalSummary = try await TokenManager.combineSummaries(
+            summaryParts,
+            contentType: determinePrimaryContentType(contentTypes),
+            service: ollamaService
+        )
         let finalTasks = deduplicateAndLimitTasks(allTasks, limit: 15)
         let finalReminders = deduplicateAndLimitReminders(allReminders, limit: 15)
         let finalContentType = determinePrimaryContentType(contentTypes)

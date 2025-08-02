@@ -82,10 +82,13 @@ struct OllamaGenerateResponse: Codable {
 class OllamaService: ObservableObject {
     private let config: OllamaConfig
     private let session: URLSession
-    
+
     @Published var isConnected: Bool = false
     @Published var availableModels: [OllamaModel] = []
     @Published var connectionError: String?
+
+    /// Maximum context tokens supported by the configured model
+    var maxContextTokens: Int { config.maxContextTokens }
     
     init(config: OllamaConfig = .default) {
         self.config = config

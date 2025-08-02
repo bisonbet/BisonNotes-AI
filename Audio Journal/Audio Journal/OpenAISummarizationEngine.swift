@@ -224,6 +224,10 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
     
     private func processChunkedText(_ text: String, service: OpenAISummarizationService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         let startTime = Date()
+
+        // Initialize Ollama service for meta-summary generation
+        let ollamaService = OllamaService()
+        _ = await ollamaService.testConnection()
         
         // Split text into chunks
         let chunks = TokenManager.chunkText(text)
@@ -257,8 +261,12 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
             }
         }
         
-        // Combine results
-        let combinedSummary = TokenManager.combineSummaries(allSummaries, contentType: contentType)
+        // Combine results using AI-generated meta-summary
+        let combinedSummary = try await TokenManager.combineSummaries(
+            allSummaries,
+            contentType: contentType,
+            service: ollamaService
+        )
         
         // Deduplicate tasks, reminders, and titles
         let uniqueTasks = deduplicateTasks(allTasks)
