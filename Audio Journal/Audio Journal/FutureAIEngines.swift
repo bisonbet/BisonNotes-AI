@@ -206,6 +206,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     }
     
     private var ollamaService: OllamaService?
+    private var config: OllamaConfig?
     
     init() {
         // Initialize with saved configuration
@@ -214,15 +215,18 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
         let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
         let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
-        
+        let contextTokens = UserDefaults.standard.integer(forKey: "ollamaContextTokens")
+
         let config = OllamaConfig(
             serverURL: serverURL,
             port: port > 0 ? port : 11434,
             modelName: modelName,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
-            temperature: temperature > 0 ? temperature : 0.1
+            temperature: temperature > 0 ? temperature : 0.1,
+            maxContextTokens: contextTokens > 0 ? contextTokens : 4096
         )
-        
+
+        self.config = config
         self.ollamaService = OllamaService(config: config)
     }
     
@@ -424,9 +428,10 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         let tokenCount = TokenManager.getTokenCount(text)
         print("📊 Text token count: \(tokenCount)")
         
-        if TokenManager.needsChunking(text) {
+        let maxContext = config?.maxContextTokens ?? TokenManager.maxTokensPerChunk
+        if TokenManager.needsChunking(text, maxTokens: maxContext) {
             print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
-            return try await processChunkedText(text, service: service)
+            return try await processChunkedText(text, service: service, maxTokens: maxContext)
         } else {
             print("📝 Processing single chunk (\(tokenCount) tokens)")
             return try await processSingleChunk(text, service: service)
@@ -446,11 +451,11 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         return (summary, extraction.tasks, extraction.reminders, titles, contentType)
     }
     
-    private func processChunkedText(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processChunkedText(_ text: String, service: OllamaService, maxTokens: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         let startTime = Date()
-        
+
         // Split text into chunks
-        let chunks = TokenManager.chunkText(text)
+        let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
         print("📦 Split text into \(chunks.count) chunks")
         
         // Process each chunk
@@ -568,6 +573,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
         let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
         let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
+        let contextTokens = UserDefaults.standard.integer(forKey: "ollamaContextTokens")
         
         print("🔧 LocalLLMEngine: Updating configuration - Server: \(serverURL), Port: \(port), Model: \(modelName)")
         
@@ -576,9 +582,11 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             port: port > 0 ? port : 11434,
             modelName: modelName,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
-            temperature: temperature > 0 ? temperature : 0.1
+            temperature: temperature > 0 ? temperature : 0.1,
+            maxContextTokens: contextTokens > 0 ? contextTokens : 4096
         )
-        
+
+        self.config = config
         self.ollamaService = OllamaService(config: config)
         print("✅ LocalLLMEngine: Configuration updated successfully")
     }

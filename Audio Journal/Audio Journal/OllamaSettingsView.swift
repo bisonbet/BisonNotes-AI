@@ -13,6 +13,8 @@ struct OllamaSettingsView: View {
     @AppStorage("ollamaModelName") private var selectedModel: String = "llama2:7b"
     @AppStorage("ollamaMaxTokens") private var maxTokens: Int = 2048
     @AppStorage("ollamaTemperature") private var temperature: Double = 0.1
+    /// Maximum context window the selected model supports
+    @AppStorage("ollamaContextTokens") private var maxContextTokens: Int = 4096
     @AppStorage("enableOllama") private var enableOllama: Bool = true
     
     var onConfigurationChanged: (() -> Void)?
@@ -35,6 +37,7 @@ struct OllamaSettingsView: View {
         let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
         let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
         let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
+        let contextTokens = UserDefaults.standard.integer(forKey: "ollamaContextTokens")
         
         // Ensure enableOllama has a default value in UserDefaults
         if UserDefaults.standard.object(forKey: "enableOllama") == nil {
@@ -47,7 +50,8 @@ struct OllamaSettingsView: View {
             port: port > 0 ? port : 11434,
             modelName: modelName,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
-            temperature: temperature > 0 ? temperature : 0.1
+            temperature: temperature > 0 ? temperature : 0.1,
+            maxContextTokens: contextTokens > 0 ? contextTokens : 4096
         )
         
         _ollamaService = State(initialValue: OllamaService(config: config))
@@ -198,6 +202,27 @@ struct OllamaSettingsView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Context Window")
+                                .font(.headline)
+
+                            HStack {
+                                Slider(value: Binding(
+                                    get: { Double(maxContextTokens) },
+                                    set: { maxContextTokens = Int($0) }
+                                ), in: 1024...32768, step: 1024)
+
+                                Text("\(maxContextTokens)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 60)
+                            }
+
+                            Text("Maximum tokens the model can process at once")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                         
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Temperature")
@@ -282,6 +307,9 @@ struct OllamaSettingsView: View {
             .onChange(of: maxTokens) {
                 onConfigurationChanged?()
             }
+            .onChange(of: maxContextTokens) {
+                onConfigurationChanged?()
+            }
             .onChange(of: temperature) {
                 onConfigurationChanged?()
             }
@@ -358,7 +386,8 @@ struct OllamaSettingsView: View {
             port: port,
             modelName: selectedModel,
             maxTokens: maxTokens,
-            temperature: temperature
+            temperature: temperature,
+            maxContextTokens: maxContextTokens
         )
         
         // Create a new OllamaService instance with the updated configuration

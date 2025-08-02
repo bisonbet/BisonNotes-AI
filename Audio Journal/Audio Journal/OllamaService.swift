@@ -15,6 +15,8 @@ struct OllamaConfig {
     let modelName: String
     let maxTokens: Int
     let temperature: Double
+    /// Maximum number of tokens the model can accept in the prompt/context
+    let maxContextTokens: Int
     
     var baseURL: String {
         return "\(serverURL):\(port)"
@@ -25,7 +27,8 @@ struct OllamaConfig {
         port: 11434,
         modelName: "llama2:7b",
         maxTokens: 2048,
-        temperature: 0.1
+        temperature: 0.1,
+        maxContextTokens: 4096
     )
 }
 
