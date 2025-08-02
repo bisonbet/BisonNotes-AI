@@ -361,6 +361,7 @@ struct SummariesView: View {
                 print("🔍 Looking for transcript...")
                 // TODO: Update to use new Core Data system with UUID
                 // For now, find the recording by URL and get its transcript
+                var job: ProcessingJob?
                 if let recordingURLString = recording.recordingURL,
                    let recordingURL = URL(string: recordingURLString),
                    let coreDataRecording = appCoordinator.getRecording(url: recordingURL),
@@ -375,15 +376,26 @@ struct SummariesView: View {
                     // Get the selected AI engine
                     let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
                     print("🤖 Using AI engine: \(selectedEngine)")
-                    
-                    // Actually generate the summary using the AI engine
+
+                    // Prepare for background tracking
                     let transcriptText = transcript.plainText
                     let recordingURL = URL(string: recording.recordingURL ?? "") ?? URL(fileURLWithPath: "")
                     let recordingName = recording.recordingName ?? "Unknown Recording"
                     let recordingDate = recording.recordingDate ?? Date()
-                    
+
+                    job = ProcessingJob(
+                        type: .summarization(engine: selectedEngine),
+                        recordingURL: recordingURL,
+                        recordingName: recordingName
+                    )
+                    if let job = job {
+                        await BackgroundProcessingManager.shared.trackExternalJob(job)
+                        let processingJob = job.withStatus(.processing)
+                        await BackgroundProcessingManager.shared.updateExternalJob(processingJob)
+                    }
+
                     print("📝 Generating enhanced summary for transcript with \(transcriptText.count) characters")
-                    
+
                     // Use the SummaryManager to generate the actual summary
                     let enhancedSummary = try await SummaryManager.shared.generateEnhancedSummary(
                         from: transcriptText,
@@ -392,6 +404,11 @@ struct SummariesView: View {
                         recordingDate: recordingDate,
                         coordinator: appCoordinator
                     )
+
+                    if let job = job {
+                        let completedJob = job.withStatus(.completed).withProgress(1.0)
+                        await BackgroundProcessingManager.shared.updateExternalJob(completedJob)
+                    }
                     
                     print("✅ Enhanced summary generated successfully")
                     print("📄 Summary length: \(enhancedSummary.summary.count) characters")
@@ -440,6 +457,10 @@ struct SummariesView: View {
             } catch {
                 print("❌ Error generating summary: \(error)")
                 print("🔍 Error details: \(error)")
+                if let job = job {
+                    let failedJob = job.withStatus(.failed(error.localizedDescription))
+                    await BackgroundProcessingManager.shared.updateExternalJob(failedJob)
+                }
                 await MainActor.run {
                     errorMessage = "Failed to generate summary: \(error.localizedDescription)"
                     showErrorAlert = true

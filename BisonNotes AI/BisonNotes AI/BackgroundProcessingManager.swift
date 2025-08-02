@@ -323,7 +323,17 @@ class BackgroundProcessingManager: ObservableObject {
             job.status == .completed || job.status.isError
         }
     }
-    
+
+    // MARK: - External Job Tracking
+
+    func trackExternalJob(_ job: ProcessingJob) async {
+        await addJob(job)
+    }
+
+    func updateExternalJob(_ job: ProcessingJob) async {
+        await updateJob(job)
+    }
+
     // MARK: - Helper Methods
     
     private func getEngineString(from jobType: JobType) -> String {
