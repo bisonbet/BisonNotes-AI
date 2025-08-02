@@ -14,7 +14,9 @@ class TokenManager {
     
     // MARK: - Configuration
     
-    static let maxTokensPerChunk = 8192
+    /// Default maximum tokens per chunk. This can be overridden when calling
+    /// chunking functions for models with different context sizes.
+    static let maxTokensPerChunk = 2048
     static let maxTokensForFinalSummary = 4096
     static let estimatedTokensPerWord = 1.3 // Conservative estimate for English text
     
