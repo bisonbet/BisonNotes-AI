@@ -1108,54 +1108,78 @@ class SummaryManager: ObservableObject {
         
         AppLogger.shared.info("Using engine: \(engine.name)", category: "SummaryManager")
         
+        var result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
         do {
             // Use the AI engine to process the complete text
-            let result = try await engine.processComplete(text: text)
-            
-            let processingTime = Date().timeIntervalSince(startTime)
-            
-            // Generate intelligent recording name using AI analysis
-            let intelligentName = generateIntelligentRecordingName(
-                from: text,
-                contentType: result.contentType,
-                tasks: result.tasks,
-                reminders: result.reminders,
-                titles: result.titles
-            )
-            
-            // Use the intelligent name if it's better than the original
-            let finalRecordingName = intelligentName.isEmpty || intelligentName == "Recording" ? recordingName : intelligentName
-            
-            let enhancedSummary = EnhancedSummaryData(
-                recordingURL: recordingURL,
-                recordingName: finalRecordingName,
-                recordingDate: recordingDate,
-                summary: result.summary,
-                tasks: result.tasks,
-                reminders: result.reminders,
-                titles: result.titles,
-                contentType: result.contentType,
-                aiMethod: engine.name,
-                originalLength: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count,
-                processingTime: processingTime
-            )
-            
-            // Validate summary quality
-            let qualityReport = errorHandler.validateSummaryQuality(enhancedSummary)
-            if qualityReport.qualityLevel == .unacceptable {
-                AppLogger.shared.warning("Summary quality is unacceptable, attempting recovery", category: "SummaryManager")
-                handleError(SummarizationError.processingFailed(reason: "Summary quality below threshold"), context: "Summary Quality", recordingName: recordingName)
+            result = try await engine.processComplete(text: text)
+        } catch {
+            AppLogger.shared.error("AI engine failed: \(error) – retrying once", category: "SummaryManager")
+            do {
+                result = try await engine.processComplete(text: text)
+                AppLogger.shared.info("AI engine retry succeeded", category: "SummaryManager")
+            } catch {
+                AppLogger.shared.error("AI engine retry failed: \(error)", category: "SummaryManager")
+
+                // Track engine failure
+                performanceMonitor.trackEngineFailure(
+                    engineName: engine.name,
+                    processingTime: Date().timeIntervalSince(startTime),
+                    error: error,
+                    textLength: text.count,
+                    wordCount: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
+                )
+
+                // Handle the error and provide recovery options
+                handleError(error, context: "Enhanced Summary Generation", recordingName: recordingName)
+
+                return try await generateBasicSummary(from: text, for: recordingURL, recordingName: recordingName, recordingDate: recordingDate, coordinator: coordinator)
             }
-            
-            // Track performance metrics
-            performanceMonitor.trackEnhancedSummaryPerformance(enhancedSummary, engineName: engine.name, processingTime: processingTime)
-            
-            // Save the enhanced summary on the main thread
-            await MainActor.run {
-                saveEnhancedSummary(enhancedSummary)
-            }
-            
-                    // Update the recording name if we generated a better one
+        }
+
+        let processingTime = Date().timeIntervalSince(startTime)
+
+        // Generate intelligent recording name using AI analysis
+        let intelligentName = generateIntelligentRecordingName(
+            from: text,
+            contentType: result.contentType,
+            tasks: result.tasks,
+            reminders: result.reminders,
+            titles: result.titles
+        )
+
+        // Use the intelligent name if it's better than the original
+        let finalRecordingName = intelligentName.isEmpty || intelligentName == "Recording" ? recordingName : intelligentName
+
+        let enhancedSummary = EnhancedSummaryData(
+            recordingURL: recordingURL,
+            recordingName: finalRecordingName,
+            recordingDate: recordingDate,
+            summary: result.summary,
+            tasks: result.tasks,
+            reminders: result.reminders,
+            titles: result.titles,
+            contentType: result.contentType,
+            aiMethod: engine.name,
+            originalLength: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count,
+            processingTime: processingTime
+        )
+
+        // Validate summary quality
+        let qualityReport = errorHandler.validateSummaryQuality(enhancedSummary)
+        if qualityReport.qualityLevel == .unacceptable {
+            AppLogger.shared.warning("Summary quality is unacceptable, attempting recovery", category: "SummaryManager")
+            handleError(SummarizationError.processingFailed(reason: "Summary quality below threshold"), context: "Summary Quality", recordingName: recordingName)
+        }
+
+        // Track performance metrics
+        performanceMonitor.trackEnhancedSummaryPerformance(enhancedSummary, engineName: engine.name, processingTime: processingTime)
+
+        // Save the enhanced summary on the main thread
+        await MainActor.run {
+            saveEnhancedSummary(enhancedSummary)
+        }
+
+        // Update the recording name if we generated a better one
         if finalRecordingName != recordingName {
             try await updateRecordingNameWithAI(
                 from: recordingName,
@@ -1168,35 +1192,16 @@ class SummaryManager: ObservableObject {
                 coordinator: coordinator
             )
         }
-            
-            AppLogger.shared.info("Enhanced summary generated successfully", category: "SummaryManager")
-            AppLogger.shared.info("Summary length: \(result.summary.count) characters", category: "SummaryManager")
-            AppLogger.shared.info("Tasks extracted: \(result.tasks.count)", category: "SummaryManager")
-            AppLogger.shared.info("Reminders extracted: \(result.reminders.count)", category: "SummaryManager")
-            AppLogger.shared.info("Content type: \(result.contentType.rawValue)", category: "SummaryManager")
-            AppLogger.shared.info("Recording name: '\(finalRecordingName)'", category: "SummaryManager")
-            AppLogger.shared.info("Quality score: \(qualityReport.formattedScore)", category: "SummaryManager")
-            
-            return enhancedSummary
-            
-        } catch {
-            AppLogger.shared.error("AI engine failed, falling back to basic processing", category: "SummaryManager")
-            AppLogger.shared.error("Error details: \(error)", category: "SummaryManager")
-            
-            // Track engine failure
-            performanceMonitor.trackEngineFailure(
-                engineName: engine.name,
-                processingTime: Date().timeIntervalSince(startTime),
-                error: error,
-                textLength: text.count,
-                wordCount: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
-            )
-            
-            // Handle the error and provide recovery options
-            handleError(error, context: "Enhanced Summary Generation", recordingName: recordingName)
-            
-            return try await generateBasicSummary(from: text, for: recordingURL, recordingName: recordingName, recordingDate: recordingDate, coordinator: coordinator)
-        }
+
+        AppLogger.shared.info("Enhanced summary generated successfully", category: "SummaryManager")
+        AppLogger.shared.info("Summary length: \(result.summary.count) characters", category: "SummaryManager")
+        AppLogger.shared.info("Tasks extracted: \(result.tasks.count)", category: "SummaryManager")
+        AppLogger.shared.info("Reminders extracted: \(result.reminders.count)", category: "SummaryManager")
+        AppLogger.shared.info("Content type: \(result.contentType.rawValue)", category: "SummaryManager")
+        AppLogger.shared.info("Recording name: '\(finalRecordingName)'", category: "SummaryManager")
+        AppLogger.shared.info("Quality score: \(qualityReport.formattedScore)", category: "SummaryManager")
+
+        return enhancedSummary
     }
     
     // MARK: - Fallback Basic Summary Generation
