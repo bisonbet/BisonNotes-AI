@@ -7,51 +7,53 @@
 
 import SwiftUI
 import CoreLocation
+import AVFoundation
 
 typealias AudioRecordingFile = RecordingFile
+
+class DeletionData: ObservableObject {
+    @Published var recordingToDelete: AudioRecordingFile?
+    @Published var fileRelationships: FileRelationships?
+}
 
 struct RecordingsListView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
+    @StateObject private var deletionData = DeletionData()
     @State private var recordings: [AudioRecordingFile] = []
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
-    @State private var recordingToDelete: AudioRecordingFile?
-    @State private var showingDeleteConfirmation = false
     @State private var preserveSummaryOnDelete = false
     @State private var showingEnhancedDeleteDialog = false
-    @State private var fileRelationships: FileRelationships?
+    @State private var selectedRecordingForPlayer: AudioRecordingFile?
     
     var body: some View {
         NavigationView {
             VStack {
-                recordingsContent
-            }
-            .navigationTitle("Recordings")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                // Custom header
+                HStack {
+                    Text("Recordings")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                    Spacer()
                     Button("Done") {
                         dismiss()
                     }
+                    .font(.headline)
                 }
-            }
-            .alert("Delete Recording", isPresented: $showingDeleteConfirmation) {
-                Button("Cancel", role: .cancel) { }
-                Button("Delete", role: .destructive) {
-                    if let recording = recordingToDelete {
-                        deleteRecording(recording)
-                    }
-                }
-            } message: {
-                if let recording = recordingToDelete {
-                    Text("Are you sure you want to delete '\(recording.name)'?")
-                }
+                .padding()
+                
+                recordingsContent
             }
             .sheet(isPresented: $showingEnhancedDeleteDialog) {
-                if let recording = recordingToDelete, let relationships = fileRelationships {
+                let _ = print("🗑️ Sheet is being presented")
+                let _ = print("🗑️ recordingToDelete in sheet: \(deletionData.recordingToDelete?.name ?? "nil")")
+                let _ = print("🗑️ fileRelationships in sheet: \(deletionData.fileRelationships != nil ? "exists" : "nil")")
+                
+                if let recording = deletionData.recordingToDelete, let relationships = deletionData.fileRelationships {
+                    let _ = print("🗑️ Creating EnhancedDeleteDialog")
                     EnhancedDeleteDialog(
                         recording: recording,
                         relationships: relationships,
@@ -66,10 +68,60 @@ struct RecordingsListView: View {
                             showingEnhancedDeleteDialog = false
                         }
                     )
+                } else {
+                    let _ = print("🗑️ Showing fallback dialog")
+                    // Loading or error state
+                    VStack(spacing: 20) {
+                        if deletionData.recordingToDelete != nil {
+                            // Loading state
+                            VStack(spacing: 16) {
+                                ProgressView()
+                                    .scaleEffect(1.2)
+                                Text("Preparing deletion options...")
+                                    .font(.body)
+                                    .foregroundColor(.secondary)
+                            }
+                        } else {
+                            // Error state
+                            VStack(spacing: 16) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.system(size: 40))
+                                    .foregroundColor(.orange)
+                                Text("Unable to prepare deletion")
+                                    .font(.title2)
+                                    .fontWeight(.medium)
+                                Text("Please try again")
+                                    .font(.body)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        Button("Cancel") {
+                            showingEnhancedDeleteDialog = false
+                            deletionData.recordingToDelete = nil
+                            deletionData.fileRelationships = nil
+                        }
+                        .padding()
+                    }
+                    .padding()
                 }
             }
             .sheet(item: $selectedLocationData) { locationData in
                 LocationDetailView(locationData: locationData)
+            }
+            .sheet(item: $selectedRecordingForPlayer) { recording in
+                VStack {
+                    Text("Audio Player Test")
+                        .font(.title)
+                        .padding()
+                    Text("Recording: \(recording.name)")
+                        .padding()
+                    AudioPlayerView(recording: recording)
+                        .environmentObject(recorderVM)
+                }
+                .onAppear {
+                    print("🎵 Creating AudioPlayerView for: \(recording.name)")
+                }
             }
         }
         .onAppear {
@@ -120,12 +172,19 @@ struct RecordingsListView: View {
     }
     
     private func recordingRow(for recording: AudioRecordingFile) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        HStack {
+            // Main content area - clickable for playback
+            Button(action: {
+                print("🎵 Opening audio player for: \(recording.name)")
+                print("🎵 Setting selectedRecordingForPlayer to: \(recording)")
+                selectedRecordingForPlayer = recording
+            }) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(recording.name)
                         .font(.headline)
                         .foregroundColor(.primary)
+                        .multilineTextAlignment(.leading)
+                    
                     HStack {
                         Text(recording.dateString)
                             .font(.caption)
@@ -148,45 +207,44 @@ struct RecordingsListView: View {
                     }
                     
                     if let locationData = recording.locationData {
-                        Button(action: {
+                        HStack {
+                            Image(systemName: "location.fill")
+                                .font(.caption)
+                            Text("View Location")
+                                .font(.caption)
+                        }
+                        .foregroundColor(.accentColor)
+                        .onTapGesture {
                             showLocationDetails(locationData)
-                        }) {
-                            HStack {
-                                Image(systemName: "location.fill")
-                                    .font(.caption)
-                                Text("View Location")
-                                    .font(.caption)
-                            }
-                            .foregroundColor(.accentColor)
                         }
                     }
                 }
-                
-                Spacer()
-                
-                // Playback controls
-                HStack(spacing: 12) {
-                    Button(action: {
-                        // Note: AudioRecorderViewModel doesn't have currentlyPlayingURL and stopPlayback methods
-                        // This is a simplified version that doesn't handle playback state
-                        // if recorderVM.currentlyPlayingURL == recording.url {
-                        //     recorderVM.stopPlayback()
-                        // }
-                    }) {
-                        Image(systemName: "play.circle.fill") // Simplified since currentlyPlayingURL doesn't exist
-                            .font(.title2)
-                            .foregroundColor(.accentColor)
-                    }
-                    
-                    Button(action: {
-                        recordingToDelete = recording
-                        showingDeleteConfirmation = true
-                    }) {
-                        Image(systemName: "trash")
-                            .font(.title2)
-                            .foregroundColor(.red)
-                    }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            Spacer()
+            
+            // Action buttons - separate from main clickable area
+            HStack(spacing: 12) {
+                Button(action: {
+                    selectedRecordingForPlayer = recording
+                }) {
+                    Image(systemName: "play.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.accentColor)
                 }
+                .buttonStyle(PlainButtonStyle())
+                
+                Button(action: {
+                    deletionData.recordingToDelete = recording
+                    deleteRecording(recording)
+                }) {
+                    Image(systemName: "trash")
+                        .font(.title2)
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(PlainButtonStyle())
             }
         }
         .padding(.vertical, 4)
@@ -242,18 +300,66 @@ struct RecordingsListView: View {
     }
     
     private func deleteRecording(_ recording: AudioRecordingFile) {
-        // Check if we have enhanced file management available
-        if let relationships = enhancedFileManager.getFileRelationships(for: recording.url) {
-            // Use enhanced deletion with relationships
-            fileRelationships = relationships
-            showingEnhancedDeleteDialog = true
-        } else {
-            // Fallback to simple deletion
-            do {
-                try FileManager.default.removeItem(at: recording.url)
-                loadRecordings() // Reload the list
-            } catch {
-                print("Failed to delete recording: \(error)")
+        print("🗑️ deleteRecording called for: \(recording.name)")
+        print("🗑️ recordingToDelete before: \(deletionData.recordingToDelete?.name ?? "nil")")
+        
+        // Set the recording to delete immediately
+        deletionData.recordingToDelete = recording
+        print("🗑️ recordingToDelete set immediately: \(deletionData.recordingToDelete?.name ?? "nil")")
+        
+        // Set up relationships for enhanced deletion
+        Task {
+            print("🗑️ Starting relationship setup for: \(recording.url)")
+            
+            // First try to get existing relationships
+            var relationships = enhancedFileManager.getFileRelationships(for: recording.url)
+            print("🗑️ Initial relationships: \(relationships != nil ? "found" : "nil")")
+            
+            // If no relationships exist, create them on demand
+            if relationships == nil {
+                print("🗑️ No relationships found, refreshing...")
+                await enhancedFileManager.refreshRelationships(for: recording.url)
+                relationships = enhancedFileManager.getFileRelationships(for: recording.url)
+                print("🗑️ After refresh relationships: \(relationships != nil ? "found" : "nil")")
+            }
+            
+            await MainActor.run {
+                print("🗑️ MainActor: setting up dialog")
+                print("🗑️ recordingToDelete in MainActor: \(self.deletionData.recordingToDelete?.name ?? "nil")")
+                
+                if let relationships = relationships {
+                    // Use enhanced deletion with relationships
+                    print("🗑️ Setting fileRelationships")
+                    print("🗑️ Relationships details:")
+                    print("   - Recording URL: \(relationships.recordingURL?.lastPathComponent ?? "nil")")
+                    print("   - Recording Name: \(relationships.recordingName)")
+                    print("   - Transcript Exists: \(relationships.transcriptExists)")
+                    print("   - Summary Exists: \(relationships.summaryExists)")
+                    print("   - Has Recording: \(relationships.hasRecording)")
+                    print("   - Availability Status: \(relationships.availabilityStatus)")
+                    
+                    self.deletionData.fileRelationships = relationships
+                    print("🗑️ fileRelationships set: \(self.deletionData.fileRelationships != nil ? "yes" : "no")")
+                    
+                    self.showingEnhancedDeleteDialog = true
+                    print("🗑️ showingEnhancedDeleteDialog set to true")
+                    
+                    // Log dialog setup details
+                    if let recording = self.deletionData.recordingToDelete, let relationships = self.deletionData.fileRelationships {
+                        print("🗑️ Dialog setup - Recording: \(recording.name)")
+                        print("🗑️ Dialog setup - Relationships: \(relationships.recordingName)")
+                    }
+                } else {
+                    print("🗑️ No relationships available, falling back to simple deletion")
+                    // Fallback to simple deletion if we still can't get relationships
+                    do {
+                        try FileManager.default.removeItem(at: recording.url)
+                        loadRecordings() // Reload the list
+                        print("🗑️ Simple deletion completed")
+                    } catch {
+                        print("Failed to delete recording: \(error)")
+                    }
+                }
             }
         }
     }
@@ -270,8 +376,12 @@ struct RecordingsListView: View {
     }
     
     private func getRecordingDuration(url: URL) -> TimeInterval {
-        // Note: AudioRecorderViewModel doesn't have getRecordingDuration method
-        // Return a default duration
-        return 0.0 // Default duration since getRecordingDuration doesn't exist
+        do {
+            let player = try AVAudioPlayer(contentsOf: url)
+            return player.duration
+        } catch {
+            print("Error getting duration for \(url.lastPathComponent): \(error)")
+            return 0.0
+        }
     }
 }

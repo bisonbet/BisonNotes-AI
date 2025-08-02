@@ -253,6 +253,15 @@ struct LocationData: Codable, Identifiable {
         self.address = nil // Could be populated with reverse geocoding if needed
     }
     
+    init(id: UUID = UUID(), latitude: Double, longitude: Double, timestamp: Date, accuracy: Double?, address: String?) {
+        self.id = id
+        self.latitude = latitude
+        self.longitude = longitude
+        self.timestamp = timestamp
+        self.accuracy = accuracy
+        self.address = address
+    }
+    
     var coordinateString: String {
         return String(format: "%.6f, %.6f", latitude, longitude)
     }

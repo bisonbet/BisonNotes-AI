@@ -9,6 +9,9 @@ import Foundation
 import SwiftUI
 import UserNotifications
 import UIKit
+import CoreData
+import AVFoundation
+import AVKit
 
 // MARK: - Processing Job Models
 
@@ -67,7 +70,7 @@ struct ProcessingJob: Identifiable, Codable {
         )
     }
     
-    private init(id: UUID, type: JobType, recordingURL: URL, recordingName: String, status: JobProcessingStatus, progress: Double, startTime: Date, completionTime: Date?, chunks: [AudioChunk]?, error: String?) {
+    init(id: UUID, type: JobType, recordingURL: URL, recordingName: String, status: JobProcessingStatus, progress: Double, startTime: Date, completionTime: Date?, chunks: [AudioChunk]?, error: String?) {
         self.id = id
         self.type = type
         self.recordingURL = recordingURL
@@ -188,23 +191,29 @@ class BackgroundProcessingManager: ObservableObject {
     
     // MARK: - Private Properties
     
-    private let userDefaults = UserDefaults.standard
-    private let jobsKey = "BackgroundProcessingJobs"
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private let chunkingService = AudioFileChunkingService()
     private let performanceOptimizer = PerformanceOptimizer.shared
     private let enhancedFileManager = EnhancedFileManager.shared
     private let audioSessionManager = EnhancedAudioSessionManager()
+    private let coreDataManager = CoreDataManager()
     
     // MARK: - Singleton
     
     static let shared = BackgroundProcessingManager()
     
     private init() {
-        loadPersistedJobs()
+        loadJobsFromCoreData()
         setupNotifications()
         setupAppLifecycleObservers()
         setupPerformanceOptimization()
+        
+        // Start processing any queued jobs on initialization
+        Task {
+            if !activeJobs.filter({ $0.status == .queued }).isEmpty {
+                await processNextJob()
+            }
+        }
     }
     
     deinit {
@@ -244,6 +253,9 @@ class BackgroundProcessingManager: ObservableObject {
             throw BackgroundProcessingError.jobAlreadyRunning
         }
         
+        // Ensure recording exists in Core Data
+        await ensureRecordingExists(recordingURL: recordingURL, recordingName: recordingName)
+        
         let job = ProcessingJob(
             type: .transcription(engine: engine),
             recordingURL: recordingURL,
@@ -281,7 +293,7 @@ class BackgroundProcessingManager: ObservableObject {
         processingStatus = .queued
         
         endBackgroundTask()
-        await persistJobs()
+        // Core Data automatically persists changes
     }
     
     func getJobStatus(_ jobId: UUID) -> JobProcessingStatus {
@@ -303,17 +315,44 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     func removeCompletedJobs() async {
+        // Remove from Core Data
+        coreDataManager.deleteCompletedProcessingJobs()
+        
+        // Remove from active jobs array
         activeJobs.removeAll { job in
             job.status == .completed || job.status.isError
         }
-        await persistJobs()
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func getEngineString(from jobType: JobType) -> String {
+        switch jobType {
+        case .transcription(let engine):
+            return engine.rawValue
+        case .summarization(let engine):
+            return engine
+        }
     }
     
     // MARK: - Private Job Management
     
     private func addJob(_ job: ProcessingJob) async {
+        // Create Core Data entry
+        let jobEntry = coreDataManager.createProcessingJob(
+            id: job.id,
+            jobType: job.type.displayName,
+            engine: getEngineString(from: job.type),
+            recordingURL: job.recordingURL,
+            recordingName: job.recordingName
+        )
+        
+        // Update the job entry with initial status
+        jobEntry.status = job.status.displayName
+        jobEntry.progress = job.progress
+        coreDataManager.updateProcessingJob(jobEntry)
+        
         activeJobs.append(job)
-        await persistJobs()
     }
     
     private func updateJob(_ updatedJob: ProcessingJob) async {
@@ -325,7 +364,22 @@ class BackgroundProcessingManager: ObservableObject {
                 processingStatus = updatedJob.status
             }
             
-            await persistJobs()
+            // Update Core Data entry
+            if let jobEntry = coreDataManager.getProcessingJob(id: updatedJob.id) {
+                jobEntry.status = updatedJob.status.displayName
+                jobEntry.progress = updatedJob.progress
+                jobEntry.lastModified = Date()
+                
+                if updatedJob.status == .completed || updatedJob.status.isError {
+                    jobEntry.completionTime = Date()
+                }
+                
+                if case .failed(let error) = updatedJob.status {
+                    jobEntry.error = error
+                }
+                
+                coreDataManager.updateProcessingJob(jobEntry)
+            }
         }
     }
     
@@ -349,15 +403,34 @@ class BackgroundProcessingManager: ObservableObject {
         await updateJob(processingJob)
         
         do {
+            // Apply battery-aware processing settings
+            await applyBatteryOptimization(for: processingJob)
+            
             switch nextJob.type {
             case .transcription(let engine):
                 try await processTranscriptionJob(processingJob, engine: engine)
             case .summarization(let engine):
                 try await processSummarizationJob(processingJob, engine: engine)
             }
+            
+            // Job completed successfully
+            let completedJob = processingJob.withStatus(.completed).withProgress(1.0)
+            await updateJob(completedJob)
+            
+            print("✅ Job completed: \(nextJob.type.displayName) for \(nextJob.recordingName)")
+            
+            // Post-processing cleanup
+            await performCleanupTasks(for: processingJob)
+            await updateFileMetadata(for: processingJob)
+            
         } catch {
             let failedJob = processingJob.withStatus(.failed(error.localizedDescription))
             await updateJob(failedJob)
+            
+            print("❌ Job failed: \(nextJob.type.displayName) for \(nextJob.recordingName) - \(error)")
+            
+            // Error recovery
+            await handleJobFailure(processingJob, error: error)
             
             // Send failure notification
             await sendNotification(
@@ -366,56 +439,17 @@ class BackgroundProcessingManager: ObservableObject {
             )
         }
         
+        // Clear current job
+        currentJob = nil
         endBackgroundTask()
         
-        // Process next job if any (but don't start a new background task immediately)
+        // Process next job if any
         if !activeJobs.filter({ $0.status == .queued }).isEmpty {
             await processNextJob()
         }
     }
     
-    private func processJob(_ job: ProcessingJob) async {
-        guard currentJob?.id == job.id else { return }
-        
-        await updateJobStatus(job.id, status: .processing)
-        processingStatus = .processing
-        
-        print("🔄 Starting job: \(job.type.displayName) for \(job.recordingName)")
-        
-        do {
-            // Apply battery-aware processing settings
-            await applyBatteryOptimization(for: job)
-            
-            switch job.type {
-            case .transcription(let engine):
-                try await processTranscriptionJob(job, engine: engine)
-            case .summarization(let engine):
-                try await processSummarizationJob(job, engine: engine)
-            }
-            
-            await updateJobStatus(job.id, status: .completed)
-            processingStatus = .completed
-            
-            print("✅ Job completed: \(job.type.displayName) for \(job.recordingName)")
-            
-            // Post-processing cleanup
-            await performCleanupTasks(for: job)
-            await updateFileMetadata(for: job)
-            
-        } catch {
-            await updateJobStatus(job.id, status: .failed(error.localizedDescription))
-            processingStatus = .failed(error.localizedDescription)
-            
-            print("❌ Job failed: \(job.type.displayName) for \(job.recordingName) - \(error)")
-            
-            // Error recovery
-            await handleJobFailure(job, error: error)
-        }
-        
-        // Clear current job
-        currentJob = nil
-        await processNextJob()
-    }
+
     
     private func applyBatteryOptimization(for job: ProcessingJob) async {
         // Apply battery-aware settings based on current conditions
@@ -506,11 +540,39 @@ class BackgroundProcessingManager: ObservableObject {
         // Reassemble transcript if multiple chunks
         if transcriptChunks.count > 1 {
             EnhancedLogger.shared.logBackgroundProcessing("Reassembling transcript from \(transcriptChunks.count) chunks", level: .info)
+            
+            // Get the recording ID first
+            let recordingId: UUID
+            if let appCoordinator = enhancedFileManager.getCoordinator() {
+                print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
+                print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
+                
+                // Debug: List all recordings in Core Data
+                let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
+                print("🔍 DEBUG: Found \(allRecordings.count) recordings in Core Data:")
+                for recording in allRecordings {
+                    print("   - \(recording.recordingName ?? "unknown"): \(recording.recordingURL ?? "no URL")")
+                }
+                
+                if let recordingEntry = appCoordinator.getRecording(url: job.recordingURL),
+                   let entryId = recordingEntry.id {
+                    recordingId = entryId
+                    print("🆔 Found recording ID for reassembly: \(recordingId)")
+                } else {
+                    print("❌ No recording found for URL: \(job.recordingURL), using new UUID")
+                    recordingId = UUID()
+                }
+            } else {
+                print("❌ AppCoordinator not available")
+                recordingId = UUID()
+            }
+            
             let reassemblyResult = try await chunkingService.reassembleTranscript(
                 from: transcriptChunks,
                 originalURL: job.recordingURL,
                 recordingName: job.recordingName,
-                recordingDate: Date() // TODO: Get actual recording date
+                recordingDate: Date(), // TODO: Get actual recording date
+                recordingId: recordingId
             )
             
             // Save the complete transcript
@@ -522,11 +584,39 @@ class BackgroundProcessingManager: ObservableObject {
             }
         } else if let firstChunk = transcriptChunks.first {
             // Single chunk, save directly
+            // Get the recording ID first
+            let recordingId: UUID
+            if let appCoordinator = enhancedFileManager.getCoordinator() {
+                print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
+                print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
+                
+                // Debug: List all recordings in Core Data
+                let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
+                print("🔍 DEBUG: Found \(allRecordings.count) recordings in Core Data:")
+                for recording in allRecordings {
+                    print("   - \(recording.recordingName ?? "unknown"): \(recording.recordingURL ?? "no URL")")
+                }
+                
+                if let recordingEntry = appCoordinator.getRecording(url: job.recordingURL),
+                   let entryId = recordingEntry.id {
+                    recordingId = entryId
+                    print("🆔 Found recording ID for single chunk: \(recordingId)")
+                } else {
+                    print("❌ No recording found for URL: \(job.recordingURL), using new UUID")
+                    recordingId = UUID()
+                }
+            } else {
+                print("❌ AppCoordinator not available")
+                recordingId = UUID()
+            }
+            
             let transcriptData = TranscriptData(
+                recordingId: recordingId,
                 recordingURL: job.recordingURL,
                 recordingName: job.recordingName,
                 recordingDate: Date(), // TODO: Get actual recording date
-                segments: firstChunk.segments
+                segments: firstChunk.segments,
+                engine: engine
             )
             
             await saveTranscript(transcriptData)
@@ -549,11 +639,22 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func transcribeChunk(_ chunk: AudioChunk, engine: TranscriptionEngine) async throws -> TranscriptionResult {
+        // Get the recording ID for this chunk
+        let recordingId: UUID
+        if let appCoordinator = enhancedFileManager.getCoordinator(),
+           let recordingEntry = appCoordinator.getRecording(url: chunk.chunkURL),
+           let entryId = recordingEntry.id {
+            recordingId = entryId
+        } else {
+            // Fallback to new UUID if recording not found
+            recordingId = UUID()
+        }
+        
         switch engine {
         case .openAI:
             let config = getOpenAIConfig()
             let service = OpenAITranscribeService(config: config, chunkingService: chunkingService)
-            let result = try await service.transcribeAudioFile(at: chunk.chunkURL)
+            let result = try await service.transcribeAudioFile(at: chunk.chunkURL, recordingId: recordingId)
             return TranscriptionResult(
                 fullText: result.transcriptText,
                 segments: result.segments,
@@ -566,7 +667,7 @@ class BackgroundProcessingManager: ObservableObject {
         case .whisper:
             let config = getWhisperConfig()
             let service = WhisperService(config: config, chunkingService: chunkingService)
-            return try await service.transcribeAudio(url: chunk.chunkURL)
+            return try await service.transcribeAudio(url: chunk.chunkURL, recordingId: recordingId)
             
         case .awsTranscribe:
             // AWS Transcribe works differently - it's async, so we need to adapt it
@@ -625,12 +726,103 @@ class BackgroundProcessingManager: ObservableObject {
         )
     }
     
+    private func ensureRecordingExists(recordingURL: URL, recordingName: String) async {
+        if let appCoordinator = enhancedFileManager.getCoordinator() {
+            // Check if recording already exists
+            if let existingRecording = appCoordinator.getRecording(url: recordingURL) {
+                print("✅ Recording already exists in Core Data: \(existingRecording.recordingName ?? "unknown")")
+                return
+            }
+            
+            // Create recording entry if it doesn't exist
+            print("📝 Creating recording entry in Core Data for: \(recordingName)")
+            
+            // Get file metadata
+            let fileSize = getFileSize(url: recordingURL)
+            let duration = await getAudioDuration(url: recordingURL)
+            
+            await MainActor.run {
+                let recordingId = appCoordinator.addRecording(
+                    url: recordingURL,
+                    name: recordingName,
+                    date: Date(),
+                    fileSize: fileSize,
+                    duration: duration,
+                    quality: .high,
+                    locationData: nil
+                )
+                
+                print("✅ Created recording entry with ID: \(recordingId)")
+            }
+        } else {
+            print("❌ AppCoordinator not available for recording creation")
+        }
+    }
+    
+    private func getFileSize(url: URL) -> Int64 {
+        do {
+            let resourceValues = try url.resourceValues(forKeys: [.fileSizeKey])
+            return Int64(resourceValues.fileSize ?? 0)
+        } catch {
+            print("❌ Error getting file size: \(error)")
+            return 0
+        }
+    }
+    
+    private func getAudioDuration(url: URL) async -> TimeInterval {
+        do {
+            let asset = AVURLAsset(url: url)
+            let duration = try await asset.load(.duration)
+            return CMTimeGetSeconds(duration)
+        } catch {
+            print("❌ Error getting audio duration: \(error)")
+            return 0
+        }
+    }
+    
     private func saveTranscript(_ transcriptData: TranscriptData) async {
-        // Save transcript using the coordinator
+        // Save transcript using the Core Data coordinator
         await MainActor.run {
-            // Note: This should be updated to use the coordinator when available
-            // For now, we'll keep using TranscriptManager.shared for backward compatibility
-            TranscriptManager.shared.saveTranscript(transcriptData)
+            print("🔍 DEBUG: Starting transcript save for URL: \(transcriptData.recordingURL)")
+            print("🔍 DEBUG: URL absoluteString: \(transcriptData.recordingURL.absoluteString)")
+            
+            // Use the new Core Data system
+            if let appCoordinator = enhancedFileManager.getCoordinator() {
+                print("✅ DEBUG: AppCoordinator available")
+                
+                // Debug: List all recordings in Core Data
+                let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
+                print("🔍 DEBUG: Found \(allRecordings.count) recordings in Core Data:")
+                for recording in allRecordings {
+                    print("   - \(recording.recordingName ?? "unknown"): \(recording.recordingURL ?? "no URL")")
+                }
+                
+                // Get the recording ID from the URL
+                guard let recordingEntry = appCoordinator.getRecording(url: transcriptData.recordingURL),
+                      let recordingId = recordingEntry.id else {
+                    print("❌ No recording found for URL: \(transcriptData.recordingURL)")
+                    print("❌ DEBUG: URL absoluteString: \(transcriptData.recordingURL.absoluteString)")
+                    return
+                }
+                
+                print("🆔 Found recording ID: \(recordingId) for URL: \(transcriptData.recordingURL)")
+                
+                let transcriptId = appCoordinator.addTranscript(
+                    for: recordingId,
+                    segments: transcriptData.segments,
+                    speakerMappings: transcriptData.speakerMappings,
+                    engine: transcriptData.engine,
+                    processingTime: transcriptData.processingTime,
+                    confidence: transcriptData.confidence
+                )
+                if transcriptId != nil {
+                    print("✅ Transcript saved to Core Data with ID: \(transcriptId!)")
+                } else {
+                    print("❌ Failed to save transcript to Core Data")
+                }
+            } else {
+                print("❌ AppCoordinator not available for transcript saving")
+            }
         }
         print("💾 Saved transcript: \(transcriptData.segments.count) segments, \(transcriptData.fullText.count) characters")
         
@@ -906,14 +1098,7 @@ class BackgroundProcessingManager: ObservableObject {
     
     // MARK: - Job Status Management
     
-    private func updateJobStatus(_ jobId: UUID, status: JobProcessingStatus) async {
-        await MainActor.run {
-            if let index = activeJobs.firstIndex(where: { $0.id == jobId }) {
-                activeJobs[index] = activeJobs[index].withStatus(status)
-                saveJobsToDisk()
-            }
-        }
-    }
+
     
     private func handleJobFailure(_ job: ProcessingJob, error: Error) async {
         print("🔄 Handling job failure: \(job.recordingName) - \(error.localizedDescription)")
@@ -989,8 +1174,7 @@ class BackgroundProcessingManager: ObservableObject {
     private func handleAppBackgrounding() async {
         print("🔄 Handling app backgrounding")
         
-        // Persist current state
-        await persistJobs()
+        // Core Data automatically persists changes, no manual persistence needed
         
         // If there's an active job, ensure background task is running
         if currentJob != nil && backgroundTaskID == .invalid {
@@ -1027,8 +1211,7 @@ class BackgroundProcessingManager: ObservableObject {
     private func handleAppTermination() async {
         print("🔄 Handling app termination")
         
-        // Persist current state
-        await persistJobs()
+        // Core Data automatically persists changes, no manual persistence needed
         
         // Mark any processing job as interrupted
         if let job = currentJob {
@@ -1046,39 +1229,60 @@ class BackgroundProcessingManager: ObservableObject {
         print("🔍 Would check for completed background jobs")
     }
     
-    // MARK: - Persistence
+    // MARK: - Core Data Persistence
     
-    private func persistJobs() async {
-        do {
-            let data = try JSONEncoder().encode(activeJobs)
-            userDefaults.set(data, forKey: jobsKey)
-            print("💾 Persisted \(activeJobs.count) jobs to UserDefaults")
-        } catch {
-            print("❌ Failed to persist jobs: \(error)")
-        }
+    private func loadJobsFromCoreData() {
+        let jobEntries = coreDataManager.getAllProcessingJobs()
+        activeJobs = jobEntries.compactMap { convertToProcessingJob(from: $0) }
+        print("💾 Loaded \(activeJobs.count) jobs from Core Data")
     }
     
-    // MARK: - Job Persistence
-    
-    private func saveJobsToDisk() {
-        do {
-            let data = try JSONEncoder().encode(activeJobs)
-            userDefaults.set(data, forKey: jobsKey)
-        } catch {
-            print("❌ Failed to save jobs to disk: \(error)")
+    private func convertToProcessingJob(from jobEntry: ProcessingJobEntry) -> ProcessingJob? {
+        guard let id = jobEntry.id,
+              let recordingURL = jobEntry.recordingURL,
+              let url = URL(string: recordingURL),
+              let recordingName = jobEntry.recordingName,
+              let jobType = jobEntry.jobType,
+              let status = jobEntry.status else {
+            return nil
         }
-    }
-    
-    private func loadPersistedJobs() {
-        guard let data = userDefaults.data(forKey: jobsKey) else { return }
         
-        do {
-            let jobs = try JSONDecoder().decode([ProcessingJob].self, from: data)
-            activeJobs = jobs
-        } catch {
-            print("❌ Failed to load jobs from disk: \(error)")
-            activeJobs = []
+        // Convert job type string back to JobType enum
+        let type: JobType
+        if jobType.contains("Transcription") {
+            let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? "appleIntelligence") ?? .appleIntelligence
+            type = .transcription(engine: engine)
+        } else {
+            type = .summarization(engine: jobEntry.engine ?? "Enhanced Apple Intelligence")
         }
+        
+        // Convert status string back to JobProcessingStatus enum
+        let processingStatus: JobProcessingStatus
+        switch status {
+        case "Queued":
+            processingStatus = .queued
+        case "Processing":
+            processingStatus = .processing
+        case "Completed":
+            processingStatus = .completed
+        case "Failed":
+            processingStatus = .failed(jobEntry.error ?? "Unknown error")
+        default:
+            processingStatus = .queued
+        }
+        
+        return ProcessingJob(
+            id: id,
+            type: type,
+            recordingURL: url,
+            recordingName: recordingName,
+            status: processingStatus,
+            progress: jobEntry.progress,
+            startTime: jobEntry.startTime ?? Date(),
+            completionTime: jobEntry.completionTime,
+            chunks: nil,
+            error: jobEntry.error
+        )
     }
     
     // MARK: - Background Task Management

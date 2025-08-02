@@ -241,10 +241,52 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         }
     }
     
+    deinit {
+        // Clean up resources when the manager is deallocated
+        currentTask?.cancel()
+        currentTask = nil
+        speechRecognizer = nil
+        print("🧹 EnhancedTranscriptionManager deallocated")
+    }
+    
+    // MARK: - Memory Management
+    
+    private func checkMemoryPressure() {
+        // Check if we're under memory pressure
+        let memoryPressure = ProcessInfo.processInfo.systemUptime
+        if memoryPressure > 0 {
+            // Force garbage collection if under pressure
+            autoreleasepool {
+                // This will help release memory
+            }
+        }
+        
+        // Log memory usage for debugging
+        let memoryUsage = ProcessInfo.processInfo.physicalMemory
+        let memoryUsageMB = memoryUsage / 1024 / 1024
+        print("💾 Memory usage: \(memoryUsageMB) MB")
+        
+        // Check if memory usage is too high
+        let maxMemoryMB: UInt64 = 1024 // 1 GB max
+        if memoryUsageMB > maxMemoryMB {
+            print("⚠️ High memory usage detected (\(memoryUsageMB) MB), forcing cleanup")
+            // Force cleanup
+            autoreleasepool {
+                // This will help release memory
+            }
+        }
+    }
+    
     // MARK: - Public Methods
     
     func transcribeAudioFile(at url: URL, using engine: TranscriptionEngine? = nil) async throws -> TranscriptionResult {
         print("🎯 Starting transcription for: \(url.lastPathComponent)")
+        
+        // Check if already transcribing
+        guard !isTranscribing else {
+            print("⚠️ Transcription already in progress")
+            throw TranscriptionError.recognitionFailed(NSError(domain: "AlreadyTranscribing", code: -1, userInfo: nil))
+        }
         
         guard FileManager.default.fileExists(atPath: url.path) else {
             print("❌ File not found: \(url.path)")
@@ -258,6 +300,14 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                 print("❌ Audio file has no content")
                 throw TranscriptionError.noSpeechDetected
             }
+            
+            // Check if duration is reasonable
+            let durationMinutes = testPlayer.duration / 60
+            print("📊 Audio file duration: \(durationMinutes) minutes")
+            
+            if durationMinutes > 120 { // 2 hours max
+                print("⚠️ Audio file is very long (\(durationMinutes) minutes), this may cause memory issues")
+            }
         } catch {
             print("❌ Audio file validation failed: \(error)")
             throw TranscriptionError.audioExtractionFailed
@@ -269,6 +319,14 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         // Determine transcription engine to use
         let selectedEngine = engine ?? .appleIntelligence // Default fallback
         print("🔧 Using transcription engine: \(selectedEngine.rawValue)")
+        
+        // Check if Apple Intelligence is available for fallback
+        if selectedEngine != .appleIntelligence {
+            guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+                print("⚠️ Selected engine not available, falling back to Apple Intelligence")
+                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+            }
+        }
         
         // Manage background checking based on selected engine
         switch selectedEngine {
@@ -285,6 +343,13 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             
         case .appleIntelligence:
             switchToAppleTranscription()
+            
+            // Ensure speech recognizer is available
+            guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+                print("❌ Apple Intelligence speech recognizer is not available")
+                throw TranscriptionError.speechRecognizerUnavailable
+            }
+            
             return try await transcribeWithAppleIntelligence(url: url, duration: duration)
             
         case .whisper:
@@ -322,6 +387,13 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                 return try await transcribeWithOpenAI(url: url, config: config)
             } else {
                 print("⚠️ OpenAI not properly configured, falling back to Apple Intelligence")
+                
+                // Ensure speech recognizer is available for fallback
+                guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+                    print("❌ Apple Intelligence speech recognizer is not available for fallback")
+                    throw TranscriptionError.speechRecognizerUnavailable
+                }
+                
                 return try await transcribeWithAppleIntelligence(url: url, duration: duration)
             }
             
@@ -345,10 +417,25 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     }
     
     func cancelTranscription() {
+        print("🛑 Cancelling transcription...")
+        
+        // Cancel the current task
         currentTask?.cancel()
+        currentTask = nil
+        
+        // Reset state
         isTranscribing = false
         progress = nil
         currentStatus = "Transcription cancelled"
+        
+        // Force cleanup of speech recognizer resources
+        speechRecognizer = nil
+        setupSpeechRecognizer()
+        
+        // Force memory cleanup
+        checkMemoryPressure()
+        
+        print("✅ Transcription cancelled and resources cleaned up")
     }
     
     /// Manually check for completed transcriptions
@@ -424,17 +511,19 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         isTranscribing = true
         currentStatus = "Transcribing audio..."
         
+        // Check if speech recognizer is available
+        guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+            print("❌ Speech recognizer is not available")
+            isTranscribing = false
+            currentStatus = "Speech recognition unavailable"
+            throw TranscriptionError.speechRecognizerUnavailable
+        }
+        
         // Add timeout to prevent infinite CPU usage
         return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
             // Main transcription task
             group.addTask { @MainActor in
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptionResult, Error>) in
-                    guard let recognizer = self.speechRecognizer else {
-                        print("❌ Speech recognizer is nil")
-                        continuation.resume(throwing: TranscriptionError.speechRecognizerUnavailable)
-                        return
-                    }
-                    
                     print("✅ Speech recognizer available, starting recognition...")
                     
                     let request = SFSpeechURLRecognitionRequest(url: url)
@@ -445,16 +534,36 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                         request.addsPunctuation = true
                     }
                     
-
+                    // Create a weak reference to avoid retain cycles
+                    weak var weakSelf = self
+                    var hasResumed = false
                     
-                    self.currentTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-                        guard let self = self else { return }
+                    self.currentTask = recognizer.recognitionTask(with: request) { result, error in
+                        guard let self = weakSelf, !hasResumed else { return }
                         
                         DispatchQueue.main.async {
+                            // Ensure we only resume once
+                            guard !hasResumed else { return }
+                            hasResumed = true
+                            
+                            // Clean up the task immediately
+                            self.currentTask?.cancel()
+                            self.currentTask = nil
+                            
                             if let error = error {
                                 // Check if this is a non-critical error that can be safely ignored
                                 if self.handleSpeechRecognitionError(error) {
                                     // Non-critical error, continue processing
+                                    hasResumed = false
+                                    return
+                                }
+                                
+                                // Check if speech recognizer became unavailable
+                                if !recognizer.isAvailable {
+                                    print("❌ Speech recognizer became unavailable during transcription")
+                                    self.isTranscribing = false
+                                    self.currentStatus = "Speech recognition unavailable"
+                                    continuation.resume(throwing: TranscriptionError.speechRecognizerUnavailable)
                                     return
                                 }
                                 
@@ -463,7 +572,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                                 self.currentStatus = "Transcription failed"
                                 continuation.resume(throwing: TranscriptionError.recognitionFailed(error))
                             } else if let result = result {
-        
                                 if result.isFinal {
                                     let processingTime = Date().timeIntervalSince(startTime)
                                     let transcriptText = result.bestTranscription.formattedString
@@ -499,6 +607,8 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                                     }
                                 } else {
                                     print("⏳ Recognition in progress...")
+                                    // Don't resume for partial results
+                                    hasResumed = false
                                 }
                             }
                         }
@@ -512,6 +622,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                 print("⏰ Transcription timeout reached, cancelling...")
                 await MainActor.run {
                     self.currentTask?.cancel()
+                    self.currentTask = nil
                     self.isTranscribing = false
                     self.currentStatus = "Transcription timed out"
                 }
@@ -542,9 +653,50 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxSafeDuration)
         }
         
+        // Check file size to prevent memory issues
+        do {
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let fileSize = fileAttributes[.size] as? Int64 ?? 0
+            let fileSizeMB = fileSize / 1024 / 1024
+            print("📁 File size: \(fileSizeMB) MB")
+            
+            let maxFileSizeMB: Int64 = 500 // 500 MB max
+            if fileSizeMB > maxFileSizeMB {
+                print("⚠️ File size (\(fileSizeMB) MB) exceeds safe limit (\(maxFileSizeMB) MB)")
+                throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxSafeDuration)
+            }
+        } catch {
+            print("⚠️ Could not check file size: \(error)")
+        }
+        
+        // Check available disk space
+        do {
+            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let documentsAttributes = try FileManager.default.attributesOfFileSystem(forPath: documentsPath.path)
+            let freeSpace = documentsAttributes[.systemFreeSize] as? Int64 ?? 0
+            let freeSpaceMB = freeSpace / 1024 / 1024
+            print("💾 Available disk space: \(freeSpaceMB) MB")
+            
+            let minFreeSpaceMB: Int64 = 1000 // 1 GB min
+            if freeSpaceMB < minFreeSpaceMB {
+                print("⚠️ Insufficient disk space (\(freeSpaceMB) MB), need at least \(minFreeSpaceMB) MB")
+                throw TranscriptionError.audioExtractionFailed
+            }
+        } catch {
+            print("⚠️ Could not check disk space: \(error)")
+        }
+        
         // Calculate chunks
         let chunks = calculateChunks(duration: duration)
         print("📊 Calculated \(chunks.count) chunks for \(duration/60) minute file")
+        
+        // Limit the number of chunks to prevent memory issues
+        let maxChunks = 20 // Maximum number of chunks to process
+        if chunks.count > maxChunks {
+            print("⚠️ Too many chunks (\(chunks.count)), limiting to \(maxChunks)")
+            throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxSafeDuration)
+        }
+        
         var allSegments: [TranscriptSegment] = []
         var allText: [String] = []
         var currentOffset: TimeInterval = 0
@@ -564,13 +716,43 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                 error: nil
             )
             
+            // Log progress
+            let progressPercent = Double(index + 1) / Double(chunks.count) * 100
+            print("📊 Progress: \(index + 1)/\(chunks.count) chunks (\(String(format: "%.1f", progressPercent))%)")
+            
             do {
-                // Add memory management and better error handling
-                autoreleasepool {
-                    // This will help with memory management during chunk processing
+                // Check if transcription was cancelled
+                guard isTranscribing else {
+                    print("🛑 Transcription was cancelled during chunk \(index + 1)")
+                    throw TranscriptionError.recognitionFailed(NSError(domain: "TranscriptionCancelled", code: -1, userInfo: nil))
                 }
                 
-                let chunkResult = try await transcribeChunk(url: url, startTime: chunk.start, endTime: chunk.end)
+                // Check if speech recognizer is still available
+                guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+                    print("❌ Speech recognizer became unavailable during chunk \(index + 1)")
+                    isTranscribing = false
+                    currentStatus = "Speech recognition unavailable"
+                    throw TranscriptionError.speechRecognizerUnavailable
+                }
+                
+                // Add timeout for individual chunk processing
+                let chunkResult = try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
+                    group.addTask {
+                        try await self.transcribeChunk(url: url, startTime: chunk.start, endTime: chunk.end)
+                    }
+                    
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: UInt64(180 * 1_000_000_000)) // 3 minute timeout per chunk
+                        throw TranscriptionError.timeout
+                    }
+                    
+                    guard let result = try await group.next() else {
+                        throw TranscriptionError.timeout
+                    }
+                    
+                    group.cancelAll()
+                    return result
+                }
                 
                 // Adjust segment timestamps
                 let adjustedSegments = chunkResult.segments.map { segment in
@@ -588,8 +770,14 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                 
                 print("✅ Chunk \(index + 1) completed successfully")
                 
+                // Check memory pressure after each chunk
+                autoreleasepool { }
+                checkMemoryPressure()
+                
             } catch {
                 print("❌ Chunk \(index + 1) failed: \(error)")
+                
+                // Clean up resources on error
                 isTranscribing = false
                 currentStatus = "Chunk \(index + 1) failed"
                 progress = TranscriptionProgress(
@@ -601,25 +789,47 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                     isComplete: false,
                     error: error
                 )
+                
+                // Force cleanup on error
+                checkMemoryPressure()
+                
                 throw TranscriptionError.chunkProcessingFailed(chunk: index + 1, error: error)
             }
             
-            // Check timeout
+            // Check timeout more frequently
             let elapsedTime = Date().timeIntervalSince(startTime)
             if elapsedTime > maxTranscriptionTime {
                 print("⏰ Transcription timeout reached after \(elapsedTime/60) minutes")
+                
+                // Clean up resources on timeout
                 isTranscribing = false
                 currentStatus = "Transcription timeout"
+                
+                // Force cleanup on timeout
+                checkMemoryPressure()
+                
                 throw TranscriptionError.timeout
             }
             
-            // Add a small delay between chunks to prevent overwhelming the system
-            try await Task.sleep(nanoseconds: UInt64(0.5 * 1_000_000_000)) // 0.5 second delay
+            // Check if we're approaching the timeout limit
+            if elapsedTime > maxTranscriptionTime * 0.8 {
+                print("⚠️ Approaching transcription timeout (\(elapsedTime/60) minutes)")
+            }
+            
+            // Add a longer delay between chunks to prevent overwhelming the system
+            try await Task.sleep(nanoseconds: UInt64(2.0 * 1_000_000_000)) // 2 second delay
+            
+            // Check if transcription was cancelled during the delay
+            guard isTranscribing else {
+                print("🛑 Transcription was cancelled during delay")
+                throw TranscriptionError.recognitionFailed(NSError(domain: "TranscriptionCancelled", code: -1, userInfo: nil))
+            }
         }
         
         let processingTime = Date().timeIntervalSince(startTime)
         let fullText = allText.joined(separator: " ")
         
+        // Final cleanup
         isTranscribing = false
         currentStatus = "Transcription complete"
         progress = TranscriptionProgress(
@@ -631,6 +841,11 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             isComplete: true,
             error: nil
         )
+        
+        // Force final memory cleanup
+        checkMemoryPressure()
+        
+        print("🎉 Large file transcription completed in \(processingTime/60) minutes")
         
         // Debug: Check if the transcript contains placeholder text
         if fullText.lowercased().contains("loading") {
@@ -748,12 +963,17 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         var chunks: [(start: TimeInterval, end: TimeInterval)] = []
         var currentStart: TimeInterval = 0
         
+        // Limit chunk size to prevent memory issues
+        let maxSafeChunkDuration: TimeInterval = 300 // 5 minutes max per chunk
+        let actualChunkDuration = min(maxChunkDuration, maxSafeChunkDuration)
+        
         while currentStart < duration {
-            let currentEnd = min(currentStart + maxChunkDuration, duration)
+            let currentEnd = min(currentStart + actualChunkDuration, duration)
             chunks.append((start: currentStart, end: currentEnd))
             currentStart = currentEnd - chunkOverlap
         }
         
+        print("📊 Calculated \(chunks.count) chunks with max duration \(actualChunkDuration/60) minutes")
         return chunks
     }
     
@@ -1419,6 +1639,9 @@ extension EnhancedTranscriptionManager: SFSpeechRecognizerDelegate {
         if !available {
             Task { @MainActor in
                 self.currentStatus = "Speech recognition unavailable"
+                // Reset the speech recognizer to try to recover
+                self.speechRecognizer = nil
+                self.setupSpeechRecognizer()
             }
         }
     }

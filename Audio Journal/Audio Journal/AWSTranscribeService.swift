@@ -248,7 +248,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
     }
     
     /// Transcribe audio file with chunking support for files >2 hours
-    func transcribeAudioFileWithChunking(at url: URL) async throws -> AWSTranscribeResult {
+    func transcribeAudioFileWithChunking(at url: URL, recordingId: UUID? = nil) async throws -> AWSTranscribeResult {
         isTranscribing = true
         currentStatus = "Preparing audio file..."
         progress = 0.0
@@ -291,7 +291,8 @@ class AWSTranscribeService: NSObject, ObservableObject {
                 from: transcriptChunks,
                 originalURL: url,
                 recordingName: url.deletingPathExtension().lastPathComponent,
-                recordingDate: creationDate
+                recordingDate: creationDate,
+                recordingId: recordingId ?? UUID() // TODO: Get actual recording ID from Core Data
             )
             // Clean up chunk files
             try await chunkingService.cleanupChunks(chunks)

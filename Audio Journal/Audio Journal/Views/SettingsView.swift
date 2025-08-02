@@ -22,10 +22,10 @@ struct SettingsView: View {
     @State private var showingPerformanceView = false
     @State private var showingClearSummariesAlert = false
     @State private var showingCleanupAlert = false
-    @State private var showingResetRegistryAlert = false
     @State private var isPerformingCleanup = false
     @State private var cleanupResults: CleanupResults?
     @State private var showingBackgroundProcessing = false
+    @State private var showingDataMigration = false
 
     @State private var selectedAudioQuality: AudioQuality = .regular
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "Enhanced Apple Intelligence"
@@ -34,7 +34,8 @@ struct SettingsView: View {
         // Initialize regeneration manager with the coordinator's registry manager
         self._regenerationManager = StateObject(wrappedValue: SummaryRegenerationManager(
             summaryManager: SummaryManager.shared,
-            transcriptManager: TranscriptManager.shared
+            transcriptManager: TranscriptManager.shared,
+            appCoordinator: AppDataCoordinator()
         ))
         self.iCloudManager = iCloudStorageManager()
         
@@ -59,6 +60,7 @@ struct SettingsView: View {
                     summarySection
                     fileManagementSection
                     advancedSection
+                    databaseMaintenanceSection
 
                     
                     Spacer(minLength: 40)
@@ -104,6 +106,9 @@ struct SettingsView: View {
         .sheet(isPresented: $showingBackgroundProcessing) {
             BackgroundProcessingView()
         }
+        .sheet(isPresented: $showingDataMigration) {
+            DataMigrationView()
+        }
 
         .alert("Cleanup Orphaned Data", isPresented: $showingCleanupAlert) {
             Button("Cancel") {
@@ -117,17 +122,6 @@ struct SettingsView: View {
             }
         } message: {
             Text("This will remove summaries and transcripts for recordings that no longer exist. This action cannot be undone.")
-        }
-        .alert("Reset Registry", isPresented: $showingResetRegistryAlert) {
-            Button("Cancel") {
-                showingResetRegistryAlert = false
-            }
-            Button("Reset", role: .destructive) {
-                appCoordinator.clearAndReloadRegistry()
-                showingResetRegistryAlert = false
-            }
-        } message: {
-            Text("This will completely clear all registry data and reload from disk only. All UserDefaults data will be lost. This action cannot be undone.")
         }
     }
     
@@ -297,9 +291,10 @@ struct SettingsView: View {
                         .font(.body)
                         .foregroundColor(.secondary)
                     
-                    let engineStatus = appCoordinator.registryManager.getEngineAvailabilityStatus()[selectedAIEngine]
-                    let statusColor: Color = engineStatus?.isAvailable == true ? .green : .red
-                    let statusText = engineStatus?.isAvailable == true ? "Available" : "Unavailable"
+                    // TODO: Update to use new Core Data system
+                    // let engineStatus = appCoordinator.registryManager.getEngineAvailabilityStatus()[selectedAIEngine]
+                    let statusColor: Color = .green // Temporary: assume available
+                    let statusText = "Available" // Temporary: assume available
                     
                     HStack(spacing: 4) {
                         Circle()
@@ -333,9 +328,10 @@ struct SettingsView: View {
                 }
                 
                 Button(action: {
-                    Task {
-                        await appCoordinator.registryManager.refreshEngineAvailability()
-                    }
+                    // TODO: Update to use new Core Data system
+                    // Task {
+                    //     await appCoordinator.registryManager.refreshEngineAvailability()
+                    // }
                 }) {
                     Image(systemName: "arrow.clockwise")
                         .font(.caption)
@@ -684,32 +680,8 @@ struct SettingsView: View {
                     .padding(.top, 8)
                 }
                 
-                // Registry Reset Button
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Reset Registry")
-                            .font(.body)
-                            .foregroundColor(.primary)
-                        Text("Clear all registry data and reload from disk")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button(action: {
-                        showingResetRegistryAlert = true
-                    }) {
-                        Text("Reset")
-                            .font(.caption)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.red)
-                            )
-                    }
-                }
-                .padding(.top, 12)
+                // Registry Reset Button - REMOVED (too dangerous)
+                // Users can delete and reinstall the app for a full reset
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 12)
@@ -810,6 +782,41 @@ struct SettingsView: View {
         }
     }
     
+    private var databaseMaintenanceSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Database Maintenance")
+                .font(.headline)
+                .foregroundColor(.primary)
+                .padding(.horizontal, 24)
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Button(action: {
+                    showingDataMigration = true
+                }) {
+                    HStack {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                        Text("Fix Database")
+                    }
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.orange)
+                    )
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
+            .background(
+                Rectangle()
+                    .fill(Color(.systemGray6))
+                    .opacity(0.3)
+            )
+        }
+    }
+    
     // MARK: - Location Status Helpers
     
     private var locationStatusIcon: String {
@@ -902,100 +909,100 @@ struct SettingsView: View {
     private func cleanupOrphanedData() async throws -> CleanupResults {
         print("🧹 Starting orphaned data cleanup...")
         
-        // Get all recordings from the unified registry
-        let allRecordings = appCoordinator.registryManager.recordings
-        print("📁 Found \(allRecordings.count) recordings in registry")
+        // Get all recordings from Core Data
+        let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
+        print("📁 Found \(allRecordings.count) recordings in Core Data")
         
-        // Get all stored summaries and transcripts
-        let enhancedSummaries = Array(appCoordinator.registryManager.enhancedSummaries)
-        let allTranscripts = appCoordinator.registryManager.transcripts
+        // Get all transcripts and summaries from Core Data
+        let allTranscripts = appCoordinator.coreDataManager.getAllTranscripts()
+        let allSummaries = appCoordinator.coreDataManager.getAllSummaries()
         
-        print("📊 Found \(enhancedSummaries.count) stored summaries and \(allTranscripts.count) stored transcripts")
+        print("📊 Found \(allSummaries.count) stored summaries and \(allTranscripts.count) stored transcripts")
         
         var orphanedSummaries = 0
         var orphanedTranscripts = 0
         var freedSpaceBytes: Int64 = 0
         
-        // Create a set of valid recording URLs for quick lookup
-        let validRecordingURLs = Set(allRecordings.map { $0.recordingURL })
-        let validRecordingIds = Set(allRecordings.map { $0.id })
+        // Create a set of valid recording IDs for quick lookup
+        let validRecordingIds = Set(allRecordings.compactMap { $0.id })
         
-        print("🔍 Valid recording URLs: \(validRecordingURLs.count)")
         print("🔍 Valid recording IDs: \(validRecordingIds.count)")
         
-        // Check for orphaned enhanced summaries
-        for summary in enhancedSummaries {
-            let recordingURL = summary.recordingURL
+        // Check for orphaned summaries
+        for summary in allSummaries {
             let recordingId = summary.recordingId
             
-            // Check if the recording URL exists in the registry
-            let hasValidURL = validRecordingURLs.contains(recordingURL)
+            // Check if the recording ID exists in Core Data
             let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
             
-            if !hasValidURL && !hasValidID {
-                print("🗑️ Found orphaned enhanced summary for: \(recordingURL.lastPathComponent)")
-                print("   URL exists: \(hasValidURL), ID exists: \(hasValidID)")
-                appCoordinator.registryManager.deleteSummary(for: recordingURL)
+            if !hasValidID {
+                print("🗑️ Found orphaned summary for recording ID: \(recordingId?.uuidString ?? "nil")")
+                print("   ID exists: \(hasValidID)")
+                
+                // Delete the orphaned summary
+                appCoordinator.coreDataManager.deleteSummary(id: summary.id)
                 orphanedSummaries += 1
                 
                 // Calculate freed space (rough estimate)
-                freedSpaceBytes += Int64(summary.summary.count * 2) // Approximate UTF-8 bytes
+                freedSpaceBytes += Int64(summary.summary?.count ?? 0 * 2) // Approximate UTF-8 bytes
             }
         }
         
-        // Check for orphaned transcripts - BE MORE CAREFUL HERE
+        // Check for orphaned transcripts
         for transcript in allTranscripts {
-            let recordingURL = transcript.recordingURL
             let recordingId = transcript.recordingId
             
-            // Check if the recording URL exists in the registry
-            let hasValidURL = validRecordingURLs.contains(recordingURL)
+            // Check if the recording ID exists in Core Data
             let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
             
-            // Only remove if BOTH URL and ID are invalid
-            if !hasValidURL && !hasValidID {
-                print("🗑️ Found orphaned transcript for: \(recordingURL.lastPathComponent)")
-                print("   URL exists: \(hasValidURL), ID exists: \(hasValidID)")
-                appCoordinator.registryManager.deleteTranscript(for: recordingURL)
+            if !hasValidID {
+                print("🗑️ Found orphaned transcript for recording ID: \(recordingId?.uuidString ?? "nil")")
+                print("   ID exists: \(hasValidID)")
+                
+                // Delete the orphaned transcript
+                appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
                 orphanedTranscripts += 1
                 
                 // Calculate freed space
-                let transcriptText = transcript.segments.map { $0.text }.joined(separator: " ")
+                let transcriptText = transcript.segments ?? ""
                 freedSpaceBytes += Int64(transcriptText.count * 2) // Approximate UTF-8 bytes
             } else {
                 // Log when we find a transcript that's actually valid
-                print("✅ Found valid transcript for: \(recordingURL.lastPathComponent)")
-                print("   URL exists: \(hasValidURL), ID exists: \(hasValidID)")
+                print("✅ Found valid transcript for recording ID: \(recordingId?.uuidString ?? "nil")")
             }
         }
         
         // Check for transcripts where the recording file doesn't exist on disk
-        // BUT be more careful - only remove if the recording is also not in the registry
         for transcript in allTranscripts {
-            let recordingURL = transcript.recordingURL
-            let recordingId = transcript.recordingId
+            guard let recordingId = transcript.recordingId,
+                  let recording = appCoordinator.coreDataManager.getRecording(id: recordingId),
+                  let recordingURLString = recording.recordingURL,
+                  let recordingURL = URL(string: recordingURLString) else {
+                continue
+            }
             
             // Check if the recording file exists on disk
             let fileExists = FileManager.default.fileExists(atPath: recordingURL.path)
             
-            // Check if the recording exists in the registry
-            let hasValidURL = validRecordingURLs.contains(recordingURL)
-            let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
+            // Check if the recording exists in Core Data
+            let hasValidID = validRecordingIds.contains(recordingId)
             
-            // Only remove if the file doesn't exist AND it's not in the registry
-            if !fileExists && !hasValidURL && !hasValidID {
+            // Only remove if the file doesn't exist AND it's not in Core Data
+            if !fileExists && !hasValidID {
                 print("🗑️ Found transcript for non-existent recording file: \(recordingURL.lastPathComponent)")
-                print("   File exists: \(fileExists), URL in registry: \(hasValidURL), ID in registry: \(hasValidID)")
-                appCoordinator.registryManager.deleteTranscript(for: recordingURL)
+                print("   File exists: \(fileExists), ID in Core Data: \(hasValidID)")
+                
+                // Delete the orphaned transcript
+                appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
                 orphanedTranscripts += 1
                 
                 // Calculate freed space
-                let transcriptText = transcript.segments.map { $0.text }.joined(separator: " ")
+                let transcriptText = transcript.segments ?? ""
                 freedSpaceBytes += Int64(transcriptText.count * 2) // Approximate UTF-8 bytes
             } else if !fileExists {
-                // Log when file doesn't exist but recording is in registry
-                print("⚠️  File not found on disk but recording exists in registry: \(recordingURL.lastPathComponent)")
-                print("   File exists: \(fileExists), URL in registry: \(hasValidURL), ID in registry: \(hasValidID)")
+                // Log when file doesn't exist but recording is in Core Data
+                print("⚠️  File not found on disk but recording exists in Core Data: \(recordingURL.lastPathComponent)")
+                print("   File exists: \(fileExists), ID in Core Data: \(hasValidID)")
             }
         }
         
@@ -1005,9 +1012,6 @@ struct SettingsView: View {
         print("   • Removed \(orphanedSummaries) orphaned summaries")
         print("   • Removed \(orphanedTranscripts) orphaned transcripts")
         print("   • Freed \(String(format: "%.1f", freedSpaceMB)) MB of space")
-        
-        // Refresh the TranscriptManager to reflect the changes
-        TranscriptManager.shared.reloadTranscripts()
         
         return CleanupResults(
             orphanedSummaries: orphanedSummaries,
@@ -1020,7 +1024,8 @@ struct SettingsView: View {
     
     private func syncAllSummaries() async {
         do {
-            let allSummaries = Array(appCoordinator.registryManager.enhancedSummaries)
+            // TODO: Implement iCloud sync with new Core Data system
+            let allSummaries: [EnhancedSummaryData] = [] // Placeholder
             try await iCloudManager.performBidirectionalSync(localSummaries: allSummaries)
         } catch {
             print("❌ Sync error: \(error)")

@@ -299,6 +299,34 @@ public struct EnhancedSummaryData: Codable, Identifiable {
         self.confidence = (taskConfidence + reminderConfidence + titleConfidence) / 3.0
     }
     
+    // Initializer for Core Data conversion that preserves the original ID
+    init(id: UUID, recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiMethod: String, originalLength: Int, processingTime: TimeInterval = 0, generatedAt: Date? = nil, version: Int = 1, wordCount: Int? = nil, compressionRatio: Double? = nil, confidence: Double? = nil) {
+        self.id = id
+        self.recordingId = recordingId
+        self.transcriptId = transcriptId
+        self.recordingURL = recordingURL
+        self.recordingName = recordingName
+        self.recordingDate = recordingDate
+        self.summary = summary
+        self.tasks = tasks.sorted { $0.priority.sortOrder < $1.priority.sortOrder }
+        self.reminders = reminders.sorted { $0.urgency.sortOrder < $1.urgency.sortOrder }
+        self.titles = titles.sorted { $0.confidence > $1.confidence }
+        self.contentType = contentType
+        self.aiMethod = aiMethod
+        self.generatedAt = generatedAt ?? Date()
+        self.version = version
+        self.wordCount = wordCount ?? summary.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
+        self.originalLength = originalLength
+        self.compressionRatio = compressionRatio ?? (originalLength > 0 ? Double(self.wordCount) / Double(originalLength) : 0.0)
+        self.processingTime = processingTime
+        self.confidence = confidence ?? {
+            let taskConfidence = tasks.isEmpty ? 0.5 : tasks.map { $0.confidence }.reduce(0, +) / Double(tasks.count)
+            let reminderConfidence = reminders.isEmpty ? 0.5 : reminders.map { $0.confidence }.reduce(0, +) / Double(reminders.count)
+            let titleConfidence = titles.isEmpty ? 0.5 : titles.map { $0.confidence }.reduce(0, +) / Double(titles.count)
+            return (taskConfidence + reminderConfidence + titleConfidence) / 3.0
+        }()
+    }
+    
     var formattedCompressionRatio: String {
         return String(format: "%.1f%%", compressionRatio * 100)
     }

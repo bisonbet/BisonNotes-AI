@@ -8,8 +8,13 @@ class RecordingNameGenerator {
     
     static func generateRecordingNameFromTranscript(_ transcript: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) -> String {
         // Try different strategies to generate a good name from the full transcript
-        let minLength = 20
-        let maxLength = 50
+        let minLength = 20  // More flexible minimum length
+        let maxLength = 80  // More flexible maximum length
+        
+        print("🎯 RecordingNameGenerator: Starting name generation with \(titles.count) titles")
+        for (index, title) in titles.enumerated() {
+            print("📝 RecordingNameGenerator: Title \(index + 1): '\(title.text)' (confidence: \(title.confidence))")
+        }
         
         // Strategy 0: Use AI-generated title if available (for Ollama and other AI engines)
         if let aiGeneratedTitle = UserDefaults.standard.string(forKey: "lastGeneratedTitle"),
@@ -26,17 +31,25 @@ class RecordingNameGenerator {
         
         // Strategy 1: Use the first high-confidence title from the titles array
         if let bestTitle = titles.first(where: { $0.confidence >= 0.8 }) {
+            print("🔍 RecordingNameGenerator: Processing high-confidence title: '\(bestTitle.text)' (confidence: \(bestTitle.confidence))")
             let titleName = generateNameFromTitle(bestTitle, minLength: minLength, maxLength: maxLength)
             if !titleName.isEmpty {
+                print("✅ RecordingNameGenerator: Generated name from title: '\(titleName)'")
                 return titleName
+            } else {
+                print("⚠️ RecordingNameGenerator: Failed to generate name from title: '\(bestTitle.text)'")
             }
         }
         
         // Strategy 2: Use any title from the titles array (even lower confidence)
         if let anyTitle = titles.first {
+            print("🔍 RecordingNameGenerator: Processing any title: '\(anyTitle.text)' (confidence: \(anyTitle.confidence))")
             let titleName = generateNameFromTitle(anyTitle, minLength: minLength, maxLength: maxLength)
             if !titleName.isEmpty {
+                print("✅ RecordingNameGenerator: Generated name from any title: '\(titleName)'")
                 return titleName
+            } else {
+                print("⚠️ RecordingNameGenerator: Failed to generate name from any title: '\(anyTitle.text)'")
             }
         }
         
@@ -78,8 +91,8 @@ class RecordingNameGenerator {
     
     static func generateRecordingName(from summary: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem]) -> String {
         // Try different strategies to generate a good name
-        let minLength = 20
-        let maxLength = 50
+        let minLength = 20  // More flexible minimum length
+        let maxLength = 80  // More flexible maximum length
         
         // Strategy 1: Use the first task if it's high priority
         if let highPriorityTask = tasks.first(where: { $0.priority == .high }) {
@@ -113,8 +126,8 @@ class RecordingNameGenerator {
         // List of generic or problematic names to avoid
         let genericNames = ["the", "a", "an", "this", "that", "it", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by"]
         
-        // Check if name is too short or generic
-        if trimmedName.count < 3 || genericNames.contains(trimmedName.lowercased()) {
+        // Check if name is too short or generic (more flexible minimum)
+        if trimmedName.count < 10 || genericNames.contains(trimmedName.lowercased()) {
             print("⚠️ Generated name '\(trimmedName)' is too generic, using fallback")
             
             // Try to extract a better name from the original filename
@@ -153,7 +166,7 @@ class RecordingNameGenerator {
     static func generateStandardizedTitlePrompt(from text: String) -> String {
         let prompt = """
         Generate a concise, descriptive title for this conversation/transcript. The title should:
-        1. Be 20-50 characters long (approximately 3-8 words)
+        1. Be 40-60 characters long (approximately 6-10 words)
         2. Capture the main topic, purpose, or key subject
         3. Be specific and meaningful - avoid generic terms
         4. Work well as a file name or conversation title
@@ -161,20 +174,21 @@ class RecordingNameGenerator {
         6. Be logical and sensical - make it clear what the content is about
         7. Use proper capitalization (Title Case)
         8. Never end with punctuation marks
+        9. Never end with weak words like "with", "to", "for", "of", "in", "on", "at", "by", "from", "about", "regarding", "concerning", "pertaining", "related", "involving", "including", "containing", "featuring", "about", "regarding", "concerning", "pertaining", "related", "involving", "including", "containing", "featuring"
 
         Examples of good titles:
-        - "Trump Scotland Visit"
-        - "Hong Kong Arrest Warrants" 
-        - "Texas Redistricting Debate"
-        - "Walmart Stabbing Investigation"
-        - "Harvard Funding Deal"
-        - "Project Budget Review"
-        - "Client Presentation Prep"
-        - "Team Strategy Meeting"
-        - "Quarterly Sales Report"
-        - "Product Launch Planning"
-        - "Customer Feedback Analysis"
-        - "Technical Architecture Review"
+        - "Trump Scotland Visit Planning"
+        - "Hong Kong Arrest Warrants Issued" 
+        - "Texas Redistricting Debate Continues"
+        - "Walmart Stabbing Investigation Update"
+        - "Harvard Funding Deal Negotiations"
+        - "Project Budget Review Meeting"
+        - "Client Presentation Preparation Session"
+        - "Team Strategy Meeting Discussion"
+        - "Quarterly Sales Report Analysis"
+        - "Product Launch Planning Session"
+        - "Customer Feedback Analysis Results"
+        - "Technical Architecture Review Meeting"
 
         **IMPORTANT: Return ONLY the title, nothing else. No quotes, no explanation, no markdown formatting, no extra text, no punctuation at the end.**
 
@@ -226,32 +240,38 @@ class RecordingNameGenerator {
         // Trim whitespace and newlines
         cleanedTitle = cleanedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Ensure title is within proper length (20-50 characters)
+        // Check for weak ending words and fix them
+        cleanedTitle = fixWeakEndingWords(cleanedTitle)
+        
+        // Ensure title is within proper length (20-80 characters)
         if cleanedTitle.count < 20 {
             // Too short, try to expand or use fallback
             if cleanedTitle.count < 10 {
                 cleanedTitle = "Untitled Conversation"
             }
-        } else if cleanedTitle.count > 50 {
-            // Too long, truncate at word boundaries
+        } else if cleanedTitle.count > 80 {
+            // Too long, truncate at word boundaries while avoiding weak endings
             let words = cleanedTitle.components(separatedBy: .whitespaces)
             var truncatedTitle = ""
             
             for word in words {
                 let testTitle = truncatedTitle.isEmpty ? word : "\(truncatedTitle) \(word)"
-                if testTitle.count <= 50 {
+                if testTitle.count <= 80 {
                     truncatedTitle = testTitle
                 } else {
                     break
                 }
             }
             
-            cleanedTitle = truncatedTitle.isEmpty ? String(cleanedTitle.prefix(50)) : truncatedTitle
+            // Fix any weak ending words in the truncated title
+            truncatedTitle = fixWeakEndingWords(truncatedTitle)
+            
+            cleanedTitle = truncatedTitle.isEmpty ? String(cleanedTitle.prefix(80)) : truncatedTitle
         }
         
         // Validate that the title makes sense
         let words = cleanedTitle.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-        if words.count < 2 || words.count > 8 {
+        if words.count < 3 || words.count > 10 {
             // If too few or too many words, it might be nonsensical
             cleanedTitle = "Untitled Conversation"
         }
@@ -292,13 +312,16 @@ class RecordingNameGenerator {
         cleanedTitle = cleanedTitle.replacingOccurrences(of: "*", with: "")
         cleanedTitle = cleanedTitle.replacingOccurrences(of: "#", with: "")
         
-        // Ensure proper length
+        // Check for weak ending words and fix them
+        cleanedTitle = fixWeakEndingWords(cleanedTitle)
+        
+        // Ensure proper length with more flexible constraints
         if cleanedTitle.count < minLength {
             return "" // Too short, try other strategies
         }
         
         if cleanedTitle.count > maxLength {
-            // Try to truncate at word boundaries
+            // Try to truncate at word boundaries while avoiding weak endings
             let words = cleanedTitle.components(separatedBy: .whitespaces)
             var truncatedTitle = ""
             
@@ -311,12 +334,15 @@ class RecordingNameGenerator {
                 }
             }
             
+            // Fix any weak ending words in the truncated title
+            truncatedTitle = fixWeakEndingWords(truncatedTitle)
+            
             cleanedTitle = truncatedTitle.isEmpty ? String(cleanedTitle.prefix(maxLength)) : truncatedTitle
         }
         
-        // Validate that the title makes sense
+        // Validate that the title makes sense with more flexible word count
         let words = cleanedTitle.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-        if words.count < 2 || words.count > 8 {
+        if words.count < 3 || words.count > 10 {
             return "" // Too few or too many words
         }
         
@@ -525,13 +551,14 @@ class RecordingNameGenerator {
         let typeString: String
         switch contentType {
         case .meeting: typeString = "Meeting"
-        case .personalJournal: typeString = "Journal"
         case .technical: typeString = "Tech"
+        case .personalJournal: typeString = "Journal"
         case .general: typeString = "Note"
         }
         
         let name = "\(typeString) \(dateString)"
-        return name.count >= minLength && name.count <= maxLength ? name : String(name.prefix(maxLength))
+        // For fallback names, we're more lenient with length constraints
+        return name.count >= 10 && name.count <= maxLength ? name : String(name.prefix(maxLength))
     }
     
     // MARK: - Helper Functions for Title Generation
@@ -539,22 +566,55 @@ class RecordingNameGenerator {
     private static func generateNameFromTitle(_ title: TitleItem, minLength: Int, maxLength: Int) -> String {
         let words = title.text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
         
+        print("🔍 RecordingNameGenerator: Processing title '\(title.text)' with \(words.count) words")
+        print("🔍 RecordingNameGenerator: Length constraints: min=\(minLength), max=\(maxLength)")
+        
+        // Check if the original title meets our flexible criteria
+        if title.text.count >= minLength && title.text.count <= maxLength && words.count >= 3 && words.count <= 10 {
+            print("✅ RecordingNameGenerator: Original title meets criteria, using: '\(title.text)'")
+            return title.text
+        }
+        
         // Take the first few meaningful words
         if words.count >= 2 {
             let keyWords = words.prefix(4).map { $0.capitalized }
             let name = keyWords.joined(separator: " ")
             
+            print("🔍 RecordingNameGenerator: Generated name: '\(name)' (length: \(name.count))")
+            
+            // If the name is within the length constraints, use it
             if name.count >= minLength && name.count <= maxLength {
+                print("✅ RecordingNameGenerator: Name within constraints, using: '\(name)'")
                 return name
             } else if name.count > maxLength {
                 // Try with fewer words
                 let shortName = keyWords.prefix(3).joined(separator: " ")
+                print("🔍 RecordingNameGenerator: Name too long, trying shorter: '\(shortName)' (length: \(shortName.count))")
                 if shortName.count >= minLength && shortName.count <= maxLength {
+                    print("✅ RecordingNameGenerator: Shorter name within constraints, using: '\(shortName)'")
                     return shortName
+                }
+            } else if name.count < minLength {
+                print("🔍 RecordingNameGenerator: Name too short, trying longer version")
+                // If too short, try with more words or use the original title
+                if words.count >= 3 {
+                    let longerName = words.prefix(5).map { $0.capitalized }.joined(separator: " ")
+                    print("🔍 RecordingNameGenerator: Trying longer name: '\(longerName)' (length: \(longerName.count))")
+                    if longerName.count >= minLength && longerName.count <= maxLength {
+                        print("✅ RecordingNameGenerator: Longer name within constraints, using: '\(longerName)'")
+                        return longerName
+                    }
+                }
+                
+                // If still too short, use the original title if it's reasonable
+                if title.text.count >= 20 && title.text.count <= maxLength {
+                    print("✅ RecordingNameGenerator: Using original title: '\(title.text)' (length: \(title.text.count))")
+                    return title.text
                 }
             }
         }
         
+        print("❌ RecordingNameGenerator: Failed to generate valid name from title: '\(title.text)'")
         return ""
     }
     
@@ -566,5 +626,53 @@ class RecordingNameGenerator {
     private static func calculateSentenceImportance(_ sentence: String, in transcript: String) -> Double {
         // Use ContentAnalyzer to calculate sentence importance
         return ContentAnalyzer.calculateSentenceImportance(sentence, in: transcript)
+    }
+    
+    private static func fixWeakEndingWords(_ title: String) -> String {
+        let words = title.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        guard words.count >= 2 else { return title }
+        
+        // List of weak ending words that should be avoided
+        let weakEndingWords = [
+            "with", "to", "for", "of", "in", "on", "at", "by", "from", "about", 
+            "regarding", "concerning", "pertaining", "related", "involving", 
+            "including", "containing", "featuring", "during", "while", "when", 
+            "where", "why", "how", "what", "which", "who", "whom", "whose",
+            "and", "or", "but", "nor", "yet", "so", "as", "than", "like",
+            "such", "very", "quite", "rather", "somewhat", "rather", "fairly",
+            "just", "only", "merely", "simply", "actually", "really", "truly",
+            "indeed", "certainly", "definitely", "absolutely", "completely",
+            "entirely", "totally", "wholly", "fully", "thoroughly", "completely"
+        ]
+        
+        let lastWord = words.last!.lowercased()
+        
+        // Check if the title ends with a weak word
+        if weakEndingWords.contains(lastWord) {
+            // Try to find a better ending by looking at the previous word
+            if words.count >= 3 {
+                // Remove the weak ending word and use the previous word as ending
+                let betterWords = Array(words.dropLast())
+                let betterTitle = betterWords.joined(separator: " ")
+                
+                // Check if the new ending is also weak
+                let newLastWord = betterWords.last!.lowercased()
+                if weakEndingWords.contains(newLastWord) && betterWords.count >= 3 {
+                    // Remove another weak word
+                    let finalWords = Array(betterWords.dropLast())
+                    return finalWords.joined(separator: " ")
+                }
+                
+                return betterTitle
+            } else {
+                // If we can't remove the weak word, try to add context
+                let contextWords = ["Discussion", "Meeting", "Session", "Review", "Analysis", "Planning", "Preparation"]
+                if let contextWord = contextWords.first {
+                    return "\(title) \(contextWord)"
+                }
+            }
+        }
+        
+        return title
     }
 }

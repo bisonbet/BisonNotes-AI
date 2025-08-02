@@ -235,18 +235,33 @@ class OpenAIPromptGenerator {
     }
     
     private static func createTitlesUserPrompt(_ text: String) -> String {
-        let standardizedPrompt = RecordingNameGenerator.generateStandardizedTitlePrompt(from: text)
         return """
-        \(standardizedPrompt)
-        
-        Return the title in this exact JSON format:
-        [
+        Analyze the following transcript and extract 4 high-quality titles or headlines. Focus on:
+        - Main topics or themes discussed
+        - Key decisions or outcomes
+        - Important events or milestones
+        - Central questions or problems addressed
+
+        **Return the results in this exact JSON format (no markdown, just pure JSON):**
+        {
+          "titles": [
             {
-                "text": "generated title",
-                "category": "meeting|personal|technical|general",
-                "confidence": 0.85
+              "text": "title text",
+              "category": "Meeting|Personal|Technical|General",
+              "confidence": 0.85
             }
-        ]
+          ]
+        }
+
+        Requirements:
+        - Generate exactly 4 titles with 85% or higher confidence
+        - Each title should be 40-60 characters and 4-6 words
+        - Focus on the most important and specific topics
+        - Avoid generic or vague titles
+        - If no suitable titles are found, return empty array
+
+        Transcript:
+        \(text)
         """
     }
     
@@ -276,7 +291,7 @@ class OpenAIPromptGenerator {
             ],
             "titles": [
                 {
-                    "text": "Generate a concise, descriptive title (20-50 characters, 3-8 words) that captures the main topic, purpose, or key subject. Focus on the most important subject, person, or action mentioned. Use proper capitalization (Title Case) and never end with punctuation marks.",
+                    "text": "Generate 4 high-quality titles (40-60 characters, 4-6 words each) that capture the main topics, decisions, or key subjects discussed. Focus on the most important and specific topics. Use proper capitalization (Title Case) and never end with punctuation marks.",
                     "category": "meeting|personal|technical|general",
                     "confidence": 0.85
                 }

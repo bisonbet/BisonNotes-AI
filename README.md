@@ -4,7 +4,7 @@
 
 ## 🎯 Overview
 
-Audio Journal is your personal AI assistant for capturing, transcribing, and analyzing audio recordings. Whether you're in meetings, brainstorming sessions, or personal reflections, the app automatically extracts key information, identifies actionable tasks, and creates intelligent summaries with location context. The app features advanced background processing, performance optimization, comprehensive error handling, and a unified data registry system.
+Audio Journal is your personal AI assistant for capturing, transcribing, and analyzing audio recordings. **All data is now managed exclusively via Core Data**—the legacy registry and file-based storage have been fully replaced. On first launch, the app will automatically migrate any legacy data into Core Data, ensuring seamless upgrades for existing users. The app features advanced background processing, performance optimization, comprehensive error handling, and a unified data model.
 
 ## ✨ Key Features
 
@@ -19,13 +19,13 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **Enhanced Audio Session Management**: Robust audio interruption handling
 - **Automatic Registry Integration**: New recordings are automatically added to the unified data registry
 
-### 🗄️ **Unified Data Registry System**
-- **Centralized Data Management**: Unified registry for recordings, transcripts, and summaries
-- **Automatic Recording Registration**: New recordings are automatically added to the registry with proper metadata
-- **Refresh from Disk**: Scan and add missing recordings that exist on disk but aren't in the registry
+### 🗄️ **Unified Data Management (Core Data Only)**
+- **Centralized Data Management**: All recordings, transcripts, summaries, and processing jobs are managed via Core Data
+- **Automatic Recording Registration**: New recordings are automatically added to Core Data with full metadata
+- **Data Migration**: On first launch, legacy file-based data is migrated into Core Data using the new migration system
 - **Data Integrity**: Maintains relationships between recordings, transcripts, and summaries
-- **Debug Tools**: Comprehensive debugging and recovery tools for data management
-- **Registry Coordination**: Seamless coordination between all data components
+- **Debug & Migration Tools**: Built-in views for migration, debugging, and clearing the database
+- **No Legacy Registry**: The old registry and file-based storage are fully removed
 
 ### 🤖 **AI-Powered Intelligence**
 - **Enhanced Apple Intelligence Engine**: Advanced natural language processing using Apple's NLTagger with semantic analysis
@@ -95,7 +95,14 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **Orphaned File Detection**: Identifies and manages orphaned files
 - **iCloud Storage Manager**: CloudKit synchronization with conflict resolution
 - **Enhanced File Manager**: Comprehensive file operations with error handling
-- **Registry Integration**: All file operations are coordinated through the unified registry
+- **Registry Integration**: All file operations are coordinated through Core Data
+
+### 🧩 **Data Migration & Debugging**
+- **DataMigrationView**: Run and monitor migration from legacy storage to Core Data
+- **Clear & Debug Tools**: Clear the database or inspect its contents from the UI
+
+### 🧑‍💻 **Audio Playback**
+- **AudioPlayerView**: New SwiftUI view for playing back audio recordings with metadata and controls
 
 ## 🔧 AI Integration Setup
 
@@ -279,6 +286,10 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - For Whisper: Local server running Whisper ASR Webservice
 - For Ollama: Local Ollama installation
 
+### **Initialization**
+1. **First Launch**: On your first launch, the app will automatically scan for any existing audio, transcript, and summary files in your app's document directory. It will then migrate this data into Core Data, ensuring a seamless transition.
+2. **Subsequent Launches**: On subsequent launches, the app will check for new data in the document directory and migrate it.
+
 ### **Installation**
 1. Clone the repository
 2. Open `Audio Journal.xcodeproj` in Xcode
@@ -287,13 +298,14 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 
 ### **First Use**
 1. **Grant Permissions**: Allow microphone and location access when prompted
-2. **Configure AI Services**: Set up OpenAI, Google AI Studio, Whisper, and/or Ollama integration
-3. **Start Recording**: Tap the record button to begin capturing audio
-4. **Generate Summary**: Use the Summaries tab to create AI-powered summaries
-5. **View Transcripts**: Access detailed transcripts in the Transcripts tab
-6. **Customize Settings**: Adjust audio quality, AI engines, and preferences
-7. **Monitor Performance**: Use the performance monitoring features to optimize usage
-8. **Registry Management**: Use debug tools to manage the unified data registry if needed
+2. **Automatic Migration**: On first launch, the app will scan for legacy audio, transcript, and summary files and migrate them into Core Data. Progress is shown in the Data Migration view if needed.
+3. **Configure AI Services**: Set up OpenAI, Google AI Studio, Whisper, and/or Ollama integration
+4. **Start Recording**: Tap the record button to begin capturing audio
+5. **Generate Summary**: Use the Summaries tab to create AI-powered summaries
+6. **View Transcripts**: Access detailed transcripts in the Transcripts tab
+7. **Customize Settings**: Adjust audio quality, AI engines, and preferences
+8. **Monitor Performance**: Use the performance monitoring features to optimize usage
+9. **Database Management**: Use the Data Migration view to debug, clear, or re-migrate data if needed
 
 ## 📱 User Interface
 
@@ -302,6 +314,7 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **Summaries**: AI-generated summaries with expandable sections
 - **Transcripts**: Detailed transcripts with editing capabilities
 - **Settings**: Comprehensive configuration options
+- **Data Migration**: (Accessible from Settings) Run, debug, or clear the Core Data database
 
 ### **Enhanced Summary View**
 - **Metadata Section**: AI method, generation time, content statistics
@@ -316,6 +329,9 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **Error Recovery View**: Comprehensive error handling and recovery
 - **Debug View**: Advanced debugging and diagnostics
 - **Registry Debug Tools**: Tools for managing the unified data registry
+
+### **Audio Playback**
+- **AudioPlayerView**: Play back any recording with full metadata and controls
 
 ## 🔧 Configuration Options
 
@@ -417,6 +433,12 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **Ollama Privacy**: Run AI models locally without external dependencies
 - **API Key Security**: Secure storage of API keys with validation
 
+## 🛠️ Error Handling Improvements
+
+- **ThumbnailErrorHandling**: Gracefully handles thumbnail generation errors during file operations, preventing interruptions
+- **Robust Migration**: Migration process is resilient to missing/corrupt files and provides progress and error feedback
+- **Comprehensive Logging**: All data operations and errors are logged for easier debugging
+
 ## 🛠️ Development
 
 ### **Project Structure**
@@ -424,80 +446,37 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 Audio Journal/
 ├── Audio_JournalApp.swift          # Main app entry point
 ├── ContentView.swift               # Main UI and tab structure
-├── EnhancedSummaryDetailView.swift # Enhanced summary display
-├── SummariesView.swift             # Summary management
-├── EnhancedAppleIntelligenceEngine.swift # AI processing engine
-├── OpenAISummarizationEngine.swift # OpenAI integration
-├── GoogleAIStudioService.swift     # Google AI Studio integration
-├── WhisperService.swift            # Whisper REST API integration
-├── OllamaService.swift             # Ollama integration
-├── OpenAITranscribeService.swift   # OpenAI transcription
-├── AWSTranscribeService.swift      # AWS transcription
-├── BackgroundProcessingManager.swift # Background job management
-├── PerformanceOptimizer.swift      # Performance optimization
-├── EnhancedAudioSessionManager.swift # Audio session management
-├── AudioFileChunkingService.swift  # Large file processing
-├── TaskExtractor.swift             # Task identification logic
-├── ReminderExtractor.swift         # Reminder extraction
-├── LocationManager.swift           # GPS and location services
-├── SummaryManager.swift            # Summary management
-├── EnhancedTranscriptionManager.swift # Transcription management
-├── EnhancedFileManager.swift       # File management
-├── iCloudStorageManager.swift      # iCloud integration
-├── ErrorHandlingSystem.swift       # Error handling
-├── EnhancedErrorRecoverySystem.swift # Error recovery
-├── EnhancedLoggingSystem.swift     # Logging system
 ├── Models/
-│   ├── AppDataCoordinator.swift    # Unified data coordination
-│   ├── RecordingRegistry.swift     # Unified registry system
-│   ├── AudioModels.swift           # Core data models
-│   ├── SummarizationEngine.swift   # AI engine protocols
-│   ├── EnhancedSummaryData.swift   # Enhanced summary models
-│   ├── AudioChunkingModels.swift  # Chunking models
-│   ├── EnginePerformanceData.swift # Performance data
-│   └── RecordingNameGenerator.swift # Name generation
-├── ViewModels/
-│   └── AudioRecorderViewModel.swift # Recording logic with registry integration
+│   ├── AppDataCoordinator.swift    # Unified data coordination (Core Data only)
+│   ├── CoreDataManager.swift       # Core Data access layer
+│   ├── DataMigrationManager.swift  # Handles migration from legacy storage
+│   ├── RecordingWorkflowManager.swift # Orchestrates recording/transcription/summary workflow
+│   ├── ... (other models)
 ├── Views/
 │   ├── RecordingsView.swift        # Main recording interface
-│   ├── RecordingsListView.swift    # Recording list with deletion
-│   ├── TranscriptViews.swift       # Transcript functionality
-│   ├── SettingsView.swift          # Settings management
-│   ├── AISettingsView.swift        # AI engine configuration
-│   ├── EnginePerformanceView.swift # Performance monitoring
-│   ├── BackgroundProcessingView.swift # Background processing
-│   ├── EnhancedErrorRecoveryView.swift # Error recovery
-│   ├── EnhancedDebugView.swift     # Debug interface
-│   └── EnhancedDeleteDialog.swift  # Deletion confirmation
-└── Assets/                         # App icons and resources
+│   ├── AudioPlayerView.swift       # Audio playback UI
+│   ├── DataMigrationView.swift     # Data migration and debug UI
+│   ├── ... (other views)
+├── ViewModels/
+│   └── AudioRecorderViewModel.swift # Recording logic with Core Data integration
+├── ... (AI engines, managers, etc.)
 ```
 
 ### **Key Components**
-- **AppDataCoordinator**: Unified data coordination and registry management
-- **RecordingRegistry**: Centralized registry for recordings, transcripts, and summaries
-- **AudioRecorderViewModel**: Manages recording, playback, audio settings, and registry integration
-- **SummaryManager**: Handles summary generation and storage
-- **TranscriptManager**: Manages transcript creation and editing
-- **LocationManager**: Handles GPS and geocoding services
-- **BackgroundProcessingManager**: Manages background job processing
-- **PerformanceOptimizer**: Optimizes battery and memory usage
-- **EnhancedAudioSessionManager**: Manages audio session configuration
-- **AudioFileChunkingService**: Handles large file processing
-- **OpenAISummarizationService**: OpenAI API communication
-- **GoogleAIStudioService**: Google AI Studio API communication
-- **WhisperService**: REST API communication with Whisper server
-- **OllamaService**: Local AI model communication
-- **AWSTranscribeService**: AWS Transcribe API communication
+- **CoreDataManager**: Central data access for all app data
+- **DataMigrationManager**: Handles migration from legacy storage to Core Data
+- **RecordingWorkflowManager**: Orchestrates the full workflow and ensures data integrity
+- **AppDataCoordinator**: Unified interface for all data operations
+- **AudioPlayerView**: Audio playback UI
+- **DataMigrationView**: Migration and debug UI
 
 ## 🔮 Recent Enhancements
 
-### **Unified Data Registry System (Latest)**
-- **Centralized Data Management**: Unified registry for recordings, transcripts, and summaries
-- **Automatic Recording Registration**: New recordings are automatically added to the registry with proper metadata
-- **Refresh from Disk**: Scan and add missing recordings that exist on disk but aren't in the registry
-- **Data Integrity**: Maintains relationships between recordings, transcripts, and summaries
-- **Debug Tools**: Comprehensive debugging and recovery tools for data management
-- **Registry Coordination**: Seamless coordination between all data components
+### **Core Data-Only Architecture (Latest)**
+- **All data is now managed via Core Data**—no legacy registry or file-based storage
+- **Automatic migration** on first launch for existing users
+- **New migration and debug tools** in the UI
+- **AudioPlayerView** and **DataMigrationView** added
 
 ### **Performance Optimization (Task 11)**
 - **Streaming File Processing**: Memory-efficient handling of large files

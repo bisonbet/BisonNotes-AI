@@ -37,7 +37,8 @@ final class AISettingsViewModel: ObservableObject {
         self.appCoordinator = appCoordinator
         self.regenerationManager = SummaryRegenerationManager(
             summaryManager: SummaryManager.shared,
-            transcriptManager: TranscriptManager.shared
+            transcriptManager: TranscriptManager.shared,
+            appCoordinator: appCoordinator
         )
         
         // We need to observe changes on the coordinator to republish them
@@ -57,8 +58,6 @@ final class AISettingsViewModel: ObservableObject {
 
     /// Moves the engine selection logic into the view model.
     func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) -> (shouldPrompt: Bool, oldEngine: String, error: String?) {
-        // Note: AudioRecorderViewModel doesn't have selectedAIEngine property
-        // Use the actual current engine from UserDefaults
         let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
         let newEngine = engineType.rawValue
 
@@ -66,28 +65,42 @@ final class AISettingsViewModel: ObservableObject {
             return (shouldPrompt: false, oldEngine: "", error: nil)
         }
         
-        // Validate engine availability before switching
-        let validation = appCoordinator.registryManager.validateEngineAvailability(newEngine)
-        switch validation {
-        case .available:
-            break // proceed
-        case .unavailable(let error):
-            return (shouldPrompt: false, oldEngine: "", error: error)
-        case .requiresConfiguration(_):
-            // Allow selection even if configuration is required
-            break // proceed
+        // Check if the engine is available
+        let isAvailable = checkEngineAvailability(engineType)
+        if !isAvailable && !engineType.isComingSoon {
+            return (shouldPrompt: false, oldEngine: "", error: "Engine is not available. Please configure it first.")
         }
         
-        // Allow selection even if not available - user can configure it
-        // Only return error if the engine is completely invalid, not just unavailable
-
-        // Note: Cannot set recorderVM.selectedAIEngine since it doesn't exist
-        // Just update the coordinator
-        self.appCoordinator.setEngine(newEngine)
+        // Update the selected engine in UserDefaults
+        UserDefaults.standard.set(newEngine, forKey: "SelectedAIEngine")
+        
+        // Update the regeneration manager
         self.regenerationManager.setEngine(newEngine)
         
         let shouldPrompt = self.regenerationManager.shouldPromptForRegeneration(oldEngine: oldEngine, newEngine: newEngine)
         return (shouldPrompt: shouldPrompt, oldEngine: oldEngine, error: nil)
+    }
+    
+    private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
+        switch engineType {
+        case .enhancedAppleIntelligence:
+            return true // Always available on iOS 15+
+        case .openAI:
+            let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
+            return !apiKey.isEmpty
+        case .openAICompatible:
+            let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
+            return !apiKey.isEmpty
+        case .localLLM:
+            let isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.enableOllama)
+            return isEnabled
+        case .googleAIStudio:
+            let apiKey = UserDefaults.standard.string(forKey: "googleAIStudioAPIKey") ?? ""
+            let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
+            return !apiKey.isEmpty && isEnabled
+        case .awsBedrock:
+            return false // Coming soon
+        }
     }
 }
 
@@ -126,13 +139,72 @@ struct AISettingsView: View {
                 isRefreshingStatus = true
             }
             
-            // Get engine statuses from coordinator
-            let statuses = appCoordinator.registryManager.getEngineAvailabilityStatus()
+            var statuses: [String: EngineAvailabilityStatus] = [:]
+            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+            
+            // Check each engine type
+            for engineType in AIEngineType.allCases {
+                let isCurrent = engineType.rawValue == currentEngine
+                let isAvailable = checkEngineAvailability(engineType)
+                
+                let status = EngineAvailabilityStatus(
+                    name: engineType.rawValue,
+                    description: engineType.description,
+                    isAvailable: isAvailable,
+                    isComingSoon: engineType.isComingSoon,
+                    requirements: engineType.requirements,
+                    version: getEngineVersion(engineType),
+                    isCurrentEngine: isCurrent
+                )
+                
+                statuses[engineType.rawValue] = status
+            }
             
             await MainActor.run {
                 engineStatuses = statuses
                 isRefreshingStatus = false
             }
+        }
+    }
+    
+    private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
+        switch engineType {
+        case .enhancedAppleIntelligence:
+            return true // Always available on iOS 15+
+        case .openAI:
+            let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
+            return !apiKey.isEmpty
+        case .openAICompatible:
+            let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
+            return !apiKey.isEmpty
+        case .localLLM:
+            let isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.enableOllama)
+            return isEnabled
+        case .googleAIStudio:
+            let apiKey = UserDefaults.standard.string(forKey: "googleAIStudioAPIKey") ?? ""
+            let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
+            return !apiKey.isEmpty && isEnabled
+        case .awsBedrock:
+            return false // Coming soon
+        }
+    }
+    
+    private func getEngineVersion(_ engineType: AIEngineType) -> String {
+        switch engineType {
+        case .enhancedAppleIntelligence:
+            return "iOS 15.0+"
+        case .openAI:
+            return "GPT-4"
+        case .openAICompatible:
+            return "API Compatible"
+        case .localLLM:
+            let modelName = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaModelName) ?? AppSettingsKeys.Defaults.ollamaModelName
+            return modelName
+        case .googleAIStudio:
+            let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-2.5-flash"
+            return model
+        case .awsBedrock:
+            return "Coming Soon"
         }
     }
     
@@ -156,9 +228,10 @@ struct AISettingsView: View {
                     openAICompatibleConfigurationSection
                     googleAIStudioConfigurationSection
                     
-                    if viewModel.appCoordinator.registryManager.enhancedSummaries.count > 0 {
+                    // TODO: Check summary count with new Core Data system
+                    // if viewModel.appCoordinator.registryManager.enhancedSummaries.count > 0 {
                         summaryManagementSection
-                    }
+                    // }
                     
                     Spacer(minLength: 40)
                 }
@@ -166,14 +239,7 @@ struct AISettingsView: View {
             }
             .navigationTitle("AI Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                    .fontWeight(.medium)
-                }
-            }
+
         }
         .alert("Engine Change", isPresented: $showingEngineChangePrompt) {
             Button("Skip") { /* Do nothing, just dismiss */ }
@@ -181,7 +247,7 @@ struct AISettingsView: View {
                 Task { await viewModel.regenerationManager.regenerateAllSummaries() }
             }
         } message: {
-            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"). Would you like to regenerate your \(viewModel.appCoordinator.registryManager.enhancedSummaries.count) existing summaries with the new AI engine?")
+            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"). Would you like to regenerate your existing summaries with the new AI engine?")
                 .font(.headline)
                 .padding()
             
@@ -193,7 +259,7 @@ struct AISettingsView: View {
                 
                 Button("Regenerate") {
                     let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
-                    viewModel.appCoordinator.registryManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
+                    // TODO: Implement setEngine with new Core Data system
                     viewModel.regenerationManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
                     showingEngineChangePrompt = false
                 }
@@ -207,7 +273,7 @@ struct AISettingsView: View {
             Text(viewModel.regenerationManager.regenerationResults?.summary ?? "Regeneration process finished.")
         }
         .onAppear {
-            viewModel.appCoordinator.registryManager.setEngine("OpenAI") // Use proper engine name
+            // TODO: Implement setEngine with new Core Data system
             viewModel.regenerationManager.setEngine("OpenAI") // Use proper engine name
             self.refreshEngineStatuses()
         }
@@ -299,7 +365,8 @@ private extension AISettingsView {
                 }
                 .padding(.horizontal, 24)
                 
-                if viewModel.appCoordinator.registryManager.enhancedSummaries.count > 0 {
+                // TODO: Check summary count with new Core Data system
+                if true { // viewModel.appCoordinator.registryManager.enhancedSummaries.count > 0 {
                     HStack {
                         Image(systemName: "doc.text")
                             .foregroundColor(.blue)
@@ -309,7 +376,7 @@ private extension AISettingsView {
                             .font(.caption)
                             .foregroundColor(.secondary)
                         
-                        Text("\(viewModel.appCoordinator.registryManager.enhancedSummaries.count)")
+                        Text("0") // TODO: Get summary count from new Core Data system
                             .font(.caption)
                             .fontWeight(.medium)
                     }
@@ -807,6 +874,9 @@ private extension AISettingsView {
                         self.previousEngine = result.oldEngine
                         self.showingEngineChangePrompt = true
                     }
+                    
+                    // Refresh engine statuses after selection
+                    self.refreshEngineStatuses()
                 }
             }
         }

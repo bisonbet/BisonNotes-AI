@@ -50,6 +50,7 @@ struct EnginePerformanceView: View {
 
 struct PerformanceMonitoringSection: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
+    @StateObject private var performanceMonitor = EnginePerformanceMonitor()
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -60,9 +61,9 @@ struct PerformanceMonitoringSection: View {
                     .font(.headline)
                 Spacer()
                 Circle()
-                    .fill(appCoordinator.registryManager.isPerformanceMonitoringEnabled() ? Color.green : Color.red)
+                    .fill(performanceMonitor.isMonitoring ? Color.green : Color.red)
                     .frame(width: 12, height: 12)
-                Text(appCoordinator.registryManager.isPerformanceMonitoringEnabled() ? "Active" : "Inactive")
+                Text(performanceMonitor.isMonitoring ? "Active" : "Inactive")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

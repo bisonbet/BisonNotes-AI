@@ -9,8 +9,8 @@ struct SummariesView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
-    @State private var recordings: [(recording: RegistryRecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = []
-    @State private var selectedRecording: RegistryRecordingEntry?
+    @State private var recordings: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = []
+    @State private var selectedRecording: RecordingEntry?
     @State private var isGeneratingSummary = false
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
@@ -18,7 +18,7 @@ struct SummariesView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var refreshTrigger = false
-    @State private var showOrphanedSummaries = false
+
 
     // MARK: - Body
     
@@ -61,12 +61,13 @@ struct SummariesView: View {
         .sheet(isPresented: $showSummary) {
             if let recording = selectedRecording {
                 // Try to get enhanced summary first, fallback to legacy
-                if let enhancedSummary = appCoordinator.getCompleteRecordingData(id: recording.id)?.summary {
-                    EnhancedSummaryDetailView(
+                if let recordingId = recording.id,
+                   let enhancedSummary = appCoordinator.getCompleteRecordingData(id: recordingId)?.summary {
+                    SummaryDetailView(
                         recording: RecordingFile(
-                            url: recording.recordingURL,
-                            name: recording.recordingName,
-                            date: recording.recordingDate,
+                            url: URL(string: recording.recordingURL ?? "") ?? URL(fileURLWithPath: ""),
+                            name: recording.recordingName ?? "Unknown",
+                            date: recording.recordingDate ?? Date(),
                             duration: recording.duration,
                             locationData: nil
                         ),
@@ -106,9 +107,7 @@ struct SummariesView: View {
         } message: {
             Text(errorMessage)
         }
-        .sheet(isPresented: $showOrphanedSummaries) {
-            OrphanedSummariesView()
-        }
+
     }
     
     // MARK: - Main Content View
@@ -132,72 +131,23 @@ struct SummariesView: View {
     private var debugButtonsView: some View {
         HStack {
             Menu("Debug") {
-                Button("Remove Duplicates") {
-                    appCoordinator.removeDuplicateRecordings()
-                    loadRecordings()
-                }
-                
-                Button("Update Durations") {
-                    appCoordinator.updateRecordingDurations()
-                    loadRecordings()
-                }
-                
-                Button("Debug Transcripts") {
-                    appCoordinator.debugTranscriptStatus()
-                    appCoordinator.forceReloadTranscripts()
-                    loadRecordings()
-                }
-                
-                Button("Debug Linking") {
-                    appCoordinator.debugTranscriptLinking()
-                }
-                
-                Button("Cleanup Duplicates") {
-                    appCoordinator.cleanupDuplicateSummaries()
-                    loadRecordings()
+                Button("Debug Database") {
+                    appCoordinator.debugDatabaseContents()
                 }
                 
                 Button("Debug Summaries") {
                     debugSummaries()
                 }
                 
-                Button("Fix Summary Links") {
-                    appCoordinator.fixSummariesWithNilRecordingId()
+                Button("Sync URLs") {
+                    appCoordinator.syncRecordingURLs()
                     loadRecordings()
                 }
                 
-                Button("Link Summaries") {
-                    appCoordinator.linkSummariesToRecordings()
+                Button("Refresh Recordings") {
+                    loadRecordings()
                     loadRecordings()
                 }
-                
-                Button("Link to Transcripts") {
-                    appCoordinator.linkSummariesToRecordingsWithTranscripts()
-                    loadRecordings()
-                }
-                
-                Button("Recover Transcripts") {
-                    appCoordinator.debugTranscriptRecovery()
-                    loadRecordings()
-                }
-                
-                Button("Recover From Disk") {
-                    appCoordinator.recoverTranscriptsFromDisk()
-                    loadRecordings()
-                }
-                
-                Button("Refresh Recordings from Disk") {
-                    appCoordinator.refreshRecordingsFromDisk()
-                    loadRecordings()
-                }
-            }
-            
-            Button("Refresh") {
-                loadRecordings()
-            }
-            
-            Button("Orphaned") {
-                showOrphanedSummaries = true
             }
             
             Spacer()
@@ -242,7 +192,7 @@ struct SummariesView: View {
     
     // MARK: - Recording Row View
     
-    private func recordingRowView(_ recordingData: (recording: RegistryRecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)) -> some View {
+    private func recordingRowView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)) -> some View {
         let recording = recordingData.recording
         let transcript = recordingData.transcript
         let summary = recordingData.summary
@@ -250,11 +200,11 @@ struct SummariesView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(recording.recordingName)
+                    Text(recording.recordingName ?? "Unknown Recording")
                         .font(.headline)
                         .foregroundColor(.primary)
                     
-                    Text(recording.recordingDate, style: .date)
+                    Text(recording.recordingDate ?? Date(), style: .date)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -270,7 +220,7 @@ struct SummariesView: View {
                             showSummary = true
                         }) {
                             HStack {
-                                Image(systemName: "doc.text.magnifyingglass.fill")
+                                Image(systemName: "doc.text.fill")
                                 Text("View Summary")
                             }
                             .font(.caption)
@@ -280,7 +230,7 @@ struct SummariesView: View {
                             .foregroundColor(.white)
                             .cornerRadius(8)
                         }
-                    } else if recording.summaryStatus == .processing {
+                    } else if recording.summaryStatus == ProcessingStatus.processing.rawValue {
                         HStack {
                             ProgressView()
                                 .scaleEffect(0.8)
@@ -295,7 +245,7 @@ struct SummariesView: View {
                         .cornerRadius(8)
                     } else {
                         Button(action: {
-                            print("🔘 Generate Summary button pressed for: \(recording.recordingName)")
+                            print("🔘 Generate Summary button pressed for: \(recording.recordingName ?? "Unknown")")
                             generateSummary(for: recording)
                         }) {
                             HStack {
@@ -334,14 +284,14 @@ struct SummariesView: View {
     
     // MARK: - Status Indicator
     
-    private func statusIndicator(for recording: RegistryRecordingEntry) -> some View {
+    private func statusIndicator(for recording: RecordingEntry) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: recording.hasTranscript ? "checkmark.circle.fill" : "circle")
-                .foregroundColor(recording.hasTranscript ? .green : .gray)
+            Image(systemName: (recording.transcript != nil) ? "checkmark.circle.fill" : "circle")
+                .foregroundColor((recording.transcript != nil) ? .green : .gray)
                 .font(.caption)
             
-            Image(systemName: recording.hasSummary ? "doc.text.magnifyingglass.fill" : "doc.text.magnifyingglass")
-                .foregroundColor(recording.hasSummary ? .blue : .gray)
+            Image(systemName: (recording.summary != nil) ? "doc.text.fill" : "doc.text.magnifyingglass")
+                .foregroundColor((recording.summary != nil) ? .blue : .gray)
                 .font(.caption)
         }
     }
@@ -350,6 +300,9 @@ struct SummariesView: View {
     
     private func loadRecordings() {
         print("🔄 loadRecordings() called in SummariesView")
+        
+        // Sync URLs first to ensure they're up to date
+        appCoordinator.syncRecordingURLs()
         
         let recordingsWithData = appCoordinator.getAllRecordingsWithData()
         print("📊 Total recordings from coordinator: \(recordingsWithData.count)")
@@ -360,15 +313,15 @@ struct SummariesView: View {
             let transcript = recordingData.transcript
             let summary = recordingData.summary
             
-            print("   \(index): \(recording.recordingName)")
+            print("   \(index): \(recording.recordingName ?? "Unknown")")
             print("      - Has transcript: \(transcript != nil)")
             print("      - Has summary: \(summary != nil)")
             if let summary = summary {
                 print("      - Summary AI Method: \(summary.aiMethod)")
                 print("      - Summary Generated At: \(summary.generatedAt)")
             }
-            print("      - Recording has transcript flag: \(recording.hasTranscript)")
-            print("      - Recording has summary flag: \(recording.hasSummary)")
+            print("      - Recording has transcript flag: \(recording.transcript != nil)")
+            print("      - Recording has summary flag: \(recording.summary != nil)")
         }
         
         // Filter to show recordings that have transcripts (so summaries can be generated)
@@ -379,10 +332,10 @@ struct SummariesView: View {
             
             // Include recordings that have transcripts (so summaries can be generated)
             if transcript != nil {
-                print("✅ Including recording with transcript: \(recording.recordingName)")
+                print("✅ Including recording with transcript: \(recording.recordingName ?? "Unknown")")
                 return (recording: recording, transcript: transcript, summary: summary)
             } else {
-                print("❌ Excluding recording without transcript: \(recording.recordingName)")
+                print("❌ Excluding recording without transcript: \(recording.recordingName ?? "Unknown")")
                 return nil
             }
         }
@@ -390,60 +343,92 @@ struct SummariesView: View {
         print("📊 Final result: \(recordings.count) recordings with transcripts out of \(recordingsWithData.count) total recordings")
     }
     
-    private func generateSummary(for recording: RegistryRecordingEntry) {
-        print("🚀 generateSummary called for recording: \(recording.recordingName)")
-        print("📁 Recording URL: \(recording.recordingURL)")
-        print("📅 Recording date: \(recording.recordingDate)")
+    private func generateSummary(for recording: RecordingEntry) {
+        print("🚀 generateSummary called for recording: \(recording.recordingName ?? "unknown")")
+        print("📁 Recording URL: \(recording.recordingURL ?? "unknown")")
+        print("📅 Recording date: \(recording.recordingDate ?? Date())")
         
         isGeneratingSummary = true
         
-        // Check engine status first
-        print("🔧 Checking engine status...")
-        appCoordinator.registryManager.checkEngineStatus()
+        // Engine status checking is no longer needed with the simplified system
+        print("🔧 Starting summary generation...")
         
         Task {
             do {
-                print("🔍 Starting summary generation for recording: \(recording.recordingName)")
+                print("🔍 Starting summary generation for recording: \(recording.recordingName ?? "Unknown")")
                 
-                // Get the transcript for this recording using the unified system
+                // Get the transcript for this recording using the new Core Data system
                 print("🔍 Looking for transcript...")
-                if let transcript = appCoordinator.getTranscript(for: recording.recordingURL) {
+                // TODO: Update to use new Core Data system with UUID
+                // For now, find the recording by URL and get its transcript
+                if let recordingURLString = recording.recordingURL,
+                   let recordingURL = URL(string: recordingURLString),
+                   let coreDataRecording = appCoordinator.getRecording(url: recordingURL),
+                   let recordingId = coreDataRecording.id,
+                   let transcript = appCoordinator.coreDataManager.getTranscriptData(for: recordingId) {
                     print("✅ Found transcript with \(transcript.segments.count) segments")
                     print("📝 Transcript text: \(transcript.plainText.prefix(100))...")
                     
-                    // Generate summary using the app coordinator
-                    print("🔧 Calling generateEnhancedSummary...")
-                    let summary = try await appCoordinator.generateEnhancedSummary(
-                        from: transcript.plainText,
-                        for: recording.recordingURL,
-                        recordingName: recording.recordingName,
-                        recordingDate: recording.recordingDate
+                    // Generate summary using the transcript
+                    print("🔧 Generating summary for recording: \(recording.recordingName ?? "Unknown")")
+                    
+                    // Get the selected AI engine
+                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+                    print("🤖 Using AI engine: \(selectedEngine)")
+                    
+                    // Actually generate the summary using the AI engine
+                    let transcriptText = transcript.plainText
+                    let recordingURL = URL(string: recording.recordingURL ?? "") ?? URL(fileURLWithPath: "")
+                    let recordingName = recording.recordingName ?? "Unknown Recording"
+                    let recordingDate = recording.recordingDate ?? Date()
+                    
+                    print("📝 Generating enhanced summary for transcript with \(transcriptText.count) characters")
+                    
+                    // Use the SummaryManager to generate the actual summary
+                    let enhancedSummary = try await SummaryManager.shared.generateEnhancedSummary(
+                        from: transcriptText,
+                        for: recordingURL,
+                        recordingName: recordingName,
+                        recordingDate: recordingDate,
+                        coordinator: appCoordinator
                     )
                     
-                    print("✅ Summary generated successfully")
+                    print("✅ Enhanced summary generated successfully")
+                    print("📄 Summary length: \(enhancedSummary.summary.count) characters")
+                    print("📋 Tasks: \(enhancedSummary.tasks.count)")
+                    print("📋 Reminders: \(enhancedSummary.reminders.count)")
+                    print("📋 Titles: \(enhancedSummary.titles.count)")
                     
-                    // Add the summary to the coordinator
-                    await MainActor.run {
-                        print("📝 Adding summary to coordinator...")
-                        print("   - Summary AI Method: \(summary.aiMethod)")
-                        print("   - Summary Generated At: \(summary.generatedAt)")
-                        print("   - Summary Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
-                        appCoordinator.addSummary(summary)
-                        isGeneratingSummary = false
-                        
-                        // Force a UI refresh
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            loadRecordings() // Refresh the list
-                            print("✅ Summary added to coordinator and UI refreshed")
+                    // Create summary entry in Core Data using the workflow manager
+                    let summaryId = appCoordinator.workflowManager.createSummary(
+                        for: recordingId,
+                        transcriptId: transcript.id,
+                        summary: enhancedSummary.summary,
+                        tasks: enhancedSummary.tasks,
+                        reminders: enhancedSummary.reminders,
+                        titles: enhancedSummary.titles,
+                        contentType: enhancedSummary.contentType,
+                        aiMethod: enhancedSummary.aiMethod,
+                        originalLength: enhancedSummary.originalLength,
+                        processingTime: enhancedSummary.processingTime
+                    )
+                    
+                    if summaryId != nil {
+                        print("✅ Summary created with ID: \(summaryId?.uuidString ?? "nil")")
+                        await MainActor.run {
+                            isGeneratingSummary = false
+                            loadRecordings()
                         }
+                    } else {
+                        throw NSError(domain: "SummaryGeneration", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to create summary entry"])
                     }
                 } else {
-                    print("❌ No transcript found for recording: \(recording.recordingName)")
+                    print("❌ No transcript found for recording: \(recording.recordingName ?? "Unknown")")
                     print("🔍 Checking if recording exists in coordinator...")
                     let allRecordings = appCoordinator.getAllRecordingsWithData()
                     print("📊 Total recordings in coordinator: \(allRecordings.count)")
                     for (index, recData) in allRecordings.enumerated() {
-                        print("   \(index): \(recData.recording.recordingName) - has transcript: \(recData.transcript != nil)")
+                        print("   \(index): \(recData.recording.recordingName ?? "Unknown") - has transcript: \(recData.transcript != nil)")
                     }
                     
                     await MainActor.run {
@@ -480,8 +465,8 @@ struct SummariesView: View {
             let recording = recordingData.recording
             let summary = recordingData.summary
             
-            print("   \(index): \(recording.recordingName)")
-            print("      - Recording ID: \(recording.id)")
+            print("   \(index): \(recording.recordingName ?? "Unknown")")
+            print("      - Recording ID: \(recording.id?.uuidString ?? "nil")")
             print("      - Has summary: \(summary != nil)")
             
             if let summary = summary {
@@ -492,15 +477,17 @@ struct SummariesView: View {
             }
         }
         
-        // Also check all summaries in the registry
-        print("📊 All summaries in registry:")
-        let allSummaries = appCoordinator.registryManager.enhancedSummaries
-        for (index, summary) in allSummaries.enumerated() {
-            print("   \(index): \(summary.recordingName)")
-            print("      - AI Method: \(summary.aiMethod)")
-            print("      - Generated At: \(summary.generatedAt)")
-            print("      - Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
-            print("      - Summary ID: \(summary.id)")
+        // Also check all summaries in the database
+        print("📊 All summaries in database:")
+        let allRecordingsWithData = appCoordinator.getAllRecordingsWithData()
+        for (index, recordingData) in allRecordingsWithData.enumerated() {
+            if let summary = recordingData.summary {
+                print("   \(index): \(summary.recordingName)")
+                print("      - AI Method: \(summary.aiMethod)")
+                print("      - Generated At: \(summary.generatedAt)")
+                print("      - Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
+                print("      - Summary ID: \(summary.id)")
+            }
         }
     }
 }

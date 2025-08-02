@@ -187,7 +187,7 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         print("✅ OpenAI API connection test successful")
     }
     
-    func transcribeAudioFile(at url: URL) async throws -> OpenAITranscribeResult {
+    func transcribeAudioFile(at url: URL, recordingId: UUID? = nil) async throws -> OpenAITranscribeResult {
         guard !config.apiKey.isEmpty else {
             throw OpenAITranscribeError.configurationMissing
         }
@@ -240,7 +240,8 @@ class OpenAITranscribeService: NSObject, ObservableObject {
                     from: transcriptChunks,
                     originalURL: url,
                     recordingName: url.deletingPathExtension().lastPathComponent,
-                    recordingDate: creationDate
+                    recordingDate: creationDate,
+                    recordingId: recordingId ?? UUID() // TODO: Get actual recording ID from Core Data
                 )
                 // Clean up chunk files
                 try await chunkingService.cleanupChunks(chunks)

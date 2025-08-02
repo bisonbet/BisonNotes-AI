@@ -27,6 +27,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     
     // Reference to the app coordinator for adding recordings to registry
     private var appCoordinator: AppDataCoordinator?
+    private var workflowManager: RecordingWorkflowManager?
     
     private var audioRecorder: AVAudioRecorder?
     private var audioPlayer: AVAudioPlayer?
@@ -52,6 +53,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     /// Set the app coordinator reference
     func setAppCoordinator(_ coordinator: AppDataCoordinator) {
         self.appCoordinator = coordinator
+        Task { @MainActor in
+            let workflowManager = RecordingWorkflowManager()
+            workflowManager.setAppCoordinator(coordinator)
+            self.workflowManager = workflowManager
+        }
     }
     
     /// Initialize the view model asynchronously to ensure proper setup
@@ -302,8 +308,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
                 audioPlayer?.delegate = self
                 audioPlayer?.play()
                 
-                isPlaying = true
-                playingTime = 0
+                await MainActor.run {
+                    isPlaying = true
+                    playingTime = 0
+                }
                 startPlayingTimer()
                 
             } catch {
@@ -408,24 +416,25 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                     if let recordingURL = recordingURL {
                         saveLocationData(for: recordingURL)
                         
-                        // Add recording to registry
-                        if let coordinator = appCoordinator {
+                        // Add recording using workflow manager for proper UUID consistency
+                        if let workflowManager = workflowManager {
                             let fileSize = getFileSize(url: recordingURL)
                             let duration = getRecordingDuration(url: recordingURL)
                             let quality = AudioRecorderViewModel.getCurrentAudioQuality()
                             
-                            let recordingId = coordinator.addRecording(
+                            let recordingId = workflowManager.createRecording(
                                 url: recordingURL,
                                 name: recordingURL.deletingPathExtension().lastPathComponent,
                                 date: Date(),
                                 fileSize: fileSize,
                                 duration: duration,
-                                quality: quality
+                                quality: quality,
+                                locationData: currentLocationData
                             )
                             
-                            print("✅ Recording added to registry with ID: \(recordingId)")
+                            print("✅ Recording created with workflow manager, ID: \(recordingId)")
                         } else {
-                            print("⚠️ AppCoordinator not set, recording not added to registry")
+                            print("❌ WorkflowManager not set - recording not saved to database!")
                         }
                     }
                 } else {

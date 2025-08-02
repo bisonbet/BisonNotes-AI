@@ -124,6 +124,10 @@ class EnhancedFileManager: ObservableObject {
         self.appCoordinator = coordinator
     }
     
+    func getCoordinator() -> AppDataCoordinator? {
+        return appCoordinator
+    }
+    
     // MARK: - Relationship Management
     
     func getFileRelationships(for url: URL) -> FileRelationships? {
@@ -139,11 +143,33 @@ class EnhancedFileManager: ObservableObject {
     
     func refreshRelationships(for url: URL) async {
         let recordingExists = FileManager.default.fileExists(atPath: url.path)
+        
         let transcriptExists = await MainActor.run { 
-            appCoordinator?.getTranscript(for: url) != nil 
+            guard let appCoordinator = appCoordinator else { return false }
+            
+            // Sync URLs first to ensure they're up to date
+            appCoordinator.syncRecordingURLs()
+            
+            // Use the improved getRecording method that handles renamed files
+            let coreDataRecording = appCoordinator.getRecording(url: url)
+            
+            guard let recording = coreDataRecording,
+                  let recordingId = recording.id else { return false }
+            return appCoordinator.coreDataManager.getTranscriptData(for: recordingId) != nil
         }
+        
         let summaryExists = await MainActor.run { 
-            appCoordinator?.getBestAvailableSummary(for: url) != nil 
+            guard let appCoordinator = appCoordinator else { return false }
+            
+            // Sync URLs first to ensure they're up to date
+            appCoordinator.syncRecordingURLs()
+            
+            // Use the improved getRecording method that handles renamed files
+            let coreDataRecording = appCoordinator.getRecording(url: url)
+            
+            guard let recording = coreDataRecording,
+                  let recordingId = recording.id else { return false }
+            return appCoordinator.coreDataManager.getSummaryData(for: recordingId) != nil
         }
         
         // Check iCloud sync status (placeholder for now)
@@ -177,6 +203,13 @@ class EnhancedFileManager: ObservableObject {
     
     func refreshAllRelationships() {
         Task {
+            // Sync URLs first to ensure they're up to date
+            await MainActor.run {
+                if let coordinator = appCoordinator {
+                    coordinator.syncRecordingURLs()
+                }
+            }
+            
             // Get all known recording URLs from various sources
             var allURLs = Set<URL>()
             
@@ -211,8 +244,10 @@ class EnhancedFileManager: ObservableObject {
             if let coordinator = appCoordinator {
                 let recordings = await coordinator.getAllRecordingsWithData()
                 for recordingData in recordings {
-                    if FileManager.default.fileExists(atPath: recordingData.recording.recordingURL.path) {
-                        allURLs.insert(recordingData.recording.recordingURL)
+                    if let urlString = recordingData.recording.recordingURL,
+                       let url = URL(string: urlString),
+                       FileManager.default.fileExists(atPath: url.path) {
+                        allURLs.insert(url)
                     }
                 }
             }
@@ -237,40 +272,73 @@ class EnhancedFileManager: ObservableObject {
             throw FileManagementError.relationshipNotFound
         }
         
+        // Get the recording ID from the coordinator
+        guard let appCoordinator = appCoordinator,
+              let recordingEntry = await appCoordinator.getRecording(url: url),
+              let recordingId = recordingEntry.id else {
+            throw FileManagementError.relationshipNotFound
+        }
+        
         // Stop any playback if this recording is currently playing
         // Note: This would need to be coordinated with the AudioRecorderViewModel
         
         // Delete the audio file if it exists
         if relationships.hasRecording {
-            try FileManager.default.removeItem(at: url)
-            print("✅ Deleted audio file: \(url.lastPathComponent)")
+            do {
+                try FileManager.default.removeItem(at: url)
+                print("✅ Deleted audio file: \(url.lastPathComponent)")
+            } catch {
+                if error.isThumbnailGenerationError {
+                    print("⚠️ Thumbnail generation warning during file deletion (can be ignored): \(error.localizedDescription)")
+                    // Continue with deletion even if thumbnail generation fails
+                } else {
+                    throw error
+                }
+            }
             
             // Delete associated location file if it exists
             let locationURL = url.deletingPathExtension().appendingPathExtension("location")
             if FileManager.default.fileExists(atPath: locationURL.path) {
-                try FileManager.default.removeItem(at: locationURL)
-                print("✅ Deleted location file: \(locationURL.lastPathComponent)")
+                do {
+                    try FileManager.default.removeItem(at: locationURL)
+                    print("✅ Deleted location file: \(locationURL.lastPathComponent)")
+                } catch {
+                    if error.isThumbnailGenerationError {
+                        print("⚠️ Thumbnail generation warning during location file deletion (can be ignored): \(error.localizedDescription)")
+                        // Continue with deletion even if thumbnail generation fails
+                    } else {
+                        throw error
+                    }
+                }
             }
         }
         
-        // Always delete transcript when recording is deleted
-        if relationships.transcriptExists {
-            // This will now be handled by the coordinator
-            // transcriptManager.deleteTranscript(for: url) 
-            print("✅ Deleted transcript for: \(relationships.recordingName)")
-        }
-        
-        // Delete summary only if not preserving it
-        if relationships.summaryExists && !preserveSummary {
-            // This will now be handled by the coordinator
-            // let manager = await summaryManager
-            // await MainActor.run { manager.deleteSummary(for: url) }
-            print("✅ Deleted summary for: \(relationships.recordingName)")
-        }
-        
-        // Update relationships
+        // Handle selective deletion based on preserveSummary parameter
         if preserveSummary && relationships.summaryExists {
-            // Keep the relationship but mark recording as unavailable
+            // Delete recording and transcript, but preserve summary
+            // We need to manually handle this since cascade deletion would delete everything
+            
+            // First, get the summary entry and update its relationships to preserve it
+            if let summaryEntry = await appCoordinator.coreDataManager.getSummary(for: recordingId) {
+                // Update the summary to remove its relationship to the recording
+                // This will preserve the summary even when the recording is deleted
+                summaryEntry.recording = nil
+                summaryEntry.transcript = nil
+                
+                // Save the context to persist the changes
+                do {
+                    try await appCoordinator.coreDataManager.saveContext()
+                    print("✅ Preserved summary for: \(relationships.recordingName)")
+                } catch {
+                    print("❌ Error preserving summary: \(error)")
+                }
+            }
+            
+            // Now delete the recording (this will cascade delete the transcript)
+            await appCoordinator.deleteRecording(id: recordingId)
+            print("✅ Deleted recording and transcript for: \(relationships.recordingName)")
+            
+            // Update relationships to reflect that only summary remains
             let updatedRelationships = FileRelationships(
                 recordingURL: nil, // Recording no longer available
                 recordingName: relationships.recordingName,
@@ -281,6 +349,10 @@ class EnhancedFileManager: ObservableObject {
             )
             await updateFileRelationships(for: url, relationships: updatedRelationships)
         } else {
+            // Delete everything (recording, transcript, and summary)
+            await appCoordinator.deleteRecording(id: recordingId)
+            print("✅ Deleted recording, transcript, and summary for: \(relationships.recordingName)")
+            
             // Remove the relationship entirely
             await MainActor.run {
                 _ = fileRelationships.removeValue(forKey: url)

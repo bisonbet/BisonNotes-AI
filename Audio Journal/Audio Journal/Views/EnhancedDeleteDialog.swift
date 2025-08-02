@@ -197,6 +197,14 @@ struct EnhancedDeleteDialog: View {
         .onAppear {
             // Set default preserve summary option
             preserveSummary = relationships.summaryExists
+            // Debug logging
+            let _ = print("🗑️ EnhancedDeleteDialog rendering:")
+            let _ = print("   - Recording name: \(recording.name)")
+            let _ = print("   - Relationships name: \(relationships.recordingName)")
+            let _ = print("   - Has recording: \(relationships.hasRecording)")
+            let _ = print("   - Has transcript: \(relationships.transcriptExists)")
+            let _ = print("   - Has summary: \(relationships.summaryExists)")
+            let _ = print("   - Preserve summary: \(preserveSummary)")
         }
     }
 }

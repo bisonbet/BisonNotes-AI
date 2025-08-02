@@ -158,7 +158,7 @@ class AudioFileChunkingService: ObservableObject {
     }
     
     /// Reassembles transcript chunks into a complete TranscriptData object
-    func reassembleTranscript(from chunks: [TranscriptChunk], originalURL: URL, recordingName: String, recordingDate: Date) async throws -> ReassemblyResult {
+    func reassembleTranscript(from chunks: [TranscriptChunk], originalURL: URL, recordingName: String, recordingDate: Date, recordingId: UUID) async throws -> ReassemblyResult {
         let startTime = Date()
         
         print("🔧 Reassembling transcript from \(chunks.count) chunks")
@@ -202,8 +202,9 @@ class AudioFileChunkingService: ObservableObject {
         // Remove duplicate segments that might occur due to overlap
         allSegments = removeDuplicateSegments(allSegments)
         
-        // Create the complete transcript
+        // Create the complete transcript with recording ID
         let transcriptData = TranscriptData(
+            recordingId: recordingId,
             recordingURL: originalURL,
             recordingName: recordingName,
             recordingDate: recordingDate,

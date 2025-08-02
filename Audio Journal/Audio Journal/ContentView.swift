@@ -89,6 +89,28 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             Task { @MainActor in
                 do {
+                    // Check if Core Data has recordings, if not, trigger migration
+                    let coreDataRecordings = appCoordinator.getAllRecordingsWithData()
+                    if coreDataRecordings.isEmpty {
+                        print("🔄 No recordings found in Core Data, triggering migration...")
+                        let migrationManager = DataMigrationManager()
+                        await migrationManager.performDataMigration()
+                        print("✅ Migration completed")
+                    } else {
+                        print("✅ Core Data already has \(coreDataRecordings.count) recordings")
+                        
+                        // Check if any recordings have transcripts in Core Data
+                        let recordingsWithTranscripts = coreDataRecordings.filter { $0.transcript != nil }
+                        if recordingsWithTranscripts.isEmpty {
+                            print("🔄 Recordings found but no transcripts in Core Data, triggering migration...")
+                            let migrationManager = DataMigrationManager()
+                            await migrationManager.performDataMigration()
+                            print("✅ Migration completed")
+                        } else {
+                            print("✅ Core Data has \(recordingsWithTranscripts.count) recordings with transcripts")
+                        }
+                    }
+                    
                     // Initialize the recorder view model on main thread
                     await recorderVM.initialize()
                     

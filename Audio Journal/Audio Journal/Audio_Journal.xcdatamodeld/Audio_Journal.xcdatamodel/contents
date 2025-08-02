@@ -7,6 +7,11 @@
         <attribute name="fileSize" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
         <attribute name="lastModified" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="locationAccuracy" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="locationAddress" optional="YES" attributeType="String"/>
+        <attribute name="locationLatitude" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="locationLongitude" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="locationTimestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="recordingDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="recordingName" optional="YES" attributeType="String"/>
         <attribute name="recordingURL" optional="YES" attributeType="String"/>
@@ -16,6 +21,7 @@
         <attribute name="transcriptionStatus" optional="YES" attributeType="String"/>
         <relationship name="summary" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="SummaryEntry" inverseName="recording" inverseEntity="SummaryEntry"/>
         <relationship name="transcript" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="TranscriptEntry" inverseName="recording" inverseEntity="TranscriptEntry"/>
+        <relationship name="processingJobs" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="ProcessingJobEntry" inverseName="recording" inverseEntity="ProcessingJobEntry"/>
     </entity>
     <entity name="SummaryEntry" representedClassName="SummaryEntry" syncable="YES" codeGenerationType="class">
         <attribute name="aiMethod" optional="YES" attributeType="String"/>
@@ -50,9 +56,24 @@
         <relationship name="recording" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="RecordingEntry" inverseName="transcript" inverseEntity="RecordingEntry"/>
         <relationship name="summaries" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="SummaryEntry" inverseName="transcript" inverseEntity="SummaryEntry"/>
     </entity>
+    <entity name="ProcessingJobEntry" representedClassName="ProcessingJobEntry" syncable="YES" codeGenerationType="class">
+        <attribute name="completionTime" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="engine" optional="YES" attributeType="String"/>
+        <attribute name="error" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="jobType" optional="YES" attributeType="String"/>
+        <attribute name="lastModified" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="progress" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="recordingName" optional="YES" attributeType="String"/>
+        <attribute name="recordingURL" optional="YES" attributeType="String"/>
+        <attribute name="startTime" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="status" optional="YES" attributeType="String"/>
+        <relationship name="recording" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="RecordingEntry" inverseName="processingJobs" inverseEntity="RecordingEntry"/>
+    </entity>
     <elements>
         <element name="RecordingEntry" positionX="-63" positionY="-18" width="128" height="254"/>
         <element name="SummaryEntry" positionX="144" positionY="72" width="128" height="284"/>
         <element name="TranscriptEntry" positionX="144" positionY="-117" width="128" height="194"/>
+        <element name="ProcessingJobEntry" positionX="144" positionY="180" width="128" height="194"/>
     </elements>
 </model>

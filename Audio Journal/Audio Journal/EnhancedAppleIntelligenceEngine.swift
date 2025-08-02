@@ -81,10 +81,11 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     func extractTitles(from text: String) async throws -> [TitleItem] {
         print("🍎 EnhancedAppleIntelligenceEngine: Starting title extraction")
         
-        // Use standardized title generation approach
+        // Use enhanced local processing to generate multiple high-quality titles
         let sentences = ContentAnalyzer.extractSentences(from: text)
         var allTitles: [TitleItem] = []
         
+        // Extract titles from key sentences
         for sentence in sentences {
             if let title = extractTitleFromSentence(sentence) {
                 allTitles.append(title)
@@ -94,21 +95,30 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         // Remove duplicates and sort by confidence
         let uniqueTitles = Array(Set(allTitles)).sorted { $0.confidence > $1.confidence }
         
-        // Apply standardized title cleaning to the best title
-        if let bestTitle = uniqueTitles.first(where: { $0.confidence >= 0.7 }) {
-            let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(bestTitle.text)
-            if cleanedTitle != "Untitled Conversation" {
-                return [TitleItem(
-                    text: cleanedTitle,
-                    confidence: bestTitle.confidence,
-                    category: bestTitle.category
-                )]
+        // Filter for high-confidence titles (85% or higher)
+        let highConfidenceTitles = uniqueTitles.filter { $0.confidence >= 0.85 }
+        
+        // Apply standardized title cleaning and length validation
+        var cleanedTitles: [TitleItem] = []
+        for title in highConfidenceTitles {
+            let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(title.text)
+            if cleanedTitle != "Untitled Conversation" && 
+               cleanedTitle.count >= 20 && cleanedTitle.count <= 80 {
+                let words = cleanedTitle.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                if words.count >= 3 && words.count <= 10 {
+                    cleanedTitles.append(TitleItem(
+                        text: cleanedTitle,
+                        confidence: title.confidence,
+                        category: title.category
+                    ))
+                }
             }
         }
         
-        print("📝 Final title count: \(uniqueTitles.count)")
+        print("📝 Final title count: \(cleanedTitles.count)")
         
-        return Array(uniqueTitles.prefix(5)) // Limit to 5 titles
+        // Return up to 4 titles (matching other engines)
+        return Array(cleanedTitles.prefix(4))
     }
     
     func classifyContent(_ text: String) async throws -> ContentType {

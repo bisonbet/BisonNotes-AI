@@ -1054,7 +1054,7 @@ class SummaryManager: ObservableObject {
     
     // MARK: - Enhanced Summary Generation
     
-    func generateEnhancedSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date) async throws -> EnhancedSummaryData {
+    func generateEnhancedSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator? = nil) async throws -> EnhancedSummaryData {
         AppLogger.shared.info("Starting enhanced summary generation using \(getCurrentEngineName())", category: "SummaryManager")
         
         let startTime = Date()
@@ -1103,7 +1103,7 @@ class SummaryManager: ObservableObject {
             AppLogger.shared.warning("No AI engine available, falling back to basic processing", category: "SummaryManager")
             let fallbackError = SummarizationError.aiServiceUnavailable(service: "No AI engines available")
             handleError(fallbackError, context: "Engine Availability", recordingName: recordingName)
-            return try await generateBasicSummary(from: text, for: recordingURL, recordingName: recordingName, recordingDate: recordingDate)
+            return try await generateBasicSummary(from: text, for: recordingURL, recordingName: recordingName, recordingDate: recordingDate, coordinator: coordinator)
         }
         
         AppLogger.shared.info("Using engine: \(engine.name)", category: "SummaryManager")
@@ -1155,18 +1155,19 @@ class SummaryManager: ObservableObject {
                 saveEnhancedSummary(enhancedSummary)
             }
             
-            // Update the recording name if we generated a better one
-            if finalRecordingName != recordingName {
-                try await updateRecordingNameWithAI(
-                    from: recordingName,
-                    recordingURL: recordingURL,
-                    transcript: text,
-                    contentType: result.contentType,
-                    tasks: result.tasks,
-                    reminders: result.reminders,
-                    titles: result.titles
-                )
-            }
+                    // Update the recording name if we generated a better one
+        if finalRecordingName != recordingName {
+            try await updateRecordingNameWithAI(
+                from: recordingName,
+                recordingURL: recordingURL,
+                transcript: text,
+                contentType: result.contentType,
+                tasks: result.tasks,
+                reminders: result.reminders,
+                titles: result.titles,
+                coordinator: coordinator
+            )
+        }
             
             AppLogger.shared.info("Enhanced summary generated successfully", category: "SummaryManager")
             AppLogger.shared.info("Summary length: \(result.summary.count) characters", category: "SummaryManager")
@@ -1194,13 +1195,13 @@ class SummaryManager: ObservableObject {
             // Handle the error and provide recovery options
             handleError(error, context: "Enhanced Summary Generation", recordingName: recordingName)
             
-            return try await generateBasicSummary(from: text, for: recordingURL, recordingName: recordingName, recordingDate: recordingDate)
+            return try await generateBasicSummary(from: text, for: recordingURL, recordingName: recordingName, recordingDate: recordingDate, coordinator: coordinator)
         }
     }
     
     // MARK: - Fallback Basic Summary Generation
     
-    private func generateBasicSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date) async throws -> EnhancedSummaryData {
+    private func generateBasicSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator?) async throws -> EnhancedSummaryData {
         AppLogger.shared.info("Using basic fallback summarization with task/reminder extraction", category: "SummaryManager")
         
         let startTime = Date()
@@ -1299,7 +1300,8 @@ class SummaryManager: ObservableObject {
                 contentType: contentType,
                 tasks: tasks,
                 reminders: reminders,
-                titles: []
+                titles: [],
+                coordinator: coordinator
             )
         }
         
@@ -1921,7 +1923,7 @@ class SummaryManager: ObservableObject {
         return validatedName
     }
     
-    func updateRecordingNameWithAI(from oldName: String, recordingURL: URL, transcript: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) async throws {
+    func updateRecordingNameWithAI(from oldName: String, recordingURL: URL, transcript: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], coordinator: AppDataCoordinator?) async throws {
         print("🤖 SummaryManager: Updating recording name using AI analysis")
         
         // Generate intelligent name using AI analysis
@@ -1930,7 +1932,11 @@ class SummaryManager: ObservableObject {
         // Only update if the new name is different and meaningful
         if newName != oldName && !newName.isEmpty && newName != "Recording" {
             print("📝 SummaryManager: Updating name from '\(oldName)' to '\(newName)'")
-            try await updateRecordingName(from: oldName, to: newName, recordingURL: recordingURL)
+            if let coordinator = coordinator {
+                try await updateRecordingName(from: oldName, to: newName, recordingURL: recordingURL, coordinator: coordinator)
+            } else {
+                print("⚠️ No coordinator provided, skipping Core Data update")
+            }
             
             // Update the enhanced summary with the new name
             if let existingSummary = getEnhancedSummary(for: recordingURL) {
@@ -1954,88 +1960,43 @@ class SummaryManager: ObservableObject {
         }
     }
     
-    private func updateRecordingName(from oldName: String, to newName: String, recordingURL: URL) async throws {
+    private func updateRecordingName(from oldName: String, to newName: String, recordingURL: URL, coordinator: AppDataCoordinator) async throws {
         print("📁 Starting file rename process:")
         print("📁 Old name: \(oldName)")
         print("📁 New name: \(newName)")
         print("📁 Recording URL: \(recordingURL)")
         
-        let fileManager = FileManager.default
-        let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        
-        // Update the main recording file - check for different audio formats
-        let audioExtensions = ["m4a", "mp3", "wav"]
-        var oldRecordingURL: URL?
-        var newRecordingURL: URL?
-        
-        for ext in audioExtensions {
-            let testURL = documentsPath.appendingPathComponent("\(oldName).\(ext)")
-            if fileManager.fileExists(atPath: testURL.path) {
-                oldRecordingURL = testURL
-                newRecordingURL = documentsPath.appendingPathComponent("\(newName).\(ext)")
-                break
-            }
+        // Get the recording from Core Data using the coordinator
+        guard let recordingEntry = coordinator.getRecording(url: recordingURL),
+              let recordingId = recordingEntry.id else {
+            print("❌ Could not find recording in Core Data for URL: \(recordingURL)")
+            return
         }
         
-        if let oldURL = oldRecordingURL, let newURL = newRecordingURL, fileManager.fileExists(atPath: oldURL.path) {
-            // Check if target file already exists and generate unique name if needed
-            var finalNewURL = newURL
-            var counter = 1
-            let baseNewName = newName
-            let fileExtension = newURL.pathExtension
-            
-            while fileManager.fileExists(atPath: finalNewURL.path) {
-                let uniqueName = "\(baseNewName) (\(counter))"
-                finalNewURL = documentsPath.appendingPathComponent("\(uniqueName).\(fileExtension)")
-                counter += 1
-                
-                // Prevent infinite loop
-                if counter > 100 {
-                    print("⚠️ Could not find unique filename after 100 attempts, using timestamp")
-                    let timestamp = Int(Date().timeIntervalSince1970)
-                    let timestampName = "\(baseNewName)_\(timestamp)"
-                    finalNewURL = documentsPath.appendingPathComponent("\(timestampName).\(fileExtension)")
-                    break
-                }
-            }
-            
-            print("📁 Renaming audio file: \(oldURL.lastPathComponent) → \(finalNewURL.lastPathComponent)")
-            try fileManager.moveItem(at: oldURL, to: finalNewURL)
-            print("✅ Audio file renamed successfully")
-            
-            // Update the newRecordingURL for other file updates
-            newRecordingURL = finalNewURL
-        }
+        print("✅ Found recording in Core Data: \(recordingEntry.recordingName ?? "unknown") with ID: \(recordingId)")
         
-        // Update location file if it exists
-        let oldLocationURL = documentsPath.appendingPathComponent("\(oldName).location")
-        let newLocationURL = documentsPath.appendingPathComponent("\(newName).location")
+        // Use the Core Data workflow manager to update the recording name
+        // This will handle both the Core Data update and file renaming
+        coordinator.updateRecordingName(recordingId: recordingId, newName: newName)
         
-        if fileManager.fileExists(atPath: oldLocationURL.path) {
-            try fileManager.moveItem(at: oldLocationURL, to: newLocationURL)
-        }
+        print("✅ Recording name updated using Core Data workflow")
         
-        // Update transcript file if it exists
-        let oldTranscriptURL = documentsPath.appendingPathComponent("\(oldName).transcript")
-        let newTranscriptURL = documentsPath.appendingPathComponent("\(newName).transcript")
-        
-        if fileManager.fileExists(atPath: oldTranscriptURL.path) {
-            try fileManager.moveItem(at: oldTranscriptURL, to: newTranscriptURL)
-        }
-        
-        // Update summary file if it exists
-        let oldSummaryURL = documentsPath.appendingPathComponent("\(oldName).summary")
-        let newSummaryURL = documentsPath.appendingPathComponent("\(newName).summary")
-        
-        if fileManager.fileExists(atPath: oldSummaryURL.path) {
-            try fileManager.moveItem(at: oldSummaryURL, to: newSummaryURL)
-        }
-        
-        // Update transcript manager if needed
-        if let newURL = newRecordingURL {
-            await updateTranscriptManagerURL(from: recordingURL, to: newURL)
-            // Also update pending transcription jobs
-            await updatePendingTranscriptionJobs(from: recordingURL, to: newURL, newName: newName)
+        // Update the enhanced summary with the new name
+        if let existingSummary = getEnhancedSummary(for: recordingURL) {
+            let updatedSummary = EnhancedSummaryData(
+                recordingURL: recordingURL,
+                recordingName: newName,
+                recordingDate: existingSummary.recordingDate,
+                summary: existingSummary.summary,
+                tasks: existingSummary.tasks,
+                reminders: existingSummary.reminders,
+                contentType: existingSummary.contentType,
+                aiMethod: existingSummary.aiMethod,
+                originalLength: existingSummary.originalLength,
+                processingTime: existingSummary.processingTime
+            )
+            saveEnhancedSummary(updatedSummary)
+            print("✅ SummaryManager: Updated enhanced summary with new name")
         }
         
         // Notify UI to refresh recordings list
@@ -2047,15 +2008,10 @@ class SummaryManager: ObservableObject {
                     "oldName": oldName,
                     "newName": newName,
                     "oldURL": recordingURL,
-                    "newURL": newRecordingURL ?? recordingURL
+                    "newURL": recordingURL // The URL will be updated by the workflow manager
                 ]
             )
         }
-    }
-    
-    private func updateTranscriptManagerURL(from oldURL: URL, to newURL: URL) async {
-        // Update transcript manager with new URL
-        TranscriptManager.shared.updateRecordingURL(from: oldURL, to: newURL)
     }
     
     private func updatePendingTranscriptionJobs(from oldURL: URL, to newURL: URL, newName: String) async {

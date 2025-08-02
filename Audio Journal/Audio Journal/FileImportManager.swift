@@ -90,17 +90,15 @@ class FileImportManager: NSObject, ObservableObject {
             throw ImportError.fileAlreadyExists(filename)
         }
         
-        // Copy file to documents directory with error handling for thumbnail issues
+        // Copy file to documents directory with comprehensive error handling for thumbnail issues
         do {
             try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
         } catch {
             // Check if this is a thumbnail-related error that we can ignore
-            let errorDescription = error.localizedDescription
-            if errorDescription.contains("QLThumbnailErrorDomain") || 
-               errorDescription.contains("GSLibraryErrorDomain") ||
-               errorDescription.contains("Generation not found") {
-                print("⚠️ Thumbnail generation warning (can be ignored): \(errorDescription)")
+            if error.isThumbnailGenerationError {
+                print("⚠️ Thumbnail generation warning (can be ignored): \(error.localizedDescription)")
                 // Continue with import even if thumbnail generation fails
+                // The file copy operation itself succeeded, only thumbnail generation failed
             } else {
                 throw ImportError.copyFailed(error.localizedDescription)
             }
@@ -202,6 +200,8 @@ enum ImportError: LocalizedError {
         }
     }
 }
+
+
 
 // MARK: - Supporting Structures
 

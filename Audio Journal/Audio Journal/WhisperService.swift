@@ -189,7 +189,73 @@ class WhisperService: ObservableObject {
     
     // MARK: - Transcription
     
-    func transcribeAudio(url: URL) async throws -> TranscriptionResult {
+    func transcribeAudio(url: URL, recordingId: UUID? = nil) async throws -> TranscriptionResult {
+        // Check if chunking is needed
+        let needsChunking = try await chunkingService.shouldChunkFile(url, for: .whisper)
+        if needsChunking {
+            await MainActor.run {
+                self.isTranscribing = true
+                self.currentStatus = "Chunking audio file..."
+                self.progress = 0.05
+            }
+            let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .whisper)
+            let chunks = chunkingResult.chunks
+            var transcriptChunks: [TranscriptChunk] = []
+            var chunkIndex = 0
+            for audioChunk in chunks {
+                await MainActor.run {
+                    self.currentStatus = "Transcribing chunk \(chunkIndex + 1) of \(chunks.count)..."
+                    self.progress = 0.05 + 0.85 * (Double(chunkIndex) / Double(chunks.count))
+                }
+                let result = try await performSingleTranscription(url: audioChunk.chunkURL)
+                // Wrap result in TranscriptChunk
+                let transcriptChunk = TranscriptChunk(
+                    chunkId: audioChunk.id,
+                    sequenceNumber: audioChunk.sequenceNumber,
+                    transcript: result.fullText,
+                    segments: result.segments,
+                    startTime: audioChunk.startTime,
+                    endTime: audioChunk.endTime,
+                    processingTime: result.processingTime
+                )
+                transcriptChunks.append(transcriptChunk)
+                chunkIndex += 1
+            }
+            // Reassemble transcript
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let creationDate = (fileAttributes[.creationDate] as? Date) ?? Date()
+            let reassembly = try await chunkingService.reassembleTranscript(
+                from: transcriptChunks,
+                originalURL: url,
+                recordingName: url.deletingPathExtension().lastPathComponent,
+                recordingDate: creationDate,
+                recordingId: recordingId ?? UUID() // Use provided recordingId or fallback to new UUID
+            )
+            // Clean up chunk files
+            try await chunkingService.cleanupChunks(chunks)
+            await MainActor.run {
+                self.currentStatus = "Transcription complete"
+                self.progress = 1.0
+                self.isTranscribing = false
+            }
+            // Return as TranscriptionResult (flattened)
+            return TranscriptionResult(
+                fullText: reassembly.transcriptData.plainText,
+                segments: reassembly.transcriptData.segments,
+                processingTime: reassembly.reassemblyTime,
+                chunkCount: chunks.count,
+                success: true,
+                error: nil
+            )
+        } else {
+            // No chunking needed, use single file method
+            return try await performSingleTranscription(url: url)
+        }
+    }
+    
+    // MARK: - Single File Transcription
+    
+    private func performSingleTranscription(url: URL) async throws -> TranscriptionResult {
         // First, ensure we have a valid connection
         if !isConnected {
             print("⚠️ Whisper service not connected, attempting to connect...")
@@ -391,7 +457,7 @@ class WhisperService: ObservableObject {
     
     // MARK: - Chunked Transcription (for large files)
     
-    func transcribeAudioInChunks(url: URL, chunkDuration: TimeInterval = 3600) async throws -> TranscriptionResult {
+    func transcribeAudioInChunks(url: URL, chunkDuration: TimeInterval = 3600, recordingId: UUID? = nil) async throws -> TranscriptionResult {
         // Check if chunking is needed for Whisper (2 hour limit)
         let needsChunking = try await chunkingService.shouldChunkFile(url, for: .whisper)
         if needsChunking {
@@ -409,7 +475,7 @@ class WhisperService: ObservableObject {
                     self.currentStatus = "Transcribing chunk \(chunkIndex + 1) of \(chunks.count)..."
                     self.progress = 0.05 + 0.85 * (Double(chunkIndex) / Double(chunks.count))
                 }
-                let result = try await transcribeAudio(url: audioChunk.chunkURL)
+                let result = try await performSingleTranscription(url: audioChunk.chunkURL)
                 // Wrap result in TranscriptChunk
                 let transcriptChunk = TranscriptChunk(
                     chunkId: audioChunk.id,
@@ -430,7 +496,8 @@ class WhisperService: ObservableObject {
                 from: transcriptChunks,
                 originalURL: url,
                 recordingName: url.deletingPathExtension().lastPathComponent,
-                recordingDate: creationDate
+                recordingDate: creationDate,
+                recordingId: recordingId ?? UUID() // TODO: Get actual recording ID from Core Data
             )
             // Clean up chunk files
             try await chunkingService.cleanupChunks(chunks)
@@ -450,7 +517,9 @@ class WhisperService: ObservableObject {
             )
         } else {
             // No chunking needed, use single file method
-            return try await transcribeAudio(url: url)
+            // Note: This would cause infinite recursion, so we need to handle single file transcription differently
+            // For now, we'll throw an error indicating that single file transcription should be handled by the caller
+            throw WhisperError.audioProcessingFailed("Single file transcription not implemented - use chunking or call the service directly")
         }
     }
     

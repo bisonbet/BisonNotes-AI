@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct BackgroundProcessingView: View {
-    @StateObject private var processingManager = BackgroundProcessingManager.shared
+    @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var showingJobDetails = false
     @State private var selectedJob: ProcessingJob?
     

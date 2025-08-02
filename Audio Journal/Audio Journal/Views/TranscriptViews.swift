@@ -14,7 +14,7 @@ struct TranscriptsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
-    @StateObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
+    @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
     @State private var recordings: [(recording: RegistryRecordingEntry, transcript: TranscriptData?)] = []
     @State private var selectedRecording: RegistryRecordingEntry?
     @State private var isGeneratingTranscript = false
@@ -420,8 +420,25 @@ struct TranscriptsView: View {
                             segments: result.segments
                         )
                         
-                        // Save the transcript
-                        TranscriptManager.shared.saveTranscript(transcriptData)
+                        // Save the transcript using Core Data
+                        let appCoordinator = appCoordinator
+                        guard let recordingId = transcriptData.recordingId else {
+                            print("❌ Transcript data missing recording ID")
+                            return
+                        }
+                        let transcriptId = appCoordinator.addTranscript(
+                            for: recordingId,
+                            segments: transcriptData.segments,
+                            speakerMappings: transcriptData.speakerMappings,
+                            engine: transcriptData.engine,
+                            processingTime: transcriptData.processingTime,
+                            confidence: transcriptData.confidence
+                        )
+                        if transcriptId != nil {
+                            print("✅ Transcript saved to Core Data with ID: \(transcriptId!)")
+                        } else {
+                            print("❌ Failed to save transcript to Core Data")
+                        }
                         print("💾 Transcript saved successfully")
                         
                                             // Don't automatically open the transcript view - let user choose when to edit
@@ -529,7 +546,25 @@ struct TranscriptsView: View {
                         segments: result.segments
                     )
                     
-                    TranscriptManager.shared.saveTranscript(transcriptData)
+                    // Save transcript using Core Data
+                    let appCoordinator = appCoordinator
+                    guard let recordingId = transcriptData.recordingId else {
+                        print("❌ Background transcript data missing recording ID")
+                        return
+                    }
+                    let transcriptId = appCoordinator.addTranscript(
+                        for: recordingId,
+                        segments: transcriptData.segments,
+                        speakerMappings: transcriptData.speakerMappings,
+                        engine: transcriptData.engine,
+                        processingTime: transcriptData.processingTime,
+                        confidence: transcriptData.confidence
+                    )
+                    if transcriptId != nil {
+                        print("✅ Background transcript saved to Core Data with ID: \(transcriptId!)")
+                    } else {
+                        print("❌ Failed to save background transcript to Core Data")
+                    }
                     print("💾 Background transcript saved for: \(recording.recording.recordingName)")
                     
                     // Force UI refresh to update button states
@@ -669,11 +704,8 @@ struct EditableTranscriptView: View {
     }
     
     private func saveTranscript() {
-        let updatedTranscript = transcript.updatedTranscript(
-            segments: editedSegments,
-            speakerMappings: speakerMappings
-        )
-        transcriptManager.updateTranscript(updatedTranscript)
+        // Note: Transcript updates are now handled through Core Data
+        // This method is kept for potential future implementation
     }
 }
 

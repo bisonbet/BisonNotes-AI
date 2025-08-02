@@ -64,6 +64,22 @@ public struct TranscriptData: Codable, Identifiable {
         self.confidence = confidence
     }
     
+    // Initializer for Core Data conversion that preserves the original ID
+    init(id: UUID, recordingId: UUID, recordingURL: URL, recordingName: String, recordingDate: Date, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5, createdAt: Date? = nil, lastModified: Date? = nil) {
+        self.id = id
+        self.recordingId = recordingId
+        self.recordingURL = recordingURL
+        self.recordingName = recordingName
+        self.recordingDate = recordingDate
+        self.segments = segments
+        self.speakerMappings = speakerMappings
+        self.engine = engine
+        self.createdAt = createdAt ?? Date()
+        self.lastModified = lastModified ?? Date()
+        self.processingTime = processingTime
+        self.confidence = confidence
+    }
+    
     var fullText: String {
         return segments.map { segment in
             let speakerName = speakerMappings[segment.speaker] ?? segment.speaker

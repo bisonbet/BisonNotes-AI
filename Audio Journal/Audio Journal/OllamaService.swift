@@ -196,95 +196,8 @@ class OllamaService: ObservableObject {
     }
     
     private func cleanTitleResponse(_ response: String) -> String {
-        // Remove <think> tags and their content
-        let thinkPattern = #"<think>[\s\S]*?</think>"#
-        var cleanedTitle = response.replacingOccurrences(
-            of: thinkPattern,
-            with: "",
-            options: .regularExpression
-        )
-        
-        // Remove quotes if present
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: "\"", with: "")
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: "'", with: "")
-        
-        // Remove common prefixes/suffixes that might be added
-        let unwantedPrefixes = ["Title:", "Name:", "Generated Title:", "Conversation Title:", "The title is:", "Here's the title:", "Title is:", "AI Title:", "Suggested Title:"]
-        for prefix in unwantedPrefixes {
-            if cleanedTitle.lowercased().hasPrefix(prefix.lowercased()) {
-                cleanedTitle = String(cleanedTitle.dropFirst(prefix.count))
-            }
-        }
-        
-        // Remove word count patterns (including character count patterns)
-        let wordCountPattern = #"\s*\(\d+[\s-]*(words?|characters?)\)\s*$"#
-        cleanedTitle = cleanedTitle.replacingOccurrences(
-            of: wordCountPattern,
-            with: "",
-            options: .regularExpression
-        )
-        
-        // Remove markdown formatting
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: "**", with: "")
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: "*", with: "")
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: "#", with: "")
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: "`", with: "")
-        
-        // Remove ALL punctuation at the end (more comprehensive)
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: #"[.!?;:,]+$"#, with: "", options: .regularExpression)
-        
-        // Trim whitespace and newlines
-        cleanedTitle = cleanedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Ensure title is within proper length (20-50 characters)
-        if cleanedTitle.count < 20 {
-            // Too short, try to expand or use fallback
-            if cleanedTitle.count < 10 {
-                cleanedTitle = "Untitled Conversation"
-            }
-        } else if cleanedTitle.count > 50 {
-            // Too long, truncate at word boundaries
-            let words = cleanedTitle.components(separatedBy: .whitespaces)
-            var truncatedTitle = ""
-            
-            for word in words {
-                let testTitle = truncatedTitle.isEmpty ? word : "\(truncatedTitle) \(word)"
-                if testTitle.count <= 50 {
-                    truncatedTitle = testTitle
-                } else {
-                    break
-                }
-            }
-            
-            cleanedTitle = truncatedTitle.isEmpty ? String(cleanedTitle.prefix(50)) : truncatedTitle
-        }
-        
-        // Validate that the title makes sense
-        let words = cleanedTitle.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-        if words.count < 2 || words.count > 8 {
-            // If too few or too many words, it might be nonsensical
-            cleanedTitle = "Untitled Conversation"
-        }
-        
-        // Check for repeated words or nonsensical patterns
-        let uniqueWords = Set(words.map { $0.lowercased() })
-        if uniqueWords.count < Int(Double(words.count) * 0.6) { // If more than 40% of words are repeated
-            cleanedTitle = "Untitled Conversation"
-        }
-        
-        // Check for generic or meaningless titles
-        let genericTitles = ["title", "conversation", "meeting", "discussion", "talk", "chat", "recording", "audio", "transcript"]
-        let lowerTitle = cleanedTitle.lowercased()
-        if genericTitles.contains(lowerTitle) || genericTitles.contains(where: { lowerTitle.contains($0) && words.count <= 2 }) {
-            cleanedTitle = "Untitled Conversation"
-        }
-        
-        // Ensure title is not empty
-        if cleanedTitle.isEmpty {
-            cleanedTitle = "Untitled Conversation"
-        }
-        
-        return cleanedTitle
+        // Use the centralized title cleaning function from RecordingNameGenerator
+        return RecordingNameGenerator.cleanStandardizedTitleResponse(response)
     }
     
     // MARK: - AI Processing
@@ -403,7 +316,7 @@ class OllamaService: ObservableObject {
     
     func extractTitles(from text: String) async throws -> [TitleItem] {
         let prompt = """
-        Analyze the following transcript and extract potential titles or headlines. Focus on:
+        Analyze the following transcript and extract 4 high-quality titles or headlines. Focus on:
         - Main topics or themes discussed
         - Key decisions or outcomes
         - Important events or milestones
@@ -420,7 +333,12 @@ class OllamaService: ObservableObject {
           ]
         }
 
-        Only include titles with 80% or higher confidence. If no titles are found, return empty array.
+        Requirements:
+        - Generate exactly 4 titles with 85% or higher confidence
+        - Each title should be 40-60 characters and 4-6 words
+        - Focus on the most important and specific topics
+        - Avoid generic or vague titles
+        - If no suitable titles are found, return empty array
 
         Transcript:
         \(text)

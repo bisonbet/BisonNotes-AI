@@ -21,10 +21,12 @@ class SummaryRegenerationManager: ObservableObject {
     
     private let summaryManager: SummaryManager
     private let transcriptManager: TranscriptManager
+    private let appCoordinator: AppDataCoordinator
     
-    init(summaryManager: SummaryManager, transcriptManager: TranscriptManager) {
+    init(summaryManager: SummaryManager, transcriptManager: TranscriptManager, appCoordinator: AppDataCoordinator) {
         self.summaryManager = summaryManager
         self.transcriptManager = transcriptManager
+        self.appCoordinator = appCoordinator
     }
     
     func setEngine(_ engineName: String) {
@@ -40,7 +42,9 @@ class SummaryRegenerationManager: ObservableObject {
         regenerationProgress = 0.0
         currentlyProcessing = "Preparing..."
         
-        let summariesToRegenerate = summaryManager.enhancedSummaries
+        // Get all recordings with summaries from Core Data
+        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        let summariesToRegenerate = recordingsWithData.compactMap { $0.summary }
         let totalCount = summariesToRegenerate.count
         
         guard totalCount > 0 else {
@@ -56,23 +60,52 @@ class SummaryRegenerationManager: ObservableObject {
             currentlyProcessing = "Processing \(summary.recordingName)..."
             regenerationProgress = Double(index) / Double(totalCount)
             
-            // Get transcript for this recording
-            if let transcript = transcriptManager.getTranscript(for: summary.recordingURL) {
-                do {
-                    _ = try await summaryManager.generateEnhancedSummary(
-                        from: transcript.plainText,
-                        for: summary.recordingURL,
-                        recordingName: summary.recordingName,
-                        recordingDate: summary.recordingDate
-                    )
-                    successful += 1
-                } catch {
-                    failed += 1
-                    errors.append("\(summary.recordingName): \(error.localizedDescription)")
-                }
-            } else {
+            // Get complete recording data
+            guard let recordingId = summary.recordingId,
+                  let recordingData = appCoordinator.getCompleteRecordingData(id: recordingId),
+                  let transcript = recordingData.transcript else {
                 failed += 1
                 errors.append("\(summary.recordingName): No transcript found")
+                continue
+            }
+            
+            do {
+                // Generate new summary using the current AI engine
+                let newEnhancedSummary = try await summaryManager.generateEnhancedSummary(
+                    from: transcript.plainText,
+                    for: summary.recordingURL,
+                    recordingName: summary.recordingName,
+                    recordingDate: summary.recordingDate
+                )
+                
+                // Delete the old summary from Core Data
+                appCoordinator.coreDataManager.deleteSummary(id: summary.id)
+                
+                // Create new summary entry in Core Data
+                let newSummaryId = appCoordinator.workflowManager.createSummary(
+                    for: recordingId,
+                    transcriptId: summary.transcriptId ?? UUID(),
+                    summary: newEnhancedSummary.summary,
+                    tasks: newEnhancedSummary.tasks,
+                    reminders: newEnhancedSummary.reminders,
+                    titles: newEnhancedSummary.titles,
+                    contentType: newEnhancedSummary.contentType,
+                    aiMethod: newEnhancedSummary.aiMethod,
+                    originalLength: newEnhancedSummary.originalLength,
+                    processingTime: newEnhancedSummary.processingTime
+                )
+                
+                if newSummaryId != nil {
+                    successful += 1
+                    print("✅ Regenerated summary for: \(summary.recordingName)")
+                } else {
+                    failed += 1
+                    errors.append("\(summary.recordingName): Failed to save new summary")
+                }
+                
+            } catch {
+                failed += 1
+                errors.append("\(summary.recordingName): \(error.localizedDescription)")
             }
             
             // Small delay to show progress
@@ -93,27 +126,63 @@ class SummaryRegenerationManager: ObservableObject {
     }
     
     func regenerateSummary(for recordingURL: URL) async -> Bool {
-        guard let summary = summaryManager.getEnhancedSummary(for: recordingURL),
-              let transcript = transcriptManager.getTranscript(for: recordingURL) else {
+        // Find the recording by URL
+        guard let recording = appCoordinator.getRecording(url: recordingURL),
+              let recordingId = recording.id,
+              let recordingData = appCoordinator.getCompleteRecordingData(id: recordingId),
+              let summary = recordingData.summary,
+              let transcript = recordingData.transcript else {
+            print("❌ No summary or transcript found for URL: \(recordingURL.lastPathComponent)")
             return false
         }
         
         do {
-            _ = try await summaryManager.generateEnhancedSummary(
+            print("🔄 Regenerating summary for: \(summary.recordingName)")
+            
+            // Generate new summary using the current AI engine
+            let newEnhancedSummary = try await summaryManager.generateEnhancedSummary(
                 from: transcript.plainText,
                 for: recordingURL,
                 recordingName: summary.recordingName,
                 recordingDate: summary.recordingDate
             )
-            return true
+            
+            // Delete the old summary from Core Data
+            appCoordinator.coreDataManager.deleteSummary(id: summary.id)
+            print("🗑️ Deleted old summary with ID: \(summary.id)")
+            
+            // Create new summary entry in Core Data
+            let newSummaryId = appCoordinator.workflowManager.createSummary(
+                for: recordingId,
+                transcriptId: summary.transcriptId ?? UUID(),
+                summary: newEnhancedSummary.summary,
+                tasks: newEnhancedSummary.tasks,
+                reminders: newEnhancedSummary.reminders,
+                titles: newEnhancedSummary.titles,
+                contentType: newEnhancedSummary.contentType,
+                aiMethod: newEnhancedSummary.aiMethod,
+                originalLength: newEnhancedSummary.originalLength,
+                processingTime: newEnhancedSummary.processingTime
+            )
+            
+            if newSummaryId != nil {
+                print("✅ Successfully regenerated summary for: \(summary.recordingName)")
+                return true
+            } else {
+                print("❌ Failed to save new summary for: \(summary.recordingName)")
+                return false
+            }
+            
         } catch {
-            print("Failed to regenerate summary for \(summary.recordingName): \(error)")
+            print("❌ Failed to regenerate summary for \(summary.recordingName): \(error)")
             return false
         }
     }
     
     func shouldPromptForRegeneration(oldEngine: String, newEngine: String) -> Bool {
-        return oldEngine != newEngine && summaryManager.enhancedSummaries.count > 0
+        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        let summariesCount = recordingsWithData.compactMap { $0.summary }.count
+        return oldEngine != newEngine && summariesCount > 0
     }
     
     private func completeRegeneration(with results: RegenerationResults) {
@@ -132,7 +201,9 @@ class SummaryRegenerationManager: ObservableObject {
     }
     
     var canRegenerate: Bool {
-        return !isRegenerating && summaryManager.enhancedSummaries.count > 0
+        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        let summariesCount = recordingsWithData.compactMap { $0.summary }.count
+        return !isRegenerating && summariesCount > 0
     }
 }
 

@@ -11,7 +11,7 @@ struct RecordingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @StateObject private var importManager = FileImportManager()
     @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
-    @StateObject private var processingManager = BackgroundProcessingManager.shared
+    @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [AudioRecordingFile] = []
     @State private var showingRecordingsList = false
     @State private var showingBackgroundProcessing = false

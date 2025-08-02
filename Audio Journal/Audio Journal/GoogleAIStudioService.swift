@@ -473,40 +473,42 @@ class GoogleAIStudioService: ObservableObject {
     func extractTitles(from text: String) async throws -> [TitleItem] {
         print("🤖 GoogleAIStudioService: Starting title extraction")
         
-        // Use the existing generateContent method with structured output
-        // This is more cost-effective than making separate calls
-        let response = try await generateContent(prompt: text, useStructuredOutput: true)
-        
-        // Parse the structured response to extract titles
-        // The structured response includes summary, tasks, reminders, and titles
-        let lines = response.components(separatedBy: .newlines)
-        var titles: [TitleItem] = []
-        
-        for line in lines {
-            if line.contains("SUGGESTED TITLES:") {
-                // Extract titles from the structured response
-                let titleLines = lines.dropFirst(lines.firstIndex(of: line) ?? 0 + 1)
-                    .prefix(while: { !$0.contains("CONTENT TYPE:") })
-                
-                for titleLine in titleLines {
-                    let cleanedLine = titleLine.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if cleanedLine.hasPrefix("• ") && cleanedLine.count > 3 {
-                        let titleText = String(cleanedLine.dropFirst(2))
-                        let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(titleText)
-                        if cleanedTitle != "Untitled Conversation" {
-                            titles.append(TitleItem(
-                                text: cleanedTitle,
-                                confidence: 0.8,
-                                category: .general
-                            ))
-                        }
-                    }
-                }
-                break
+        let prompt = """
+        Analyze the following transcript and extract 4 high-quality titles or headlines. Focus on:
+        - Main topics or themes discussed
+        - Key decisions or outcomes
+        - Important events or milestones
+        - Central questions or problems addressed
+
+        **Return the results in this exact JSON format (no markdown, just pure JSON):**
+        {
+          "titles": [
+            {
+              "text": "title text",
+              "category": "Meeting|Personal|Technical|General",
+              "confidence": 0.85
             }
+          ]
         }
+
+        Requirements:
+        - Generate exactly 4 titles with 85% or higher confidence
+        - Each title should be 40-60 characters and 4-6 words
+        - Focus on the most important and specific topics
+        - Avoid generic or vague titles
+        - If no suitable titles are found, return empty array
+
+        Transcript:
+        \(text)
+        """
         
-        return titles.isEmpty ? [] : titles
+        do {
+            let response = try await generateContent(prompt: prompt, useStructuredOutput: false)
+            return try parseTitlesFromJSON(response)
+        } catch {
+            print("❌ GoogleAIStudioService: Title extraction failed: \(error)")
+            throw SummarizationError.aiServiceUnavailable(service: "Google AI Studio title extraction failed: \(error.localizedDescription)")
+        }
     }
     
     private func parseTitlesFromJSON(_ jsonString: String) throws -> [TitleItem] {
