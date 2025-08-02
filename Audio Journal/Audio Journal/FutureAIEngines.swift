@@ -434,7 +434,24 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             return try await processChunkedText(text, service: service, maxTokens: maxContext)
         } else {
             print("📝 Processing single chunk (\(tokenCount) tokens)")
-            return try await processSingleChunk(text, service: service)
+            do {
+                return try await processSingleChunk(text, service: service)
+            } catch {
+                // If the server reports a context window issue, retry with chunked processing
+                let errorMessage = error.localizedDescription.lowercased()
+                if errorMessage.contains("context") || errorMessage.contains("token") {
+                    print("🔁 Context window exceeded, retrying with chunked processing")
+                    do {
+                        let result = try await processChunkedText(text, service: service, maxTokens: maxContext)
+                        print("✅ Chunked retry succeeded")
+                        return result
+                    } catch {
+                        print("❌ Chunked retry failed: \(error)")
+                        throw error
+                    }
+                }
+                throw error
+            }
         }
     }
     
