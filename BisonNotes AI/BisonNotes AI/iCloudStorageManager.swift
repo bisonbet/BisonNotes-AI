@@ -323,8 +323,14 @@ class iCloudStorageManager: ObservableObject {
                 do {
                     existingRecord = try await database.record(for: recordID)
                 } catch {
-                    // Record doesn't exist, which is fine for new summaries
-                    if let ckError = error as? CKError, ckError.code != .unknownItem {
+                    if let ckError = error as? CKError {
+                        // Treat missing record or record type as a new record and ensure schema exists
+                        if ckError.code == .unknownItem || ckError.localizedDescription.contains("record type") {
+                            await setupCloudKitSchema()
+                        } else {
+                            throw error
+                        }
+                    } else {
                         throw error
                     }
                 }
@@ -487,11 +493,19 @@ class iCloudStorageManager: ObservableObject {
                 
             } catch {
                 retryCount += 1
-                
-                if let ckError = error as? CKError, ckError.isRetryable && retryCount < maxRetryAttempts {
-                    print("⚠️ Retryable error fetching from iCloud, attempt \(retryCount)/\(maxRetryAttempts): \(ckError.localizedDescription)")
-                    try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
-                    continue
+
+                if let ckError = error as? CKError {
+                    if ckError.code == .unknownItem || ckError.localizedDescription.contains("record type") {
+                        await setupCloudKitSchema()
+                        return []
+                    } else if ckError.isRetryable && retryCount < maxRetryAttempts {
+                        print("⚠️ Retryable error fetching from iCloud, attempt \(retryCount)/\(maxRetryAttempts): \(ckError.localizedDescription)")
+                        try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
+                        continue
+                    } else {
+                        print("❌ Failed to fetch summaries from iCloud after \(retryCount) attempts: \(error)")
+                        throw error
+                    }
                 } else {
                     print("❌ Failed to fetch summaries from iCloud after \(retryCount) attempts: \(error)")
                     throw error
@@ -777,12 +791,43 @@ class iCloudStorageManager: ObservableObject {
         try await syncAllSummaries([]) // Pass empty array for now
     }
     
+
     private func setupCloudKitSchema() async {
         print("🔧 Setting up CloudKit schema...")
-        
-        // CloudKit schema is typically set up through the CloudKit Dashboard
-        // or automatically when first records are saved
-        // This method can be used for any additional setup if needed
+    
+        guard let database = database else { return }
+    
+        // Create a temporary record to ensure the record type exists.
+        let tempID = CKRecord.ID(recordName: UUID().uuidString)
+        let tempRecord = CKRecord(recordType: CloudKitSummaryRecord.recordType, recordID: tempID)
+    
+        // Populate all known fields so the schema matches production usage
+        tempRecord[CloudKitSummaryRecord.recordingURLField] = ""
+        tempRecord[CloudKitSummaryRecord.recordingNameField] = "SchemaInit"
+        tempRecord[CloudKitSummaryRecord.recordingDateField] = Date()
+        tempRecord[CloudKitSummaryRecord.summaryField] = ""
+        tempRecord[CloudKitSummaryRecord.tasksField] = Data()
+        tempRecord[CloudKitSummaryRecord.remindersField] = Data()
+        tempRecord[CloudKitSummaryRecord.titlesField] = Data()
+        tempRecord[CloudKitSummaryRecord.contentTypeField] = ContentType.general.rawValue
+        tempRecord[CloudKitSummaryRecord.aiMethodField] = "schema"
+        tempRecord[CloudKitSummaryRecord.generatedAtField] = Date()
+        tempRecord[CloudKitSummaryRecord.versionField] = 1
+        tempRecord[CloudKitSummaryRecord.wordCountField] = 0
+        tempRecord[CloudKitSummaryRecord.originalLengthField] = 0
+        tempRecord[CloudKitSummaryRecord.compressionRatioField] = 0.0
+        tempRecord[CloudKitSummaryRecord.confidenceField] = 0.0
+        tempRecord[CloudKitSummaryRecord.processingTimeField] = 0.0
+        tempRecord[CloudKitSummaryRecord.deviceIdentifierField] = deviceIdentifier
+        tempRecord[CloudKitSummaryRecord.lastModifiedField] = Date()
+    
+        do {
+            _ = try await database.save(tempRecord)
+            try await database.deleteRecord(withID: tempID)
+            print("✅ CloudKit schema ensured")
+        } catch {
+            print("⚠️ Failed to set up CloudKit schema: \(error)")
+        }
     }
     
     private func createCloudKitRecord(from summary: EnhancedSummaryData) throws -> CKRecord {
