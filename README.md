@@ -444,7 +444,7 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 ### **Project Structure**
 ```
 Audio Journal/
-├── Audio_JournalApp.swift          # Main app entry point
+├── BisonNotesAIApp.swift          # Main app entry point
 ├── ContentView.swift               # Main UI and tab structure
 ├── Models/
 │   ├── AppDataCoordinator.swift    # Unified data coordination (Core Data only)

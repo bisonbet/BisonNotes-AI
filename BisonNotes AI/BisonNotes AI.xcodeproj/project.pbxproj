@@ -1,0 +1,662 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9072E3F8D5600BBD2FA /* AWSBedrock */; };
+		14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */; };
+		14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90B2E3F8D5600BBD2FA /* AWSS3 */; };
+		14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */; };
+		14FDF9102E3F8D5600BBD2FA /* AWSTranscribeStreaming in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */; };
+		14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		14DBC8502E34F7B600DAD442 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 14DBC83C2E34F7B500DAD442;
+			remoteInfo = "BisonNotes AI";
+		};
+		14DBC85A2E34F7B600DAD442 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 14DBC83C2E34F7B500DAD442;
+			remoteInfo = "BisonNotes AI";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BisonNotes AI.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		14DBC84F2E34F7B600DAD442 /* BisonNotes AITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		14DBC8592E34F7B600DAD442 /* BisonNotes AIUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AIUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		14DBC8812E34FE1800DAD442 /* Exceptions for "BisonNotes AI" folder in "BisonNotes AI" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 14DBC83C2E34F7B500DAD442 /* BisonNotes AI */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		14DBC83F2E34F7B500DAD442 /* BisonNotes AI */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				14DBC8812E34FE1800DAD442 /* Exceptions for "BisonNotes AI" folder in "BisonNotes AI" target */,
+			);
+			path = "BisonNotes AI";
+			sourceTree = "<group>";
+		};
+		14DBC8522E34F7B600DAD442 /* BisonNotes AITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "BisonNotes AITests";
+			sourceTree = "<group>";
+		};
+		14DBC85C2E34F7B600DAD442 /* BisonNotes AIUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "BisonNotes AIUITests";
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		14DBC83A2E34F7B500DAD442 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				14FDF9102E3F8D5600BBD2FA /* AWSTranscribeStreaming in Frameworks */,
+				14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */,
+				14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */,
+				14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */,
+				14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */,
+				14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		14DBC84C2E34F7B600DAD442 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		14DBC8562E34F7B600DAD442 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		14DBC8342E34F7B500DAD442 = {
+			isa = PBXGroup;
+			children = (
+				14DBC83F2E34F7B500DAD442 /* BisonNotes AI */,
+				14DBC8522E34F7B600DAD442 /* BisonNotes AITests */,
+				14DBC85C2E34F7B600DAD442 /* BisonNotes AIUITests */,
+				14DBC83E2E34F7B500DAD442 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		14DBC83E2E34F7B500DAD442 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */,
+				14DBC84F2E34F7B600DAD442 /* BisonNotes AITests.xctest */,
+				14DBC8592E34F7B600DAD442 /* BisonNotes AIUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		14DBC83C2E34F7B500DAD442 /* BisonNotes AI */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 14DBC8632E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AI" */;
+			buildPhases = (
+				14DBC8392E34F7B500DAD442 /* Sources */,
+				14DBC83A2E34F7B500DAD442 /* Frameworks */,
+				14DBC83B2E34F7B500DAD442 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				14DBC83F2E34F7B500DAD442 /* BisonNotes AI */,
+			);
+			name = "BisonNotes AI";
+			packageProductDependencies = (
+				14FDF9072E3F8D5600BBD2FA /* AWSBedrock */,
+				14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */,
+				14FDF90B2E3F8D5600BBD2FA /* AWSS3 */,
+				14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */,
+				14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */,
+				14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */,
+			);
+			productName = "BisonNotes AI";
+			productReference = 14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */;
+			productType = "com.apple.product-type.application";
+		};
+		14DBC84E2E34F7B600DAD442 /* BisonNotes AITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 14DBC8662E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AITests" */;
+			buildPhases = (
+				14DBC84B2E34F7B600DAD442 /* Sources */,
+				14DBC84C2E34F7B600DAD442 /* Frameworks */,
+				14DBC84D2E34F7B600DAD442 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				14DBC8512E34F7B600DAD442 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				14DBC8522E34F7B600DAD442 /* BisonNotes AITests */,
+			);
+			name = "BisonNotes AITests";
+			packageProductDependencies = (
+			);
+			productName = "BisonNotes AITests";
+			productReference = 14DBC84F2E34F7B600DAD442 /* BisonNotes AITests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		14DBC8582E34F7B600DAD442 /* BisonNotes AIUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 14DBC8692E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AIUITests" */;
+			buildPhases = (
+				14DBC8552E34F7B600DAD442 /* Sources */,
+				14DBC8562E34F7B600DAD442 /* Frameworks */,
+				14DBC8572E34F7B600DAD442 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				14DBC85B2E34F7B600DAD442 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				14DBC85C2E34F7B600DAD442 /* BisonNotes AIUITests */,
+			);
+			name = "BisonNotes AIUITests";
+			packageProductDependencies = (
+			);
+			productName = "BisonNotes AIUITests";
+			productReference = 14DBC8592E34F7B600DAD442 /* BisonNotes AIUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		14DBC8352E34F7B500DAD442 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1640;
+				LastUpgradeCheck = 1640;
+				TargetAttributes = {
+					14DBC83C2E34F7B500DAD442 = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					14DBC84E2E34F7B600DAD442 = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = 14DBC83C2E34F7B500DAD442;
+					};
+					14DBC8582E34F7B600DAD442 = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = 14DBC83C2E34F7B500DAD442;
+					};
+				};
+			};
+			buildConfigurationList = 14DBC8382E34F7B500DAD442 /* Build configuration list for PBXProject "BisonNotes AI" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 14DBC8342E34F7B500DAD442;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 14DBC83E2E34F7B500DAD442 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				14DBC83C2E34F7B500DAD442 /* BisonNotes AI */,
+				14DBC84E2E34F7B600DAD442 /* BisonNotes AITests */,
+				14DBC8582E34F7B600DAD442 /* BisonNotes AIUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		14DBC83B2E34F7B500DAD442 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		14DBC84D2E34F7B600DAD442 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		14DBC8572E34F7B600DAD442 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		14DBC8392E34F7B500DAD442 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		14DBC84B2E34F7B600DAD442 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		14DBC8552E34F7B600DAD442 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		14DBC8512E34F7B600DAD442 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 14DBC83C2E34F7B500DAD442 /* BisonNotes AI */;
+			targetProxy = 14DBC8502E34F7B600DAD442 /* PBXContainerItemProxy */;
+		};
+		14DBC85B2E34F7B600DAD442 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 14DBC83C2E34F7B500DAD442 /* BisonNotes AI */;
+			targetProxy = 14DBC85A2E34F7B600DAD442 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		14DBC8612E34F7B600DAD442 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		14DBC8622E34F7B600DAD442 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		14DBC8642E34F7B600DAD442 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI/BisonNotes AI.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				"INFOPLIST_FILE[sdk=iphone*]" = "BisonNotes AI/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI";
+				PRODUCT_NAME = "BisonNotes AI";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		14DBC8652E34F7B600DAD442 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI/BisonNotes AI.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				"INFOPLIST_FILE[sdk=iphone*]" = "BisonNotes AI/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI";
+				PRODUCT_NAME = "BisonNotes AI";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		14DBC8672E34F7B600DAD442 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.Audio-JournalTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BisonNotes AI.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BisonNotes AI";
+			};
+			name = Debug;
+		};
+		14DBC8682E34F7B600DAD442 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.Audio-JournalTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BisonNotes AI.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BisonNotes AI";
+			};
+			name = Release;
+		};
+		14DBC86A2E34F7B600DAD442 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.Audio-JournalUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "BisonNotes AI";
+			};
+			name = Debug;
+		};
+		14DBC86B2E34F7B600DAD442 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.Audio-JournalUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "BisonNotes AI";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		14DBC8382E34F7B500DAD442 /* Build configuration list for PBXProject "BisonNotes AI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				14DBC8612E34F7B600DAD442 /* Debug */,
+				14DBC8622E34F7B600DAD442 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		14DBC8632E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				14DBC8642E34F7B600DAD442 /* Debug */,
+				14DBC8652E34F7B600DAD442 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		14DBC8662E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				14DBC8672E34F7B600DAD442 /* Debug */,
+				14DBC8682E34F7B600DAD442 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		14DBC8692E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AIUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				14DBC86A2E34F7B600DAD442 /* Debug */,
+				14DBC86B2E34F7B600DAD442 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/awslabs/aws-sdk-swift";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 1.5.12;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		14FDF9072E3F8D5600BBD2FA /* AWSBedrock */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
+			productName = AWSBedrock;
+		};
+		14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
+			productName = AWSClientRuntime;
+		};
+		14FDF90B2E3F8D5600BBD2FA /* AWSS3 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
+			productName = AWSS3;
+		};
+		14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
+			productName = AWSTranscribe;
+		};
+		14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
+			productName = AWSTranscribeStreaming;
+		};
+		14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
+			productName = AWSBedrockRuntime;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 14DBC8352E34F7B500DAD442 /* Project object */;
+}

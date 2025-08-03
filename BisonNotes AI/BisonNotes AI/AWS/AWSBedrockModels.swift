@@ -1,0 +1,358 @@
+//
+//  AWSBedrockModels.swift
+//  Audio Journal
+//
+//  AWS Bedrock models and configuration for AI summarization
+//
+
+import Foundation
+
+// MARK: - AWS Bedrock Models
+
+enum AWSBedrockModel: String, CaseIterable {
+    case claude35Sonnet = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+    case claude35Haiku = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+    case llama33_70B = "us.meta.llama3-3-70b-instruct-v1:0"
+    
+    var displayName: String {
+        switch self {
+        case .claude35Sonnet:
+            return "Claude 3.5 Sonnet v2"
+        case .claude35Haiku:
+            return "Claude 3.5 Haiku"
+        case .llama33_70B:
+            return "Llama 3.3 70B Instruct"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .claude35Sonnet:
+            return "Latest Claude 3.5 Sonnet with enhanced reasoning and analysis capabilities"
+        case .claude35Haiku:
+            return "Fast and efficient Claude model optimized for quick responses"
+        case .llama33_70B:
+            return "Meta's large instruction-following model with strong performance"
+        }
+    }
+    
+    var maxTokens: Int {
+        switch self {
+        case .claude35Sonnet, .claude35Haiku:
+            return 8192
+        case .llama33_70B:
+            return 4096
+        }
+    }
+    
+    var contextWindow: Int {
+        switch self {
+        case .claude35Sonnet, .claude35Haiku:
+            return 200000
+        case .llama33_70B:
+            return 128000
+        }
+    }
+    
+    var costTier: String {
+        switch self {
+        case .claude35Sonnet:
+            return "Premium"
+        case .claude35Haiku:
+            return "Economy"
+        case .llama33_70B:
+            return "Standard"
+        }
+    }
+    
+    var provider: String {
+        switch self {
+        case .claude35Sonnet, .claude35Haiku:
+            return "Anthropic"
+        case .llama33_70B:
+            return "Meta"
+        }
+    }
+    
+    var supportsStructuredOutput: Bool {
+        switch self {
+        case .claude35Sonnet, .claude35Haiku:
+            return true
+        case .llama33_70B:
+            return false
+        }
+    }
+}
+
+// MARK: - AWS Bedrock Configuration
+
+struct AWSBedrockConfig: Equatable {
+    let region: String
+    let accessKeyId: String
+    let secretAccessKey: String
+    let sessionToken: String?
+    let model: AWSBedrockModel
+    let temperature: Double
+    let maxTokens: Int
+    let timeout: TimeInterval
+    let useProfile: Bool
+    let profileName: String?
+    
+    static let `default` = AWSBedrockConfig(
+        region: "us-east-1",
+        accessKeyId: "",
+        secretAccessKey: "",
+        sessionToken: nil,
+        model: .claude35Haiku,
+        temperature: 0.1,
+        maxTokens: 4096,
+        timeout: 60.0,
+        useProfile: false,
+        profileName: nil
+    )
+    
+    var isValid: Bool {
+        if useProfile {
+            return !region.isEmpty && profileName != nil && !profileName!.isEmpty
+        } else {
+            return !region.isEmpty && !accessKeyId.isEmpty && !secretAccessKey.isEmpty
+        }
+    }
+}
+
+// MARK: - AWS Bedrock API Request/Response Models
+
+struct AWSBedrockInvokeRequest {
+    let modelId: String
+    let contentType: String
+    let accept: String
+    let body: Data
+    
+    init(modelId: String, body: Data) {
+        self.modelId = modelId
+        self.contentType = "application/json"
+        self.accept = "application/json"
+        self.body = body
+    }
+}
+
+struct AWSBedrockInvokeResponse {
+    let body: Data
+    let contentType: String
+}
+
+// MARK: - Model-Specific Request Bodies
+
+protocol BedrockModelRequest: Codable {
+    // Protocol for Bedrock model requests
+}
+
+// Anthropic Claude 3.5 Models
+struct Claude35Request: BedrockModelRequest {
+    let messages: [Claude35Message]
+    let maxTokens: Int
+    let temperature: Double
+    let topP: Double?
+    let topK: Int?
+    let stopSequences: [String]?
+    let anthropicVersion: String
+    let system: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case messages
+        case maxTokens = "max_tokens"
+        case temperature
+        case topP = "top_p"
+        case topK = "top_k"
+        case stopSequences = "stop_sequences"
+        case anthropicVersion = "anthropic_version"
+        case system
+    }
+    
+    init(messages: [Claude35Message], maxTokens: Int, temperature: Double, system: String? = nil) {
+        self.messages = messages
+        self.maxTokens = maxTokens
+        self.temperature = temperature
+        self.topP = nil
+        self.topK = nil
+        self.stopSequences = nil
+        self.anthropicVersion = "bedrock-2023-05-31"
+        self.system = system
+    }
+}
+
+struct Claude35Message: Codable {
+    let role: String
+    let content: [Claude35Content]
+    
+    init(role: String, text: String) {
+        self.role = role
+        self.content = [Claude35Content(type: "text", text: text)]
+    }
+}
+
+struct Claude35Content: Codable {
+    let type: String
+    let text: String
+}
+
+// Meta Llama Models
+struct LlamaRequest: BedrockModelRequest {
+    let prompt: String
+    let maxGenLen: Int
+    let temperature: Double
+    let topP: Double
+    
+    enum CodingKeys: String, CodingKey {
+        case prompt
+        case maxGenLen = "max_gen_len"
+        case temperature
+        case topP = "top_p"
+    }
+    
+    init(prompt: String, maxTokens: Int, temperature: Double) {
+        self.prompt = prompt
+        self.maxGenLen = maxTokens
+        self.temperature = temperature
+        self.topP = 0.9
+    }
+}
+
+
+// MARK: - Model-Specific Response Bodies
+
+protocol BedrockModelResponse: Codable {
+    var content: String { get }
+}
+
+struct Claude35Response: BedrockModelResponse {
+    let id: String?
+    let type: String?
+    let role: String?
+    let contentArray: [Claude35ResponseContent]
+    let model: String?
+    let stopReason: String?
+    let stopSequence: String?
+    let usage: Claude35Usage?
+    
+    var content: String {
+        return contentArray.compactMap { $0.text }.joined(separator: "")
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, type, role, model
+        case contentArray = "content"
+        case stopReason = "stop_reason"
+        case stopSequence = "stop_sequence"
+        case usage
+    }
+}
+
+struct Claude35ResponseContent: Codable {
+    let type: String
+    let text: String?
+}
+
+struct Claude35Usage: Codable {
+    let inputTokens: Int?
+    let outputTokens: Int?
+    
+    enum CodingKeys: String, CodingKey {
+        case inputTokens = "input_tokens"
+        case outputTokens = "output_tokens"
+    }
+}
+
+struct LlamaResponse: BedrockModelResponse {
+    let generation: String
+    let promptTokenCount: Int?
+    let generationTokenCount: Int?
+    let stopReason: String?
+    
+    var content: String { return generation }
+    
+    enum CodingKeys: String, CodingKey {
+        case generation
+        case promptTokenCount = "prompt_token_count"
+        case generationTokenCount = "generation_token_count"
+        case stopReason = "stop_reason"
+    }
+}
+
+
+// MARK: - AWS Error Response
+
+struct AWSBedrockError: Codable, LocalizedError {
+    let message: String
+    let type: String?
+    let code: String?
+    
+    var errorDescription: String? {
+        return message
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case message
+        case type = "__type"
+        case code
+    }
+}
+
+// MARK: - Model Factory
+
+class AWSBedrockModelFactory {
+    static func createRequest(
+        for model: AWSBedrockModel,
+        prompt: String,
+        systemPrompt: String? = nil,
+        maxTokens: Int,
+        temperature: Double
+    ) -> any BedrockModelRequest {
+        switch model {
+        case .claude35Sonnet, .claude35Haiku:
+            var messages = [Claude35Message]()
+            messages.append(Claude35Message(role: "user", text: prompt))
+            return Claude35Request(
+                messages: messages,
+                maxTokens: maxTokens,
+                temperature: temperature,
+                system: systemPrompt
+            )
+            
+        case .llama33_70B:
+            let formattedPrompt = formatLlamaPrompt(prompt: prompt, systemPrompt: systemPrompt)
+            return LlamaRequest(
+                prompt: formattedPrompt,
+                maxTokens: maxTokens,
+                temperature: temperature
+            )
+        }
+    }
+    
+    static func parseResponse(
+        for model: AWSBedrockModel,
+        data: Data
+    ) throws -> any BedrockModelResponse {
+        let decoder = JSONDecoder()
+        
+        switch model {
+        case .claude35Sonnet, .claude35Haiku:
+            return try decoder.decode(Claude35Response.self, from: data)
+            
+        case .llama33_70B:
+            return try decoder.decode(LlamaResponse.self, from: data)
+        }
+    }
+    
+    private static func formatLlamaPrompt(prompt: String, systemPrompt: String?) -> String {
+        let system = systemPrompt ?? "You are a helpful assistant."
+        return """
+        <|begin_of_text|><|start_header_id|>system<|end_header_id|>
+        
+        \(system)<|eot_id|><|start_header_id|>user<|end_header_id|>
+        
+        \(prompt)<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+        
+        """
+    }
+}
