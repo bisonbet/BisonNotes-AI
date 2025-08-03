@@ -134,7 +134,7 @@ class OpenAISummarizationService: ObservableObject {
             messages: messages,
             temperature: config.temperature,
             maxCompletionTokens: config.maxTokens,
-            responseFormat: ResponseFormat.completeResponseSchema
+            responseFormat: ResponseFormat.json
         )
         
         let response = try await makeAPICall(request: request)

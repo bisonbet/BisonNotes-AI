@@ -9,6 +9,7 @@ import Foundation
 import AVFoundation
 import UIKit
 import SwiftUI
+import CoreData
 
 // MARK: - File Import Manager
 
@@ -22,6 +23,14 @@ class FileImportManager: NSObject, ObservableObject {
     @Published var showingImportAlert = false
     
     private let supportedExtensions = ["m4a", "mp3", "wav"]
+    private let persistenceController: PersistenceController
+    private let context: NSManagedObjectContext
+    
+    override init() {
+        self.persistenceController = PersistenceController.shared
+        self.context = persistenceController.container.viewContext
+        super.init()
+    }
     
     // MARK: - Import Methods
     
@@ -107,6 +116,9 @@ class FileImportManager: NSObject, ObservableObject {
         // Validate the copied file
         try validateAudioFile(at: destinationURL)
         
+        // Create Core Data entry for the imported file
+        try await createRecordingEntryForImportedFile(at: destinationURL)
+        
         print("✅ Successfully imported: \(filename)")
     }
     
@@ -176,6 +188,79 @@ class FileImportManager: NSObject, ObservableObject {
     
     var canImport: Bool {
         return !isImporting
+    }
+    
+    // MARK: - Core Data Integration
+    
+    private func createRecordingEntryForImportedFile(at fileURL: URL) async throws {
+        let recordingName = fileURL.deletingPathExtension().lastPathComponent
+        
+        // Check if recording already exists
+        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "recordingName == %@", recordingName)
+        
+        do {
+            let existingRecordings = try context.fetch(fetchRequest)
+            if !existingRecordings.isEmpty {
+                print("⏭️ Recording entry already exists: \(recordingName)")
+                return
+            }
+        } catch {
+            print("❌ Error checking for existing recording: \(error)")
+            throw ImportError.copyFailed("Failed to check existing recordings: \(error.localizedDescription)")
+        }
+        
+        // Create new recording entry
+        let recordingEntry = RecordingEntry(context: context)
+        recordingEntry.id = UUID()
+        recordingEntry.recordingName = recordingName
+        recordingEntry.recordingURL = fileURL.absoluteString
+        
+        // Get file metadata
+        do {
+            let resourceValues = try fileURL.resourceValues(forKeys: [.creationDateKey, .fileSizeKey])
+            recordingEntry.recordingDate = resourceValues.creationDate ?? Date()
+            recordingEntry.createdAt = resourceValues.creationDate ?? Date()
+            recordingEntry.lastModified = Date()
+            recordingEntry.fileSize = Int64(resourceValues.fileSize ?? 0)
+            
+            // Get duration
+            let duration = await getAudioDuration(url: fileURL)
+            recordingEntry.duration = duration
+            
+        } catch {
+            print("❌ Error getting file metadata: \(error)")
+            recordingEntry.recordingDate = Date()
+            recordingEntry.createdAt = Date()
+            recordingEntry.lastModified = Date()
+            recordingEntry.fileSize = 0
+            recordingEntry.duration = 0
+        }
+        
+        // Set default values
+        recordingEntry.audioQuality = "high"
+        recordingEntry.transcriptionStatus = "Not Started"
+        recordingEntry.summaryStatus = "Not Started"
+        
+        // Save the context
+        do {
+            try context.save()
+            print("✅ Created Core Data entry for imported file: \(recordingName)")
+        } catch {
+            print("❌ Failed to save Core Data entry: \(error)")
+            throw ImportError.copyFailed("Failed to save to database: \(error.localizedDescription)")
+        }
+    }
+    
+    private func getAudioDuration(url: URL) async -> TimeInterval {
+        do {
+            let asset = AVURLAsset(url: url)
+            let duration = try await asset.load(.duration)
+            return CMTimeGetSeconds(duration)
+        } catch {
+            print("❌ Error getting audio duration: \(error)")
+            return 0
+        }
     }
 }
 

@@ -263,6 +263,37 @@ class OllamaService: ObservableObject {
         return RecordingNameGenerator.cleanStandardizedTitleResponse(response)
     }
     
+    private func cleanSummaryResponse(_ response: String) -> String {
+        var cleaned = response
+        
+        // Remove <think> tags and their content using regex
+        let thinkPattern = #"<think>[\s\S]*?</think>"#
+        cleaned = cleaned.replacingOccurrences(
+            of: thinkPattern,
+            with: "",
+            options: .regularExpression
+        )
+        
+        // Remove word count patterns at the end (e.g., "(199 words)", "(200 words)", etc.)
+        let wordCountPattern = #"\s*\(\d+\s+words?\)\s*$"#
+        cleaned = cleaned.replacingOccurrences(
+            of: wordCountPattern,
+            with: "",
+            options: .regularExpression
+        )
+        
+        // Convert \n escape sequences to actual newlines
+        cleaned = cleaned.replacingOccurrences(of: "\\n", with: "\n")
+        
+        // Clean up markdown formatting but preserve readability
+        cleaned = cleanMarkdownFormatting(cleaned)
+        
+        // Don't try to extract JSON - we want the full text response for summaries
+        
+        // Trim whitespace and newlines
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
     // MARK: - AI Processing
     
     func generateSummary(from text: String) async throws -> String {
@@ -281,7 +312,7 @@ class OllamaService: ObservableObject {
         **Summary:**
         """
         
-        return try await generateResponse(prompt: prompt, model: config.modelName)
+        return try await generateResponse(prompt: prompt, model: config.modelName, cleanForJSON: false)
     }
     
     func generateTitle(from text: String) async throws -> String {
@@ -455,7 +486,7 @@ class OllamaService: ObservableObject {
         }
     }
     
-    private func generateResponse(prompt: String, model: String) async throws -> String {
+    private func generateResponse(prompt: String, model: String, cleanForJSON: Bool = true) async throws -> String {
         guard isConnected else {
             throw OllamaError.notConnected
         }
@@ -497,8 +528,8 @@ class OllamaService: ObservableObject {
             let generateResponse = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
             print("✅ OllamaService: Successfully parsed response")
             
-            // Clean up the response by removing <think> tags and their content
-            let cleanedResponse = cleanOllamaResponse(generateResponse.response)
+            // Clean up the response based on the expected format
+            let cleanedResponse = cleanForJSON ? cleanOllamaResponse(generateResponse.response) : cleanSummaryResponse(generateResponse.response)
             print("🔧 OllamaService: Cleaned response (\(cleanedResponse.count) chars)")
             
             return cleanedResponse

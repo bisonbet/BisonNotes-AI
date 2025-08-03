@@ -96,19 +96,18 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     private var awsConfig: AWSTranscribeConfig? {
         guard enableAWSTranscribe else { return nil }
         
-        let accessKey = UserDefaults.standard.string(forKey: "awsAccessKey") ?? ""
-        let secretKey = UserDefaults.standard.string(forKey: "awsSecretKey") ?? ""
-        let region = UserDefaults.standard.string(forKey: "awsRegion") ?? "us-east-1"
+        // Use unified credentials manager instead of separate UserDefaults keys
+        let credentials = AWSCredentialsManager.shared.credentials
         let bucketName = UserDefaults.standard.string(forKey: "awsBucketName") ?? ""
         
-        guard !accessKey.isEmpty && !secretKey.isEmpty && !bucketName.isEmpty else {
+        guard credentials.isValid && !bucketName.isEmpty else {
             return nil
         }
         
         return AWSTranscribeConfig(
-            region: region,
-            accessKey: accessKey,
-            secretKey: secretKey,
+            region: credentials.region,
+            accessKey: credentials.accessKeyId,
+            secretKey: credentials.secretAccessKey,
             bucketName: bucketName
         )
     }
@@ -270,28 +269,47 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     // MARK: - Memory Management
     
     private func checkMemoryPressure() {
-        // Check if we're under memory pressure
-        let memoryPressure = ProcessInfo.processInfo.systemUptime
-        if memoryPressure > 0 {
-            // Force garbage collection if under pressure
+        // Force garbage collection to help with memory management
+        autoreleasepool {
+            // This will help release memory
+        }
+        
+        // Get actual app memory usage (not total device memory)
+        let memoryUsage = getAppMemoryUsage()
+        let memoryUsageMB = memoryUsage / 1024 / 1024
+        print("💾 App memory usage: \(memoryUsageMB) MB")
+        
+        // Only warn about high memory usage, don't cancel transcriptions
+        // iOS will handle memory pressure automatically
+        let warningThresholdMB: UInt64 = 500 // 500 MB warning threshold
+        if memoryUsageMB > warningThresholdMB {
+            print("⚠️ High app memory usage detected (\(memoryUsageMB) MB), but continuing transcription")
+            // Force cleanup without cancelling
             autoreleasepool {
                 // This will help release memory
             }
         }
+    }
+    
+    private func getAppMemoryUsage() -> UInt64 {
+        // Get the current memory usage of this app process
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size)/4
         
-        // Log memory usage for debugging
-        let memoryUsage = ProcessInfo.processInfo.physicalMemory
-        let memoryUsageMB = memoryUsage / 1024 / 1024
-        print("💾 Memory usage: \(memoryUsageMB) MB")
-        
-        // Check if memory usage is too high
-        let maxMemoryMB: UInt64 = 1024 // 1 GB max
-        if memoryUsageMB > maxMemoryMB {
-            print("⚠️ High memory usage detected (\(memoryUsageMB) MB), forcing cleanup")
-            // Force cleanup
-            autoreleasepool {
-                // This will help release memory
+        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+                task_info(mach_task_self_,
+                         task_flavor_t(MACH_TASK_BASIC_INFO),
+                         $0,
+                         &count)
             }
+        }
+        
+        if kerr == KERN_SUCCESS {
+            return UInt64(info.resident_size)
+        } else {
+            // Fallback: return a reasonable estimate
+            return 100 * 1024 * 1024 // 100 MB fallback
         }
     }
     
@@ -350,14 +368,22 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         switch selectedEngine {
         case .awsTranscribe:
             switchToAWSTranscription()
-            if let config = awsConfig {
-                print("☁️ Using AWS Transcribe for transcription")
-                return try await transcribeWithAWS(url: url, config: config)
-            } else {
-                print("⚠️ AWS Transcribe selected but not configured, falling back to Apple Intelligence")
-                switchToAppleTranscription()
-                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+            
+            // Check if AWS Transcribe is configured
+            guard let config = awsConfig else {
+                print("❌ AWS Transcribe selected but not configured")
+                throw TranscriptionError.awsNotConfigured
             }
+            
+            // AWS Transcribe has a maximum limit of 4 hours
+            let maxAWSDuration: TimeInterval = 4 * 60 * 60 // 4 hours in seconds
+            if duration > maxAWSDuration {
+                print("❌ File too large for AWS Transcribe: \(duration/3600) hours (max: 4 hours)")
+                throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxAWSDuration)
+            }
+            
+            print("☁️ Using AWS Transcribe for transcription (duration: \(Int(duration/60)) minutes)")
+            return try await transcribeWithAWS(url: url, config: config)
             
         case .appleIntelligence:
             switchToAppleTranscription()
@@ -985,13 +1011,33 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         let maxSafeChunkDuration: TimeInterval = 300 // 5 minutes max per chunk
         let actualChunkDuration = min(maxChunkDuration, maxSafeChunkDuration)
         
+        // Ensure overlap is smaller than chunk duration to prevent infinite loops
+        let safeOverlap = min(chunkOverlap, actualChunkDuration * 0.1) // Max 10% of chunk duration
+        let minAdvancement: TimeInterval = 1.0 // Minimum 1 second advancement to prevent infinite loops
+        
         while currentStart < duration {
             let currentEnd = min(currentStart + actualChunkDuration, duration)
             chunks.append((start: currentStart, end: currentEnd))
-            currentStart = currentEnd - chunkOverlap
+            
+            // Calculate next start position with safety checks
+            let nextStart = currentEnd - safeOverlap
+            let advancement = nextStart - currentStart
+            
+            // Ensure we always advance by at least the minimum amount to prevent infinite loops
+            if advancement < minAdvancement {
+                currentStart = currentStart + minAdvancement
+            } else {
+                currentStart = nextStart
+            }
+            
+            // Safety check: if we're not making progress, break to prevent infinite loop
+            if currentStart >= currentEnd {
+                print("⚠️ Breaking chunk calculation to prevent infinite loop")
+                break
+            }
         }
         
-        print("📊 Calculated \(chunks.count) chunks with max duration \(actualChunkDuration/60) minutes")
+        print("📊 Calculated \(chunks.count) chunks with max duration \(actualChunkDuration/60) minutes and safe overlap \(safeOverlap)s")
         return chunks
     }
     
@@ -1031,27 +1077,16 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             let jobName = try await awsService.startTranscriptionJob(url: url)
             
             print("✅ AWS Transcribe job started: \(jobName)")
-            print("⏳ Job is running in background. Use checkTranscriptionStatus() to monitor progress.")
+            print("⏳ Polling every 30 seconds for completion...")
             
             // Add job to pending list for background checking
             addPendingJob(jobName, recordingURL: url, recordingName: url.lastPathComponent)
             
-            // Return a result indicating the job is running
-            let transcriptionResult = TranscriptionResult(
-                fullText: "Transcription job started: \(jobName)\n\nJob is running in background. Check status later to retrieve results.",
-                segments: [TranscriptSegment(
-                    speaker: "System",
-                    text: "Transcription job \(jobName) is running in background",
-                    startTime: 0,
-                    endTime: 0
-                )],
-                processingTime: 0,
-                chunkCount: 1,
-                success: true,
-                error: nil
-            )
+            // Start background checking if not already running
+            startBackgroundChecking()
             
-            return transcriptionResult
+            // Now wait for the job to complete by polling
+            return try await waitForAndRetrieveTranscription(jobName: jobName, awsService: awsService)
             
         } catch {
             print("❌ AWS Transcribe failed: \(error)")
@@ -1062,45 +1097,67 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     /// Wait for a transcription job to complete and retrieve the result
     private func waitForAndRetrieveTranscription(jobName: String, awsService: AWSTranscribeService) async throws -> TranscriptionResult {
         let maxWaitTime: TimeInterval = 3600 // 1 hour max wait
-        let checkInterval: TimeInterval = 10 // Check every 10 seconds
         let startTime = Date()
         
+        print("🔄 Starting to poll AWS transcription job: \(jobName)")
+        
         while Date().timeIntervalSince(startTime) < maxWaitTime {
-            let status = try await awsService.checkJobStatus(jobName: jobName)
-            
-            switch status.status {
-            case .completed:
-                print("✅ Transcription job completed, retrieving result...")
-                let awsResult = try await awsService.retrieveTranscript(jobName: jobName)
+            do {
+                let status = try await awsService.checkJobStatus(jobName: jobName)
                 
-                // Convert AWS result to our TranscriptionResult format
-                let transcriptionResult = TranscriptionResult(
-                    fullText: awsResult.transcriptText,
-                    segments: awsResult.segments,
-                    processingTime: awsResult.processingTime,
-                    chunkCount: 1,
-                    success: awsResult.success,
-                    error: awsResult.error
-                )
+                print("📊 Job \(jobName) status: \(status.status.rawValue)")
                 
-                return transcriptionResult
+                switch status.status {
+                case .completed:
+                    print("✅ AWS transcription job completed: \(jobName)")
+                    let awsResult = try await awsService.retrieveTranscript(jobName: jobName)
+                    
+                    // Remove from pending jobs since it's complete
+                    removePendingJob(jobName)
+                    
+                    let transcriptionResult = TranscriptionResult(
+                        fullText: awsResult.transcriptText,
+                        segments: awsResult.segments,
+                        processingTime: Date().timeIntervalSince(startTime),
+                        chunkCount: 1,
+                        success: true,
+                        error: nil
+                    )
+                    
+                    return transcriptionResult
+                    
+                case .failed:
+                    let errorMessage = status.failureReason ?? "Unknown error"
+                    print("❌ AWS transcription job failed: \(errorMessage)")
+                    removePendingJob(jobName)
+                    throw TranscriptionError.awsTranscriptionFailed(NSError(domain: "AWSTranscribe", code: -1, userInfo: [NSLocalizedDescriptionKey: errorMessage]))
+                    
+                case .inProgress:
+                    print("⏳ Job still in progress, waiting 30 seconds...")
+                    // Wait 30 seconds before checking again
+                    try await Task.sleep(nanoseconds: 30_000_000_000)
+                    
+                default:
+                    print("🤔 Unexpected job status: \(status.status.rawValue), continuing to wait...")
+                    try await Task.sleep(nanoseconds: 30_000_000_000)
+                }
                 
-            case .failed:
-                let errorMessage = status.failureReason ?? "Unknown error"
-                print("❌ Transcription job failed: \(errorMessage)")
-                throw TranscriptionError.awsTranscriptionFailed(NSError(domain: "AWSTranscribe", code: -1, userInfo: [NSLocalizedDescriptionKey: errorMessage]))
-                
-            case .inProgress:
-                print("⏳ Transcription job still in progress... (elapsed: \(Int(Date().timeIntervalSince(startTime)))s)")
-                try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
-                
-            default:
-                print("⚠️ Unknown job status: \(status.status.rawValue)")
-                try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
+            } catch {
+                print("⚠️ Error checking job status: \(error), retrying in 30 seconds...")
+                try await Task.sleep(nanoseconds: 30_000_000_000)
             }
         }
         
-        throw TranscriptionError.timeout
+        // If we get here, the job timed out
+        print("⏰ AWS transcription job timed out after \(maxWaitTime/60) minutes")
+        removePendingJob(jobName)
+        throw TranscriptionError.awsTranscriptionFailed(NSError(domain: "AWSTranscribe", code: -2, userInfo: [NSLocalizedDescriptionKey: "Transcription job timed out after \(Int(maxWaitTime/60)) minutes"]))
+    }
+    
+    private func removePendingJob(_ jobName: String) {
+        pendingJobs.removeAll { $0.jobName == jobName }
+        savePendingJobs()
+        print("🗑️ Removed pending job: \(jobName)")
     }
     
     /// Start an async transcription job and return the job name
@@ -1399,12 +1456,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         }
     }
     
-    private func removePendingJob(_ jobName: String) {
-        pendingJobs.removeAll { $0.jobName == jobName }
-        savePendingJobs()
-        print("🗑️ Removed pending job: \(jobName)")
-    }
-    
     private func getPendingJobNames() -> [String] {
         return pendingJobs.map { $0.jobName }
     }
@@ -1680,6 +1731,7 @@ enum TranscriptionError: LocalizedError {
     case timeout
     case fileTooLarge(duration: TimeInterval, maxDuration: TimeInterval)
     case awsTranscriptionFailed(Error)
+    case awsNotConfigured
     case whisperConnectionFailed
     case whisperTranscriptionFailed(Error)
     case openAITranscriptionFailed(Error)
@@ -1702,6 +1754,8 @@ enum TranscriptionError: LocalizedError {
             return "Transcription timed out"
         case .awsTranscriptionFailed(let error):
             return "AWS Transcribe failed: \(error.localizedDescription)"
+        case .awsNotConfigured:
+            return "AWS Transcribe is not properly configured. Please check your AWS credentials in settings."
         case .whisperConnectionFailed:
             return "Failed to connect to Whisper service"
         case .whisperTranscriptionFailed(let error):

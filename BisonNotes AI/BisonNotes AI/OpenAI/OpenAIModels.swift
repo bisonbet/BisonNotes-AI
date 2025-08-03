@@ -201,10 +201,13 @@ struct JSONSchema: Codable {
         try container.encode(name, forKey: .name)
         try container.encode(strict, forKey: .strict)
         
-        // Convert [String: Any] to JSON Data and back to handle encoding
-        let jsonData = try JSONSerialization.data(withJSONObject: schema)
-        let jsonObject = try JSONSerialization.jsonObject(with: jsonData)
-        try container.encode(AnyCodable(jsonObject), forKey: .schema)
+        // Encode the schema as a raw JSON object
+        let jsonData = try JSONSerialization.data(withJSONObject: schema, options: [])
+        if let jsonObject = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any] {
+            try container.encode(AnyCodable(jsonObject), forKey: .schema)
+        } else {
+            try container.encode(schema.mapValues { AnyCodable($0) }, forKey: .schema)
+        }
     }
     
     init(from decoder: Decoder) throws {

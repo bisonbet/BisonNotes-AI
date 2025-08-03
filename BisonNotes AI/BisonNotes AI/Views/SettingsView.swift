@@ -801,8 +801,8 @@ struct SettingsView: View {
                     showingDataMigration = true
                 }) {
                     HStack {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                        Text("Fix Database")
+                        Image(systemName: "wrench.and.screwdriver")
+                        Text("Database Tools")
                     }
                     .font(.caption)
                     .foregroundColor(.white)

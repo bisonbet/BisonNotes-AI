@@ -96,8 +96,6 @@ final class AISettingsViewModel: ObservableObject {
             let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
             return !apiKey.isEmpty && isEnabled
         case .awsBedrock:
-            let accessKeyId = UserDefaults.standard.string(forKey: "awsBedrockAccessKeyId") ?? ""
-            let secretAccessKey = UserDefaults.standard.string(forKey: "awsBedrockSecretAccessKey") ?? ""
             let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
             let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
             let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
@@ -105,7 +103,9 @@ final class AISettingsViewModel: ObservableObject {
             if useProfile {
                 return !profileName.isEmpty && isEnabled
             } else {
-                return !accessKeyId.isEmpty && !secretAccessKey.isEmpty && isEnabled
+                // Use unified credentials manager instead of separate UserDefaults keys
+                let credentials = AWSCredentialsManager.shared.credentials
+                return credentials.isValid && isEnabled
             }
         }
     }
@@ -194,8 +194,6 @@ struct AISettingsView: View {
             let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
             return !apiKey.isEmpty && isEnabled
         case .awsBedrock:
-            let accessKeyId = UserDefaults.standard.string(forKey: "awsBedrockAccessKeyId") ?? ""
-            let secretAccessKey = UserDefaults.standard.string(forKey: "awsBedrockSecretAccessKey") ?? ""
             let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
             let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
             let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
@@ -203,7 +201,9 @@ struct AISettingsView: View {
             if useProfile {
                 return !profileName.isEmpty && isEnabled
             } else {
-                return !accessKeyId.isEmpty && !secretAccessKey.isEmpty && isEnabled
+                // Use unified credentials manager instead of separate UserDefaults keys
+                let credentials = AWSCredentialsManager.shared.credentials
+                return credentials.isValid && isEnabled
             }
         }
     }

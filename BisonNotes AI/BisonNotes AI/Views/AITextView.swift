@@ -1,11 +1,65 @@
 import SwiftUI
 
+enum AIService {
+    case googleAI
+    case openAI  
+    case bedrock
+    case ollama
+    case appleIntelligence
+    case whisper
+    
+    var description: String {
+        switch self {
+        case .googleAI:
+            return "google"
+        case .openAI:
+            return "openai"
+        case .bedrock:
+            return "bedrock"
+        case .ollama:
+            return "ollama"
+        case .appleIntelligence:
+            return "apple"
+        case .whisper:
+            return "whisper"
+        }
+    }
+    
+    /// Maps an AI method string to the appropriate AIService
+    static func from(aiMethod: String) -> AIService {
+        let lowercased = aiMethod.lowercased()
+        
+        if lowercased.contains("google") || lowercased.contains("gemini") {
+            return .googleAI
+        } else if lowercased.contains("openai") || lowercased.contains("gpt") {
+            return .openAI
+        } else if lowercased.contains("bedrock") || lowercased.contains("claude") {
+            return .bedrock
+        } else if lowercased.contains("ollama") {
+            return .ollama
+        } else if lowercased.contains("apple") || lowercased.contains("intelligence") {
+            return .appleIntelligence
+        } else if lowercased.contains("whisper") {
+            return .whisper
+        } else {
+            // Default to standard processor for unknown services
+            return .bedrock
+        }
+    }
+}
+
 struct AITextView: View {
     let text: String
+    let aiService: AIService
+    
+    init(text: String, aiService: AIService = .googleAI) {
+        self.text = text
+        self.aiService = aiService
+    }
     
     var body: some View {
-        // Use the enhanced Google AI content renderer for better header and bullet point styling
-        googleAIContentText(text)
+        // Use the unified robust markdown renderer for all AI services
+        unifiedRobustMarkdownText(text, aiService: aiService.description)
             .lineSpacing(4)
     }
     
@@ -153,6 +207,6 @@ struct AITextView: View {
 }
 
 #Preview {
-    AITextView(text: "- **President Trump** is in Scotland, meeting with **Ursula von der Leyen** and **Keir Starmer**, leveraging his **Scottish heritage** and **royal admiration** to foster diplomatic ties.  \\n- **Anti-Trump protests** have erupted in multiple UK cities amid his visit.  \\n- **Secretary of State Marco Rubio** condemned **Hong Kong's arrest warrants** targeting **US-based activists**, accusing the government of eroding autonomy and threatening **American citizens**.")
+    AITextView(text: "- **President Trump** is in Scotland, meeting with **Ursula von der Leyen** and **Keir Starmer**, leveraging his **Scottish heritage** and **royal admiration** to foster diplomatic ties.  \\n- **Anti-Trump protests** have erupted in multiple UK cities amid his visit.  \\n- **Secretary of State Marco Rubio** condemned **Hong Kong's arrest warrants** targeting **US-based activists**, accusing the government of eroding autonomy and threatening **American citizens**.", aiService: .googleAI)
         .padding()
 } 

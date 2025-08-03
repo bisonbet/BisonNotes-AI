@@ -718,6 +718,26 @@ class SummaryManager: ObservableObject {
         return engine.name
     }
     
+    private func syncCurrentEngineWithSettings() {
+        let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "None"
+        
+        // If "None" is selected, clear current engine
+        if selectedEngineName == "None" {
+            currentEngine = nil
+            return
+        }
+        
+        // If current engine doesn't match the selected engine, update it
+        if currentEngine?.name != selectedEngineName {
+            if let selectedEngine = availableEngines[selectedEngineName], selectedEngine.isAvailable {
+                currentEngine = selectedEngine
+                print("🔄 SummaryManager: Synced current engine to '\(selectedEngineName)' from settings")
+            } else {
+                print("⚠️ SummaryManager: Selected engine '\(selectedEngineName)' not available, keeping current engine")
+            }
+        }
+    }
+    
     func getEngineInfo(for engineName: String) -> (description: String, isAvailable: Bool, version: String)? {
         // First try to get from initialized engines
         if let engine = availableEngines[engineName] {
@@ -1129,6 +1149,9 @@ class SummaryManager: ObservableObject {
             handleError(validationError, context: "Input Validation", recordingName: recordingName)
             throw validationError
         }
+        
+        // Ensure we're using the currently selected engine from settings
+        syncCurrentEngineWithSettings()
         
         let engineToUse: SummarizationEngine?
 

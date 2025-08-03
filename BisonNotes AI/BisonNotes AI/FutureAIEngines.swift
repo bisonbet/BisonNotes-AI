@@ -20,12 +20,6 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
     private var currentConfig: AWSBedrockConfig?
     
     var isAvailable: Bool {
-        // Check if AWS credentials are configured
-        let accessKeyId = UserDefaults.standard.string(forKey: "awsBedrockAccessKeyId") ?? ""
-        let secretAccessKey = UserDefaults.standard.string(forKey: "awsBedrockSecretAccessKey") ?? ""
-        let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
-        let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
-        
         // Check if AWS Bedrock is enabled in settings
         let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
         let keyExists = UserDefaults.standard.object(forKey: "enableAWSBedrock") != nil
@@ -43,6 +37,10 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
             return false
         }
         
+        // Check credentials using unified credentials manager
+        let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
+        let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
+        
         // Check credentials based on authentication method
         if useProfile {
             guard !profileName.isEmpty else {
@@ -52,9 +50,11 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
                 return false
             }
         } else {
-            guard !accessKeyId.isEmpty && !secretAccessKey.isEmpty else {
+            // Use unified credentials manager instead of separate UserDefaults keys
+            let credentials = AWSCredentialsManager.shared.credentials
+            guard credentials.isValid else {
                 if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                    AppLogger.shared.verbose("AWS credentials not configured", category: "AWSBedrockEngine")
+                    AppLogger.shared.verbose("AWS credentials not configured in unified manager", category: "AWSBedrockEngine")
                 }
                 return false
             }
@@ -191,10 +191,9 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
     // MARK: - Configuration Management
     
     private func updateConfiguration() {
-        let accessKeyId = UserDefaults.standard.string(forKey: "awsBedrockAccessKeyId") ?? ""
-        let secretAccessKey = UserDefaults.standard.string(forKey: "awsBedrockSecretAccessKey") ?? ""
+        // Use unified credentials manager instead of separate UserDefaults keys
+        let credentials = AWSCredentialsManager.shared.credentials
         let sessionToken = UserDefaults.standard.string(forKey: "awsBedrockSessionToken")
-        let region = UserDefaults.standard.string(forKey: "awsBedrockRegion") ?? "us-east-1"
         let modelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude35Haiku.rawValue
         let temperature = UserDefaults.standard.double(forKey: "awsBedrockTemperature")
         let maxTokens = UserDefaults.standard.integer(forKey: "awsBedrockMaxTokens")
@@ -204,9 +203,9 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
         let model = AWSBedrockModel(rawValue: modelString) ?? .claude35Haiku
         
         let newConfig = AWSBedrockConfig(
-            region: region,
-            accessKeyId: accessKeyId,
-            secretAccessKey: secretAccessKey,
+            region: credentials.region,
+            accessKeyId: credentials.accessKeyId,
+            secretAccessKey: credentials.secretAccessKey,
             sessionToken: sessionToken,
             model: model,
             temperature: temperature > 0 ? temperature : 0.1,
@@ -220,7 +219,7 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
         if currentConfig == nil || currentConfig != newConfig {
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Updating configuration - Model: \(modelString), Region: \(region)", category: "AWSBedrockEngine")
+                AppLogger.shared.verbose("Updating configuration - Model: \(modelString), Region: \(credentials.region)", category: "AWSBedrockEngine")
             }
             
             self.currentConfig = newConfig

@@ -326,6 +326,29 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         stopPlayingTimer()
     }
     
+    /// Seek to a specific time in the current audio playback
+    func seekToTime(_ time: TimeInterval) {
+        guard let player = audioPlayer else { return }
+        player.currentTime = min(max(time, 0), player.duration)
+        playingTime = player.currentTime
+    }
+    
+    /// Get the current playback time
+    func getCurrentTime() -> TimeInterval {
+        return audioPlayer?.currentTime ?? 0
+    }
+    
+    /// Get the total duration of the current audio
+    func getDuration() -> TimeInterval {
+        return audioPlayer?.duration ?? 0
+    }
+    
+    /// Get the current playback progress as a percentage (0.0 to 1.0)
+    func getPlaybackProgress() -> Double {
+        guard let player = audioPlayer, player.duration > 0 else { return 0.0 }
+        return player.currentTime / player.duration
+    }
+    
     private func startRecordingTimer() {
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
@@ -340,9 +363,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     }
     
     private func startPlayingTimer() {
-        playingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        playingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
-                self?.playingTime += 1
+                guard let self = self, let player = self.audioPlayer else { return }
+                self.playingTime = player.currentTime
             }
         }
     }

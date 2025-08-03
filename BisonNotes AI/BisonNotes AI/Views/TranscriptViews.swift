@@ -28,6 +28,7 @@ struct TranscriptsView: View {
     @AppStorage("showTranscriptionProgress") private var showTranscriptionProgress: Bool = true
     @State private var refreshTimer: Timer?
     @State private var isShowingAlert = false
+    @State private var userDismissedProgress = false
     
     var body: some View {
         NavigationView {
@@ -57,6 +58,7 @@ struct TranscriptsView: View {
                     },
                     onDone: {
                         showingTranscriptionProgress = false
+                        userDismissedProgress = true
                         // Transcription continues in background
                     }
                 )
@@ -320,6 +322,7 @@ struct TranscriptsView: View {
     
     private func generateTranscript(for recording: RecordingEntry) {
         isGeneratingTranscript = true
+        userDismissedProgress = false  // Reset flag for new transcription
         
         // First request speech recognition permission
         SFSpeechRecognizer.requestAuthorization { authStatus in
@@ -493,11 +496,13 @@ struct TranscriptsView: View {
                         try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
                     }
                     
-                    // Only show alert if not already showing one
-                    if !self.isShowingAlert {
+                    // Only show alert if not already showing one and user didn't manually dismiss progress
+                    if !self.isShowingAlert && !self.userDismissedProgress {
                         // Show completion alert
                         self.completedTranscriptionText = "Transcription completed for: \(recording.recording.recordingName ?? "Unknown Recording")"
                         self.showingTranscriptionCompletionAlert = true
+                    } else if self.userDismissedProgress {
+                        print("ℹ️ User dismissed progress manually, skipping completion alert")
                     }
                 } else {
                     print("❌ Could not find recording for completed transcription")
@@ -571,11 +576,13 @@ struct TranscriptsView: View {
                         try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
                     }
                     
-                    // Only show alert if not already showing one
-                    if !self.isShowingAlert {
+                    // Only show alert if not already showing one and user didn't manually dismiss progress
+                    if !self.isShowingAlert && !self.userDismissedProgress {
                         // Show completion alert
                         self.completedTranscriptionText = "Transcription completed for: \(recording.recording.recordingName ?? "Unknown Recording")"
                         self.showingTranscriptionCompletionAlert = true
+                    } else if self.userDismissedProgress {
+                        print("ℹ️ User dismissed progress manually, skipping completion alert")
                     }
                 } else {
                     print("❌ No matching recording found for job: \(jobInfo.recordingName)")

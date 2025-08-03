@@ -233,7 +233,7 @@ struct SummaryDetailView: View {
             }
             .padding(.bottom, 8)
             
-            AITextView(text: summaryData.summary)
+            AITextView(text: summaryData.summary, aiService: AIService.from(aiMethod: summaryData.aiMethod))
                 .font(.body)
                 .lineSpacing(4)
                 .padding(.top, 4)

@@ -423,6 +423,398 @@ struct MarkdownRenderer {
         return createGoogleAICustomFormattedString(from: cleanedContent)
     }
     
+    // MARK: - Unified Robust Markdown Renderer
+    
+    /// Universal robust markdown renderer that handles all AI service formats
+    /// Combines the best features from Google AI, enhanced, and standard renderers
+    static func renderUnifiedRobustMarkdown(_ content: String, aiService: String = "") -> AttributedString {
+        print("🚀 UnifiedMarkdownRenderer: Starting to render content from \(aiService)")
+        print("📝 Input content: \(content.prefix(200))...")
+        
+        // Step 1: Comprehensive preprocessing
+        let preprocessedContent = comprehensivePreprocessing(content, aiService: aiService)
+        
+        // Step 2: Use robust custom formatting for better control over newlines and spacing
+        print("🎯 Using unified custom formatter for optimal rendering")
+        return createUnifiedCustomFormattedString(from: preprocessedContent)
+    }
+    
+    /// Comprehensive preprocessing that handles all AI service formats
+    private static func comprehensivePreprocessing(_ content: String, aiService: String) -> String {
+        var processed = content
+        
+        // Step 1: Handle escape sequences and basic cleanup
+        processed = processed.replacingOccurrences(of: "\\n", with: "\n")
+        processed = processed.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Step 2: Service-specific preprocessing
+        switch aiService.lowercased() {
+        case let service where service.contains("google") || service.contains("gemini"):
+            processed = preprocessGoogleAIContent(processed)
+        case let service where service.contains("openai") || service.contains("gpt"):
+            processed = preprocessOpenAIContent(processed)
+        case let service where service.contains("bedrock") || service.contains("claude"):
+            processed = preprocessBedrockContent(processed)
+        case let service where service.contains("ollama"):
+            processed = preprocessOllamaContent(processed)
+        default:
+            processed = preprocessGenericAIContent(processed)
+        }
+        
+        // Step 3: Universal structural fixes
+        processed = applyUniversalStructuralFixes(processed)
+        
+        // Step 4: Final cleanup
+        processed = finalCleanup(processed)
+        
+        print("🔧 Preprocessed content sample: \(processed.prefix(300))")
+        return processed
+    }
+    
+    /// Google AI specific preprocessing
+    private static func preprocessGoogleAIContent(_ content: String) -> String {
+        var processed = content
+        
+        // Handle Google AI's bullet point format - ensure proper spacing
+        processed = processed.replacingOccurrences(of: "• ", with: "- ")
+        processed = processed.replacingOccurrences(of: "\n• ", with: "\n- ")
+        
+        // Fix Google AI's tendency to create unstructured content
+        if !processed.contains("\n") {
+            processed = aggressivelyRestructureContent(processed)
+        }
+        
+        // Handle Google AI's bold text patterns
+        processed = processed.replacingOccurrences(of: "\\*\\*([^*]+)\\*\\*", with: "**$1**", options: .regularExpression)
+        
+        return processed
+    }
+    
+    /// OpenAI specific preprocessing
+    private static func preprocessOpenAIContent(_ content: String) -> String {
+        var processed = content
+        
+        // OpenAI often uses proper markdown, but may have spacing issues
+        processed = processed.replacingOccurrences(of: "\n-", with: "\n\n-")
+        processed = processed.replacingOccurrences(of: "\n\\*", with: "\n\n*", options: .regularExpression)
+        processed = processed.replacingOccurrences(of: "\n\\d+\\.", with: "\n\n$0", options: .regularExpression)
+        
+        return processed
+    }
+    
+    /// AWS Bedrock/Claude specific preprocessing
+    private static func preprocessBedrockContent(_ content: String) -> String {
+        var processed = content
+        
+        // Bedrock/Claude typically uses good markdown, so minimal preprocessing
+        // Only fix spacing around lists after sentences
+        processed = processed.replacingOccurrences(of: "([.!?])\\s*\\n\\s*-", with: "$1\n\n-", options: .regularExpression)
+        processed = processed.replacingOccurrences(of: "([.!?])\\s*\\n\\s*•", with: "$1\n\n•", options: .regularExpression)
+        
+        return processed
+    }
+    
+    /// Ollama specific preprocessing
+    private static func preprocessOllamaContent(_ content: String) -> String {
+        var processed = content
+        
+        // Ollama models vary, so apply general fixes
+        processed = preprocessGenericAIContent(processed)
+        
+        return processed
+    }
+    
+    /// Generic AI content preprocessing
+    private static func preprocessGenericAIContent(_ content: String) -> String {
+        var processed = content
+        
+        // Handle common AI patterns
+        processed = processed.replacingOccurrences(of: "([.!?])\\s*\\n\\s*([A-Z])", with: "$1\n\n$2", options: .regularExpression)
+        processed = processed.replacingOccurrences(of: "([a-z])([A-Z])(?![*])", with: "$1 $2", options: .regularExpression)
+        
+        return processed
+    }
+    
+    /// Apply universal structural fixes that work for all services
+    private static func applyUniversalStructuralFixes(_ content: String) -> String {
+        var processed = content
+        
+        // Only apply minimal fixes to avoid breaking properly formatted content
+        // Handle mixed bullet point styles (normalize to -)
+        processed = processed.replacingOccurrences(of: "\\n\\* ", with: "\n- ", options: .regularExpression)
+        processed = processed.replacingOccurrences(of: "^\\* ", with: "- ", options: .regularExpression)
+        
+        return processed
+    }
+    
+    /// Final cleanup pass
+    private static func finalCleanup(_ content: String) -> String {
+        var processed = content
+        
+        // Remove excessive newlines (more than 2 consecutive)
+        processed = processed.replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+        
+        // Remove excessive spaces (more than single space)
+        processed = processed.replacingOccurrences(of: " {2,}", with: " ", options: .regularExpression)
+        
+        // Remove trailing whitespace from lines
+        processed = processed.replacingOccurrences(of: " +\\n", with: "\n", options: .regularExpression)
+        
+        // Final trim
+        processed = processed.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        return processed
+    }
+    
+    /// Creates a unified custom formatted string with the best features from all renderers
+    private static func createUnifiedCustomFormattedString(from content: String) -> AttributedString {
+        var attributedString = AttributedString()
+        
+        let lines = content.components(separatedBy: .newlines)
+        
+        for (index, line) in lines.enumerated() {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            
+            if trimmedLine.isEmpty {
+                // Add paragraph breaks for empty lines
+                attributedString.append(AttributedString("\n"))
+                continue
+            }
+            
+            // Enhanced header handling with better typography
+            if let headerLevel = getHeaderLevel(trimmedLine) {
+                let text = getHeaderText(trimmedLine, level: headerLevel)
+                var headerString = AttributedString(text)
+                
+                switch headerLevel {
+                case 1:
+                    headerString.font = .largeTitle.weight(.bold)
+                    headerString.foregroundColor = .primary
+                case 2:
+                    headerString.font = .title.weight(.bold)
+                    headerString.foregroundColor = .primary
+                case 3:
+                    headerString.font = .title2.weight(.semibold)
+                    headerString.foregroundColor = .primary
+                default:
+                    headerString.font = .title3.weight(.medium)
+                    headerString.foregroundColor = .primary
+                }
+                
+                // Add proper spacing before header
+                if !attributedString.characters.isEmpty {
+                    attributedString.append(AttributedString("\n\n"))
+                }
+                
+                attributedString.append(headerString)
+                attributedString.append(AttributedString("\n"))
+                
+                // Add visual separator for level 3 headers
+                if headerLevel == 3 {
+                    var separatorString = AttributedString("─")
+                    separatorString.font = .caption
+                    separatorString.foregroundColor = .secondary
+                    attributedString.append(separatorString)
+                    attributedString.append(AttributedString("\n"))
+                }
+                
+                // Add spacing after header
+                attributedString.append(AttributedString("\n"))
+                
+            } else if isListItem(trimmedLine) {
+                // Enhanced list handling
+                let (listType, content) = parseListItem(trimmedLine)
+                
+                var bulletString: AttributedString
+                switch listType {
+                case .bullet:
+                    bulletString = AttributedString("• ")
+                    bulletString.foregroundColor = .accentColor
+                case .numbered(let number):
+                    bulletString = AttributedString("\(number). ")
+                    bulletString.foregroundColor = .accentColor
+                    bulletString.font = .body.weight(.medium)
+                }
+                
+                bulletString.font = .body
+                attributedString.append(bulletString)
+                
+                // Process content with enhanced inline formatting
+                let formattedContent = processAdvancedInlineFormatting(content)
+                attributedString.append(formattedContent)
+                attributedString.append(AttributedString("\n"))
+                
+            } else {
+                // Regular text with advanced inline formatting
+                let formattedText = processAdvancedInlineFormatting(trimmedLine)
+                attributedString.append(formattedText)
+                
+                // Smart spacing based on context - ensure proper line breaks
+                if index < lines.count - 1 {
+                    let nextLine = lines[index + 1].trimmingCharacters(in: .whitespaces)
+                    if nextLine.isEmpty {
+                        // Next line is empty, add double line break
+                        attributedString.append(AttributedString("\n\n"))
+                    } else if isListItem(nextLine) || isHeader(nextLine) {
+                        // Next line is special element, add single line break with space
+                        attributedString.append(AttributedString("\n\n"))
+                    } else {
+                        // Next line is regular text, add single line break with space
+                        attributedString.append(AttributedString("\n\n"))
+                    }
+                } else {
+                    // Last line, add final line break
+                    attributedString.append(AttributedString("\n"))
+                }
+            }
+        }
+        
+        return attributedString
+    }
+    
+    // MARK: - Advanced Helper Methods
+    
+    private static func isListItem(_ line: String) -> Bool {
+        return line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("• ") || line.matches("^\\d+\\. ")
+    }
+    
+    private static func isHeader(_ line: String) -> Bool {
+        return line.hasPrefix("#")
+    }
+    
+    private static func getHeaderLevel(_ line: String) -> Int? {
+        if line.hasPrefix("### ") { return 3 }
+        if line.hasPrefix("## ") { return 2 }
+        if line.hasPrefix("# ") { return 1 }
+        return nil
+    }
+    
+    private static func getHeaderText(_ line: String, level: Int) -> String {
+        let prefixLength = level + 1 // # + space
+        return String(line.dropFirst(prefixLength))
+    }
+    
+    private enum ListType {
+        case bullet
+        case numbered(Int)
+    }
+    
+    private static func parseListItem(_ line: String) -> (ListType, String) {
+        if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("• ") {
+            return (.bullet, String(line.dropFirst(2)))
+        } else if line.matches("^\\d+\\. ") {
+            let components = line.components(separatedBy: ". ")
+            if let numberString = components.first, let number = Int(numberString) {
+                let content = components.dropFirst().joined(separator: ". ")
+                return (.numbered(number), content)
+            }
+        }
+        return (.bullet, line)
+    }
+    
+    /// Advanced inline formatting processor that handles complex patterns
+    private static func processAdvancedInlineFormatting(_ text: String) -> AttributedString {
+        var attributedString = AttributedString()
+        var currentIndex = text.startIndex
+        
+        while currentIndex < text.endIndex {
+            // Look for bold text (double asterisks)
+            if let boldMatch = findBoldMatch(in: text, startingAt: currentIndex) {
+                // Add text before bold
+                if boldMatch.range.lowerBound > currentIndex {
+                    let beforeText = String(text[currentIndex..<boldMatch.range.lowerBound])
+                    attributedString.append(AttributedString(beforeText))
+                }
+                
+                // Add bold text (content without the ** markers)
+                var boldString = AttributedString(boldMatch.content)
+                boldString.font = .body.weight(.bold)
+                attributedString.append(boldString)
+                
+                currentIndex = boldMatch.range.upperBound
+                continue
+            }
+            
+            // Look for italic text (single asterisk)
+            if let italicMatch = findItalicMatch(in: text, startingAt: currentIndex) {
+                // Add text before italic
+                if italicMatch.range.lowerBound > currentIndex {
+                    let beforeText = String(text[currentIndex..<italicMatch.range.lowerBound])
+                    attributedString.append(AttributedString(beforeText))
+                }
+                
+                // Add italic text (content without the * markers)
+                var italicString = AttributedString(italicMatch.content)
+                italicString.font = .body.italic()
+                attributedString.append(italicString)
+                
+                currentIndex = italicMatch.range.upperBound
+                continue
+            }
+            
+            // No more formatting found - add remaining text
+            let remainingText = String(text[currentIndex...])
+            attributedString.append(AttributedString(remainingText))
+            break
+        }
+        
+        return attributedString
+    }
+    
+    private struct FormatMatch {
+        let range: Range<String.Index>
+        let content: String
+    }
+    
+    private static func findBoldMatch(in text: String, startingAt start: String.Index) -> FormatMatch? {
+        // Look for **text** pattern
+        if let startRange = text[start...].range(of: "**") {
+            let afterStart = startRange.upperBound
+            if let endRange = text[afterStart...].range(of: "**") {
+                let content = String(text[afterStart..<endRange.lowerBound])
+                if !content.isEmpty {
+                    let fullRange = startRange.lowerBound..<endRange.upperBound
+                    return FormatMatch(range: fullRange, content: content)
+                }
+            }
+        }
+        return nil
+    }
+    
+    private static func findItalicMatch(in text: String, startingAt start: String.Index) -> FormatMatch? {
+        // Look for *text* pattern (but not ** which is bold)
+        var searchStart = start
+        while let startIdx = text[searchStart...].firstIndex(of: "*") {
+            // Check if it's not part of a ** pattern
+            let beforeIdx = startIdx > text.startIndex ? text.index(before: startIdx) : text.startIndex
+            let afterIdx = text.index(after: startIdx)
+            
+            let isPartOfBold = (beforeIdx != text.startIndex && text[beforeIdx] == "*") ||
+                              (afterIdx < text.endIndex && text[afterIdx] == "*")
+            
+            if !isPartOfBold {
+                // Look for closing *
+                if let endIdx = text[afterIdx...].firstIndex(of: "*") {
+                    let afterEndIdx = text.index(after: endIdx)
+                    let isEndPartOfBold = afterEndIdx < text.endIndex && text[afterEndIdx] == "*"
+                    
+                    if !isEndPartOfBold {
+                        let content = String(text[afterIdx..<endIdx])
+                        if !content.isEmpty {
+                            let fullRange = startIdx..<text.index(after: endIdx)
+                            return FormatMatch(range: fullRange, content: content)
+                        }
+                    }
+                }
+            }
+            
+            searchStart = text.index(after: startIdx)
+            if searchStart >= text.endIndex { break }
+        }
+        
+        return nil
+    }
+    
     /// Cleans Google AI content for better rendering
     private static func cleanGoogleAIContent(_ content: String) -> String {
         var cleaned = content
@@ -696,6 +1088,14 @@ extension View {
     /// Displays Google AI content with enhanced styling for headers and bullet points
     func googleAIContentText(_ content: String) -> some View {
         let attributedString = MarkdownRenderer.renderGoogleAIContent(content)
+        
+        return Text(attributedString)
+            .textSelection(.enabled)
+    }
+    
+    /// Displays AI content using the unified robust markdown renderer
+    func unifiedRobustMarkdownText(_ content: String, aiService: String = "") -> some View {
+        let attributedString = MarkdownRenderer.renderUnifiedRobustMarkdown(content, aiService: aiService)
         
         return Text(attributedString)
             .textSelection(.enabled)

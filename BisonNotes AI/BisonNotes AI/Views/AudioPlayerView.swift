@@ -29,28 +29,64 @@ struct AudioPlayerView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
             
+            Spacer()
+            
+            // Audio scrubber with progress and seek functionality
             if duration > 0 {
-                Text("Duration: \(formatTime(duration))")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                AudioScrubber(
+                    currentTime: recorderVM.playingTime,
+                    duration: duration,
+                    onSeek: { time in
+                        recorderVM.seekToTime(time)
+                    }
+                )
+                .padding(.horizontal)
             } else {
-                Text("Loading duration...")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                // Loading state
+                VStack {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                    Text("Loading audio...")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .frame(height: 50)
             }
             
-            Button(action: togglePlayback) {
-                HStack {
-                    Image(systemName: recorderVM.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.title)
-                    Text(recorderVM.isPlaying ? "Pause" : "Play")
-                        .font(.title2)
+            // Playback controls
+            HStack(spacing: 30) {
+                // Skip backward 15 seconds
+                Button(action: skipBackward) {
+                    VStack {
+                        Image(systemName: "gobackward.15")
+                            .font(.title2)
+                        Text("15s")
+                            .font(.caption2)
+                    }
                 }
-                .foregroundColor(.white)
-                .padding()
-                .background(Color.accentColor)
-                .cornerRadius(10)
+                .foregroundColor(.accentColor)
+                
+                // Main play/pause button
+                Button(action: togglePlayback) {
+                    Image(systemName: recorderVM.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 60))
+                        .foregroundColor(.accentColor)
+                }
+                
+                // Skip forward 15 seconds
+                Button(action: skipForward) {
+                    VStack {
+                        Image(systemName: "goforward.15")
+                            .font(.title2)
+                        Text("15s")
+                            .font(.caption2)
+                    }
+                }
+                .foregroundColor(.accentColor)
             }
+            .padding()
+            
+            Spacer()
             
             Button("Close") {
                 if recorderVM.isPlaying {
@@ -60,8 +96,6 @@ struct AudioPlayerView: View {
             }
             .font(.headline)
             .padding()
-            
-            Spacer()
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -104,19 +138,16 @@ struct AudioPlayerView: View {
         }
     }
     
-    private func seekBackward() {
-        // Restart from beginning since AudioRecorderViewModel doesn't have seek functionality
-        if recorderVM.isPlaying {
-            recorderVM.stopPlaying()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                recorderVM.playRecording(url: recording.url)
-            }
-        }
+    private func skipBackward() {
+        let currentTime = recorderVM.getCurrentTime()
+        let newTime = max(currentTime - 15.0, 0)
+        recorderVM.seekToTime(newTime)
     }
     
-    private func seekForward() {
-        // Placeholder for future seek functionality
-        // Would require additional methods in AudioRecorderViewModel
+    private func skipForward() {
+        let currentTime = recorderVM.getCurrentTime()
+        let newTime = min(currentTime + 15.0, duration)
+        recorderVM.seekToTime(newTime)
     }
     
     private func formatTime(_ time: TimeInterval) -> String {
