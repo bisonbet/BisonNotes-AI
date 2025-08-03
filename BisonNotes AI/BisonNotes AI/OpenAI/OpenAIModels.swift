@@ -95,6 +95,7 @@ struct OpenAIChatCompletionRequest: Codable {
     let topP: Double?
     let frequencyPenalty: Double?
     let presencePenalty: Double?
+    let responseFormat: ResponseFormat?
     
     enum CodingKeys: String, CodingKey {
         case model
@@ -104,9 +105,10 @@ struct OpenAIChatCompletionRequest: Codable {
         case topP = "top_p"
         case frequencyPenalty = "frequency_penalty"
         case presencePenalty = "presence_penalty"
+        case responseFormat = "response_format"
     }
     
-    init(model: String, messages: [ChatMessage], temperature: Double? = nil, maxCompletionTokens: Int? = nil, topP: Double? = nil, frequencyPenalty: Double? = nil, presencePenalty: Double? = nil) {
+    init(model: String, messages: [ChatMessage], temperature: Double? = nil, maxCompletionTokens: Int? = nil, topP: Double? = nil, frequencyPenalty: Double? = nil, presencePenalty: Double? = nil, responseFormat: ResponseFormat? = nil) {
         self.model = model
         self.messages = messages
         self.temperature = temperature
@@ -114,6 +116,7 @@ struct OpenAIChatCompletionRequest: Codable {
         self.topP = topP
         self.frequencyPenalty = frequencyPenalty
         self.presencePenalty = presencePenalty
+        self.responseFormat = responseFormat
     }
 }
 
@@ -152,6 +155,177 @@ struct Usage: Codable {
         case promptTokens = "prompt_tokens"
         case completionTokens = "completion_tokens"
         case totalTokens = "total_tokens"
+    }
+}
+
+// MARK: - Structured Output Support
+
+struct ResponseFormat: Codable {
+    let type: String
+    let jsonSchema: JSONSchema?
+    
+    enum CodingKeys: String, CodingKey {
+        case type
+        case jsonSchema = "json_schema"
+    }
+    
+    static func jsonSchema(name: String, schema: [String: Any], strict: Bool = true) -> ResponseFormat {
+        return ResponseFormat(
+            type: "json_schema",
+            jsonSchema: JSONSchema(name: name, schema: schema, strict: strict)
+        )
+    }
+    
+    static let json = ResponseFormat(type: "json_object", jsonSchema: nil)
+}
+
+struct JSONSchema: Codable {
+    let name: String
+    let schema: [String: Any]
+    let strict: Bool?
+    
+    enum CodingKeys: String, CodingKey {
+        case name
+        case schema
+        case strict
+    }
+    
+    init(name: String, schema: [String: Any], strict: Bool? = true) {
+        self.name = name
+        self.schema = schema
+        self.strict = strict
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(strict, forKey: .strict)
+        
+        // Convert [String: Any] to JSON Data and back to handle encoding
+        let jsonData = try JSONSerialization.data(withJSONObject: schema)
+        let jsonObject = try JSONSerialization.jsonObject(with: jsonData)
+        try container.encode(AnyCodable(jsonObject), forKey: .schema)
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        strict = try container.decodeIfPresent(Bool.self, forKey: .strict)
+        
+        let anyCodable = try container.decode(AnyCodable.self, forKey: .schema)
+        schema = anyCodable.value as? [String: Any] ?? [:]
+    }
+}
+
+// Helper for encoding Any types
+struct AnyCodable: Codable {
+    let value: Any
+    
+    init(_ value: Any) {
+        self.value = value
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        
+        if let intVal = value as? Int {
+            try container.encode(intVal)
+        } else if let stringVal = value as? String {
+            try container.encode(stringVal)
+        } else if let boolVal = value as? Bool {
+            try container.encode(boolVal)
+        } else if let arrayVal = value as? [Any] {
+            try container.encode(arrayVal.map { AnyCodable($0) })
+        } else if let dictVal = value as? [String: Any] {
+            try container.encode(dictVal.mapValues { AnyCodable($0) })
+        } else {
+            throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: encoder.codingPath, debugDescription: "Invalid type for AnyCodable"))
+        }
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        
+        if let intVal = try? container.decode(Int.self) {
+            value = intVal
+        } else if let stringVal = try? container.decode(String.self) {
+            value = stringVal
+        } else if let boolVal = try? container.decode(Bool.self) {
+            value = boolVal
+        } else if let arrayVal = try? container.decode([AnyCodable].self) {
+            value = arrayVal.map { $0.value }
+        } else if let dictVal = try? container.decode([String: AnyCodable].self) {
+            value = dictVal.mapValues { $0.value }
+        } else {
+            throw DecodingError.typeMismatch(AnyCodable.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Could not decode AnyCodable"))
+        }
+    }
+}
+
+// MARK: - Schema Helpers
+
+extension ResponseFormat {
+    static var completeResponseSchema: ResponseFormat {
+        let schema: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "summary": [
+                    "type": "string",
+                    "description": "The main summary of the content"
+                ],
+                "tasks": [
+                    "type": "array",
+                    "items": [
+                        "type": "object",
+                        "properties": [
+                            "text": ["type": "string"],
+                            "priority": ["type": "string", "enum": ["high", "medium", "low"]],
+                            "category": ["type": "string", "enum": ["call", "meeting", "purchase", "research", "email", "travel", "health", "general"]],
+                            "timeReference": ["type": "string"],
+                            "confidence": ["type": "number", "minimum": 0, "maximum": 1]
+                        ],
+                        "required": ["text", "priority"],
+                        "additionalProperties": false
+                    ]
+                ],
+                "reminders": [
+                    "type": "array",
+                    "items": [
+                        "type": "object",
+                        "properties": [
+                            "text": ["type": "string"],
+                            "urgency": ["type": "string", "enum": ["immediate", "today", "thisWeek", "later"]],
+                            "timeReference": ["type": "string"],
+                            "confidence": ["type": "number", "minimum": 0, "maximum": 1]
+                        ],
+                        "required": ["text"],
+                        "additionalProperties": false
+                    ]
+                ],
+                "titles": [
+                    "type": "array",
+                    "items": [
+                        "type": "object",
+                        "properties": [
+                            "text": ["type": "string"],
+                            "category": ["type": "string", "enum": ["meeting", "personal", "technical", "general"]],
+                            "confidence": ["type": "number", "minimum": 0, "maximum": 1]
+                        ],
+                        "required": ["text", "confidence"],
+                        "additionalProperties": false
+                    ]
+                ],
+                "contentType": [
+                    "type": "string",
+                    "enum": ["meeting", "personalJournal", "technical", "general"],
+                    "description": "The type of content being summarized"
+                ]
+            ],
+            "required": ["summary", "tasks", "reminders", "titles"],
+            "additionalProperties": false
+        ]
+        
+        return ResponseFormat.jsonSchema(name: "complete_response", schema: schema)
     }
 }
 

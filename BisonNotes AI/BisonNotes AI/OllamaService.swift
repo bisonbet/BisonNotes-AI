@@ -82,6 +82,7 @@ struct OllamaGenerateResponse: Codable {
 class OllamaService: ObservableObject {
     private let config: OllamaConfig
     private let session: URLSession
+    private static var requestCounter = 0
 
     @Published var isConnected: Bool = false
     @Published var availableModels: [OllamaModel] = []
@@ -152,6 +153,26 @@ class OllamaService: ObservableObject {
         return listResponse.models
     }
     
+    func isModelAvailable(_ modelName: String) async -> Bool {
+        do {
+            let models = try await loadAvailableModels()
+            return models.contains { $0.name == modelName }
+        } catch {
+            print("❌ OllamaService: Failed to check model availability: \(error)")
+            return false
+        }
+    }
+    
+    func getFirstAvailableModel() async -> String? {
+        do {
+            let models = try await loadAvailableModels()
+            return models.first?.name
+        } catch {
+            print("❌ OllamaService: Failed to get available models: \(error)")
+            return nil
+        }
+    }
+    
     // MARK: - Response Cleaning
     
     private func cleanOllamaResponse(_ response: String) -> String {
@@ -177,8 +198,44 @@ class OllamaService: ObservableObject {
         // Clean up markdown formatting
         cleanedResponse = cleanMarkdownFormatting(cleanedResponse)
         
+        // Try to extract JSON from the response if it's not already valid JSON
+        if !isValidJSON(cleanedResponse) {
+            cleanedResponse = extractJSONFromResponse(cleanedResponse)
+        }
+        
         // Trim whitespace and newlines
         return cleanedResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    private func isValidJSON(_ text: String) -> Bool {
+        guard let data = text.data(using: .utf8) else { return false }
+        do {
+            _ = try JSONSerialization.jsonObject(with: data)
+            return true
+        } catch {
+            return false
+        }
+    }
+    
+    private func extractJSONFromResponse(_ response: String) -> String {
+        // Try to find JSON object in the response
+        let jsonPattern = #"\{[\s\S]*\}"#
+        if let match = response.range(of: jsonPattern, options: .regularExpression) {
+            let jsonString = String(response[match])
+            if isValidJSON(jsonString) {
+                return jsonString
+            }
+        }
+        
+        // If no valid JSON found, return empty JSON structure
+        print("⚠️ OllamaService: Could not extract valid JSON from response, returning empty structure")
+        
+        // Determine which type of JSON structure to return based on the context
+        if response.contains("titles") || response.contains("title") {
+            return "{\"titles\":[]}"
+        } else {
+            return "{\"tasks\":[],\"reminders\":[]}"
+        }
     }
     
     private func cleanMarkdownFormatting(_ text: String) -> String {
@@ -244,13 +301,15 @@ class OllamaService: ObservableObject {
     
     func extractTasksAndReminders(from text: String) async throws -> (tasks: [TaskItem], reminders: [ReminderItem]) {
         let prompt = """
+        You are a JSON generator. Your ONLY job is to output valid JSON. Do not include any other text, explanations, or markdown formatting.
+
         Analyze the following transcript and extract any tasks, to-dos, or reminders mentioned. For each item found, provide:
         1. A brief description (under 50 words)
         2. Priority level (High, Medium, Low)
         3. If a date/time is mentioned, include it
         4. Categorize as either a task or reminder
 
-        **Return the results in this exact JSON format (no markdown, just pure JSON):**
+        **CRITICAL: You must respond with ONLY valid JSON in this exact format:**
         {
           "tasks": [
             {
@@ -269,7 +328,13 @@ class OllamaService: ObservableObject {
           ]
         }
 
-        Only include items with 80% or higher confidence. If no tasks or reminders are found, return empty arrays.
+        Rules:
+        - Output ONLY the JSON object, nothing else
+        - Do not include any explanatory text
+        - Do not use markdown formatting
+        - Only include items with 80% or higher confidence
+        - If no tasks or reminders are found, return empty arrays
+        - Ensure all JSON is properly escaped
 
         Transcript:
         \(text)
@@ -278,7 +343,7 @@ class OllamaService: ObservableObject {
         print("🔧 OllamaService: Sending tasks/reminders extraction request")
         let response = try await generateResponse(prompt: prompt, model: config.modelName)
         
-        print("🔧 OllamaService: Received response for tasks/reminders: \(response)")
+        print("🔧 OllamaService: Received response for tasks/reminders (\(response.count) chars)")
         
         // Parse JSON response
         guard let data = response.data(using: .utf8) else {
@@ -315,20 +380,22 @@ class OllamaService: ObservableObject {
             return (tasks, reminders)
         } catch {
             print("❌ OllamaService: JSON parsing failed for tasks/reminders: \(error)")
-            print("❌ OllamaService: Raw response data: \(String(data: data, encoding: .utf8) ?? "nil")")
+            print("❌ OllamaService: Response data length: \(data.count) bytes")
             throw OllamaError.parsingError("Failed to parse JSON response: \(error.localizedDescription)")
         }
     }
     
     func extractTitles(from text: String) async throws -> [TitleItem] {
         let prompt = """
+        You are a JSON generator. Your ONLY job is to output valid JSON. Do not include any other text, explanations, or markdown formatting.
+
         Analyze the following transcript and extract 4 high-quality titles or headlines. Focus on:
         - Main topics or themes discussed
         - Key decisions or outcomes
         - Important events or milestones
         - Central questions or problems addressed
 
-        **Return the results in this exact JSON format (no markdown, just pure JSON):**
+        **CRITICAL: You must respond with ONLY valid JSON in this exact format:**
         {
           "titles": [
             {
@@ -339,12 +406,16 @@ class OllamaService: ObservableObject {
           ]
         }
 
-        Requirements:
+        Rules:
+        - Output ONLY the JSON object, nothing else
+        - Do not include any explanatory text
+        - Do not use markdown formatting
         - Generate exactly 4 titles with 85% or higher confidence
         - Each title should be 40-60 characters and 4-6 words
         - Focus on the most important and specific topics
         - Avoid generic or vague titles
         - If no suitable titles are found, return empty array
+        - Ensure all JSON is properly escaped
 
         Transcript:
         \(text)
@@ -353,7 +424,7 @@ class OllamaService: ObservableObject {
         print("🔧 OllamaService: Sending title extraction request")
         let response = try await generateResponse(prompt: prompt, model: config.modelName)
         
-        print("🔧 OllamaService: Received response for titles: \(response)")
+        print("🔧 OllamaService: Received response for titles (\(response.count) chars)")
         
         // Parse JSON response
         guard let data = response.data(using: .utf8) else {
@@ -379,7 +450,7 @@ class OllamaService: ObservableObject {
             return titles
         } catch {
             print("❌ OllamaService: JSON parsing failed for titles: \(error)")
-            print("❌ OllamaService: Raw response data: \(String(data: data, encoding: .utf8) ?? "nil")")
+            print("❌ OllamaService: Response data length: \(data.count) bytes")
             throw OllamaError.parsingError("Failed to parse JSON response: \(error.localizedDescription)")
         }
     }
@@ -408,33 +479,32 @@ class OllamaService: ObservableObject {
         
         request.httpBody = try JSONEncoder().encode(generateRequest)
         
-        print("🔧 OllamaService: Sending request to \(url)")
+        Self.requestCounter += 1
+        print("🔧 OllamaService: Sending request #\(Self.requestCounter) to \(url)")
+        print("🔧 OllamaService: Request type: \(model)")
         print("🔧 OllamaService: Request body: \(String(data: request.httpBody!, encoding: .utf8) ?? "nil")")
         
         let (data, response) = try await session.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             print("❌ OllamaService: HTTP error - Status: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
-            print("❌ OllamaService: Response data: \(String(data: data, encoding: .utf8) ?? "nil")")
             throw OllamaError.serverError("Failed to generate response")
         }
         
-        print("✅ OllamaService: Received response - Status: \(httpResponse.statusCode)")
-        print("🔧 OllamaService: Response data: \(String(data: data, encoding: .utf8) ?? "nil")")
+        print("✅ OllamaService: Received response #\(Self.requestCounter) - Status: \(httpResponse.statusCode)")
         
         do {
             let generateResponse = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
             print("✅ OllamaService: Successfully parsed response")
-            print("🔧 OllamaService: Raw response: \(generateResponse.response)")
             
             // Clean up the response by removing <think> tags and their content
             let cleanedResponse = cleanOllamaResponse(generateResponse.response)
-            print("🔧 OllamaService: Cleaned response: \(cleanedResponse)")
+            print("🔧 OllamaService: Cleaned response (\(cleanedResponse.count) chars)")
             
             return cleanedResponse
         } catch {
             print("❌ OllamaService: JSON parsing failed: \(error)")
-            print("❌ OllamaService: Raw response data: \(String(data: data, encoding: .utf8) ?? "nil")")
+            print("❌ OllamaService: Response data length: \(data.count) bytes")
             throw OllamaError.parsingError("Failed to parse JSON response: \(error.localizedDescription)")
         }
     }

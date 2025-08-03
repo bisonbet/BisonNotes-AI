@@ -9,109 +9,412 @@ import Foundation
 import os.log
 import SwiftUI
 
-// MARK: - AWS Bedrock Engine (Future Implementation)
+// MARK: - AWS Bedrock Engine
 
-class AWSBedrockEngine: SummarizationEngine {
+class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
     let name: String = "AWS Bedrock"
     let description: String = "Advanced AI-powered summaries using AWS Bedrock with Claude and other foundation models"
-    let isAvailable: Bool = false
-    let version: String = "1.0-preview"
+    let version: String = "1.0"
     
-    // Configuration for future implementation
-    struct AWSConfig {
-        let region: String
-        let accessKeyId: String?
-        let secretAccessKey: String?
-        let modelId: String
-        let maxTokens: Int
-        let temperature: Double
+    private var service: AWSBedrockService?
+    private var currentConfig: AWSBedrockConfig?
+    
+    var isAvailable: Bool {
+        // Check if AWS credentials are configured
+        let accessKeyId = UserDefaults.standard.string(forKey: "awsBedrockAccessKeyId") ?? ""
+        let secretAccessKey = UserDefaults.standard.string(forKey: "awsBedrockSecretAccessKey") ?? ""
+        let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
+        let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
         
-        static let `default` = AWSConfig(
-            region: "us-east-1",
-            accessKeyId: nil,
-            secretAccessKey: nil,
-            modelId: "anthropic.claude-3-sonnet-20240229-v1:0",
-            maxTokens: 4096,
-            temperature: 0.1
-        )
+        // Check if AWS Bedrock is enabled in settings
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
+        let keyExists = UserDefaults.standard.object(forKey: "enableAWSBedrock") != nil
+        
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+            AppLogger.shared.verbose("Checking enableAWSBedrock setting - Value: \(isEnabled), Key exists: \(keyExists)", category: "AWSBedrockEngine")
+        }
+        
+        guard isEnabled else {
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                AppLogger.shared.verbose("AWS Bedrock is not enabled in settings", category: "AWSBedrockEngine")
+            }
+            return false
+        }
+        
+        // Check credentials based on authentication method
+        if useProfile {
+            guard !profileName.isEmpty else {
+                if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                    AppLogger.shared.verbose("AWS profile name not configured", category: "AWSBedrockEngine")
+                }
+                return false
+            }
+        } else {
+            guard !accessKeyId.isEmpty && !secretAccessKey.isEmpty else {
+                if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                    AppLogger.shared.verbose("AWS credentials not configured", category: "AWSBedrockEngine")
+                }
+                return false
+            }
+        }
+        
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+            AppLogger.shared.verbose("Basic availability checks passed", category: "AWSBedrockEngine")
+        }
+        return true
     }
     
-    private let config: AWSConfig
-    
-    init(config: AWSConfig = .default) {
-        self.config = config
+    init() {
+        updateConfiguration()
     }
     
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        print("🤖 AWSBedrockEngine: Starting summary generation")
+        
+        updateConfiguration()
+        
+        guard let service = service else {
+            print("❌ AWSBedrockEngine: Service is nil")
+            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
+        }
+        
+        print("✅ AWSBedrockEngine: Calling AWS Bedrock service for summary")
+        
+        do {
+            return try await service.generateSummary(from: text, contentType: contentType)
+        } catch {
+            print("❌ AWSBedrockEngine: Summary generation failed: \(error)")
+            throw handleAPIError(error)
+        }
     }
     
     func extractTasks(from text: String) async throws -> [TaskItem] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        print("🤖 AWSBedrockEngine: Starting task extraction")
+        
+        updateConfiguration()
+        
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
+        }
+        
+        do {
+            return try await service.extractTasks(from: text)
+        } catch {
+            print("❌ AWSBedrockEngine: Task extraction failed: \(error)")
+            throw handleAPIError(error)
+        }
     }
     
     func extractReminders(from text: String) async throws -> [ReminderItem] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        print("🤖 AWSBedrockEngine: Starting reminder extraction")
+        
+        updateConfiguration()
+        
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
+        }
+        
+        do {
+            return try await service.extractReminders(from: text)
+        } catch {
+            print("❌ AWSBedrockEngine: Reminder extraction failed: \(error)")
+            throw handleAPIError(error)
+        }
     }
     
     func extractTitles(from text: String) async throws -> [TitleItem] {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        print("🤖 AWSBedrockEngine: Starting title extraction")
+        
+        updateConfiguration()
+        
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
+        }
+        
+        do {
+            return try await service.extractTitles(from: text)
+        } catch {
+            print("❌ AWSBedrockEngine: Title extraction failed: \(error)")
+            throw handleAPIError(error)
+        }
     }
     
     func classifyContent(_ text: String) async throws -> ContentType {
-        throw SummarizationError.aiServiceUnavailable(service: name)
+        print("🤖 AWSBedrockEngine: Starting content classification")
+        
+        updateConfiguration()
+        
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
+        }
+        
+        do {
+            return try await service.classifyContent(text)
+        } catch {
+            print("❌ AWSBedrockEngine: Content classification failed: \(error)")
+            throw handleAPIError(error)
+        }
     }
     
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        throw SummarizationError.aiServiceUnavailable(service: name)
-    }
-    
-    // MARK: - Future Implementation Methods
-    
-    private func validateAWSCredentials() -> Bool {
-        // Future implementation: validate AWS credentials
-        return config.accessKeyId != nil && config.secretAccessKey != nil
-    }
-    
-    private func createBedrockPrompt(text: String, contentType: ContentType, task: String) -> String {
-        // Future implementation: create optimized prompts for different Bedrock models
-        let contextPrompt = switch contentType {
-        case .meeting:
-            "This is a meeting transcript. Focus on decisions, action items, and key discussion points."
-        case .personalJournal:
-            "This is a personal journal entry. Focus on emotions, insights, and personal experiences."
-        case .technical:
-            "This is technical content. Focus on concepts, solutions, and important technical details."
-        case .general:
-            "This is general content. Provide a balanced summary of the main points."
+        print("🤖 AWSBedrockEngine: Starting complete processing")
+        
+        updateConfiguration()
+        
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
         }
         
-        return """
-        \(contextPrompt)
+        // Check if text needs chunking based on token count
+        let tokenCount = TokenManager.getTokenCount(text)
+        print("📊 Text token count: \(tokenCount)")
         
-        Task: \(task)
-        
-        Content:
-        \(text)
-        
-        Please provide a response in the following JSON format:
-        {
-            "summary": "concise summary here",
-            "tasks": ["task 1", "task 2"],
-            "reminders": ["reminder 1", "reminder 2"],
-            "confidence": 0.85
+        do {
+            // Use the model's context window for chunking decision
+            let contextWindow = currentConfig?.model.contextWindow ?? TokenManager.maxTokensPerChunk
+            if TokenManager.needsChunking(text, maxTokens: contextWindow) {
+                print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+                return try await processChunkedText(text, service: service)
+            } else {
+                print("📝 Processing single chunk (\(tokenCount) tokens)")
+                return try await service.processComplete(text: text)
+            }
+        } catch {
+            print("❌ AWSBedrockEngine: Complete processing failed: \(error)")
+            throw handleAPIError(error)
         }
-        """
     }
     
-    // Placeholder for future AWS SDK integration
-    private func callBedrockAPI(prompt: String) async throws -> String {
-        // Future implementation:
-        // 1. Initialize AWS Bedrock client
-        // 2. Create InvokeModel request
-        // 3. Handle response and error cases
-        // 4. Parse JSON response
-        throw SummarizationError.aiServiceUnavailable(service: name)
+    // MARK: - Configuration Management
+    
+    private func updateConfiguration() {
+        let accessKeyId = UserDefaults.standard.string(forKey: "awsBedrockAccessKeyId") ?? ""
+        let secretAccessKey = UserDefaults.standard.string(forKey: "awsBedrockSecretAccessKey") ?? ""
+        let sessionToken = UserDefaults.standard.string(forKey: "awsBedrockSessionToken")
+        let region = UserDefaults.standard.string(forKey: "awsBedrockRegion") ?? "us-east-1"
+        let modelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude35Haiku.rawValue
+        let temperature = UserDefaults.standard.double(forKey: "awsBedrockTemperature")
+        let maxTokens = UserDefaults.standard.integer(forKey: "awsBedrockMaxTokens")
+        let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
+        let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName")
+        
+        let model = AWSBedrockModel(rawValue: modelString) ?? .claude35Haiku
+        
+        let newConfig = AWSBedrockConfig(
+            region: region,
+            accessKeyId: accessKeyId,
+            secretAccessKey: secretAccessKey,
+            sessionToken: sessionToken,
+            model: model,
+            temperature: temperature > 0 ? temperature : 0.1,
+            maxTokens: maxTokens > 0 ? maxTokens : 4096,
+            timeout: 60.0,
+            useProfile: useProfile,
+            profileName: profileName
+        )
+        
+        // Only create a new service if the configuration has actually changed
+        if currentConfig == nil || currentConfig != newConfig {
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Updating configuration - Model: \(modelString), Region: \(region)", category: "AWSBedrockEngine")
+            }
+            
+            self.currentConfig = newConfig
+            self.service = AWSBedrockService(config: newConfig)
+            
+            // Only log if verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Configuration updated successfully", category: "AWSBedrockEngine")
+            }
+        }
+    }
+    
+    // MARK: - Chunked Processing
+    
+    private func processChunkedText(_ text: String, service: AWSBedrockService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        let startTime = Date()
+        
+        // Initialize Ollama service for meta-summary generation
+        let ollamaService = OllamaService()
+        _ = await ollamaService.testConnection()
+        
+        // Split text into chunks
+        let contextWindow = currentConfig?.model.contextWindow ?? TokenManager.maxTokensPerChunk
+        let chunks = TokenManager.chunkText(text, maxTokens: contextWindow)
+        print("📦 Split text into \(chunks.count) chunks")
+        
+        // Process each chunk
+        var allSummaries: [String] = []
+        var allTasks: [TaskItem] = []
+        var allReminders: [ReminderItem] = []
+        var allTitles: [TitleItem] = []
+        var contentType: ContentType = .general
+        
+        for (index, chunk) in chunks.enumerated() {
+            print("🔄 Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+            
+            do {
+                let chunkResult = try await service.processComplete(text: chunk)
+                allSummaries.append(chunkResult.summary)
+                allTasks.append(contentsOf: chunkResult.tasks)
+                allReminders.append(contentsOf: chunkResult.reminders)
+                allTitles.append(contentsOf: chunkResult.titles)
+                
+                // Use the first chunk's content type
+                if index == 0 {
+                    contentType = chunkResult.contentType
+                }
+                
+                // Add delay between chunks to avoid rate limiting
+                if index < chunks.count - 1 {
+                    try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second between chunks
+                }
+                
+            } catch {
+                print("❌ Failed to process chunk \(index + 1): \(error)")
+                throw error
+            }
+        }
+        
+        // Combine results using AI-generated meta-summary
+        let combinedSummary = try await TokenManager.combineSummaries(
+            allSummaries,
+            contentType: contentType,
+            service: ollamaService
+        )
+        
+        // Deduplicate tasks, reminders, and titles
+        let uniqueTasks = deduplicateTasks(allTasks)
+        let uniqueReminders = deduplicateReminders(allReminders)
+        let uniqueTitles = deduplicateTitles(allTitles)
+        
+        let processingTime = Date().timeIntervalSince(startTime)
+        print("✅ Chunked processing completed in \(String(format: "%.2f", processingTime))s")
+        print("📊 Final summary: \(combinedSummary.count) characters")
+        print("📋 Final tasks: \(uniqueTasks.count)")
+        print("🔔 Final reminders: \(uniqueReminders.count)")
+        print("📝 Final titles: \(uniqueTitles.count)")
+        
+        return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
+    }
+    
+    private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
+        var uniqueTasks: [TaskItem] = []
+        
+        for task in tasks {
+            let isDuplicate = uniqueTasks.contains { existingTask in
+                let similarity = calculateTextSimilarity(task.text, existingTask.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueTasks.append(task)
+            }
+        }
+        
+        return Array(uniqueTasks.prefix(15)) // Limit to 15 tasks
+    }
+    
+    private func deduplicateReminders(_ reminders: [ReminderItem]) -> [ReminderItem] {
+        var uniqueReminders: [ReminderItem] = []
+        
+        for reminder in reminders {
+            let isDuplicate = uniqueReminders.contains { existingReminder in
+                let similarity = calculateTextSimilarity(reminder.text, existingReminder.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueReminders.append(reminder)
+            }
+        }
+        
+        return Array(uniqueReminders.prefix(15)) // Limit to 15 reminders
+    }
+    
+    private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
+        var uniqueTitles: [TitleItem] = []
+        
+        for title in titles {
+            let isDuplicate = uniqueTitles.contains { existingTitle in
+                let similarity = calculateTextSimilarity(title.text, existingTitle.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueTitles.append(title)
+            }
+        }
+        
+        return Array(uniqueTitles.prefix(5)) // Limit to 5 titles
+    }
+    
+    private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
+        let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
+        let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
+        
+        let intersection = words1.intersection(words2)
+        let union = words1.union(words2)
+        
+        return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
+    }
+    
+    // MARK: - Connection Testing
+    
+    func testConnection() async -> Bool {
+        print("🔧 AWSBedrockEngine: Testing connection...")
+        
+        updateConfiguration()
+        
+        guard let service = service else {
+            print("❌ AWSBedrockEngine: Service is nil - configuration issue")
+            return false
+        }
+        
+        let connectionResult = await service.testConnection()
+        if connectionResult {
+            print("✅ AWSBedrockEngine: Connection test successful")
+            return true
+        } else {
+            print("❌ AWSBedrockEngine: Connection test failed")
+            return false
+        }
+    }
+    
+    func loadAvailableModels() async throws -> [AWSBedrockModel] {
+        updateConfiguration()
+        guard let service = service else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+        
+        return try await service.listAvailableModels()
+    }
+    
+    // MARK: - Enhanced Error Handling
+    
+    private func handleAPIError(_ error: Error) -> SummarizationError {
+        if let summarizationError = error as? SummarizationError {
+            return summarizationError
+        }
+        
+        // Handle specific AWS Bedrock errors
+        let errorString = error.localizedDescription.lowercased()
+        
+        if errorString.contains("access denied") || errorString.contains("unauthorized") {
+            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock access denied. Please check your credentials and permissions.")
+        } else if errorString.contains("throttling") || errorString.contains("rate limit") {
+            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock rate limit exceeded. Please try again later.")
+        } else if errorString.contains("model not found") || errorString.contains("validation") {
+            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock model not available. Please check your model configuration.")
+        } else if errorString.contains("timeout") || errorString.contains("network") {
+            return SummarizationError.processingTimeout
+        } else {
+            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock error: \(error.localizedDescription)")
+        }
     }
 }
 
@@ -178,22 +481,22 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             return false
         }
         
-        // Check if server URL is configured
-        let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? ""
-        guard !serverURL.isEmpty else {
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                AppLogger.shared.verbose("Server URL not configured", category: "LocalLLMEngine")
-            }
-            return false
-        }
+        // Check if server URL is configured (use defaults if not set)
+        let _ = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
+        let _ = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
         
-        // Check if model name is configured
-        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? ""
-        guard !modelName.isEmpty else {
+        // For Ollama to be considered available, we need to have both URL and model
+        // But we should also check if this is actually a real Ollama server
+        // Since we can't easily test connection here, we'll be more conservative
+        
+        // Only consider available if explicitly configured (not using defaults)
+        let hasExplicitURL = UserDefaults.standard.object(forKey: "ollamaServerURL") != nil
+        let hasExplicitModel = UserDefaults.standard.object(forKey: "ollamaModelName") != nil
+        
+        guard hasExplicitURL && hasExplicitModel else {
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                AppLogger.shared.verbose("Model name not configured", category: "LocalLLMEngine")
+                AppLogger.shared.verbose("Ollama not explicitly configured (using defaults)", category: "LocalLLMEngine")
             }
             return false
         }
@@ -235,6 +538,9 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         
         // Update configuration with latest settings
         updateConfiguration()
+        
+        // Validate model availability before proceeding
+        try await validateAndUpdateModel()
         
         guard let service = ollamaService else {
             print("❌ LocalLLMEngine: Ollama service is nil")
@@ -456,13 +762,18 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     }
     
     private func processSingleChunk(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        async let summaryTask = service.generateSummary(from: text)
-        async let extractionTask = service.extractTasksAndReminders(from: text)
-        async let titlesTask = service.extractTitles(from: text)
+        // Process requests sequentially to avoid overwhelming the Ollama server
+        let summary = try await service.generateSummary(from: text)
         
-        let summary = try await summaryTask
-        let extraction = try await extractionTask
-        let titles = try await titlesTask
+        // Small delay between requests to prevent overwhelming the server
+        try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+        
+        let extraction = try await service.extractTasksAndReminders(from: text)
+        
+        // Small delay between requests to prevent overwhelming the server
+        try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+        
+        let titles = try await service.extractTitles(from: text)
         let contentType = try await classifyContent(text)
         
         return (summary, extraction.tasks, extraction.reminders, titles, contentType)
@@ -495,6 +806,11 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
                 // Use the first chunk's content type
                 if index == 0 {
                     contentType = chunkResult.contentType
+                }
+                
+                // Add delay between chunks to prevent overwhelming the server
+                if index < chunks.count - 1 {
+                    try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second between chunks
                 }
                 
             } catch {
@@ -610,6 +926,52 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         self.config = config
         self.ollamaService = OllamaService(config: config)
         print("✅ LocalLLMEngine: Configuration updated successfully")
+    }
+    
+    private func validateAndUpdateModel() async throws {
+        guard let service = ollamaService else {
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama service not configured")
+        }
+        
+        // Test connection first
+        let isConnected = await service.testConnection()
+        guard isConnected else {
+            throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server at \(config?.baseURL ?? "unknown")")
+        }
+        
+        // Check if the configured model is available
+        let isModelAvailable = await service.isModelAvailable(config?.modelName ?? "")
+        
+        if !isModelAvailable {
+            print("⚠️ LocalLLMEngine: Configured model '\(config?.modelName ?? "unknown")' is not available")
+            
+            // Try to get the first available model
+            if let firstAvailableModel = await service.getFirstAvailableModel() {
+                print("🔄 LocalLLMEngine: Switching to available model '\(firstAvailableModel)'")
+                
+                // Update the configuration with the available model
+                let newConfig = OllamaConfig(
+                    serverURL: config?.serverURL ?? "",
+                    port: config?.port ?? 11434,
+                    modelName: firstAvailableModel,
+                    maxTokens: config?.maxTokens ?? 2048,
+                    temperature: config?.temperature ?? 0.1,
+                    maxContextTokens: config?.maxContextTokens ?? 4096
+                )
+                
+                self.config = newConfig
+                self.ollamaService = OllamaService(config: newConfig)
+                
+                // Optionally update UserDefaults with the working model
+                UserDefaults.standard.set(firstAvailableModel, forKey: "ollamaModelName")
+                print("💾 LocalLLMEngine: Updated saved model preference to '\(firstAvailableModel)'")
+                
+            } else {
+                throw SummarizationError.aiServiceUnavailable(service: "No models available on Ollama server. Please install a model using 'ollama pull <model_name>'")
+            }
+        } else {
+            print("✅ LocalLLMEngine: Model '\(config?.modelName ?? "unknown")' is available")
+        }
     }
     
     // MARK: - Connection Testing
@@ -1120,7 +1482,7 @@ enum AIEngineType: String, CaseIterable {
         case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio:
             return false
         case .awsBedrock:
-            return true
+            return false
         }
     }
     

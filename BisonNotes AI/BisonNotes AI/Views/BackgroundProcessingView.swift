@@ -224,6 +224,8 @@ struct StatCard: View {
 struct JobCard: View {
     let job: ProcessingJob
     let onTap: () -> Void
+    @State private var currentTime = Date()
+    @State private var timer: Timer?
     
     var body: some View {
         Button(action: onTap) {
@@ -253,14 +255,35 @@ struct JobCard: View {
                 
                 // Time information
                 HStack {
-                    Text("Started: \(job.startTime, style: .relative)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if job.status == .processing {
+                        Text("Running: \(formatDuration(currentTime.timeIntervalSince(job.startTime)))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .onAppear {
+                                // Start timer to update running time
+                                timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                                    currentTime = Date()
+                                }
+                            }
+                            .onDisappear {
+                                // Clean up timer when view disappears
+                                timer?.invalidate()
+                                timer = nil
+                            }
+                    } else if job.status == .completed, let completionTime = job.completionTime {
+                        Text("Duration: \(formatDuration(completionTime.timeIntervalSince(job.startTime)))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("Started: \(job.startTime, style: .relative)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     
                     Spacer()
                     
-                    if let completionTime = job.completionTime {
-                        Text("Completed: \(completionTime, style: .relative)")
+                    if job.status == .completed, let completionTime = job.completionTime {
+                        Text("Completed: \(formatCompletionTime(completionTime))")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -281,6 +304,23 @@ struct JobCard: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
+    }
+    
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        
+        if minutes > 0 {
+            return "\(minutes)m \(seconds)s"
+        } else {
+            return "\(seconds)s"
+        }
+    }
+    
+    private func formatCompletionTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM dd, yyyy HH:mm:ss"
+        return formatter.string(from: date)
     }
 }
 
@@ -321,6 +361,8 @@ struct StatusBadge: View {
 struct JobDetailView: View {
     let job: ProcessingJob
     @Environment(\.dismiss) private var dismiss
+    @State private var currentTime = Date()
+    @State private var timer: Timer?
     
     var body: some View {
         NavigationView {
@@ -375,18 +417,34 @@ struct JobDetailView: View {
                                 Text(job.startTime, style: .time)
                             }
                             
-                            if let completionTime = job.completionTime {
+                            if job.status == .processing {
+                                HStack {
+                                    Text("Running:")
+                                    Spacer()
+                                    Text(formatDuration(currentTime.timeIntervalSince(job.startTime)))
+                                }
+                                .onAppear {
+                                    // Start timer to update running time
+                                    timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                                        currentTime = Date()
+                                    }
+                                }
+                                .onDisappear {
+                                    // Clean up timer when view disappears
+                                    timer?.invalidate()
+                                    timer = nil
+                                }
+                            } else if job.status == .completed, let completionTime = job.completionTime {
                                 HStack {
                                     Text("Completed:")
                                     Spacer()
-                                    Text(completionTime, style: .time)
+                                    Text(formatCompletionTime(completionTime))
                                 }
                                 
                                 HStack {
                                     Text("Duration:")
                                     Spacer()
-                                    let duration = completionTime.timeIntervalSince(job.startTime)
-                                    Text("\(Int(duration / 60))m \(Int(duration.truncatingRemainder(dividingBy: 60)))s")
+                                    Text(formatDuration(completionTime.timeIntervalSince(job.startTime)))
                                 }
                             }
                         }
@@ -436,6 +494,23 @@ struct JobDetailView: View {
                 }
             }
         }
+    }
+    
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        
+        if minutes > 0 {
+            return "\(minutes)m \(seconds)s"
+        } else {
+            return "\(seconds)s"
+        }
+    }
+    
+    private func formatCompletionTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM dd, yyyy HH:mm:ss"
+        return formatter.string(from: date)
     }
 }
 

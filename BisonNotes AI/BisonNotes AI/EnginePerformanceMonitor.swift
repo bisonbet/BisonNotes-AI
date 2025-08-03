@@ -524,4 +524,12 @@ class EnginePerformanceMonitor: ObservableObject {
         
         logger.info("Performance data cleared")
     }
+    
+    func refreshData() {
+        updateEngineStatistics()
+        updatePerformanceTrends()
+        updateUsageAnalytics()
+        savePerformanceData()
+        logger.info("Performance data refreshed")
+    }
 } 

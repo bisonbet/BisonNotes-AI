@@ -12,6 +12,8 @@ struct EnginePerformanceView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var performanceOptimizer = PerformanceOptimizer.shared
     @StateObject private var performanceMonitor = EnginePerformanceMonitor()
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingClearAlert = false
     
     var body: some View {
         NavigationView {
@@ -19,6 +21,7 @@ struct EnginePerformanceView: View {
                 VStack(spacing: 20) {
                     // Performance Monitoring Status
                     PerformanceMonitoringSection()
+                        .environmentObject(performanceMonitor)
                     
                     // Battery and Memory Status
                     BatteryMemorySection()
@@ -28,20 +31,57 @@ struct EnginePerformanceView: View {
                     
                     // Engine Statistics
                     EngineStatisticsSection()
+                        .environmentObject(performanceMonitor)
                     
                     // Recent Performance
                     RecentPerformanceSection()
+                        .environmentObject(performanceMonitor)
                     
                     // Performance Trends
                     PerformanceTrendsSection()
+                        .environmentObject(performanceMonitor)
                     
                     // Usage Analytics
                     UsageAnalyticsSection()
+                        .environmentObject(performanceMonitor)
                 }
                 .padding()
             }
             .navigationTitle("Performance Monitor")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Button(action: {
+                            performanceMonitor.refreshData()
+                        }) {
+                            Label("Refresh Data", systemImage: "arrow.clockwise")
+                        }
+                        
+                        Button(action: {
+                            showingClearAlert = true
+                        }) {
+                            Label("Clear Data", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+        }
+        .alert("Clear Performance Data", isPresented: $showingClearAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Clear", role: .destructive) {
+                performanceMonitor.clearPerformanceData()
+            }
+        } message: {
+            Text("This will permanently remove all performance monitoring data. This action cannot be undone.")
         }
     }
 }
@@ -50,7 +90,7 @@ struct EnginePerformanceView: View {
 
 struct PerformanceMonitoringSection: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
-    @StateObject private var performanceMonitor = EnginePerformanceMonitor()
+    @EnvironmentObject var performanceMonitor: EnginePerformanceMonitor
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -241,7 +281,7 @@ struct OptimizationStatusSection: View {
 // MARK: - Engine Statistics Section
 
 struct EngineStatisticsSection: View {
-    @StateObject private var performanceMonitor = EnginePerformanceMonitor()
+    @EnvironmentObject var performanceMonitor: EnginePerformanceMonitor
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -256,9 +296,21 @@ struct EngineStatisticsSection: View {
             let statistics = performanceMonitor.engineStatistics
             
             if statistics.isEmpty {
-                Text("No performance data available")
-                    .foregroundColor(.secondary)
-                    .italic()
+                VStack(spacing: 8) {
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.title2)
+                        .foregroundColor(.secondary)
+                    
+                    Text("No Engine Statistics")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    Text("Generate summaries to see engine performance data")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.vertical)
             } else {
                 LazyVGrid(columns: [
                     GridItem(.flexible()),
@@ -281,7 +333,7 @@ struct EngineStatisticsSection: View {
 // MARK: - Recent Performance Section
 
 struct RecentPerformanceSection: View {
-    @StateObject private var performanceMonitor = EnginePerformanceMonitor()
+    @EnvironmentObject var performanceMonitor: EnginePerformanceMonitor
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -296,9 +348,21 @@ struct RecentPerformanceSection: View {
             let recentData = performanceMonitor.recentPerformance
             
             if recentData.isEmpty {
-                Text("No recent performance data")
-                    .foregroundColor(.secondary)
-                    .italic()
+                VStack(spacing: 8) {
+                    Image(systemName: "clock.badge.questionmark")
+                        .font(.title2)
+                        .foregroundColor(.secondary)
+                    
+                    Text("No Recent Activity")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    Text("Recent AI processing will appear here")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.vertical)
             } else {
                 LazyVStack(spacing: 8) {
                     ForEach(recentData.prefix(10)) { data in
@@ -316,7 +380,7 @@ struct RecentPerformanceSection: View {
 // MARK: - Performance Trends Section
 
 struct PerformanceTrendsSection: View {
-    @StateObject private var performanceMonitor = EnginePerformanceMonitor()
+    @EnvironmentObject var performanceMonitor: EnginePerformanceMonitor
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -331,9 +395,21 @@ struct PerformanceTrendsSection: View {
             let trends = performanceMonitor.performanceTrends
             
             if trends.isEmpty {
-                Text("No trend data available")
-                    .foregroundColor(.secondary)
-                    .italic()
+                VStack(spacing: 8) {
+                    Image(systemName: "chart.line.uptrend.xyaxis.circle")
+                        .font(.title2)
+                        .foregroundColor(.secondary)
+                    
+                    Text("No Trend Data")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    Text("Performance trends will show after multiple uses")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.vertical)
             } else {
                 LazyVStack(spacing: 8) {
                     ForEach(trends.prefix(6)) { trend in
@@ -351,7 +427,7 @@ struct PerformanceTrendsSection: View {
 // MARK: - Usage Analytics Section
 
 struct UsageAnalyticsSection: View {
-    @StateObject private var performanceMonitor = EnginePerformanceMonitor()
+    @EnvironmentObject var performanceMonitor: EnginePerformanceMonitor
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -435,9 +511,21 @@ struct UsageAnalyticsSection: View {
                     }
                 }
             } else {
-                Text("No usage analytics available")
-                    .foregroundColor(.secondary)
-                    .italic()
+                VStack(spacing: 8) {
+                    Image(systemName: "chart.pie")
+                        .font(.title2)
+                        .foregroundColor(.secondary)
+                    
+                    Text("No Usage Data")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    Text("Usage analytics will appear after generating summaries")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.vertical)
             }
         }
         .padding()
@@ -606,4 +694,12 @@ struct ComparisonMetricRow: View {
         .background(Color(.systemBackground))
         .cornerRadius(8)
     }
-} 
+}
+
+// MARK: - Preview
+
+#Preview {
+    EnginePerformanceView()
+        .environmentObject(AppDataCoordinator())
+        .environmentObject(EnginePerformanceMonitor())
+}

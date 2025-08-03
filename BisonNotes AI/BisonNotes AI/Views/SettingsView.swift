@@ -96,6 +96,11 @@ struct SettingsView: View {
                 await recorderVM.fetchInputs()
             }
         }
+        .onChange(of: selectedAIEngine) { _, newEngine in
+            // Immediately update the SummaryManager when user changes AI engine selection
+            SummaryManager.shared.setEngine(newEngine)
+            print("🔄 SettingsView: Updated AI engine to '\(newEngine)'")
+        }
         .sheet(isPresented: $showingAISettings) {
             AISettingsView()
                 .environmentObject(recorderVM)
@@ -109,7 +114,10 @@ struct SettingsView: View {
         .sheet(isPresented: $showingDataMigration) {
             DataMigrationView()
         }
-
+        .sheet(isPresented: $showingPerformanceView) {
+            EnginePerformanceView()
+                .environmentObject(appCoordinator)
+        }
         .alert("Cleanup Orphaned Data", isPresented: $showingCleanupAlert) {
             Button("Cancel") {
                 showingCleanupAlert = false
@@ -358,7 +366,6 @@ struct SettingsView: View {
                 .foregroundColor(.green)
             }
             .padding(.horizontal, 24)
-            .disabled(true) // Disable until PerformanceView is implemented
         }
     }
     

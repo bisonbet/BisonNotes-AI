@@ -133,7 +133,8 @@ class OpenAISummarizationService: ObservableObject {
             model: config.effectiveModelId,
             messages: messages,
             temperature: config.temperature,
-            maxCompletionTokens: config.maxTokens
+            maxCompletionTokens: config.maxTokens,
+            responseFormat: ResponseFormat.completeResponseSchema
         )
         
         let response = try await makeAPICall(request: request)
@@ -142,6 +143,7 @@ class OpenAISummarizationService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI - No response choices")
         }
         
+        // With structured output, we get guaranteed valid JSON
         let result = try OpenAIResponseParser.parseCompleteResponseFromJSON(choice.message.content)
         return (result.summary, result.tasks, result.reminders, result.titles, contentType)
     }

@@ -406,6 +406,11 @@ class SummaryManager: ObservableObject {
         }
     }
     
+    func showUnsupportedDeviceAlert() {
+        let error = AppError.system(.configurationError(message: "Apple Intelligence is not supported on this device. Please select another AI engine in Settings."))
+        handleError(error, context: "Unsupported Device")
+    }
+
     // MARK: - Engine Management
     
     func initializeEngines() {
@@ -453,37 +458,57 @@ class SummaryManager: ObservableObject {
         }
         
         // Now restore the user's selected engine from UserDefaults or set default
-        if let savedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine"),
+        let savedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine")
+
+        if let savedEngineName = savedEngineName,
            let savedEngine = availableEngines[savedEngineName],
            savedEngine.isAvailable {
+            // User has a saved preference and the engine is available
             currentEngine = savedEngine
             logger.info("Restored previously selected engine: \(savedEngine.name)", category: "SummaryManager")
-        } else {
-            // Set Enhanced Apple Intelligence as the default if no saved engine or saved engine is not available
-            if let defaultEngine = availableEngines["Enhanced Apple Intelligence"], defaultEngine.isAvailable {
-                currentEngine = defaultEngine
-                UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
-                logger.info("Set Enhanced Apple Intelligence as default engine", category: "SummaryManager")
-            } else {
-                // Fallback: create Enhanced Apple Intelligence if not in available engines
-                let defaultEngine = AIEngineFactory.createEngine(type: .enhancedAppleIntelligence)
-                if defaultEngine.isAvailable {
-                    availableEngines[defaultEngine.name] = defaultEngine
+        } else if let savedEngineName = savedEngineName,
+                  let savedEngine = availableEngines[savedEngineName],
+                  !savedEngine.isAvailable {
+            // User has a saved preference but the engine is not available
+            // Try to find an available alternative, but don't overwrite their preference
+            if let availableEngine = availableEngines.values.first(where: { $0.isAvailable }) {
+                currentEngine = availableEngine
+                logger.warning("Saved engine '\(savedEngineName)' not available, using '\(availableEngine.name)' temporarily", category: "SummaryManager")
+            }
+        } else if savedEngineName == nil {
+            // No saved preference, set Enhanced Apple Intelligence as the default if supported
+            if DeviceCompatibility.isAppleIntelligenceSupported {
+                if let defaultEngine = availableEngines["Enhanced Apple Intelligence"], defaultEngine.isAvailable {
                     currentEngine = defaultEngine
                     UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
-                    logger.info("Created and set Enhanced Apple Intelligence as default engine", category: "SummaryManager")
+                    logger.info("No saved preference, set Enhanced Apple Intelligence as default engine", category: "SummaryManager")
+                } else {
+                    // Fallback: create Enhanced Apple Intelligence if not in available engines
+                    let defaultEngine = AIEngineFactory.createEngine(type: .enhancedAppleIntelligence)
+                    if defaultEngine.isAvailable {
+                        availableEngines[defaultEngine.name] = defaultEngine
+                        currentEngine = defaultEngine
+                        UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
+                        logger.info("Created and set Enhanced Apple Intelligence as default engine", category: "SummaryManager")
+                    }
                 }
+            } else {
+                // Apple Intelligence is not supported, set default to "none"
+                UserDefaults.standard.set("None", forKey: "SelectedAIEngine")
+                logger.info("Apple Intelligence not supported, setting default engine to None.", category: "SummaryManager")
             }
         }
-        
-        // Ensure we have at least one working engine
-        if currentEngine == nil {
-            logger.warning("No available engines found, falling back to Enhanced Apple Intelligence", category: "SummaryManager")
-            // Force create Enhanced Apple Intelligence as fallback using factory
-            let fallbackEngine = AIEngineFactory.createEngine(type: .enhancedAppleIntelligence)
-            availableEngines[fallbackEngine.name] = fallbackEngine
-            currentEngine = fallbackEngine
-            logger.info("Set \(fallbackEngine.name) as fallback engine", category: "SummaryManager")
+
+        // Ensure we have at least one working engine if one is selected
+        if let engineName = UserDefaults.standard.string(forKey: "SelectedAIEngine"), engineName != "None" {
+            if currentEngine == nil {
+                logger.warning("No available engines found, falling back to Enhanced Apple Intelligence", category: "SummaryManager")
+                // Force create Enhanced Apple Intelligence as fallback using factory
+                let fallbackEngine = AIEngineFactory.createEngine(type: .enhancedAppleIntelligence)
+                availableEngines[fallbackEngine.name] = fallbackEngine
+                currentEngine = fallbackEngine
+                logger.info("Set \(fallbackEngine.name) as fallback engine", category: "SummaryManager")
+            }
         }
         
         logger.info("Current active engine: \(getCurrentEngineName())", category: "SummaryManager")
@@ -681,11 +706,11 @@ class SummaryManager: ObservableObject {
         // Verify the engine is still available
         if !engine.isAvailable {
             print("⚠️ SummaryManager: Current engine '\(engine.name)' is no longer available")
-            // Try to find an available fallback engine
+            // Try to find an available fallback engine, but don't overwrite user's preference
             if let fallbackEngine = availableEngines.values.first(where: { $0.isAvailable }) {
-                print("🔄 SummaryManager: Switching to fallback engine '\(fallbackEngine.name)'")
+                print("🔄 SummaryManager: Using fallback engine '\(fallbackEngine.name)' temporarily")
                 currentEngine = fallbackEngine
-                UserDefaults.standard.set(fallbackEngine.name, forKey: "SelectedAIEngine")
+                // Don't overwrite the user's saved preference - they may want to use their selected engine when it becomes available again
                 return fallbackEngine.name
             }
         }
@@ -1054,7 +1079,14 @@ class SummaryManager: ObservableObject {
     
     // MARK: - Enhanced Summary Generation
     
-    func generateEnhancedSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator? = nil) async throws -> EnhancedSummaryData {
+    func generateEnhancedSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator? = nil, engineName: String? = nil) async throws -> EnhancedSummaryData {
+        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "None"
+
+        if selectedEngine == "Enhanced Apple Intelligence" && !DeviceCompatibility.isAppleIntelligenceSupported {
+            showUnsupportedDeviceAlert()
+            throw SummarizationError.aiServiceUnavailable(service: "Apple Intelligence not supported")
+        }
+
         AppLogger.shared.info("Starting enhanced summary generation using \(getCurrentEngineName())", category: "SummaryManager")
         
         let startTime = Date()
@@ -1098,8 +1130,16 @@ class SummaryManager: ObservableObject {
             throw validationError
         }
         
+        let engineToUse: SummarizationEngine?
+
+        if let engineName = engineName, let engine = availableEngines[engineName] {
+            engineToUse = engine
+        } else {
+            engineToUse = currentEngine
+        }
+
         // Ensure we have a working engine
-        guard let engine = currentEngine else {
+        guard let engine = engineToUse else {
             AppLogger.shared.warning("No AI engine available, falling back to basic processing", category: "SummaryManager")
             let fallbackError = SummarizationError.aiServiceUnavailable(service: "No AI engines available")
             handleError(fallbackError, context: "Engine Availability", recordingName: recordingName)
@@ -1132,7 +1172,9 @@ class SummaryManager: ObservableObject {
                 // Handle the error and provide recovery options
                 handleError(error, context: "Enhanced Summary Generation", recordingName: recordingName)
 
-                return try await generateBasicSummary(from: text, for: recordingURL, recordingName: recordingName, recordingDate: recordingDate, coordinator: coordinator)
+                // STOP HERE - Don't fall back to basic summary automatically
+                // Let the user decide what to do instead of silently switching engines
+                throw SummarizationError.aiServiceUnavailable(service: "\(engine.name) failed after retry: \(error.localizedDescription). Please check your \(engine.name) configuration or select a different AI engine.")
             }
         }
 

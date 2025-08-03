@@ -99,7 +99,17 @@ final class AISettingsViewModel: ObservableObject {
             let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
             return !apiKey.isEmpty && isEnabled
         case .awsBedrock:
-            return false // Coming soon
+            let accessKeyId = UserDefaults.standard.string(forKey: "awsBedrockAccessKeyId") ?? ""
+            let secretAccessKey = UserDefaults.standard.string(forKey: "awsBedrockSecretAccessKey") ?? ""
+            let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
+            let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
+            let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
+            
+            if useProfile {
+                return !profileName.isEmpty && isEnabled
+            } else {
+                return !accessKeyId.isEmpty && !secretAccessKey.isEmpty && isEnabled
+            }
         }
     }
 }
@@ -118,6 +128,7 @@ struct AISettingsView: View {
     @State private var showingOpenAISettings = false
     @State private var showingOpenAICompatibleSettings = false
     @State private var showingGoogleAIStudioSettings = false
+    @State private var showingAWSBedrockSettings = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     
@@ -185,7 +196,17 @@ struct AISettingsView: View {
             let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
             return !apiKey.isEmpty && isEnabled
         case .awsBedrock:
-            return false // Coming soon
+            let accessKeyId = UserDefaults.standard.string(forKey: "awsBedrockAccessKeyId") ?? ""
+            let secretAccessKey = UserDefaults.standard.string(forKey: "awsBedrockSecretAccessKey") ?? ""
+            let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
+            let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
+            let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
+            
+            if useProfile {
+                return !profileName.isEmpty && isEnabled
+            } else {
+                return !accessKeyId.isEmpty && !secretAccessKey.isEmpty && isEnabled
+            }
         }
     }
     
@@ -204,7 +225,11 @@ struct AISettingsView: View {
             let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-2.5-flash"
             return model
         case .awsBedrock:
-            return "Coming Soon"
+            let modelName = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude35Haiku.rawValue
+            if let model = AWSBedrockModel(rawValue: modelName) {
+                return model.displayName
+            }
+            return "Claude 3.5 Haiku"
         }
     }
     
@@ -227,6 +252,7 @@ struct AISettingsView: View {
                     openAIConfigurationSection
                     openAICompatibleConfigurationSection
                     googleAIStudioConfigurationSection
+                    awsBedrockConfigurationSection
                     
                     // TODO: Check summary count with new Core Data system
                     // if viewModel.appCoordinator.registryManager.enhancedSummaries.count > 0 {
@@ -303,6 +329,9 @@ struct AISettingsView: View {
             GoogleAIStudioSettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
+        }
+        .sheet(isPresented: $showingAWSBedrockSettings) {
+            AWSBedrockSettingsView()
         }
     }
 }
@@ -655,6 +684,106 @@ private extension AISettingsView {
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.purple.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+    
+    var awsBedrockConfigurationSection: some View {
+        // FIX: Logic moved outside the ViewBuilder closure.
+        let accessKeyId = UserDefaults.standard.string(forKey: "awsBedrockAccessKeyId") ?? ""
+        let secretAccessKey = UserDefaults.standard.string(forKey: "awsBedrockSecretAccessKey") ?? ""
+        let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
+        let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
+        let modelName = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude35Haiku.rawValue
+        let model = AWSBedrockModel(rawValue: modelName) ?? .claude35Haiku
+        let region = UserDefaults.standard.string(forKey: "awsBedrockRegion") ?? "us-east-1"
+        
+        // The return statement is now required because the property contains more than a single expression.
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("AWS Bedrock Configuration")
+                .font(.headline)
+                .padding(.horizontal, 24)
+            
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("AWS Bedrock AI Settings")
+                            .font(.body)
+                        Text("Configure AWS Bedrock with Anthropic Claude, Amazon, and Meta models for advanced AI summarization")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { self.showingAWSBedrockSettings = true }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("Configure")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.orange)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Status:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            let isConfigured = isEnabled && (useProfile ? !profileName.isEmpty : (!accessKeyId.isEmpty && !secretAccessKey.isEmpty))
+                            Circle()
+                                .fill(isConfigured ? Color.green : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text(isConfigured ? "Configured" : "Not Configured")
+                                .font(.caption)
+                                .foregroundColor(isConfigured ? .green : .red)
+                        }
+                    }
+                    
+                    HStack {
+                        Text("Model:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(model.displayName)
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+                    
+                    HStack {
+                        Text("Region:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(region)
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+                    
+                    HStack {
+                        Text("Authentication:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(useProfile ? "AWS Profile (\(profileName.isEmpty ? "Not Set" : profileName))" : "Access Keys")
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(useProfile ? (profileName.isEmpty ? .red : .green) : (!accessKeyId.isEmpty && !secretAccessKey.isEmpty ? .green : .red))
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.orange.opacity(0.1))
             )
             .padding(.horizontal, 24)
         }

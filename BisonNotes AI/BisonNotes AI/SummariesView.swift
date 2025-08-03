@@ -354,6 +354,7 @@ struct SummariesView: View {
         print("🔧 Starting summary generation...")
         
         Task {
+            var job: ProcessingJob?
             do {
                 print("🔍 Starting summary generation for recording: \(recording.recordingName ?? "Unknown")")
                 
@@ -361,7 +362,7 @@ struct SummariesView: View {
                 print("🔍 Looking for transcript...")
                 // TODO: Update to use new Core Data system with UUID
                 // For now, find the recording by URL and get its transcript
-                var job: ProcessingJob?
+                
                 if let recordingURLString = recording.recordingURL,
                    let recordingURL = URL(string: recordingURLString),
                    let coreDataRecording = appCoordinator.getRecording(url: recordingURL),
@@ -402,7 +403,8 @@ struct SummariesView: View {
                         for: recordingURL,
                         recordingName: recordingName,
                         recordingDate: recordingDate,
-                        coordinator: appCoordinator
+                        coordinator: appCoordinator,
+                        engineName: selectedEngine
                     )
 
                     if let job = job {
@@ -448,6 +450,17 @@ struct SummariesView: View {
                         print("   \(index): \(recData.recording.recordingName ?? "Unknown") - has transcript: \(recData.transcript != nil)")
                     }
                     
+                    // Create a job for tracking even when there's no transcript
+                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+                    let recordingURL = URL(string: recording.recordingURL ?? "") ?? URL(fileURLWithPath: "")
+                    let recordingName = recording.recordingName ?? "Unknown Recording"
+                    
+                    job = ProcessingJob(
+                        type: .summarization(engine: selectedEngine),
+                        recordingURL: recordingURL,
+                        recordingName: recordingName
+                    )
+                    
                     await MainActor.run {
                         errorMessage = "No transcript available for this recording"
                         showErrorAlert = true
@@ -457,8 +470,8 @@ struct SummariesView: View {
             } catch {
                 print("❌ Error generating summary: \(error)")
                 print("🔍 Error details: \(error)")
-                if let job = job {
-                    let failedJob = job.withStatus(.failed(error.localizedDescription))
+                if let currentJob = job {
+                    let failedJob = currentJob.withStatus(.failed(error.localizedDescription))
                     await BackgroundProcessingManager.shared.updateExternalJob(failedJob)
                 }
                 await MainActor.run {

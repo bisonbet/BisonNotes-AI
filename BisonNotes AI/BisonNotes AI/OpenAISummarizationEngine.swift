@@ -162,7 +162,8 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         print("📊 Text token count: \(tokenCount)")
         
         do {
-            if TokenManager.needsChunking(text) {
+            // Use GPT-4.1 context window for chunking decision
+            if TokenManager.needsChunking(text, maxTokens: TokenManager.gpt41ContextWindow) {
                 print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
                 return try await processChunkedText(text, service: service)
             } else {
