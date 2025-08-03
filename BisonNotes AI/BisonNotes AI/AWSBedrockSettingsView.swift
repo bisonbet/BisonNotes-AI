@@ -69,6 +69,12 @@ struct AWSBedrockSettingsView: View {
             editingAccessKey = credentialsManager.credentials.accessKeyId
             editingSecretKey = credentialsManager.credentials.secretAccessKey
             editingRegion = credentialsManager.credentials.region
+            
+            // Validate and fix invalid stored model selection
+            if AWSBedrockModel(rawValue: selectedModel) == nil {
+                print("⚠️ Invalid stored model '\(selectedModel)', resetting to default")
+                selectedModel = AWSBedrockModel.claude35Haiku.rawValue
+            }
         }
     }
     

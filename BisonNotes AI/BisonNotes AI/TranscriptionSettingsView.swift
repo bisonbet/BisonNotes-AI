@@ -22,6 +22,7 @@ struct TranscriptionSettingsView: View {
         NavigationView {
             Form {
                 engineSection
+                selectedEngineConfigurationSection
                 displayOptionsSection
                 tipsSection
                 resetSection
@@ -51,93 +52,172 @@ struct TranscriptionSettingsView: View {
     }
     
     private var engineSection: some View {
-        Section {
+        Section(header: Text("Transcription Engine")) {
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(TranscriptionEngine.allCases, id: \.self) { engine in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(engine.rawValue)
-                                    .font(.body)
-                                    .fontWeight(.medium)
-                                
-                                if !engine.isAvailable {
-                                    Text("(Coming Soon)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            
+                Text("Select Transcription Engine")
+                    .font(.body)
+                    .fontWeight(.medium)
+                
+                Picker("Transcription Engine", selection: $selectedTranscriptionEngine) {
+                    ForEach(TranscriptionEngine.allCases.filter { $0.isAvailable }, id: \.self) { engine in
+                        VStack(alignment: .leading) {
+                            Text(engine.rawValue)
+                                .font(.body)
                             Text(engine.description)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                                .lineLimit(2)
                         }
-                        
-                        Spacer()
-                        
-                        if engine.isAvailable {
-                            Button(action: {
-                                selectedTranscriptionEngine = engine.rawValue
-                            }) {
-                                Image(systemName: selectedTranscriptionEngine == engine.rawValue ? "checkmark.circle.fill" : "circle")
-                                    .foregroundColor(selectedTranscriptionEngine == engine.rawValue ? .accentColor : .secondary)
-                                    .font(.title2)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        } else {
-                            Image(systemName: "circle")
-                                .foregroundColor(.secondary)
-                                .font(.title2)
-                        }
+                        .tag(engine.rawValue)
                     }
-                    .padding(.vertical, 4)
+                }
+                .pickerStyle(MenuPickerStyle())
+                
+                if let selectedEngine = TranscriptionEngine(rawValue: selectedTranscriptionEngine) {
+                    HStack {
+                        Circle()
+                            .fill(selectedEngine.isAvailable ? Color.green : Color.red)
+                            .frame(width: 8, height: 8)
+                        Text(selectedEngine.isAvailable ? "Available" : "Not Available")
+                            .font(.caption)
+                            .foregroundColor(selectedEngine.isAvailable ? .green : .red)
+                    }
+                    .padding(.top, 4)
                 }
             }
             .padding(.vertical, 8)
+        }
+    }
+    
+    private var selectedEngineConfigurationSection: some View {
+        if let selectedEngine = TranscriptionEngine(rawValue: selectedTranscriptionEngine),
+           selectedEngine.requiresConfiguration {
             
-            // Settings buttons for engines that require configuration
-            if let selectedEngine = TranscriptionEngine(rawValue: selectedTranscriptionEngine),
-               selectedEngine.requiresConfiguration {
-                Divider()
-                
-                VStack(spacing: 8) {
-                    Text("Engine Settings")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    
-                    if selectedEngine == .awsTranscribe {
-                        Button("AWS Settings") {
-                            showingAWSSettings = true
+            return AnyView(
+                Section(header: Text("\(selectedEngine.rawValue) Configuration")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(selectedEngine.rawValue) Settings")
+                                    .font(.body)
+                                Text(selectedEngine.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            
+                            Button(action: {
+                                switch selectedEngine {
+                                case .awsTranscribe:
+                                    showingAWSSettings = true
+                                case .whisper:
+                                    showingWhisperSettings = true
+                                case .openAI:
+                                    showingOpenAISettings = true
+                                case .appleIntelligence:
+                                    showingAppleIntelligenceSettings = true
+                                case .openAIAPICompatible:
+                                    // Coming soon - no settings yet
+                                    break
+                                }
+                            }) {
+                                HStack {
+                                    Image(systemName: "gear")
+                                    Text("Configure")
+                                }
+                                .font(.caption)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(engineColor(for: selectedEngine))
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                            }
                         }
-                        .foregroundColor(.accentColor)
+                        
+                        engineStatusView(for: selectedEngine)
                     }
-                    
-                    if selectedEngine == .whisper {
-                        Button("Whisper Settings") {
-                            showingWhisperSettings = true
-                        }
-                        .foregroundColor(.accentColor)
-                    }
-                    
-                    if selectedEngine == .openAI {
-                        Button("OpenAI Settings") {
-                            showingOpenAISettings = true
-                        }
-                        .foregroundColor(.accentColor)
-                    }
-                    
-                    if selectedEngine == .appleIntelligence {
-                        Button("Apple Intelligence Settings") {
-                            showingAppleIntelligenceSettings = true
-                        }
-                        .foregroundColor(.accentColor)
-                    }
+                    .padding(.vertical, 8)
+                }
+            )
+        } else {
+            return AnyView(EmptyView())
+        }
+    }
+    
+    private func engineColor(for engine: TranscriptionEngine) -> Color {
+        switch engine {
+        case .awsTranscribe:
+            return .orange
+        case .whisper:
+            return .purple
+        case .openAI:
+            return .blue
+        case .appleIntelligence:
+            return .green
+        case .openAIAPICompatible:
+            return .gray
+        }
+    }
+    
+    private func engineStatusView(for engine: TranscriptionEngine) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Status:")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                Spacer()
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(engine.isAvailable ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
+                    Text(engine.isAvailable ? "Configured" : "Needs Configuration")
+                        .font(.caption)
+                        .foregroundColor(engine.isAvailable ? .green : .red)
                 }
             }
-        } header: {
-            Text("Transcription Engine")
+            
+            HStack {
+                Text("Type:")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(engineTypeDescription(for: engine))
+                    .font(.body)
+                    .fontWeight(.medium)
+            }
+            
+            if engine == .appleIntelligence {
+                HStack {
+                    Text("Privacy:")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("On-Device")
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .foregroundColor(.green)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(engineColor(for: engine).opacity(0.1))
+        )
+    }
+    
+    private func engineTypeDescription(for engine: TranscriptionEngine) -> String {
+        switch engine {
+        case .awsTranscribe:
+            return "Cloud-based"
+        case .whisper:
+            return "Local AI"
+        case .openAI:
+            return "Cloud AI"
+        case .appleIntelligence:
+            return "On-Device"
+        case .openAIAPICompatible:
+            return "Coming Soon"
         }
     }
     

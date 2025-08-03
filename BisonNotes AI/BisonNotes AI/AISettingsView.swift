@@ -65,11 +65,8 @@ final class AISettingsViewModel: ObservableObject {
             return (shouldPrompt: false, oldEngine: "", error: nil)
         }
         
-        // Check if the engine is available
-        let isAvailable = checkEngineAvailability(engineType)
-        if !isAvailable && !engineType.isComingSoon {
-            return (shouldPrompt: false, oldEngine: "", error: "Engine is not available. Please configure it first.")
-        }
+        // Allow selection of any engine - users need to be able to select engines to configure them
+        // Note: Availability checks are used for display status only, not selection restrictions
         
         // Update the selected engine in UserDefaults
         UserDefaults.standard.set(newEngine, forKey: "SelectedAIEngine")
@@ -129,6 +126,7 @@ struct AISettingsView: View {
     @State private var showingOpenAICompatibleSettings = false
     @State private var showingGoogleAIStudioSettings = false
     @State private var showingAWSBedrockSettings = false
+    @State private var showingAppleIntelligenceSettings = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     
@@ -244,20 +242,9 @@ struct AISettingsView: View {
                         }
                     
                     headerSection
-                    currentConfigurationSection
                     engineSelectionSection
-                    
-                    // Show configuration sections for available engines
-                    ollamaConfigurationSection
-                    openAIConfigurationSection
-                    openAICompatibleConfigurationSection
-                    googleAIStudioConfigurationSection
-                    awsBedrockConfigurationSection
-                    
-                    // TODO: Check summary count with new Core Data system
-                    // if viewModel.appCoordinator.registryManager.enhancedSummaries.count > 0 {
-                        summaryManagementSection
-                    // }
+                    selectedEngineConfigurationSection
+                    summaryManagementSection
                     
                     Spacer(minLength: 40)
                 }
@@ -333,6 +320,9 @@ struct AISettingsView: View {
         .sheet(isPresented: $showingAWSBedrockSettings) {
             AWSBedrockSettingsView()
         }
+        .sheet(isPresented: $showingAppleIntelligenceSettings) {
+            AppleIntelligenceSettingsView()
+        }
     }
 }
 
@@ -362,57 +352,62 @@ private extension AISettingsView {
         }
     }
     
-    var currentConfigurationSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Current Configuration")
+    
+    var engineSelectionSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("AI Engine Selection")
                 .font(.headline)
                 .padding(.horizontal, 24)
             
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "cpu")
-                        .foregroundColor(.blue)
-                        .font(.caption)
-                    
-                    Text("Engine:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Text(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence") // Use actual current engine instead of hardcoded "openai"
-                        .font(.caption)
-                        .fontWeight(.medium)
-                    
-                    if currentEngineType?.isComingSoon == true {
-                        Text("(Coming Soon)")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.orange.opacity(0.2))
-                            .cornerRadius(3)
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Select AI Engine")
+                    .font(.body)
+                    .fontWeight(.medium)
+                
+                Picker("AI Engine", selection: Binding(
+                    get: { UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence" },
+                    set: { newValue in
+                        if let engineType = AIEngineType.allCases.first(where: { $0.rawValue == newValue }) {
+                            let result = self.viewModel.selectEngine(engineType, recorderVM: self.recorderVM)
+                            if let error = result.error {
+                                let systemError = SystemError.configurationError(message: error)
+                                let appError = AppError.system(systemError)
+                                self.errorHandler.handle(appError, context: "Engine Selection")
+                            } else if result.shouldPrompt {
+                                self.previousEngine = result.oldEngine
+                                self.showingEngineChangePrompt = true
+                            }
+                            self.refreshEngineStatuses()
+                        }
+                    }
+                )) {
+                    ForEach(AIEngineType.allCases.filter { !$0.isComingSoon }, id: \.self) { engineType in
+                        VStack(alignment: .leading) {
+                            Text(engineType.rawValue)
+                                .font(.body)
+                            Text(engineType.description)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .tag(engineType.rawValue)
                     }
                 }
-                .padding(.horizontal, 24)
+                .pickerStyle(MenuPickerStyle())
                 
-                // TODO: Check summary count with new Core Data system
-                if true { // viewModel.appCoordinator.registryManager.enhancedSummaries.count > 0 {
+                if let currentEngine = currentEngineType {
                     HStack {
-                        Image(systemName: "doc.text")
-                            .foregroundColor(.blue)
+                        Circle()
+                            .fill(statusColor(for: currentEngine, status: engineStatuses[currentEngine.rawValue]))
+                            .frame(width: 8, height: 8)
+                        Text(statusText(for: currentEngine, status: engineStatuses[currentEngine.rawValue]))
                             .font(.caption)
-                        
-                        Text("Existing Summaries:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Text("0") // TODO: Get summary count from new Core Data system
-                            .font(.caption)
-                            .fontWeight(.medium)
+                            .foregroundColor(statusColor(for: currentEngine, status: engineStatuses[currentEngine.rawValue]))
                     }
-                    .padding(.horizontal, 24)
+                    .padding(.top, 4)
                 }
             }
-            .padding(.vertical, 12)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.blue.opacity(0.1))
@@ -421,34 +416,104 @@ private extension AISettingsView {
         }
     }
     
-    var engineSelectionSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Available Engines")
-                    .font(.headline)
-                
-                Spacer()
-                
-                Button(action: { self.refreshEngineStatuses() }) {
-                    HStack(spacing: 4) {
-                        if isRefreshingStatus {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        Text("Refresh")
-                    }
-                    .font(.caption)
-                    .foregroundColor(.blue)
+    var selectedEngineConfigurationSection: some View {
+        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+        
+        return Group {
+            if let currentEngine = AIEngineType.allCases.first(where: { $0.rawValue == currentEngineName }) {
+                switch currentEngine {
+                case .enhancedAppleIntelligence:
+                    appleIntelligenceConfigurationSection
+                case .openAI:
+                    openAIConfigurationSection
+                case .openAICompatible:
+                    openAICompatibleConfigurationSection
+                case .localLLM:
+                    ollamaConfigurationSection
+                case .googleAIStudio:
+                    googleAIStudioConfigurationSection
+                case .awsBedrock:
+                    awsBedrockConfigurationSection
                 }
-                .disabled(isRefreshingStatus)
+            }
+        }
+    }
+    
+    var appleIntelligenceConfigurationSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Apple Intelligence Configuration")
+                .font(.headline)
+                .padding(.horizontal, 24)
+            
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Apple Intelligence Settings")
+                            .font(.body)
+                        Text("Enhanced on-device processing using Apple's machine learning frameworks")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { showingAppleIntelligenceSettings = true }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("Configure")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Status:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color.green)
+                                .frame(width: 8, height: 8)
+                            Text("Available")
+                                .font(.caption)
+                                .foregroundColor(.green)
+                        }
+                    }
+                    
+                    HStack {
+                        Text("Processing:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("On-Device")
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+                    
+                    HStack {
+                        Text("Privacy:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("Fully Private")
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(.green)
+                    }
+                }
             }
             .padding(.horizontal, 24)
-            
-            ForEach(AIEngineType.allCases, id: \.self) { engineType in
-                engineRow(for: engineType)
-            }
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
         }
     }
     
@@ -917,101 +982,6 @@ private extension AISettingsView {
 
 // MARK: - Helper Functions
 private extension AISettingsView {
-    @ViewBuilder
-    func engineRow(for engineType: AIEngineType) -> some View {
-        let engineStatus = self.engineStatuses[engineType.rawValue]
-        let isCurrentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") == engineType.rawValue // Use actual current engine
-        
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(engineType.rawValue)
-                            .font(.body)
-                        
-                        // Status indicator
-                        HStack(spacing: 2) {
-                            Circle()
-                                .fill(statusColor(for: engineType, status: engineStatus))
-                                .frame(width: 8, height: 8)
-                            
-                            Text(statusText(for: engineType, status: engineStatus))
-                                .font(.caption2)
-                                .foregroundColor(statusColor(for: engineType, status: engineStatus))
-                        }
-                        
-                        if engineType.isComingSoon {
-                            Text("(Coming Soon)")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.orange.opacity(0.2))
-                                .cornerRadius(4)
-                        }
-                    }
-                    Text(engineType.description)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    // Requirements if not available
-                    if let status = engineStatus, !status.isAvailable && !engineType.isComingSoon {
-                        Text("Requirements: \(status.requirements.joined(separator: ", "))")
-                            .font(.caption2)
-                            .foregroundColor(.red)
-                    }
-                }
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 4) {
-                    if isCurrentEngine {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.blue)
-                            .font(.title2)
-                    }
-                    
-                    if let status = engineStatus {
-                        Text(status.version)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(.systemGray6))
-                .opacity(isCurrentEngine ? 0.3 : 0.1)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isCurrentEngine ? Color.blue : Color.clear, lineWidth: 2)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if !engineType.isComingSoon {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    let result = self.viewModel.selectEngine(engineType, recorderVM: self.recorderVM)
-                    if let error = result.error {
-                        // Show error from validation
-                        let systemError = SystemError.configurationError(message: error)
-                        let appError = AppError.system(systemError)
-                        self.errorHandler.handle(appError, context: "Engine Selection")
-                    } else if result.shouldPrompt {
-                        self.previousEngine = result.oldEngine
-                        self.showingEngineChangePrompt = true
-                    }
-                    
-                    // Refresh engine statuses after selection
-                    self.refreshEngineStatuses()
-                }
-            }
-        }
-        .opacity(engineType.isComingSoon ? 0.6 : 1.0)
-        .padding(.horizontal, 24)
-    }
     
     func statusColor(for engineType: AIEngineType, status: EngineAvailabilityStatus?) -> Color {
         if engineType.isComingSoon {
