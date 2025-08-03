@@ -7,11 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		14C3B9512E35BCD300C0B6CA /* AWSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 14C3B9502E35BCD300C0B6CA /* AWSCore */; };
-		14C3B9532E35BCD300C0B6CA /* AWSMachineLearning in Frameworks */ = {isa = PBXBuildFile; productRef = 14C3B9522E35BCD300C0B6CA /* AWSMachineLearning */; };
-		14C3B9552E35BCD300C0B6CA /* AWSS3 in Frameworks */ = {isa = PBXBuildFile; productRef = 14C3B9542E35BCD300C0B6CA /* AWSS3 */; };
-		14C3B9572E35BCD300C0B6CA /* AWSTranscribe in Frameworks */ = {isa = PBXBuildFile; productRef = 14C3B9562E35BCD300C0B6CA /* AWSTranscribe */; };
-		14C3B9592E35BCD300C0B6CA /* AWSTranscribeStreaming in Frameworks */ = {isa = PBXBuildFile; productRef = 14C3B9582E35BCD300C0B6CA /* AWSTranscribeStreaming */; };
+		14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9072E3F8D5600BBD2FA /* AWSBedrock */; };
+		14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */; };
+		14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90B2E3F8D5600BBD2FA /* AWSS3 */; };
+		14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */; };
+		14FDF9102E3F8D5600BBD2FA /* AWSTranscribeStreaming in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */; };
+		14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -73,11 +74,12 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				14C3B9592E35BCD300C0B6CA /* AWSTranscribeStreaming in Frameworks */,
-				14C3B9552E35BCD300C0B6CA /* AWSS3 in Frameworks */,
-				14C3B9572E35BCD300C0B6CA /* AWSTranscribe in Frameworks */,
-				14C3B9532E35BCD300C0B6CA /* AWSMachineLearning in Frameworks */,
-				14C3B9512E35BCD300C0B6CA /* AWSCore in Frameworks */,
+				14FDF9102E3F8D5600BBD2FA /* AWSTranscribeStreaming in Frameworks */,
+				14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */,
+				14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */,
+				14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */,
+				14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */,
+				14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -138,11 +140,12 @@
 			);
 			name = "BisonNotes AI";
 			packageProductDependencies = (
-				14C3B9502E35BCD300C0B6CA /* AWSCore */,
-				14C3B9522E35BCD300C0B6CA /* AWSMachineLearning */,
-				14C3B9542E35BCD300C0B6CA /* AWSS3 */,
-				14C3B9562E35BCD300C0B6CA /* AWSTranscribe */,
-				14C3B9582E35BCD300C0B6CA /* AWSTranscribeStreaming */,
+				14FDF9072E3F8D5600BBD2FA /* AWSBedrock */,
+				14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */,
+				14FDF90B2E3F8D5600BBD2FA /* AWSS3 */,
+				14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */,
+				14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */,
+				14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */,
 			);
 			productName = "BisonNotes AI";
 			productReference = 14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */;
@@ -227,7 +230,7 @@
 			mainGroup = 14DBC8342E34F7B500DAD442;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				14C3B94F2E35BCD300C0B6CA /* XCRemoteSwiftPackageReference "aws-sdk-ios-spm" */,
+				14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 14DBC83E2E34F7B500DAD442 /* Products */;
@@ -433,7 +436,7 @@
 				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI/BisonNotes AI.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				"INFOPLIST_FILE[sdk=iphone*]" = "BisonNotes AI/Info.plist";
@@ -470,7 +473,7 @@
 				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI/BisonNotes AI.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				"INFOPLIST_FILE[sdk=iphone*]" = "BisonNotes AI/Info.plist";
@@ -612,41 +615,46 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		14C3B94F2E35BCD300C0B6CA /* XCRemoteSwiftPackageReference "aws-sdk-ios-spm" */ = {
+		14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/aws-amplify/aws-sdk-ios-spm";
+			repositoryURL = "https://github.com/awslabs/aws-sdk-swift";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.41.0;
+				kind = upToNextMinorVersion;
+				minimumVersion = 1.5.12;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		14C3B9502E35BCD300C0B6CA /* AWSCore */ = {
+		14FDF9072E3F8D5600BBD2FA /* AWSBedrock */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14C3B94F2E35BCD300C0B6CA /* XCRemoteSwiftPackageReference "aws-sdk-ios-spm" */;
-			productName = AWSCore;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
+			productName = AWSBedrock;
 		};
-		14C3B9522E35BCD300C0B6CA /* AWSMachineLearning */ = {
+		14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14C3B94F2E35BCD300C0B6CA /* XCRemoteSwiftPackageReference "aws-sdk-ios-spm" */;
-			productName = AWSMachineLearning;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
+			productName = AWSClientRuntime;
 		};
-		14C3B9542E35BCD300C0B6CA /* AWSS3 */ = {
+		14FDF90B2E3F8D5600BBD2FA /* AWSS3 */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14C3B94F2E35BCD300C0B6CA /* XCRemoteSwiftPackageReference "aws-sdk-ios-spm" */;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
 			productName = AWSS3;
 		};
-		14C3B9562E35BCD300C0B6CA /* AWSTranscribe */ = {
+		14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14C3B94F2E35BCD300C0B6CA /* XCRemoteSwiftPackageReference "aws-sdk-ios-spm" */;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
 			productName = AWSTranscribe;
 		};
-		14C3B9582E35BCD300C0B6CA /* AWSTranscribeStreaming */ = {
+		14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14C3B94F2E35BCD300C0B6CA /* XCRemoteSwiftPackageReference "aws-sdk-ios-spm" */;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
 			productName = AWSTranscribeStreaming;
+		};
+		14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
+			productName = AWSBedrockRuntime;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

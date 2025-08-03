@@ -8,9 +8,7 @@
 import SwiftUI
 
 struct AWSSettingsView: View {
-    @AppStorage("awsAccessKey") private var accessKey: String = ""
-    @AppStorage("awsSecretKey") private var secretKey: String = ""
-    @AppStorage("awsRegion") private var region: String = "us-east-1"
+    @ObservedObject private var credentialsManager = AWSCredentialsManager.shared
     @AppStorage("awsBucketName") private var bucketName: String = ""
     @AppStorage("enableAWSTranscribe") private var enableAWSTranscribe: Bool = false
     
@@ -19,16 +17,16 @@ struct AWSSettingsView: View {
     @State private var testResult: String?
     @State private var isTesting = false
     
+    // Local state for editing
+    @State private var editingAccessKey: String = ""
+    @State private var editingSecretKey: String = ""
+    @State private var editingRegion: String = "us-east-1"
+    
     private let regions = [
         "us-east-1": "US East (N. Virginia)",
         "us-east-2": "US East (Ohio)",
         "us-west-1": "US West (N. California)",
-        "us-west-2": "US West (Oregon)",
-        "eu-west-1": "Europe (Ireland)",
-        "eu-central-1": "Europe (Frankfurt)",
-        "ap-southeast-1": "Asia Pacific (Singapore)",
-        "ap-southeast-2": "Asia Pacific (Sydney)",
-        "ap-northeast-1": "Asia Pacific (Tokyo)"
+        "us-west-2": "US West (Oregon)"
     ]
     
     var body: some View {
@@ -48,7 +46,14 @@ struct AWSSettingsView: View {
                 }
                 
                 if enableAWSTranscribe {
-                    Section(header: Text("AWS Credentials")) {
+                    Section(header: 
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("AWS Credentials")
+                            Text("These credentials are shared with AWS Bedrock")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    ) {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Text("Access Key ID")
@@ -60,11 +65,17 @@ struct AWSSettingsView: View {
                             }
                             
                             if showingCredentials {
-                                TextField("Enter Access Key ID", text: $accessKey)
+                                TextField("Enter Access Key ID", text: $editingAccessKey)
                                     .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .onChange(of: editingAccessKey) { _, newValue in
+                                        credentialsManager.updateAccessKey(newValue)
+                                    }
                             } else {
-                                SecureField("Enter Access Key ID", text: $accessKey)
+                                SecureField("Enter Access Key ID", text: $editingAccessKey)
                                     .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .onChange(of: editingAccessKey) { _, newValue in
+                                        credentialsManager.updateAccessKey(newValue)
+                                    }
                             }
                             
                             HStack {
@@ -77,11 +88,17 @@ struct AWSSettingsView: View {
                             }
                             
                             if showingCredentials {
-                                TextField("Enter Secret Access Key", text: $secretKey)
+                                TextField("Enter Secret Access Key", text: $editingSecretKey)
                                     .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .onChange(of: editingSecretKey) { _, newValue in
+                                        credentialsManager.updateSecretKey(newValue)
+                                    }
                             } else {
-                                SecureField("Enter Secret Access Key", text: $secretKey)
+                                SecureField("Enter Secret Access Key", text: $editingSecretKey)
                                     .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .onChange(of: editingSecretKey) { _, newValue in
+                                        credentialsManager.updateSecretKey(newValue)
+                                    }
                             }
                         }
                         
@@ -99,11 +116,14 @@ struct AWSSettingsView: View {
                     }
                     
                     Section(header: Text("AWS Configuration")) {
-                        Picker("Region", selection: $region) {
+                        Picker("Region", selection: $editingRegion) {
                             ForEach(Array(regions.keys.sorted()), id: \.self) { key in
                                 Text("\(key) - \(regions[key] ?? "")")
                                     .tag(key)
                             }
+                        }
+                        .onChange(of: editingRegion) { _, newValue in
+                            credentialsManager.updateRegion(newValue)
                         }
                         
                         VStack(alignment: .leading, spacing: 8) {
@@ -192,10 +212,16 @@ struct AWSSettingsView: View {
                 }
             }
         }
+        .onAppear {
+            // Initialize editing states with current credentials
+            editingAccessKey = credentialsManager.credentials.accessKeyId
+            editingSecretKey = credentialsManager.credentials.secretAccessKey
+            editingRegion = credentialsManager.credentials.region
+        }
     }
     
     private var isConfigurationValid: Bool {
-        !accessKey.isEmpty && !secretKey.isEmpty && !bucketName.isEmpty
+        credentialsManager.credentials.isValid && !bucketName.isEmpty
     }
     
     private func testConnection() {
@@ -205,9 +231,9 @@ struct AWSSettingsView: View {
         Task {
             do {
                 let config = AWSTranscribeConfig(
-                    region: region,
-                    accessKey: accessKey,
-                    secretKey: secretKey,
+                    region: credentialsManager.credentials.region,
+                    accessKey: credentialsManager.credentials.accessKeyId,
+                    secretKey: credentialsManager.credentials.secretAccessKey,
                     bucketName: bucketName
                 )
                 

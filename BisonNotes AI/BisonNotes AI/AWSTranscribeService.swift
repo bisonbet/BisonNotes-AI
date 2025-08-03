@@ -6,9 +6,9 @@
 //
 
 import Foundation
-import AWSCore
 import AWSTranscribe
 import AWSS3
+import AWSClientRuntime
 import AVFoundation
 
 // MARK: - AWS Transcribe Configuration
@@ -43,7 +43,7 @@ struct AWSTranscribeResult {
 
 struct AWSTranscribeJobStatus {
     let jobName: String
-    let status: AWSTranscribeTranscriptionJobStatus
+    let status: TranscribeClientTypes.TranscriptionJobStatus
     let failureReason: String?
     let transcriptUri: String?
     
@@ -73,8 +73,8 @@ class AWSTranscribeService: NSObject, ObservableObject {
     
     // MARK: - Private Properties
     
-    private var transcribeClient: AWSTranscribe?
-    private var s3Client: AWSS3?
+    private var transcribeClient: TranscribeClient?
+    private var s3Client: S3Client?
     private var config: AWSTranscribeConfig
     private var currentJobName: String?
     // Add chunking service
@@ -92,36 +92,65 @@ class AWSTranscribeService: NSObject, ObservableObject {
     // MARK: - Setup
     
     private func setupAWSServices() {
-        // Configure AWS credentials
-        let credentialsProvider = AWSStaticCredentialsProvider(
-            accessKey: config.accessKey,
-            secretKey: config.secretKey
-        )
-        
-        let configuration = AWSServiceConfiguration(
-            region: regionTypeFromString(config.region),
-            credentialsProvider: credentialsProvider
-        )
-        
-        AWSServiceManager.default().defaultServiceConfiguration = configuration
-        
-        // Initialize clients
-        transcribeClient = AWSTranscribe.default()
-        s3Client = AWSS3.default()
+        // Clients will be initialized lazily when first needed
+        // IMPORTANT: For iOS apps, you need to configure AWS credentials through:
+        // 1. AWS Cognito (recommended for mobile apps)
+        // 2. Environment variables (for development)  
+        // 3. Custom credential provider
+        //
+        // The new AWS SDK will look for credentials in this order:
+        // - Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
+        // - AWS credential files (if available)
+        transcribeClient = nil
+        s3Client = nil
     }
     
-    private func regionTypeFromString(_ regionString: String) -> AWSRegionType {
-        switch regionString {
-        case "us-east-1":
-            return .USEast1
-        case "us-east-2":
-            return .USEast2
-        case "us-west-1":
-            return .USWest1
-        case "us-west-2":
-            return .USWest2
-        default:
-            return .USEast1 // Default fallback
+    
+    // MARK: - Private Helper Methods
+    
+    private func getTranscribeClient() async throws -> TranscribeClient {
+        if let client = transcribeClient {
+            return client
+        }
+        
+        // Use shared AWS credentials for all services
+        let sharedCredentials = AWSCredentialsManager.shared.credentials
+        
+        // Ensure environment variables are set from shared credentials
+        AWSCredentialsManager.shared.initializeEnvironment()
+        
+        do {
+            let clientConfig = try await TranscribeClient.TranscribeClientConfiguration(
+                region: sharedCredentials.region
+            )
+            let client = TranscribeClient(config: clientConfig)
+            self.transcribeClient = client
+            return client
+        } catch {
+            throw AWSTranscribeError.configurationMissing
+        }
+    }
+    
+    private func getS3Client() async throws -> S3Client {
+        if let client = s3Client {
+            return client
+        }
+        
+        // Use shared AWS credentials for all services
+        let sharedCredentials = AWSCredentialsManager.shared.credentials
+        
+        // Ensure environment variables are set from shared credentials
+        AWSCredentialsManager.shared.initializeEnvironment()
+        
+        do {
+            let clientConfig = try await S3Client.S3ClientConfiguration(
+                region: sharedCredentials.region
+            )
+            let client = S3Client(config: clientConfig)
+            self.s3Client = client
+            return client
+        } catch {
+            throw AWSTranscribeError.configurationMissing
         }
     }
     
@@ -152,36 +181,30 @@ class AWSTranscribeService: NSObject, ObservableObject {
     
     /// Check the status of a transcription job
     func checkJobStatus(jobName: String) async throws -> AWSTranscribeJobStatus {
-        let client = transcribeClient
+        let client = try await getTranscribeClient()
         
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let request = AWSTranscribeGetTranscriptionJobRequest() else {
-                continuation.resume(throwing: AWSTranscribeError.jobMonitoringFailed(NSError(domain: "AWSTranscribe", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create get transcription job request"])))
-                return
-            }
-            request.transcriptionJobName = jobName
+        do {
+            let request = GetTranscriptionJobInput(
+                transcriptionJobName: jobName
+            )
             
-            client?.getTranscriptionJob(request).continueWith { task in
-                if let error = task.error {
-                    continuation.resume(throwing: AWSTranscribeError.jobMonitoringFailed(error))
-                    return nil
-                }
-                
-                guard let job = task.result?.transcriptionJob else {
-                    continuation.resume(throwing: AWSTranscribeError.jobNotFound)
-                    return nil
-                }
-                
-                let status = AWSTranscribeJobStatus(
-                    jobName: jobName,
-                    status: job.transcriptionJobStatus,
-                    failureReason: job.failureReason,
-                    transcriptUri: job.transcript?.transcriptFileUri
-                )
-                
-                continuation.resume(returning: status)
-                return nil
+            let response = try await client.getTranscriptionJob(input: request)
+            
+            guard let job = response.transcriptionJob else {
+                throw AWSTranscribeError.jobNotFound
             }
+            
+            let status = AWSTranscribeJobStatus(
+                jobName: jobName,
+                status: job.transcriptionJobStatus ?? .failed,
+                failureReason: job.failureReason,
+                transcriptUri: job.transcript?.transcriptFileUri
+            )
+            
+            return status
+            
+        } catch {
+            throw AWSTranscribeError.jobMonitoringFailed(error)
         }
     }
     
@@ -225,25 +248,17 @@ class AWSTranscribeService: NSObject, ObservableObject {
         }
         
         // Test S3 access by trying to list objects in the bucket
-        let client = s3Client
+        let client = try await getS3Client()
         
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let listRequest = AWSS3ListObjectsV2Request() else {
-                continuation.resume(throwing: AWSTranscribeError.configurationMissing)
-                return
-            }
+        do {
+            let listRequest = ListObjectsV2Input(
+                bucket: config.bucketName,
+                maxKeys: 1
+            )
             
-            listRequest.bucket = config.bucketName
-            listRequest.maxKeys = 1 // Just get one object to test access
-            
-            client?.listObjectsV2(listRequest).continueWith { task in
-                if let error = task.error {
-                    continuation.resume(throwing: AWSTranscribeError.uploadFailed(error))
-                } else {
-                    continuation.resume(returning: ())
-                }
-                return nil
-            }
+            _ = try await client.listObjectsV2(input: listRequest)
+        } catch {
+            throw AWSTranscribeError.uploadFailed(error)
         }
     }
     
@@ -334,144 +349,107 @@ class AWSTranscribeService: NSObject, ObservableObject {
     private func uploadToS3(fileURL: URL) async throws -> String {
         let s3Key = "audio-files/\(UUID().uuidString)-\(fileURL.lastPathComponent)"
         
-        // Capture the client reference on the main actor
-        let client = s3Client
+        let client = try await getS3Client()
         
-        return try await withCheckedThrowingContinuation { continuation in
-            // Read the file data
-            do {
-                let fileData = try Data(contentsOf: fileURL)
-                
-                guard let putRequest = AWSS3PutObjectRequest() else {
-                    continuation.resume(throwing: AWSTranscribeError.uploadFailed(NSError(domain: "AWSTranscribe", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create S3 put request"])))
-                    return
-                }
-                
-                putRequest.bucket = config.bucketName
-                putRequest.key = s3Key
-                putRequest.body = fileData
-                
-                // Set proper content type based on file extension
-                let fileExtension = fileURL.pathExtension.lowercased()
-                switch fileExtension {
-                case "m4a", "mp4":
-                    putRequest.contentType = "audio/mp4"
-                case "wav":
-                    putRequest.contentType = "audio/wav"
-                case "mp3":
-                    putRequest.contentType = "audio/mpeg"
-                case "aac":
-                    putRequest.contentType = "audio/aac"
-                default:
-                    putRequest.contentType = "audio/mp4" // Default fallback
-                }
-                
-                // Set content length explicitly
-                putRequest.contentLength = NSNumber(value: fileData.count)
-                
-                print("📤 Uploading \(fileData.count) bytes to S3 as \(s3Key)")
-                
-                client?.putObject(putRequest).continueWith { task in
-                    if let error = task.error {
-                        print("❌ S3 upload failed: \(error)")
-                        continuation.resume(throwing: AWSTranscribeError.uploadFailed(error))
-                    } else {
-                        print("✅ S3 upload successful")
-                        continuation.resume(returning: s3Key)
-                    }
-                    return nil
-                }
-            } catch {
-                print("❌ Failed to read file data: \(error)")
-                continuation.resume(throwing: AWSTranscribeError.uploadFailed(error))
+        do {
+            let fileData = try Data(contentsOf: fileURL)
+            
+            // Set proper content type based on file extension
+            let fileExtension = fileURL.pathExtension.lowercased()
+            let contentType: String
+            switch fileExtension {
+            case "m4a", "mp4":
+                contentType = "audio/mp4"
+            case "wav":
+                contentType = "audio/wav"
+            case "mp3":
+                contentType = "audio/mpeg"
+            case "aac":
+                contentType = "audio/aac"
+            default:
+                contentType = "audio/mp4" // Default fallback
             }
+            
+            print("📤 Uploading \(fileData.count) bytes to S3 as \(s3Key)")
+            
+            let putRequest = PutObjectInput(
+                body: .data(fileData),
+                bucket: config.bucketName,
+                contentLength: fileData.count,
+                contentType: contentType,
+                key: s3Key
+            )
+            
+            _ = try await client.putObject(input: putRequest)
+            print("✅ S3 upload successful")
+            return s3Key
+            
+        } catch {
+            print("❌ S3 upload failed: \(error)")
+            throw AWSTranscribeError.uploadFailed(error)
         }
     }
     
     private func startTranscriptionJob(s3Key: String) async throws -> String {
         let jobName = "transcription-\(UUID().uuidString)"
         
-        // Capture the client reference on the main actor
-        let client = transcribeClient
+        let client = try await getTranscribeClient()
         
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let request = AWSTranscribeStartTranscriptionJobRequest() else {
-                continuation.resume(throwing: AWSTranscribeError.jobStartFailed(NSError(domain: "AWSTranscribe", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create transcription job request"])))
-                return
+        do {
+            let media = TranscribeClientTypes.Media(
+                mediaFileUri: "s3://\(config.bucketName)/\(s3Key)"
+            )
+            
+            let request = StartTranscriptionJobInput(
+                languageCode: .enUs,
+                media: media,
+                outputBucketName: config.bucketName,
+                outputKey: "transcripts/\(jobName).json",
+                transcriptionJobName: jobName
+            )
+            
+            _ = try await client.startTranscriptionJob(input: request)
+            return jobName
+            
+        } catch {
+            throw AWSTranscribeError.jobStartFailed(error)
+        }
+    }
+    
+    private func monitorTranscriptionJob(jobName: String) async throws -> TranscribeClientTypes.TranscriptionJob {
+        let client = try await getTranscribeClient()
+        
+        while true {
+            let request = GetTranscriptionJobInput(
+                transcriptionJobName: jobName
+            )
+            
+            let response = try await client.getTranscriptionJob(input: request)
+            
+            guard let job = response.transcriptionJob else {
+                throw AWSTranscribeError.jobNotFound
             }
             
-            request.transcriptionJobName = jobName
-            request.media = AWSTranscribeMedia()
-            request.media?.mediaFileUri = "s3://\(config.bucketName)/\(s3Key)"
-            request.languageCode = .enUS
-            request.outputBucketName = config.bucketName
-            request.outputKey = "transcripts/\(jobName).json"
+            // Update progress on main actor
+            await MainActor.run {
+                updateProgress(for: job)
+            }
             
-            // Note: Speaker diarization settings removed for compatibility
-            // with current AWS SDK version
-            
-            client?.startTranscriptionJob(request).continueWith { task in
-                if let error = task.error {
-                    continuation.resume(throwing: AWSTranscribeError.jobStartFailed(error))
-                } else {
-                    continuation.resume(returning: jobName)
-                }
-                return nil
+            switch job.transcriptionJobStatus {
+            case .completed:
+                return job
+            case .failed:
+                throw AWSTranscribeError.jobFailed(job.failureReason ?? "Unknown error")
+            case .inProgress:
+                // Wait 5 seconds before checking again
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            default:
+                throw AWSTranscribeError.unknownJobStatus
             }
         }
     }
     
-    private func monitorTranscriptionJob(jobName: String) async throws -> AWSTranscribeTranscriptionJob {
-        // Capture the client reference on the main actor
-        let client = transcribeClient
-        
-        return try await withCheckedThrowingContinuation { continuation in
-            func checkJobStatus() {
-                guard let request = AWSTranscribeGetTranscriptionJobRequest() else {
-                    continuation.resume(throwing: AWSTranscribeError.jobMonitoringFailed(NSError(domain: "AWSTranscribe", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create get transcription job request"])))
-                    return
-                }
-                request.transcriptionJobName = jobName
-                
-                client?.getTranscriptionJob(request).continueWith { task in
-                    if let error = task.error {
-                        continuation.resume(throwing: AWSTranscribeError.jobMonitoringFailed(error))
-                        return nil
-                    }
-                    
-                    guard let job = task.result?.transcriptionJob else {
-                        continuation.resume(throwing: AWSTranscribeError.jobNotFound)
-                        return nil
-                    }
-                    
-                    // Update progress
-                    DispatchQueue.main.async {
-                        self.updateProgress(for: job)
-                    }
-                    
-                    switch job.transcriptionJobStatus {
-                    case .completed:
-                        continuation.resume(returning: job)
-                    case .failed:
-                        continuation.resume(throwing: AWSTranscribeError.jobFailed(job.failureReason ?? "Unknown error"))
-                    case .inProgress:
-                        // Check again in 5 seconds
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                            checkJobStatus()
-                        }
-                    default:
-                        continuation.resume(throwing: AWSTranscribeError.unknownJobStatus)
-                    }
-                    
-                    return nil
-                }
-            }
-            
-            checkJobStatus()
-        }
-    }
-    
-    private func updateProgress(for job: AWSTranscribeTranscriptionJob) {
+    private func updateProgress(for job: TranscribeClientTypes.TranscriptionJob) {
         switch job.transcriptionJobStatus {
         case .inProgress:
             progress = 0.4
@@ -487,7 +465,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
         }
     }
     
-    private func processTranscriptionResult(result: AWSTranscribeTranscriptionJob) async throws -> AWSTranscribeResult {
+    private func processTranscriptionResult(result: TranscribeClientTypes.TranscriptionJob) async throws -> AWSTranscribeResult {
         // Check if transcript is available directly in the response
         if let transcript = result.transcript,
            let transcriptText = transcript.transcriptFileUri {
@@ -556,38 +534,34 @@ class AWSTranscribeService: NSObject, ObservableObject {
         let s3Key = pathComponents.dropFirst(2).joined(separator: "/")
         print("🔑 Extracted S3 key: \(s3Key)")
         
-        // Use AWS S3 client to download with proper authentication
-        let client = s3Client
+        let client = try await getS3Client()
         
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let getRequest = AWSS3GetObjectRequest() else {
-                continuation.resume(throwing: AWSTranscribeError.invalidTranscriptURI)
-                return
-            }
-            
-            getRequest.bucket = config.bucketName
-            getRequest.key = s3Key
+        do {
+            let getRequest = GetObjectInput(
+                bucket: config.bucketName,
+                key: s3Key
+            )
             
             print("📤 Requesting S3 object: \(config.bucketName)/\(s3Key)")
             
-            client?.getObject(getRequest).continueWith { task in
-                if let error = task.error {
-                    print("❌ S3 download failed: \(error)")
-                    continuation.resume(throwing: AWSTranscribeError.invalidTranscriptURI)
-                    return task
-                }
-                
-                guard let result = task.result,
-                      let body = result.body as? Data else {
-                    print("❌ S3 download returned no data or invalid data type")
-                    continuation.resume(throwing: AWSTranscribeError.invalidTranscriptURI)
-                    return task
-                }
-                
-                print("✅ S3 download successful: \(body.count) bytes")
-                continuation.resume(returning: body)
-                return task
+            let response = try await client.getObject(input: getRequest)
+            
+            guard let body = response.body else {
+                print("❌ S3 download returned no data")
+                throw AWSTranscribeError.invalidTranscriptURI
             }
+            
+            if let data = try await body.readData() {
+                print("✅ S3 download successful: \(data.count) bytes")
+                return data
+            } else {
+                print("❌ S3 download returned no data from stream")
+                throw AWSTranscribeError.invalidTranscriptURI
+            }
+            
+        } catch {
+            print("❌ S3 download failed: \(error)")
+            throw AWSTranscribeError.invalidTranscriptURI
         }
     }
     
@@ -689,25 +663,18 @@ class AWSTranscribeService: NSObject, ObservableObject {
     }
     
     private func cleanup(s3Key: String, jobName: String) async throws {
-        // Delete the uploaded audio file
-        guard let deleteRequest = AWSS3DeleteObjectRequest() else {
-            throw AWSTranscribeError.uploadFailed(NSError(domain: "AWSTranscribe", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create S3 delete request"]))
-        }
-        deleteRequest.bucket = config.bucketName
-        deleteRequest.key = s3Key
+        let client = try await getS3Client()
         
-        // Capture the client reference on the main actor
-        let client = s3Client
-        
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            client?.deleteObject(deleteRequest).continueWith { task in
-                if let error = task.error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: ())
-                }
-                return nil
-            }
+        do {
+            let deleteRequest = DeleteObjectInput(
+                bucket: config.bucketName,
+                key: s3Key
+            )
+            
+            _ = try await client.deleteObject(input: deleteRequest)
+            
+        } catch {
+            throw AWSTranscribeError.uploadFailed(error)
         }
     }
     

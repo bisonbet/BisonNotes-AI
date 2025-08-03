@@ -8,10 +8,8 @@
 import SwiftUI
 
 struct AWSBedrockSettingsView: View {
-    @AppStorage("awsBedrockAccessKeyId") private var accessKeyId: String = ""
-    @AppStorage("awsBedrockSecretAccessKey") private var secretAccessKey: String = ""
+    @ObservedObject private var credentialsManager = AWSCredentialsManager.shared
     @AppStorage("awsBedrockSessionToken") private var sessionToken: String = ""
-    @AppStorage("awsBedrockRegion") private var region: String = "us-east-1"
     @AppStorage("awsBedrockModel") private var selectedModel: String = AWSBedrockModel.claude35Haiku.rawValue
     @AppStorage("awsBedrockTemperature") private var temperature: Double = 0.1
     @AppStorage("awsBedrockMaxTokens") private var maxTokens: Int = 4096
@@ -26,16 +24,16 @@ struct AWSBedrockSettingsView: View {
     @State private var availableModels: [AWSBedrockModel] = AWSBedrockModel.allCases
     @State private var isLoadingModels = false
     
+    // Local state for editing (sync with unified credentials)
+    @State private var editingAccessKey: String = ""
+    @State private var editingSecretKey: String = ""
+    @State private var editingRegion: String = "us-east-1"
+    
     private let regions = [
         "us-east-1": "US East (N. Virginia)",
         "us-east-2": "US East (Ohio)",
         "us-west-1": "US West (N. California)",
-        "us-west-2": "US West (Oregon)",
-        "eu-west-1": "Europe (Ireland)",
-        "eu-central-1": "Europe (Frankfurt)",
-        "ap-southeast-1": "Asia Pacific (Singapore)",
-        "ap-southeast-2": "Asia Pacific (Sydney)",
-        "ap-northeast-1": "Asia Pacific (Tokyo)"
+        "us-west-2": "US West (Oregon)"
     ]
     
     private var selectedModelEnum: AWSBedrockModel {
@@ -65,6 +63,12 @@ struct AWSBedrockSettingsView: View {
                     }
                 }
             }
+        }
+        .onAppear {
+            // Initialize editing states with current credentials
+            editingAccessKey = credentialsManager.credentials.accessKeyId
+            editingSecretKey = credentialsManager.credentials.secretAccessKey
+            editingRegion = credentialsManager.credentials.region
         }
     }
     
@@ -154,11 +158,17 @@ struct AWSBedrockSettingsView: View {
                         }
                         
                         if showingCredentials {
-                            TextField("Enter Access Key ID", text: $accessKeyId)
+                            TextField("Enter Access Key ID", text: $editingAccessKey)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .onChange(of: editingAccessKey) { _, newValue in
+                                    credentialsManager.updateAccessKey(newValue)
+                                }
                         } else {
-                            SecureField("Enter Access Key ID", text: $accessKeyId)
+                            SecureField("Enter Access Key ID", text: $editingAccessKey)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .onChange(of: editingAccessKey) { _, newValue in
+                                    credentialsManager.updateAccessKey(newValue)
+                                }
                         }
                         
                         HStack {
@@ -171,11 +181,17 @@ struct AWSBedrockSettingsView: View {
                         }
                         
                         if showingCredentials {
-                            TextField("Enter Secret Access Key", text: $secretAccessKey)
+                            TextField("Enter Secret Access Key", text: $editingSecretKey)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .onChange(of: editingSecretKey) { _, newValue in
+                                    credentialsManager.updateSecretKey(newValue)
+                                }
                         } else {
-                            SecureField("Enter Secret Access Key", text: $secretAccessKey)
+                            SecureField("Enter Secret Access Key", text: $editingSecretKey)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .onChange(of: editingSecretKey) { _, newValue in
+                                    credentialsManager.updateSecretKey(newValue)
+                                }
                         }
                         
                         VStack(alignment: .leading, spacing: 8) {
@@ -215,11 +231,14 @@ struct AWSBedrockSettingsView: View {
     private var modelConfigurationSection: some View {
         Section(header: Text("Model Configuration")) {
             VStack(alignment: .leading, spacing: 16) {
-                Picker("AWS Region", selection: $region) {
+                Picker("AWS Region", selection: $editingRegion) {
                     ForEach(Array(regions.keys.sorted()), id: \.self) { key in
                         Text("\(key) - \(regions[key] ?? "")")
                             .tag(key)
                     }
+                }
+                .onChange(of: editingRegion) { _, newValue in
+                    credentialsManager.updateRegion(newValue)
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
@@ -426,9 +445,9 @@ struct AWSBedrockSettingsView: View {
     
     private var isConfigurationValid: Bool {
         if useProfile {
-            return !profileName.isEmpty && !region.isEmpty
+            return !profileName.isEmpty && !credentialsManager.credentials.region.isEmpty
         } else {
-            return !accessKeyId.isEmpty && !secretAccessKey.isEmpty && !region.isEmpty
+            return credentialsManager.credentials.isValid
         }
     }
     
@@ -495,9 +514,9 @@ struct AWSBedrockSettingsView: View {
     
     private func createConfig() -> AWSBedrockConfig {
         return AWSBedrockConfig(
-            region: region,
-            accessKeyId: accessKeyId,
-            secretAccessKey: secretAccessKey,
+            region: credentialsManager.credentials.region,
+            accessKeyId: credentialsManager.credentials.accessKeyId,
+            secretAccessKey: credentialsManager.credentials.secretAccessKey,
             sessionToken: sessionToken.isEmpty ? nil : sessionToken,
             model: selectedModelEnum,
             temperature: temperature,

@@ -10,10 +10,9 @@ import Foundation
 // MARK: - AWS Bedrock Models
 
 enum AWSBedrockModel: String, CaseIterable {
-    case claude35Sonnet = "anthropic.claude-3-5-sonnet-20241022-v2:0"
-    case claude35Haiku = "anthropic.claude-3-5-haiku-20241022-v1:0"
-    case llama33_70B = "meta.llama3-3-70b-instruct-v1:0"
-    case novaLite = "amazon.nova-lite-v1:0"
+    case claude35Sonnet = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+    case claude35Haiku = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+    case llama33_70B = "us.meta.llama3-3-70b-instruct-v1:0"
     
     var displayName: String {
         switch self {
@@ -23,8 +22,6 @@ enum AWSBedrockModel: String, CaseIterable {
             return "Claude 3.5 Haiku"
         case .llama33_70B:
             return "Llama 3.3 70B Instruct"
-        case .novaLite:
-            return "Amazon Nova Lite"
         }
     }
     
@@ -36,8 +33,6 @@ enum AWSBedrockModel: String, CaseIterable {
             return "Fast and efficient Claude model optimized for quick responses"
         case .llama33_70B:
             return "Meta's large instruction-following model with strong performance"
-        case .novaLite:
-            return "Amazon's lightweight multimodal foundation model"
         }
     }
     
@@ -47,8 +42,6 @@ enum AWSBedrockModel: String, CaseIterable {
             return 8192
         case .llama33_70B:
             return 4096
-        case .novaLite:
-            return 5000
         }
     }
     
@@ -58,8 +51,6 @@ enum AWSBedrockModel: String, CaseIterable {
             return 200000
         case .llama33_70B:
             return 128000
-        case .novaLite:
-            return 300000
         }
     }
     
@@ -71,8 +62,6 @@ enum AWSBedrockModel: String, CaseIterable {
             return "Economy"
         case .llama33_70B:
             return "Standard"
-        case .novaLite:
-            return "Economy"
         }
     }
     
@@ -82,8 +71,6 @@ enum AWSBedrockModel: String, CaseIterable {
             return "Anthropic"
         case .llama33_70B:
             return "Meta"
-        case .novaLite:
-            return "Amazon"
         }
     }
     
@@ -92,8 +79,6 @@ enum AWSBedrockModel: String, CaseIterable {
         case .claude35Sonnet, .claude35Haiku:
             return true
         case .llama33_70B:
-            return false
-        case .novaLite:
             return false
         }
     }
@@ -233,42 +218,6 @@ struct LlamaRequest: BedrockModelRequest {
     }
 }
 
-// Amazon Nova Models
-struct NovaRequest: BedrockModelRequest {
-    let messages: [NovaMessage]
-    let inferenceConfig: NovaInferenceConfig
-    
-    struct NovaMessage: Codable {
-        let role: String
-        let content: [NovaContent]
-        
-        init(role: String, text: String) {
-            self.role = role
-            self.content = [NovaContent(text: text)]
-        }
-    }
-    
-    struct NovaContent: Codable {
-        let text: String
-    }
-    
-    struct NovaInferenceConfig: Codable {
-        let maxTokens: Int
-        let temperature: Double
-        let topP: Double
-        
-        enum CodingKeys: String, CodingKey {
-            case maxTokens = "max_new_tokens"
-            case temperature
-            case topP = "top_p"
-        }
-    }
-    
-    init(messages: [NovaMessage], maxTokens: Int, temperature: Double) {
-        self.messages = messages
-        self.inferenceConfig = NovaInferenceConfig(maxTokens: maxTokens, temperature: temperature, topP: 0.9)
-    }
-}
 
 // MARK: - Model-Specific Response Bodies
 
@@ -330,44 +279,6 @@ struct LlamaResponse: BedrockModelResponse {
     }
 }
 
-struct NovaResponse: BedrockModelResponse {
-    let output: NovaOutput
-    let stopReason: String?
-    let usage: NovaUsage?
-    
-    var content: String {
-        return output.message.content.compactMap { $0.text }.joined(separator: "")
-    }
-    
-    struct NovaOutput: Codable {
-        let message: NovaMessage
-    }
-    
-    struct NovaMessage: Codable {
-        let role: String
-        let content: [NovaContent]
-    }
-    
-    struct NovaContent: Codable {
-        let text: String?
-    }
-    
-    struct NovaUsage: Codable {
-        let inputTokens: Int?
-        let outputTokens: Int?
-        
-        enum CodingKeys: String, CodingKey {
-            case inputTokens = "inputTokens"
-            case outputTokens = "outputTokens"
-        }
-    }
-    
-    enum CodingKeys: String, CodingKey {
-        case output
-        case stopReason = "stopReason"
-        case usage
-    }
-}
 
 // MARK: - AWS Error Response
 
@@ -415,18 +326,6 @@ class AWSBedrockModelFactory {
                 maxTokens: maxTokens,
                 temperature: temperature
             )
-            
-        case .novaLite:
-            var messages = [NovaRequest.NovaMessage]()
-            if let systemPrompt = systemPrompt {
-                messages.append(NovaRequest.NovaMessage(role: "system", text: systemPrompt))
-            }
-            messages.append(NovaRequest.NovaMessage(role: "user", text: prompt))
-            return NovaRequest(
-                messages: messages,
-                maxTokens: maxTokens,
-                temperature: temperature
-            )
         }
     }
     
@@ -442,9 +341,6 @@ class AWSBedrockModelFactory {
             
         case .llama33_70B:
             return try decoder.decode(LlamaResponse.self, from: data)
-            
-        case .novaLite:
-            return try decoder.decode(NovaResponse.self, from: data)
         }
     }
     

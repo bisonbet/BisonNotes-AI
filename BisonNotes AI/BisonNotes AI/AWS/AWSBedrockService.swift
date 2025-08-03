@@ -6,9 +6,8 @@
 //
 
 import Foundation
-// TODO: Add AWS Bedrock SDK imports once added to project
-// import AWSBedrock
-// import AWSBedrockRuntime
+import AWSBedrockRuntime
+import AWSClientRuntime
 
 // MARK: - AWS Bedrock Service
 
@@ -17,75 +16,200 @@ class AWSBedrockService: ObservableObject {
     // MARK: - Properties
     
     @Published var config: AWSBedrockConfig
-    private let session: URLSession
+    private var bedrockClient: BedrockRuntimeClient?
     
     // MARK: - Initialization
     
     init(config: AWSBedrockConfig) {
         self.config = config
+        // Client will be initialized lazily when first needed
+        self.bedrockClient = nil
+    }
+    
+    // MARK: - Private Helper Methods
+    
+    private func getBedrockClient() async throws -> BedrockRuntimeClient {
+        if let client = bedrockClient {
+            return client
+        }
         
-        let sessionConfig = URLSessionConfiguration.default
-        sessionConfig.timeoutIntervalForRequest = config.timeout
-        sessionConfig.timeoutIntervalForResource = config.timeout * 2
-        self.session = URLSession(configuration: sessionConfig)
+        // Use shared AWS credentials for all services
+        let sharedCredentials = AWSCredentialsManager.shared.credentials
+        
+        // Ensure environment variables are set from shared credentials
+        AWSCredentialsManager.shared.initializeEnvironment()
+        
+        do {
+            let clientConfig = try await BedrockRuntimeClient.BedrockRuntimeClientConfiguration(
+                region: sharedCredentials.region
+            )
+            let client = BedrockRuntimeClient(config: clientConfig)
+            self.bedrockClient = client
+            return client
+        } catch {
+            print("⚠️ Failed to initialize BedrockRuntimeClient: \(error)")
+            throw SummarizationError.aiServiceUnavailable(service: "Failed to initialize AWS Bedrock client: \(error.localizedDescription)")
+        }
     }
     
     // MARK: - Public Methods
     
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        let systemPrompt = createSystemPrompt(for: contentType)
-        let userPrompt = createSummaryPrompt(text: text)
+        // Check if text needs chunking for this individual method
+        let tokenCount = TokenManager.getTokenCount(text)
+        let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
         
-        let response = try await invokeModel(
-            prompt: userPrompt,
-            systemPrompt: systemPrompt,
-            maxTokens: config.maxTokens,
-            temperature: config.temperature
-        )
-        
-        return response
+        if TokenManager.needsChunking(text, maxTokens: maxTokens) {
+            print("🔀 AWS Bedrock Summary: Large text detected (\(tokenCount) tokens), using chunked processing")
+            let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
+            var summaries: [String] = []
+            
+            for chunk in chunks {
+                let systemPrompt = createSystemPrompt(for: contentType)
+                let userPrompt = createSummaryPrompt(text: chunk)
+                
+                let response = try await invokeModel(
+                    prompt: userPrompt,
+                    systemPrompt: systemPrompt,
+                    maxTokens: config.maxTokens,
+                    temperature: config.temperature
+                )
+                summaries.append(response)
+            }
+            
+            // Generate meta-summary from all chunk summaries
+            return try await generateMetaSummary(from: summaries, contentType: contentType)
+        } else {
+            // Single chunk processing
+            let systemPrompt = createSystemPrompt(for: contentType)
+            let userPrompt = createSummaryPrompt(text: text)
+            
+            let response = try await invokeModel(
+                prompt: userPrompt,
+                systemPrompt: systemPrompt,
+                maxTokens: config.maxTokens,
+                temperature: config.temperature
+            )
+            
+            return response
+        }
     }
     
     func extractTasks(from text: String) async throws -> [TaskItem] {
-        let systemPrompt = "You are an AI assistant that extracts actionable tasks from text. Focus on personal, actionable items that require follow-up."
-        let userPrompt = createTaskExtractionPrompt(text: text)
+        // Check if text needs chunking
+        let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
         
-        let response = try await invokeModel(
-            prompt: userPrompt,
-            systemPrompt: systemPrompt,
-            maxTokens: 1024,
-            temperature: 0.1
-        )
-        
-        return parseTasksFromResponse(response)
+        if TokenManager.needsChunking(text, maxTokens: maxTokens) {
+            let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
+            var allTasks: [TaskItem] = []
+            
+            for chunk in chunks {
+                let systemPrompt = "You are an AI assistant that extracts actionable tasks from text. Focus on personal, actionable items that require follow-up."
+                let userPrompt = createTaskExtractionPrompt(text: chunk)
+                
+                let response = try await invokeModel(
+                    prompt: userPrompt,
+                    systemPrompt: systemPrompt,
+                    maxTokens: 1024,
+                    temperature: 0.1
+                )
+                
+                let chunkTasks = parseTasksFromResponse(response)
+                allTasks.append(contentsOf: chunkTasks)
+            }
+            
+            return deduplicateTasks(allTasks)
+        } else {
+            let systemPrompt = "You are an AI assistant that extracts actionable tasks from text. Focus on personal, actionable items that require follow-up."
+            let userPrompt = createTaskExtractionPrompt(text: text)
+            
+            let response = try await invokeModel(
+                prompt: userPrompt,
+                systemPrompt: systemPrompt,
+                maxTokens: 1024,
+                temperature: 0.1
+            )
+            
+            return parseTasksFromResponse(response)
+        }
     }
     
     func extractReminders(from text: String) async throws -> [ReminderItem] {
-        let systemPrompt = "You are an AI assistant that extracts time-sensitive reminders from text. Focus on deadlines, appointments, and scheduled events."
-        let userPrompt = createReminderExtractionPrompt(text: text)
+        // Check if text needs chunking
+        let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
         
-        let response = try await invokeModel(
-            prompt: userPrompt,
-            systemPrompt: systemPrompt,
-            maxTokens: 1024,
-            temperature: 0.1
-        )
-        
-        return parseRemindersFromResponse(response)
+        if TokenManager.needsChunking(text, maxTokens: maxTokens) {
+            let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
+            var allReminders: [ReminderItem] = []
+            
+            for chunk in chunks {
+                let systemPrompt = "You are an AI assistant that extracts time-sensitive reminders from text. Focus on deadlines, appointments, and scheduled events."
+                let userPrompt = createReminderExtractionPrompt(text: chunk)
+                
+                let response = try await invokeModel(
+                    prompt: userPrompt,
+                    systemPrompt: systemPrompt,
+                    maxTokens: 1024,
+                    temperature: 0.1
+                )
+                
+                let chunkReminders = parseRemindersFromResponse(response)
+                allReminders.append(contentsOf: chunkReminders)
+            }
+            
+            return deduplicateReminders(allReminders)
+        } else {
+            let systemPrompt = "You are an AI assistant that extracts time-sensitive reminders from text. Focus on deadlines, appointments, and scheduled events."
+            let userPrompt = createReminderExtractionPrompt(text: text)
+            
+            let response = try await invokeModel(
+                prompt: userPrompt,
+                systemPrompt: systemPrompt,
+                maxTokens: 1024,
+                temperature: 0.1
+            )
+            
+            return parseRemindersFromResponse(response)
+        }
     }
     
     func extractTitles(from text: String) async throws -> [TitleItem] {
-        let systemPrompt = "You are an AI assistant that generates concise, descriptive titles for content. Create 3-5 titles that capture the main topics or themes."
-        let userPrompt = createTitleExtractionPrompt(text: text)
+        // Check if text needs chunking
+        let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
         
-        let response = try await invokeModel(
-            prompt: userPrompt,
-            systemPrompt: systemPrompt,
-            maxTokens: 512,
-            temperature: 0.2
-        )
-        
-        return parseTitlesFromResponse(response)
+        if TokenManager.needsChunking(text, maxTokens: maxTokens) {
+            let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
+            var allTitles: [TitleItem] = []
+            
+            for chunk in chunks {
+                let systemPrompt = "You are an AI assistant that generates concise, descriptive titles for content. Create 3-5 titles that capture the main topics or themes."
+                let userPrompt = createTitleExtractionPrompt(text: chunk)
+                
+                let response = try await invokeModel(
+                    prompt: userPrompt,
+                    systemPrompt: systemPrompt,
+                    maxTokens: 512,
+                    temperature: 0.2
+                )
+                
+                let chunkTitles = parseTitlesFromResponse(response)
+                allTitles.append(contentsOf: chunkTitles)
+            }
+            
+            return deduplicateTitles(allTitles)
+        } else {
+            let systemPrompt = "You are an AI assistant that generates concise, descriptive titles for content. Create 3-5 titles that capture the main topics or themes."
+            let userPrompt = createTitleExtractionPrompt(text: text)
+            
+            let response = try await invokeModel(
+                prompt: userPrompt,
+                systemPrompt: systemPrompt,
+                maxTokens: 512,
+                temperature: 0.2
+            )
+            
+            return parseTitlesFromResponse(response)
+        }
     }
     
     func classifyContent(_ text: String) async throws -> ContentType {
@@ -97,12 +221,24 @@ class AWSBedrockService: ObservableObject {
         // First classify the content
         let contentType = try await classifyContent(text)
         
-        if config.model.supportsStructuredOutput {
-            // Use structured output for supported models
-            return try await processCompleteStructured(text: text, contentType: contentType)
+        // Check if text needs chunking based on model's context window
+        let tokenCount = TokenManager.getTokenCount(text)
+        let maxTokens = Int(Double(config.model.contextWindow) * 0.8) // Leave 20% buffer for response
+        
+        print("📊 AWS Bedrock: Text token count: \(tokenCount), max allowed: \(maxTokens)")
+        
+        if TokenManager.needsChunking(text, maxTokens: maxTokens) {
+            print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+            return try await processCompleteChunked(text: text, contentType: contentType, maxTokens: maxTokens)
         } else {
-            // Use individual calls for models without structured output
-            return try await processCompleteIndividual(text: text, contentType: contentType)
+            print("📝 Processing single chunk (\(tokenCount) tokens)")
+            if config.model.supportsStructuredOutput {
+                // Use structured output for supported models
+                return try await processCompleteStructured(text: text, contentType: contentType)
+            } else {
+                // Use individual calls for models without structured output
+                return try await processCompleteIndividual(text: text, contentType: contentType)
+            }
         }
     }
     
@@ -146,7 +282,7 @@ class AWSBedrockService: ObservableObject {
         
         print("🔧 AWS Bedrock API Configuration - Model: \(config.model.rawValue), Region: \(config.region)")
         
-        // Create the model request
+        // Create the model request payload
         let modelRequest = AWSBedrockModelFactory.createRequest(
             for: config.model,
             prompt: prompt,
@@ -164,59 +300,42 @@ class AWSBedrockService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "Failed to encode request: \(error.localizedDescription)")
         }
         
-        // Create the AWS API request URL using URLComponents for proper encoding
-        var components = URLComponents()
-        components.scheme = "https"
-        components.host = "bedrock-runtime.\(config.region).amazonaws.com"
-        components.path = "/model/\(config.model.rawValue)/invoke"
-        
-        guard let url = components.url else {
-            throw SummarizationError.aiServiceUnavailable(service: "Invalid AWS Bedrock endpoint URL")
-        }
-        
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-        urlRequest.setValue(url.host!, forHTTPHeaderField: "Host")
-        urlRequest.setValue("BisonNotes AI iOS App", forHTTPHeaderField: "User-Agent")
-        urlRequest.httpBody = requestBody
-        
-        // Sign the request with AWS Signature Version 4
-        try signRequest(&urlRequest, body: requestBody)
-        
         // Log the request details for debugging
         if let requestBodyString = String(data: requestBody, encoding: .utf8) {
             print("📤 AWS Bedrock API Request Body: \(requestBodyString)")
         }
         
         do {
-            print("🌐 Making AWS Bedrock API request...")
-            let (data, response) = try await session.data(for: urlRequest)
+            print("🌐 Making AWS Bedrock API request using official SDK...")
             
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw SummarizationError.aiServiceUnavailable(service: "Invalid response from AWS Bedrock")
+            // Get the Bedrock client (initialize if needed)
+            let client = try await getBedrockClient()
+            
+            // Use the official AWS SDK to invoke the model
+            let invokeRequest = InvokeModelInput(
+                accept: "application/json",
+                body: requestBody,
+                contentType: "application/json",
+                modelId: config.model.rawValue
+            )
+            
+            let response = try await client.invokeModel(input: invokeRequest)
+            
+            guard let responseBody = response.body else {
+                throw SummarizationError.aiServiceUnavailable(service: "Empty response from AWS Bedrock")
             }
+            
+            // Convert response body to Data
+            let responseData = Data(responseBody)
             
             // Log the raw response for debugging
-            let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
-            print("🌐 AWS Bedrock API Response - Status: \(httpResponse.statusCode)")
+            let responseString = String(data: responseData, encoding: .utf8) ?? "Unable to decode response"
+            print("🌐 AWS Bedrock API Response received")
             print("📝 Raw response: \(responseString)")
-            print("📊 Response data length: \(data.count) bytes")
-            
-            if httpResponse.statusCode != 200 {
-                // Try to parse error response
-                if let errorResponse = try? JSONDecoder().decode(AWSBedrockError.self, from: data) {
-                    print("❌ AWS Bedrock API Error: \(errorResponse.message)")
-                    throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock API Error: \(errorResponse.message)")
-                } else {
-                    print("❌ AWS Bedrock API Error: HTTP \(httpResponse.statusCode) - \(responseString)")
-                    throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock API Error: HTTP \(httpResponse.statusCode)")
-                }
-            }
+            print("📊 Response data length: \(responseData.count) bytes")
             
             // Parse the model-specific response
-            let modelResponse = try AWSBedrockModelFactory.parseResponse(for: config.model, data: data)
+            let modelResponse = try AWSBedrockModelFactory.parseResponse(for: config.model, data: responseData)
             
             print("✅ AWS Bedrock API Success - Model: \(config.model.rawValue)")
             print("📝 Response content length: \(modelResponse.content.count) characters")
@@ -267,145 +386,172 @@ class AWSBedrockService: ObservableObject {
         return (summary, tasks, reminders, titles, contentType)
     }
     
-    // MARK: - AWS Signature Version 4
-    
-    private func signRequest(_ request: inout URLRequest, body: Data) throws {
-        let now = Date()
-        let formatter = DateFormatter()
+    private func processCompleteChunked(text: String, contentType: ContentType, maxTokens: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        // Split text into chunks
+        let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
+        print("📦 AWS Bedrock: Split text into \(chunks.count) chunks")
         
-        // ISO8601 date format for AWS
-        formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
-        formatter.timeZone = TimeZone(abbreviation: "UTC")
-        let amzDate = formatter.string(from: now)
+        // Process each chunk
+        var allSummaries: [String] = []
+        var allTasks: [TaskItem] = []
+        var allReminders: [ReminderItem] = []
+        var allTitles: [TitleItem] = []
         
-        formatter.dateFormat = "yyyyMMdd"
-        let dateStamp = formatter.string(from: now)
-        
-        // Add required headers
-        request.setValue(amzDate, forHTTPHeaderField: "X-Amz-Date")
-        
-        // Create canonical request
-        let canonicalRequest = createCanonicalRequest(request: request, body: body)
-        
-        // Create string to sign
-        let credentialScope = "\(dateStamp)/\(config.region)/bedrock/aws4_request"
-        let stringToSign = """
-AWS4-HMAC-SHA256
-\(amzDate)
-\(credentialScope)
-\(sha256Hex(canonicalRequest))
-"""
-        
-        // Debug the string to sign
-        print("🔍 DEBUG: Our string to sign:")
-        print(stringToSign)
-        
-        // Calculate signature
-        let signature = try calculateSignature(
-            stringToSign: stringToSign,
-            dateStamp: dateStamp,
-            region: config.region,
-            service: "bedrock"
-        )
-        
-        // Create authorization header  
-        let authorizationHeader = "AWS4-HMAC-SHA256 Credential=\(config.accessKeyId)/\(credentialScope), SignedHeaders=host;x-amz-date, Signature=\(signature)"
-        
-        request.setValue(authorizationHeader, forHTTPHeaderField: "Authorization")
-    }
-    
-    private func createCanonicalRequest(request: URLRequest, body: Data) -> String {
-        let httpMethod = request.httpMethod ?? "POST"
-        
-        // Build the canonical URI exactly as AWS expects it
-        // Based on error messages, AWS expects: /model/anthropic.claude-3-5-haiku-20241022-v1%3A0/invoke
-        let modelId = config.model.rawValue
-        let encodedModelId = modelId.replacingOccurrences(of: ":", with: "%3A")
-        let canonicalUri = "/model/\(encodedModelId)/invoke"
-        let canonicalQueryString = "" // No query parameters for Bedrock
-        
-        // Canonical headers (must be lowercase and sorted)
-        var canonicalHeaders = ""
-        var signedHeadersList: [String] = []
-        
-        // Get headers we want to sign and sort them
-        if let headers = request.allHTTPHeaderFields {
-            let sortedHeaders = headers.sorted { $0.key.lowercased() < $1.key.lowercased() }
-            for (key, value) in sortedHeaders {
-                let lowerKey = key.lowercased()
-                if lowerKey == "host" || lowerKey == "x-amz-date" {
-                    canonicalHeaders += "\(lowerKey):\(value.trimmingCharacters(in: .whitespacesAndNewlines))\n"
-                    signedHeadersList.append(lowerKey)
+        for (index, chunk) in chunks.enumerated() {
+            print("🔄 AWS Bedrock: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+            
+            do {
+                if config.model.supportsStructuredOutput {
+                    let chunkResult = try await processCompleteStructured(text: chunk, contentType: contentType)
+                    allSummaries.append(chunkResult.summary)
+                    allTasks.append(contentsOf: chunkResult.tasks)
+                    allReminders.append(contentsOf: chunkResult.reminders)
+                    allTitles.append(contentsOf: chunkResult.titles)
+                } else {
+                    let chunkResult = try await processCompleteIndividual(text: chunk, contentType: contentType)
+                    allSummaries.append(chunkResult.summary)
+                    allTasks.append(contentsOf: chunkResult.tasks)
+                    allReminders.append(contentsOf: chunkResult.reminders)
+                    allTitles.append(contentsOf: chunkResult.titles)
                 }
-            }
-        }
-        
-        let signedHeaders = signedHeadersList.sorted().joined(separator: ";")
-        let payloadHash = sha256Hex(body)
-        
-        return "\(httpMethod)\n\(canonicalUri)\n\(canonicalQueryString)\n\(canonicalHeaders)\n\(signedHeaders)\n\(payloadHash)"
-    }
-    
-    private func calculateSignature(stringToSign: String, dateStamp: String, region: String, service: String) throws -> String {
-        let kDate = try hmacSHA256(key: Data("AWS4\(config.secretAccessKey)".utf8), message: Data(dateStamp.utf8))
-        let kRegion = try hmacSHA256(key: kDate, message: Data(region.utf8))
-        let kService = try hmacSHA256(key: kRegion, message: Data(service.utf8))
-        let kSigning = try hmacSHA256(key: kService, message: Data("aws4_request".utf8))
-        let signature = try hmacSHA256(key: kSigning, message: Data(stringToSign.utf8))
-        
-        return signature.map { String(format: "%02x", $0) }.joined()
-    }
-    
-    private func hmacSHA256(key: Data, message: Data) throws -> Data {
-        var context = CCHmacContext()
-        CCHmacInit(&context, CCHmacAlgorithm(kCCHmacAlgSHA256), key.withUnsafeBytes { $0.bindMemory(to: UInt8.self).baseAddress }, key.count)
-        CCHmacUpdate(&context, message.withUnsafeBytes { $0.bindMemory(to: UInt8.self).baseAddress }, message.count)
-        
-        var hmac = Data(count: Int(CC_SHA256_DIGEST_LENGTH))
-        hmac.withUnsafeMutableBytes { buffer in
-            CCHmacFinal(&context, buffer.bindMemory(to: UInt8.self).baseAddress)
-        }
-        
-        return hmac
-    }
-    
-    private func sha256Hex(_ data: Data) -> String {
-        var hash = Data(count: Int(CC_SHA256_DIGEST_LENGTH))
-        _ = data.withUnsafeBytes { buffer in
-            hash.withUnsafeMutableBytes { hashBuffer in
-                CC_SHA256(buffer.bindMemory(to: UInt8.self).baseAddress, CC_LONG(data.count), hashBuffer.bindMemory(to: UInt8.self).baseAddress)
-            }
-        }
-        return hash.map { String(format: "%02x", $0) }.joined()
-    }
-    
-    private func sha256Hex(_ string: String) -> String {
-        return sha256Hex(Data(string.utf8))
-    }
-    
-    // MARK: - AWS URI Encoding
-    
-    /// AWS-compliant URI encoding function
-    /// Encodes all characters except: A-Z, a-z, 0-9, '-', '.', '_', '~'
-    /// Follows AWS Signature V4 specification
-    private func awsUriEncode(_ string: String) -> String {
-        let unreservedCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
-        
-        var encoded = ""
-        for character in string {
-            let scalar = character.unicodeScalars.first!
-            if unreservedCharacters.contains(scalar) {
-                encoded.append(character)
-            } else {
-                // Encode the character as %XX where XX is uppercase hex
-                let utf8 = String(character).data(using: .utf8)!
-                for byte in utf8 {
-                    encoded.append(String(format: "%%%02X", byte))
+                
+                // Small delay between chunks to prevent overwhelming the API
+                if index < chunks.count - 1 {
+                    try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second between chunks
                 }
+            } catch {
+                print("❌ AWS Bedrock: Failed to process chunk \(index + 1): \(error)")
+                throw error
             }
         }
-        return encoded
+        
+        // Combine all summaries into a cohesive meta-summary
+        let combinedSummary = try await generateMetaSummary(from: allSummaries, contentType: contentType)
+        
+        // Deduplicate tasks and reminders
+        let deduplicatedTasks = deduplicateTasks(allTasks)
+        let deduplicatedReminders = deduplicateReminders(allReminders)
+        let deduplicatedTitles = deduplicateTitles(allTitles)
+        
+        print("📊 AWS Bedrock: Final summary: \(combinedSummary.count) characters")
+        print("📊 AWS Bedrock: Tasks: \(deduplicatedTasks.count), Reminders: \(deduplicatedReminders.count), Titles: \(deduplicatedTitles.count)")
+        
+        return (combinedSummary, deduplicatedTasks, deduplicatedReminders, deduplicatedTitles, contentType)
     }
+    
+    private func generateMetaSummary(from summaries: [String], contentType: ContentType) async throws -> String {
+        guard !summaries.isEmpty else { return "" }
+        
+        // If only one summary, return it directly
+        if summaries.count == 1 {
+            return summaries[0]
+        }
+        
+        // Combine all summaries for meta-summarization
+        let combinedText = summaries.joined(separator: "\n\n")
+        
+        // Check if combined text fits within context window
+        let combinedTokens = TokenManager.getTokenCount(combinedText)
+        let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
+        
+        if combinedTokens <= maxTokens {
+            // Generate meta-summary directly
+            let systemPrompt = """
+            You are an AI assistant that creates cohesive summaries from multiple text segments. 
+            Combine the following summaries into one comprehensive, well-structured summary that captures all key information without redundancy.
+            Use proper Markdown formatting with **bold**, *italic*, ## headers, and • bullet points.
+            """
+            
+            let userPrompt = """
+            Please create a comprehensive summary by combining these segments:
+            
+            \(combinedText)
+            
+            Create a single, cohesive summary that captures all important information while eliminating redundancy.
+            """
+            
+            return try await invokeModel(
+                prompt: userPrompt,
+                systemPrompt: systemPrompt,
+                maxTokens: config.maxTokens,
+                temperature: config.temperature
+            )
+        } else {
+            // Recursively chunk and summarize if still too large
+            let chunks = TokenManager.chunkText(combinedText, maxTokens: maxTokens)
+            var intermediateSummaries: [String] = []
+            
+            for chunk in chunks {
+                let summary = try await generateSummary(from: chunk, contentType: contentType)
+                intermediateSummaries.append(summary)
+            }
+            
+            // Recursively generate meta-summary
+            return try await generateMetaSummary(from: intermediateSummaries, contentType: contentType)
+        }
+    }
+    
+    private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
+        var uniqueTasks: [TaskItem] = []
+        
+        for task in tasks {
+            let isDuplicate = uniqueTasks.contains { existingTask in
+                let similarity = calculateTextSimilarity(task.text, existingTask.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueTasks.append(task)
+            }
+        }
+        
+        return Array(uniqueTasks.prefix(15)) // Limit to 15 tasks
+    }
+    
+    private func deduplicateReminders(_ reminders: [ReminderItem]) -> [ReminderItem] {
+        var uniqueReminders: [ReminderItem] = []
+        
+        for reminder in reminders {
+            let isDuplicate = uniqueReminders.contains { existingReminder in
+                let similarity = calculateTextSimilarity(reminder.text, existingReminder.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueReminders.append(reminder)
+            }
+        }
+        
+        return Array(uniqueReminders.prefix(15)) // Limit to 15 reminders
+    }
+    
+    private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
+        var uniqueTitles: [TitleItem] = []
+        
+        for title in titles {
+            let isDuplicate = uniqueTitles.contains { existingTitle in
+                let similarity = calculateTextSimilarity(title.text, existingTitle.text)
+                return similarity > 0.8
+            }
+            
+            if !isDuplicate {
+                uniqueTitles.append(title)
+            }
+        }
+        
+        return Array(uniqueTitles.prefix(5)) // Limit to 5 titles
+    }
+    
+    private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
+        let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
+        let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
+        
+        let intersection = words1.intersection(words2)
+        let union = words1.union(words2)
+        
+        return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
+    }
+    
     
     // MARK: - Prompt Generators
     

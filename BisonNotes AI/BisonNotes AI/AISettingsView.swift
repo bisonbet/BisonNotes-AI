@@ -18,7 +18,7 @@ struct AppSettingsKeys {
     struct Defaults {
         static let ollamaServerURL = "http://localhost"
         static let ollamaPort = 11434
-        static let ollamaModelName = "llama2:7b"
+        static let ollamaModelName = "llama3.2"
     }
 }
 
