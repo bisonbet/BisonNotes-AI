@@ -79,7 +79,7 @@ class SummaryRegenerationManager: ObservableObject {
                 )
                 
                 // Delete the old summary from Core Data
-                appCoordinator.coreDataManager.deleteSummary(id: summary.id)
+                try appCoordinator.coreDataManager.deleteSummary(id: summary.id)
                 
                 // Create new summary entry in Core Data
                 let newSummaryId = appCoordinator.workflowManager.createSummary(
@@ -148,7 +148,7 @@ class SummaryRegenerationManager: ObservableObject {
             )
             
             // Delete the old summary from Core Data
-            appCoordinator.coreDataManager.deleteSummary(id: summary.id)
+            try appCoordinator.coreDataManager.deleteSummary(id: summary.id)
             print("🗑️ Deleted old summary with ID: \(summary.id)")
             
             // Create new summary entry in Core Data

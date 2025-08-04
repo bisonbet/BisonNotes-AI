@@ -60,6 +60,7 @@ struct SettingsView: View {
                     summarySection
                     fileManagementSection
                     advancedSection
+                    debugSection
                     databaseMaintenanceSection
 
                     
@@ -789,6 +790,48 @@ struct SettingsView: View {
         }
     }
     
+    private var debugSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Debug & Troubleshooting")
+                .font(.headline)
+                .foregroundColor(.primary)
+                .padding(.horizontal, 24)
+            
+            VStack(alignment: .leading, spacing: 8) {
+                NavigationLink(destination: DebugLogView()) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("View Debug Logs")
+                                .font(.body)
+                                .foregroundColor(.primary)
+                            Text("See detailed logs for transcription issues")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: Color.black.opacity(0.05), radius: 1, x: 0, y: 1)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color(.systemGray5), lineWidth: 0.5)
+                    )
+                    .opacity(0.3)
+            )
+        }
+    }
+    
     private var databaseMaintenanceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Database Maintenance")
@@ -947,8 +990,12 @@ struct SettingsView: View {
                 print("   ID exists: \(hasValidID)")
                 
                 // Delete the orphaned summary
-                appCoordinator.coreDataManager.deleteSummary(id: summary.id)
-                orphanedSummaries += 1
+                do {
+                    try appCoordinator.coreDataManager.deleteSummary(id: summary.id)
+                    orphanedSummaries += 1
+                } catch {
+                    print("❌ Failed to delete orphaned summary: \(error)")
+                }
                 
                 // Calculate freed space (rough estimate)
                 freedSpaceBytes += Int64(summary.summary?.count ?? 0 * 2) // Approximate UTF-8 bytes

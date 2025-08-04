@@ -613,7 +613,7 @@ class AWSBedrockService: ObservableObject {
     
     private func createSummaryPrompt(text: String) -> String {
         return """
-        Please provide a comprehensive summary of the following content using proper Markdown formatting:
+        Please provide a detailed and comprehensive summary of the following content using proper Markdown formatting (aim for 15-20% of the original transcript length):
         
         Use the following Markdown elements as appropriate:
         - **Bold text** for key points and important information
@@ -627,7 +627,14 @@ class AWSBedrockService: ObservableObject {
         Content to summarize:
         \(text)
         
-        Focus on the key points and main ideas. Keep the summary clear, informative, and well-structured with proper markdown formatting.
+        Focus on capturing all important details, context, and nuances. Include:
+        - Key points and main ideas with sufficient detail
+        - Important context and background information
+        - Specific details that provide depth and understanding
+        - Relevant examples or explanations mentioned
+        - Overall themes and conclusions
+        
+        Make the summary thorough and informative while maintaining clarity and proper markdown formatting.
         """
     }
     

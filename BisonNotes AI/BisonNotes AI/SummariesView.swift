@@ -50,6 +50,11 @@ struct SummariesView: View {
                     // Refresh when app comes to foreground
                     loadRecordings()
                 }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SummaryDeleted"))) { _ in
+                    // Refresh when a summary is deleted
+                    print("📱 SummariesView: Received summary deletion notification, refreshing...")
+                    loadRecordings()
+                }
                 .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
                     // Refresh recordings list when a recording is renamed
                     if PerformanceOptimizer.shouldLogEngineInitialization() {

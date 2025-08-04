@@ -24,11 +24,8 @@ struct TranscriptsView: View {
     @State private var completedTranscriptionText = ""
     @State private var isCheckingForCompletions = false
     @State private var refreshTrigger = false
-    @State private var showingTranscriptionProgress = false
-    @AppStorage("showTranscriptionProgress") private var showTranscriptionProgress: Bool = true
     @State private var refreshTimer: Timer?
     @State private var isShowingAlert = false
-    @State private var userDismissedProgress = false
     
     var body: some View {
         NavigationView {
@@ -45,30 +42,6 @@ struct TranscriptsView: View {
         }
         .sheet(item: $selectedLocationData) { locationData in
             LocationDetailView(locationData: locationData)
-        }
-        .sheet(isPresented: $showingTranscriptionProgress) {
-            if let progress = enhancedTranscriptionManager.progress {
-                TranscriptionProgressView(
-                    progress: progress,
-                    status: enhancedTranscriptionManager.currentStatus,
-                    onCancel: {
-                        enhancedTranscriptionManager.cancelTranscription()
-                        showingTranscriptionProgress = false
-                        isGeneratingTranscript = false
-                    },
-                    onDone: {
-                        showingTranscriptionProgress = false
-                        userDismissedProgress = true
-                        // Transcription continues in background
-                    }
-                )
-            }
-        }
-        .onDisappear {
-            // Ensure transcription progress sheet is dismissed when view disappears
-            if showingTranscriptionProgress {
-                showingTranscriptionProgress = false
-            }
         }
         .alert("Transcription Complete", isPresented: $showingTranscriptionCompletionAlert) {
             Button("OK") {
@@ -221,12 +194,11 @@ struct TranscriptsView: View {
     
     private func transcriptButtonView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
         Button(action: {
-            selectedRecording = recordingData.recording
             if recordingData.transcript != nil {
                 // Show existing transcript for editing
-                // This will be handled by the sheet
+                selectedRecording = recordingData.recording
             } else {
-                // Generate new transcript
+                // Generate new transcript - don't set selectedRecording to avoid showing modal
                 generateTranscript(for: recordingData.recording)
             }
         }) {
@@ -322,7 +294,6 @@ struct TranscriptsView: View {
     
     private func generateTranscript(for recording: RecordingEntry) {
         isGeneratingTranscript = true
-        userDismissedProgress = false  // Reset flag for new transcription
         
         // First request speech recognition permission
         SFSpeechRecognizer.requestAuthorization { authStatus in
@@ -344,10 +315,7 @@ struct TranscriptsView: View {
     private func performEnhancedTranscription(for recording: RecordingEntry) {
         print("🚀 Starting enhanced transcription for: \(recording.recordingName ?? "Unknown Recording")")
         
-        // Show progress sheet if enabled
-        if showTranscriptionProgress {
-            showingTranscriptionProgress = true
-        }
+        // Progress is now shown inline on the button, no modal needed
         
         Task {
             // Use the selected transcription engine
@@ -489,20 +457,10 @@ struct TranscriptsView: View {
                     // Send notification for other views to refresh
                     NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
                     
-                    // Dismiss progress sheet first if it's showing
-                    if self.showingTranscriptionProgress {
-                        self.showingTranscriptionProgress = false
-                        // Add a small delay to ensure the sheet is dismissed before showing the alert
-                        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-                    }
-                    
-                    // Only show alert if not already showing one and user didn't manually dismiss progress
-                    if !self.isShowingAlert && !self.userDismissedProgress {
-                        // Show completion alert
+                    // Show completion alert to notify user transcription finished in background
+                    if !self.isShowingAlert {
                         self.completedTranscriptionText = "Transcription completed for: \(recording.recording.recordingName ?? "Unknown Recording")"
                         self.showingTranscriptionCompletionAlert = true
-                    } else if self.userDismissedProgress {
-                        print("ℹ️ User dismissed progress manually, skipping completion alert")
                     }
                 } else {
                     print("❌ Could not find recording for completed transcription")
@@ -569,20 +527,10 @@ struct TranscriptsView: View {
                     // Send notification for other views to refresh
                     NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
                     
-                    // Dismiss progress sheet first if it's showing
-                    if self.showingTranscriptionProgress {
-                        self.showingTranscriptionProgress = false
-                        // Add a small delay to ensure the sheet is dismissed before showing the alert
-                        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-                    }
-                    
-                    // Only show alert if not already showing one and user didn't manually dismiss progress
-                    if !self.isShowingAlert && !self.userDismissedProgress {
-                        // Show completion alert
+                    // Show completion alert to notify user transcription finished in background
+                    if !self.isShowingAlert {
                         self.completedTranscriptionText = "Transcription completed for: \(recording.recording.recordingName ?? "Unknown Recording")"
                         self.showingTranscriptionCompletionAlert = true
-                    } else if self.userDismissedProgress {
-                        print("ℹ️ User dismissed progress manually, skipping completion alert")
                     }
                 } else {
                     print("❌ No matching recording found for job: \(jobInfo.recordingName)")

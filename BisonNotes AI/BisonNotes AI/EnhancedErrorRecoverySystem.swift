@@ -394,6 +394,20 @@ class EnhancedErrorRecoveryManager: ObservableObject {
                 action: "Check job configuration and try again",
                 error: nil
             )
+            
+        case .fileNotFound:
+            return RecoveryResult(
+                success: false,
+                action: "Check audio file location and accessibility",
+                error: nil
+            )
+            
+        case .invalidAudioFormat:
+            return RecoveryResult(
+                success: false,
+                action: "Convert audio to supported format or re-record",
+                error: nil
+            )
         }
     }
     

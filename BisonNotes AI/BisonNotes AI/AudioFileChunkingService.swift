@@ -38,6 +38,8 @@ class AudioFileChunkingService: ObservableObject {
             return fileInfo.fileSize > maxBytes
         case .duration(let maxSeconds):
             return fileInfo.duration > maxSeconds
+        case .combined(let maxBytes, let maxSeconds):
+            return fileInfo.fileSize > maxBytes || fileInfo.duration > maxSeconds
         }
     }
     
@@ -130,6 +132,8 @@ class AudioFileChunkingService: ObservableObject {
                 chunks = try await chunkByFileSizeWithStreaming(url, maxBytes: maxBytes, config: config, fileInfo: fileInfo)
             case .duration(let maxSeconds):
                 chunks = try await chunkByDurationWithStreaming(url, maxSeconds: maxSeconds, config: config, fileInfo: fileInfo)
+            case .combined(let maxBytes, let maxSeconds):
+                chunks = try await chunkByCombinedStrategy(url, maxBytes: maxBytes, maxSeconds: maxSeconds, config: config, fileInfo: fileInfo)
             }
             
             let chunkingTime = Date().timeIntervalSince(startTime)
@@ -660,5 +664,100 @@ class AudioFileChunkingService: ObservableObject {
             print("File attributes: \(attributes)")
             throw AudioChunkingError.chunkingFailed("Exported file is empty")
         }
+    }
+    
+    private func chunkByCombinedStrategy(_ url: URL, maxBytes: Int64, maxSeconds: TimeInterval, config: ChunkingConfig, fileInfo: AudioFileInfo) async throws -> [AudioChunk] {
+        currentStatus = "Chunking with combined size and duration limits..."
+        progress = 0.3
+        
+        let asset = AVURLAsset(url: url)
+        let duration = fileInfo.duration
+        let totalSize = fileInfo.fileSize
+        
+        // Calculate bytes per second to estimate chunk sizes
+        let bytesPerSecond = Double(totalSize) / duration
+        
+        // Determine the more restrictive limit
+        let maxDurationFromSize = Double(maxBytes) / bytesPerSecond
+        let effectiveMaxSeconds = min(maxSeconds, maxDurationFromSize)
+        
+        print("📊 Combined strategy: Duration limit \(maxSeconds)s, Size-based duration limit \(maxDurationFromSize)s")
+        print("📏 Using effective limit: \(effectiveMaxSeconds)s")
+        
+        var chunks: [AudioChunk] = []
+        var currentTime: TimeInterval = 0
+        var sequenceNumber = 0
+        var adaptiveDuration = effectiveMaxSeconds
+        
+        while currentTime < duration {
+            let chunkStartTime = currentTime
+            let chunkEndTime = min(currentTime + adaptiveDuration, duration)
+            
+            currentStatus = "Creating chunk \(sequenceNumber + 1) with combined limits..."
+            progress = 0.3 + (0.6 * (currentTime / duration))
+            
+            let chunkURL = config.tempDirectory.appendingPathComponent("chunk_\(sequenceNumber).m4a")
+            
+            // Export chunk with streaming
+            try await exportAudioChunkWithStreaming(from: asset, startTime: chunkStartTime, endTime: chunkEndTime, outputURL: chunkURL)
+            
+            // Get actual chunk size and validate against both limits
+            let chunkAttributes = try fileManager.attributesOfItem(atPath: chunkURL.path)
+            let chunkSize = chunkAttributes[.size] as? Int64 ?? 0
+            let chunkDuration = chunkEndTime - chunkStartTime
+            
+            // Check if chunk violates either limit
+            if chunkSize > maxBytes {
+                print("⚠️ Chunk \(sequenceNumber) exceeds size limit (\(chunkSize) bytes > \(maxBytes) bytes)")
+                adaptiveDuration = adaptiveDuration * 0.7 // Reduce by 30%
+                print("🔄 Reducing chunk duration to \(adaptiveDuration)s")
+                
+                // Remove the oversized chunk and try again
+                try? fileManager.removeItem(at: chunkURL)
+                continue
+                
+            } else if chunkDuration > maxSeconds {
+                print("⚠️ Chunk \(sequenceNumber) exceeds duration limit (\(chunkDuration)s > \(maxSeconds)s)")
+                adaptiveDuration = min(adaptiveDuration * 0.8, maxSeconds) // Reduce but cap at maxSeconds
+                print("🔄 Reducing chunk duration to \(adaptiveDuration)s")
+                
+                // Remove the oversized chunk and try again
+                try? fileManager.removeItem(at: chunkURL)
+                continue
+            }
+            
+            // Chunk is within both limits
+            let chunk = AudioChunk(
+                originalURL: url,
+                chunkURL: chunkURL,
+                sequenceNumber: sequenceNumber,
+                startTime: chunkStartTime,
+                endTime: chunkEndTime,
+                fileSize: chunkSize
+            )
+            
+            chunks.append(chunk)
+            
+            print("✅ Chunk \(sequenceNumber) created: \(chunkSize) bytes, \(chunkDuration)s duration")
+            
+            currentTime = chunkEndTime
+            sequenceNumber += 1
+            
+            // Optimize chunk size for next iteration
+            let sizeUtilization = Double(chunkSize) / Double(maxBytes)
+            let durationUtilization = chunkDuration / maxSeconds
+            
+            if sizeUtilization < 0.6 && durationUtilization < 0.6 {
+                // Chunk is much smaller than limits, can increase slightly
+                adaptiveDuration = min(adaptiveDuration * 1.1, effectiveMaxSeconds)
+            }
+            
+            // Battery-aware processing delay
+            if performanceOptimizer.batteryInfo.shouldOptimizeForBattery {
+                try await Task.sleep(nanoseconds: 50_000_000) // 50ms delay
+            }
+        }
+        
+        return chunks
     }
 }

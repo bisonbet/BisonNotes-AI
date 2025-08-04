@@ -256,7 +256,7 @@ class GoogleAIStudioService: ObservableObject {
         \(text)
         
         Please provide:
-        1. A comprehensive summary using proper Markdown formatting:
+        1. A concise summary using proper Markdown formatting (aim for 15-20% of the original transcript length):
            - Use **bold** for key points and important information
            - Use *italic* for emphasis
            - Use ## headers for main sections
@@ -264,6 +264,8 @@ class GoogleAIStudioService: ObservableObject {
            - Use • bullet points for lists
            - Use > blockquotes for important statements
            - Keep the summary well-structured and informative
+           - Focus on the most essential points and key takeaways
+           - Be concise while maintaining completeness of important information
         
         2. Personal and relevant actionable tasks (not general news or public events):
            - Focus on tasks that are personal to the speaker or their immediate context

@@ -97,6 +97,15 @@ enum JobType: Codable {
         }
     }
     
+    var engineName: String {
+        switch self {
+        case .transcription(let engine):
+            return engine.rawValue
+        case .summarization(let engine):
+            return engine
+        }
+    }
+    
     // MARK: - Codable Implementation
     
     private enum CodingKeys: String, CodingKey {
@@ -412,14 +421,21 @@ class BackgroundProcessingManager: ObservableObject {
         let processingJob = nextJob.withStatus(.processing)
         await updateJob(processingJob)
         
+        print("🚀 Starting job processing: \(nextJob.type.displayName) for \(nextJob.recordingName)")
+        print("   - Engine: \(nextJob.type.engineName)")
+        print("   - Recording URL: \(nextJob.recordingURL)")
+        print("   - File exists: \(FileManager.default.fileExists(atPath: nextJob.recordingURL.path))")
+        
         do {
             // Apply battery-aware processing settings
             await applyBatteryOptimization(for: processingJob)
             
             switch nextJob.type {
             case .transcription(let engine):
+                print("📝 Processing transcription job with \(engine.rawValue)")
                 try await processTranscriptionJob(processingJob, engine: engine)
             case .summarization(let engine):
+                print("📋 Processing summarization job with \(engine)")
                 try await processSummarizationJob(processingJob, engine: engine)
             }
             
@@ -437,7 +453,13 @@ class BackgroundProcessingManager: ObservableObject {
             let failedJob = processingJob.withStatus(.failed(error.localizedDescription))
             await updateJob(failedJob)
             
-            print("❌ Job failed: \(nextJob.type.displayName) for \(nextJob.recordingName) - \(error)")
+            print("❌ Job failed: \(nextJob.type.displayName) for \(nextJob.recordingName)")
+            print("   - Error: \(error)")
+            print("   - Error type: \(type(of: error))")
+            print("   - Localized description: \(error.localizedDescription)")
+            
+            // Save detailed error log
+            await saveErrorLog(for: processingJob, error: error)
             
             // Error recovery
             await handleJobFailure(processingJob, error: error)
@@ -635,7 +657,28 @@ class BackgroundProcessingManager: ObservableObject {
         // Post-processing: Generate title automatically - REMOVED for transcription jobs
         // await performPostProcessing(for: job, transcriptText: transcriptChunks.first?.transcript ?? "")
         
-        // Complete the job
+        // Complete the job - but validate we actually have transcript content
+        let hasTranscriptContent = transcriptChunks.contains { !$0.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        
+        if !hasTranscriptContent {
+            print("❌ WARNING: Transcription job completed but no transcript content found!")
+            print("   - Total chunks: \(transcriptChunks.count)")
+            for (index, chunk) in transcriptChunks.enumerated() {
+                print("   - Chunk \(index): '\(chunk.transcript.prefix(50))...' (\(chunk.transcript.count) chars)")
+            }
+            
+            // Mark as failed instead of completed
+            let failedJob = job.withStatus(.failed("No transcript content generated")).withProgress(1.0)
+            await updateJob(failedJob)
+            
+            await sendNotification(
+                title: "Transcription Failed",
+                body: "No transcript content was generated for \(job.recordingName)"
+            )
+            
+            throw BackgroundProcessingError.processingFailed("Transcription completed but generated no content")
+        }
+        
         let completedJob = job.withStatus(.completed).withProgress(1.0)
         await updateJob(completedJob)
         
@@ -645,10 +688,34 @@ class BackgroundProcessingManager: ObservableObject {
             body: "Successfully transcribed \(job.recordingName)"
         )
         
-        print("✅ Transcription job completed for: \(job.recordingName)")
+        print("✅ Transcription job completed for: \(job.recordingName) with valid content")
     }
     
     private func transcribeChunk(_ chunk: AudioChunk, engine: TranscriptionEngine) async throws -> TranscriptionResult {
+        let message = "🎯 Starting transcription of chunk: \(chunk.chunkURL.lastPathComponent) with engine: \(engine.rawValue)"
+        print(message)
+        DebugLogger.shared.log(message)
+        
+        // Verify chunk file exists and has content
+        guard FileManager.default.fileExists(atPath: chunk.chunkURL.path) else {
+            let error = BackgroundProcessingError.fileNotFound("Chunk file not found: \(chunk.chunkURL.path)")
+            let errorMsg = "❌ Chunk file missing: \(chunk.chunkURL.path)"
+            print(errorMsg)
+            DebugLogger.shared.log(errorMsg)
+            throw error
+        }
+        
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: chunk.chunkURL.path)[.size] as? Int64) ?? 0
+        if fileSize == 0 {
+            let error = BackgroundProcessingError.invalidAudioFormat("Chunk file is empty: \(chunk.chunkURL.path)")
+            let errorMsg = "❌ Chunk file is empty: \(chunk.chunkURL.path)"
+            print(errorMsg)
+            DebugLogger.shared.log(errorMsg)
+            throw error
+        }
+        
+        print("📁 Chunk file verified: \(fileSize) bytes, duration: \(chunk.duration)s")
+        
         // Get the recording ID for this chunk
         let recordingId: UUID
         if let appCoordinator = enhancedFileManager.getCoordinator(),
@@ -658,42 +725,76 @@ class BackgroundProcessingManager: ObservableObject {
         } else {
             // Fallback to new UUID if recording not found
             recordingId = UUID()
+            print("⚠️ Recording not found in Core Data for chunk, using fallback UUID: \(recordingId)")
         }
         
-        switch engine {
-        case .openAI:
-            let config = getOpenAIConfig()
-            let service = OpenAITranscribeService(config: config, chunkingService: chunkingService)
-            let result = try await service.transcribeAudioFile(at: chunk.chunkURL, recordingId: recordingId)
-            return TranscriptionResult(
-                fullText: result.transcriptText,
-                segments: result.segments,
-                processingTime: result.processingTime,
-                chunkCount: 1,
-                success: result.success,
-                error: result.error
-            )
+        let startTime = Date()
+        do {
+            let result: TranscriptionResult
             
-        case .whisper:
-            let config = getWhisperConfig()
-            let service = WhisperService(config: config, chunkingService: chunkingService)
-            return try await service.transcribeAudio(url: chunk.chunkURL, recordingId: recordingId)
+            switch engine {
+            case .openAI:
+                print("🤖 Using OpenAI for transcription")
+                let config = getOpenAIConfig()
+                let service = OpenAITranscribeService(config: config, chunkingService: chunkingService)
+                let openAIResult = try await service.transcribeAudioFile(at: chunk.chunkURL, recordingId: recordingId)
+                result = TranscriptionResult(
+                    fullText: openAIResult.transcriptText,
+                    segments: openAIResult.segments,
+                    processingTime: openAIResult.processingTime,
+                    chunkCount: 1,
+                    success: openAIResult.success,
+                    error: openAIResult.error
+                )
+                
+            case .whisper:
+                print("🎤 Using Whisper for transcription")
+                let config = getWhisperConfig()
+                let service = WhisperService(config: config, chunkingService: chunkingService)
+                result = try await service.transcribeAudio(url: chunk.chunkURL, recordingId: recordingId)
 
-        case .awsTranscribe:
-            // AWS Transcribe requires asynchronous job handling. Use the
-            // EnhancedTranscriptionManager which manages the lifecycle of AWS
-            // transcription jobs and polling for results.
-            let manager = EnhancedTranscriptionManager()
-            return try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .awsTranscribe)
+            case .awsTranscribe:
+                print("☁️ Using AWS Transcribe for transcription")
+                let manager = EnhancedTranscriptionManager()
+                result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .awsTranscribe)
 
-        case .appleIntelligence:
-            // Apple Intelligence uses Speech framework which has different limits
-            // Use the EnhancedTranscriptionManager for proper handling
-            let manager = EnhancedTranscriptionManager()
-            return try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .appleIntelligence)
+            case .appleIntelligence:
+                print("🍎 Using Apple Intelligence for transcription")
+                let manager = EnhancedTranscriptionManager()
+                result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .appleIntelligence)
+                
+            case .openAIAPICompatible:
+                throw BackgroundProcessingError.processingFailed("OpenAI API Compatible integration not yet implemented")
+            }
             
-        case .openAIAPICompatible:
-            throw BackgroundProcessingError.processingFailed("OpenAI API Compatible integration not yet implemented")
+            let processingTime = Date().timeIntervalSince(startTime)
+            print("⏱️ Transcription completed in \(processingTime)s")
+            
+            // Validate result
+            if result.fullText.isEmpty {
+                let warningMsg = "⚠️ WARNING: Transcription result is empty! Success: \(result.success), Segments: \(result.segments.count)"
+                print(warningMsg)
+                DebugLogger.shared.log(warningMsg)
+                if let error = result.error {
+                    DebugLogger.shared.log("   - Error: \(error.localizedDescription)")
+                }
+            } else {
+                let successMsg = "✅ Transcription successful: \(result.fullText.count) characters, \(result.segments.count) segments"
+                print(successMsg)
+                DebugLogger.shared.log(successMsg)
+                DebugLogger.shared.log("   - Preview: \(result.fullText.prefix(100))...")
+            }
+            
+            return result
+            
+        } catch {
+            let processingTime = Date().timeIntervalSince(startTime)
+            print("❌ Transcription failed after \(processingTime)s: \(error)")
+            print("   - Error type: \(type(of: error))")
+            print("   - Localized: \(error.localizedDescription)")
+            
+            // Re-throw with more context
+            throw BackgroundProcessingError.processingFailed("Transcription failed for \(engine.rawValue): \(error.localizedDescription)")
         }
     }
     
@@ -1112,6 +1213,38 @@ class BackgroundProcessingManager: ObservableObject {
     
 
     
+    private func saveErrorLog(for job: ProcessingJob, error: Error) async {
+        let errorLog = """
+        =================
+        JOB ERROR LOG
+        =================
+        Date: \(Date())
+        Job ID: \(job.id)
+        Job Type: \(job.type.displayName)
+        Recording: \(job.recordingName)
+        Recording URL: \(job.recordingURL)
+        File Exists: \(FileManager.default.fileExists(atPath: job.recordingURL.path))
+        
+        ERROR DETAILS:
+        - Type: \(type(of: error))
+        - Description: \(error.localizedDescription)
+        - Full Error: \(error)
+        
+        SYSTEM INFO:
+        - Battery Level: \(UIDevice.current.batteryLevel)
+        - Battery State: \(UIDevice.current.batteryState.rawValue)
+        - Available Memory: \(ProcessInfo.processInfo.physicalMemory)
+        
+        =================
+        """
+        
+        print("💾 Saving error log for job: \(job.recordingName)")
+        print(errorLog)
+        
+        // Also log to the enhanced logger
+        EnhancedLogger.shared.logBackgroundProcessing("Detailed error log:\n\(errorLog)", level: .error)
+    }
+    
     private func handleJobFailure(_ job: ProcessingJob, error: Error) async {
         print("🔄 Handling job failure: \(job.recordingName) - \(error.localizedDescription)")
         
@@ -1331,7 +1464,6 @@ class BackgroundProcessingManager: ObservableObject {
             
             // Check remaining background time
             let remainingTime = UIApplication.shared.backgroundTimeRemaining
-            print("⏰ Background time remaining: \(remainingTime) seconds")
             
             // With background audio session, we should get much more time
             if remainingTime < 1800 { // Less than 30 minutes
@@ -1382,7 +1514,6 @@ class BackgroundProcessingManager: ObservableObject {
         guard backgroundTaskID != .invalid else { return }
         
         let remainingTime = UIApplication.shared.backgroundTimeRemaining
-        print("⏰ Background time remaining: \(remainingTime) seconds")
         
         // For long-running audio processing, we want to maximize the time
         // With background audio session, we should get much more time
@@ -1480,6 +1611,8 @@ enum BackgroundProcessingError: LocalizedError {
     case resourceUnavailable
     case queueFull
     case invalidJobType
+    case fileNotFound(String)
+    case invalidAudioFormat(String)
     
     var errorDescription: String? {
         switch self {
@@ -1499,6 +1632,10 @@ enum BackgroundProcessingError: LocalizedError {
             return "Processing queue is full"
         case .invalidJobType:
             return "Invalid job type specified"
+        case .fileNotFound(let message):
+            return "File not found: \(message)"
+        case .invalidAudioFormat(let message):
+            return "Invalid audio format: \(message)"
         }
     }
 }

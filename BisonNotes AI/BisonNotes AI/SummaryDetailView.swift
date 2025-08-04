@@ -440,28 +440,41 @@ struct SummaryDetailView: View {
         print("🗑️ Deleting summary for: \(summaryData.recordingName)")
         print("🆔 Summary ID: \(summaryData.id)")
         
-        // Delete the summary from Core Data
-        appCoordinator.coreDataManager.deleteSummary(id: summaryData.id)
-        print("✅ Summary deleted from Core Data")
-        
-        // Update the recording to remove summary reference
-        if let recordingId = summaryData.recordingId,
-           let recording = appCoordinator.getRecording(id: recordingId) {
-            recording.summaryId = nil
-            recording.summaryStatus = ProcessingStatus.notStarted.rawValue
-            recording.lastModified = Date()
+        do {
+            // Delete the summary from Core Data
+            try appCoordinator.coreDataManager.deleteSummary(id: summaryData.id)
+            print("✅ Summary deleted from Core Data")
             
-            // Save the updated recording
-            do {
-                try appCoordinator.coreDataManager.saveContext()
-                print("✅ Recording updated to remove summary reference")
-            } catch {
-                print("❌ Failed to update recording: \(error)")
+            // Update the recording to remove summary reference (if recording still exists)
+            if let recordingId = summaryData.recordingId,
+               let recording = appCoordinator.getRecording(id: recordingId) {
+                recording.summaryId = nil
+                recording.summaryStatus = ProcessingStatus.notStarted.rawValue
+                recording.lastModified = Date()
+                
+                // Save the updated recording
+                do {
+                    try appCoordinator.coreDataManager.saveContext()
+                    print("✅ Recording updated to remove summary reference")
+                } catch {
+                    print("❌ Failed to update recording: \(error)")
+                }
+            } else {
+                print("ℹ️ Recording no longer exists (orphaned summary) - skipping recording update")
             }
+            
+            // Notify parent views to refresh
+            NotificationCenter.default.post(name: NSNotification.Name("SummaryDeleted"), object: nil)
+            appCoordinator.objectWillChange.send()
+            
+            print("✅ Summary deletion completed")
+            dismiss()
+            
+        } catch {
+            print("❌ Failed to delete summary: \(error)")
+            regenerationError = "Failed to delete summary: \(error.localizedDescription)"
+            showingRegenerationAlert = true
         }
-        
-        print("✅ Summary deletion completed")
-        dismiss()
     }
     
     // MARK: - Regeneration Logic
@@ -504,7 +517,7 @@ struct SummaryDetailView: View {
             print("📋 New titles: \(newEnhancedSummary.titles.count)")
             
             // Delete the old summary from Core Data
-            appCoordinator.coreDataManager.deleteSummary(id: summaryData.id)
+            try appCoordinator.coreDataManager.deleteSummary(id: summaryData.id)
             print("🗑️ Deleted old summary with ID: \(summaryData.id)")
             
             // Create new summary entry in Core Data

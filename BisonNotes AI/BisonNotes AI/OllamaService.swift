@@ -298,13 +298,16 @@ class OllamaService: ObservableObject {
     
     func generateSummary(from text: String) async throws -> String {
         let prompt = """
-        Please provide a concise summary of the following transcript. Focus on the main points, key decisions, and important information. Keep the summary under 200 words.
+        Please provide a comprehensive summary of the following transcript (aim for 15-20% of the original transcript length). Focus on the main points, key decisions, and important information.
 
         **Format your response using markdown:**
         - Use **bold** for emphasis on key points
+        - Use *italic* for secondary emphasis
+        - Use ## headers for main sections
         - Use bullet points for lists
         - Use proper paragraph breaks
         - Keep formatting clean and readable
+        - Balance comprehensiveness with conciseness
 
         Transcript:
         \(text)

@@ -396,6 +396,10 @@ private func getBackgroundProcessingSeverity(_ error: BackgroundProcessingError)
         return .medium
     case .invalidJobType:
         return .low
+    case .fileNotFound:
+        return .high
+    case .invalidAudioFormat:
+        return .high
     }
 }
 
@@ -745,6 +749,38 @@ extension EnhancedErrorHandler {
                     description: "Use default job settings",
                     action: { /* Implementation would use defaults */ },
                     priority: .low
+                )
+            ]
+            
+        case .fileNotFound:
+            return [
+                EnhancedRecoveryAction(
+                    title: "Check File Location",
+                    description: "Verify the audio file exists and is accessible",
+                    action: { /* Implementation would check file */ },
+                    priority: .high
+                ),
+                EnhancedRecoveryAction(
+                    title: "Re-record Audio",
+                    description: "Record a new audio file",
+                    action: { /* Implementation would open recorder */ },
+                    priority: .medium
+                )
+            ]
+            
+        case .invalidAudioFormat:
+            return [
+                EnhancedRecoveryAction(
+                    title: "Convert Audio Format",
+                    description: "Convert the audio to a supported format",
+                    action: { /* Implementation would convert audio */ },
+                    priority: .medium
+                ),
+                EnhancedRecoveryAction(
+                    title: "Re-record Audio",
+                    description: "Record a new audio file with correct format",
+                    action: { /* Implementation would open recorder */ },
+                    priority: .high
                 )
             ]
         }

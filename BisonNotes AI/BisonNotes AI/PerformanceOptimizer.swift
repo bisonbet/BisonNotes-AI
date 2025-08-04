@@ -245,7 +245,6 @@ class PerformanceOptimizer: ObservableObject, Sendable {
         // Adjust optimization level based on battery state
         await adjustOptimizationLevel()
         
-        logger.info("Battery: \(batteryInfo.formattedLevel), Low Power: \(batteryInfo.isLowPowerMode)")
     }
     
     private func adjustOptimizationLevel() async {
@@ -377,15 +376,13 @@ class PerformanceOptimizer: ObservableObject, Sendable {
     // MARK: - Background Processing Optimization
     
     func optimizeBackgroundProcessing() async {
-        logger.info("Optimizing background processing for battery and memory efficiency")
         
         // Note: DispatchQueue QoS cannot be changed after creation
         // The queue will continue using its original QoS setting
         // Battery optimization is handled through chunk size and processing frequency
         
         // Adjust chunk processing size based on memory usage
-        let optimalChunkSize = calculateOptimalChunkSize()
-        logger.info("Optimal chunk size: \(optimalChunkSize) bytes")
+        _ = calculateOptimalChunkSize()
     }
     
     public func calculateOptimalChunkSize() -> Int {
@@ -403,20 +400,18 @@ class PerformanceOptimizer: ObservableObject, Sendable {
     // MARK: - Network Optimization for iCloud Sync
     
     func optimizeNetworkUsage() async {
-        logger.info("Optimizing network usage for iCloud sync")
         
         // Adjust sync frequency based on battery and network conditions
-        let syncInterval: TimeInterval
+        let _: TimeInterval
         
         if batteryInfo.shouldOptimizeForBattery {
-            syncInterval = 600 // 10 minutes
+            _ = 600 // 10 minutes
         } else if memoryUsage.isHighUsage {
-            syncInterval = 300 // 5 minutes
+            _ = 300 // 5 minutes
         } else {
-            syncInterval = 180 // 3 minutes
+            _ = 180 // 3 minutes
         }
         
-        logger.info("Network sync interval: \(syncInterval) seconds")
     }
     
     // MARK: - Progress Tracking with Battery Awareness

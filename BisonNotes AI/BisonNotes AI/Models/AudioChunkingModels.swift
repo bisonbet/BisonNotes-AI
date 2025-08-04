@@ -64,8 +64,9 @@ struct TranscriptChunk: Identifiable, Codable {
 enum ChunkingStrategy {
     case fileSize(maxBytes: Int64)
     case duration(maxSeconds: TimeInterval)
+    case combined(maxBytes: Int64, maxSeconds: TimeInterval)
     
-    static let openAI = ChunkingStrategy.fileSize(maxBytes: 24 * 1024 * 1024) // 24MB
+    static let openAI = ChunkingStrategy.combined(maxBytes: 24 * 1024 * 1024, maxSeconds: 1300) // 24MB and 1300 seconds (21.67 minutes)
     static let whisper = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let aws = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let appleIntelligence = ChunkingStrategy.duration(maxSeconds: 15 * 60) // 15 minutes
@@ -76,6 +77,8 @@ enum ChunkingStrategy {
             return "File size limit: \(maxBytes / 1024 / 1024) MB"
         case .duration(let maxSeconds):
             return "Duration limit: \(Int(maxSeconds / 60)) minutes"
+        case .combined(let maxBytes, let maxSeconds):
+            return "Combined limits: \(maxBytes / 1024 / 1024) MB and \(Int(maxSeconds / 60)) minutes"
         }
     }
 }

@@ -259,13 +259,19 @@ class WhisperService: ObservableObject {
     // MARK: - Single File Transcription
     
     private func performSingleTranscription(url: URL) async throws -> TranscriptionResult {
+        print("🎯 Starting single file transcription for: \(url.lastPathComponent)")
+        
         // First, ensure we have a valid connection
         if !isConnected {
             print("⚠️ Whisper service not connected, attempting to connect...")
             let connected = await testConnection()
             if !connected {
+                print("❌ Failed to connect to Whisper service")
                 throw WhisperError.notConnected
             }
+            print("✅ Connection established")
+        } else {
+            print("✅ Whisper service already connected")
         }
         
         await MainActor.run {
@@ -291,7 +297,44 @@ class WhisperService: ObservableObject {
                 self.isTranscribing = false
                 self.currentStatus = "Audio file not found"
             }
+            print("❌ Audio file not found at path: \(url.path)")
             throw WhisperError.audioProcessingFailed("Audio file does not exist at path: \(url.path)")
+        }
+        
+        // Check file size and format
+        do {
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let fileSize = fileAttributes[.size] as? Int64 ?? 0
+            
+            if fileSize == 0 {
+                await MainActor.run {
+                    self.isTranscribing = false
+                    self.currentStatus = "Audio file is empty"
+                }
+                print("❌ Audio file is empty: \(url.path)")
+                throw WhisperError.audioProcessingFailed("Audio file is empty")
+            }
+            
+            print("📁 Audio file validated: \(fileSize) bytes")
+            
+            // Basic audio format validation
+            let fileExtension = url.pathExtension.lowercased()
+            let supportedFormats = ["m4a", "mp3", "wav", "flac", "ogg", "webm", "mp4"]
+            
+            if !supportedFormats.contains(fileExtension) {
+                print("⚠️ WARNING: Unsupported audio format: \(fileExtension)")
+                print("   - Supported formats: \(supportedFormats.joined(separator: ", "))")
+            } else {
+                print("✅ Audio format supported: \(fileExtension)")
+            }
+            
+        } catch {
+            await MainActor.run {
+                self.isTranscribing = false
+                self.currentStatus = "Failed to validate audio file"
+            }
+            print("❌ Failed to validate audio file: \(error)")
+            throw WhisperError.audioProcessingFailed("Failed to validate audio file: \(error.localizedDescription)")
         }
         
         await MainActor.run {
@@ -394,7 +437,18 @@ class WhisperService: ObservableObject {
         }
         
         print("✅ Successfully parsed response")
-        print("📝 Transcript text: \(whisperResponse.text.prefix(100))...")
+        print("📝 Transcript text length: \(whisperResponse.text.count) characters")
+        
+        // Check if the response is empty or contains only whitespace
+        if whisperResponse.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            print("⚠️ WARNING: Whisper returned empty transcript!")
+            print("   - Raw text: '\(whisperResponse.text)'")
+            print("   - Segments count: \(whisperResponse.segments?.count ?? 0)")
+            print("   - Language: \(whisperResponse.language ?? "unknown")")
+        } else {
+            print("📝 Transcript preview: \(whisperResponse.text.prefix(100))...")
+        }
+        
         print("🌍 Detected language: \(whisperResponse.language ?? "unknown")")
         print("📊 Number of segments: \(whisperResponse.segments?.count ?? 0)")
         

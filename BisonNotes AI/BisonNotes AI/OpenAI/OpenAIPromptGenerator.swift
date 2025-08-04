@@ -99,7 +99,7 @@ class OpenAIPromptGenerator {
     private static func createSummaryPrompt() -> String {
         return """
         **Summary Generation Guidelines:**
-        - Create a comprehensive summary using Markdown formatting
+        - Create a comprehensive summary using Markdown formatting (aim for 15-20% of the original transcript length)
         - Use **bold** for key points and important information
         - Use *italic* for emphasis and highlights
         - Use ## headers for main sections
@@ -108,6 +108,7 @@ class OpenAIPromptGenerator {
         - Use > blockquotes for important statements or quotes
         - Keep the summary well-structured and informative
         - Focus on the most important content and insights
+        - Balance comprehensiveness with conciseness
         - Ensure the summary captures the essence of the conversation
         """
     }
@@ -271,7 +272,7 @@ class OpenAIPromptGenerator {
         Please analyze the following content and provide a comprehensive response in VALID JSON format only. Do not include any text before or after the JSON. The response must be a single, well-formed JSON object with this exact structure:
 
         {
-            "summary": "A detailed summary using Markdown formatting with **bold**, *italic*, ## headers, • bullet points, etc.",
+            "summary": "A detailed summary using Markdown formatting with **bold**, *italic*, ## headers, • bullet points, etc. (aim for 15-20% of the original transcript length)",
             "tasks": [
                 {
                     "text": "task description",

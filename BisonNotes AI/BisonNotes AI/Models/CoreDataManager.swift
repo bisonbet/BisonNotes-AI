@@ -255,21 +255,40 @@ class CoreDataManager: ObservableObject {
         }
     }
     
-    func deleteSummary(id: UUID?) {
-        guard let id = id else { return }
+    func deleteSummary(id: UUID?) throws {
+        guard let id = id else { 
+            print("❌ Cannot delete summary: ID is nil")
+            return 
+        }
         
         let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
         
         do {
             let summaries = try context.fetch(fetchRequest)
+            if summaries.isEmpty {
+                print("⚠️ No summary found with ID: \(id)")
+                return
+            }
+            
             for summary in summaries {
+                print("🗑️ Deleting summary with ID: \(id)")
                 context.delete(summary)
             }
-            try? saveContext()
-            print("✅ Deleted summary with ID: \(id)")
+            
+            // Properly handle save errors
+            do {
+                try saveContext()
+                print("✅ Successfully deleted summary with ID: \(id)")
+            } catch {
+                print("❌ Failed to save context after deleting summary: \(error)")
+                // Rollback the deletion
+                context.rollback()
+                throw error
+            }
         } catch {
             print("❌ Error deleting summary: \(error)")
+            throw error
         }
     }
     
