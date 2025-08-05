@@ -115,10 +115,12 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     // Whisper Configuration
     private var whisperConfig: WhisperConfig? {
         let isEnabled = UserDefaults.standard.bool(forKey: "enableWhisper")
-        let serverURL = UserDefaults.standard.string(forKey: "whisperServerURL") ?? "http://localhost"
+        let serverURL = UserDefaults.standard.string(forKey: "whisperServerURL") ?? "localhost"
         let port = UserDefaults.standard.integer(forKey: "whisperPort")
+        let protocolString = UserDefaults.standard.string(forKey: "whisperProtocol") ?? WhisperProtocol.rest.rawValue
+        let selectedProtocol = WhisperProtocol(rawValue: protocolString) ?? .rest
         
-        print("🔍 Whisper config debug - enabled: \(isEnabled), serverURL: \(serverURL), port: \(port)")
+        print("🔍 Whisper config debug - enabled: \(isEnabled), serverURL: \(serverURL), port: \(port), protocol: \(selectedProtocol.rawValue)")
         
         guard isEnabled else { 
             print("⚠️ Whisper is not enabled")
@@ -126,14 +128,21 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         }
         
         // Use default port if not set (UserDefaults.integer returns 0 if key doesn't exist)
-        let effectivePort = port > 0 ? port : 9000
+        let effectivePort = port > 0 ? port : (selectedProtocol == .wyoming ? 10300 : 9000)
+        
+        // Ensure URL format matches protocol
+        var processedServerURL = serverURL
+        if selectedProtocol == .rest && !serverURL.hasPrefix("http://") && !serverURL.hasPrefix("https://") {
+            processedServerURL = "http://" + serverURL
+        }
         
         let config = WhisperConfig(
-            serverURL: serverURL,
-            port: effectivePort
+            serverURL: processedServerURL,
+            port: effectivePort,
+            whisperProtocol: selectedProtocol
         )
         
-        print("✅ Whisper config created: \(config.baseURL)")
+        print("✅ Whisper config created: \(config.baseURL) with protocol: \(selectedProtocol.rawValue)")
         return config
     }
     
@@ -396,7 +405,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             
             return try await transcribeWithAppleIntelligence(url: url, duration: duration)
             
-        case .whisper:
+        case .whisper, .whisperWyoming:
             switchToWhisperTranscription()
             
             // Validate Whisper configuration and availability
@@ -409,7 +418,9 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             let isWhisperAvailable = await validateWhisperService()
             if isWhisperAvailable {
                 print("🎤 Using Whisper for transcription")
+                print("🔍 DEBUG: Getting whisperConfig...")
                 if let config = whisperConfig {
+                    print("🔍 DEBUG: Got whisperConfig: \(config.whisperProtocol.rawValue)")
                     return try await transcribeWithWhisper(url: url, config: config)
                 } else {
                     print("❌ Whisper config is nil despite validation passing")
@@ -1575,7 +1586,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         switch engine {
         case .awsTranscribe:
             switchToAWSTranscription()
-        case .whisper:
+        case .whisper, .whisperWyoming:
             switchToWhisperTranscription()
         case .appleIntelligence, .openAI, .openAIAPICompatible:
             switchToAppleTranscription()

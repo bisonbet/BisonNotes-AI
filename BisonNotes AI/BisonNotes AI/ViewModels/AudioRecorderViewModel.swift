@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 import SwiftUI
 import Combine
 import CoreLocation
@@ -220,15 +220,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         // Capture current location before starting recording
         captureCurrentLocation()
         
-        // Get selected audio quality from UserDefaults
-        let selectedQuality: AudioQuality
-        if let savedQuality = UserDefaults.standard.string(forKey: "SelectedAudioQuality"),
-           let quality = AudioQuality(rawValue: savedQuality) {
-            selectedQuality = quality
-        } else {
-            selectedQuality = .high // Default to high quality (128 kbps)
-        }
-        
+        // Use Whisper-optimized quality for all recordings
+        let selectedQuality = AudioQuality.whisperOptimized
         let settings = selectedQuality.settings
         
         do {
@@ -385,11 +378,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     // MARK: - Audio Quality Helper
     
     static func getCurrentAudioQuality() -> AudioQuality {
-        if let savedQuality = UserDefaults.standard.string(forKey: "SelectedAudioQuality"),
-           let quality = AudioQuality(rawValue: savedQuality) {
-            return quality
-        }
-        return .regular // Default to regular quality (64 kbps) to minimize space usage
+        // Always use Whisper-optimized quality for voice transcription
+        return .whisperOptimized
     }
     
     static func getCurrentAudioSettings() -> [String: Any] {
@@ -429,6 +419,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         
         return loadedDuration
     }
+    
 }
 
 extension AudioRecorderViewModel: AVAudioRecorderDelegate {
@@ -439,6 +430,9 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                     print("Recording finished successfully")
                     if let recordingURL = recordingURL {
                         saveLocationData(for: recordingURL)
+                        
+                        // New recordings are already in Whisper-optimized format (16kHz, 64kbps AAC)
+                        print("✅ Recording saved in Whisper-optimized format")
                         
                         // Add recording using workflow manager for proper UUID consistency
                         if let workflowManager = workflowManager {

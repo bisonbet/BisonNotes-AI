@@ -106,10 +106,25 @@ class OllamaService: ObservableObject {
     func testConnection() async -> Bool {
         do {
             let url = URL(string: "\(config.baseURL)/api/tags")!
-            let (_, response) = try await session.data(from: url)
+            print("🔧 OllamaService: Testing connection to \(url)")
+            
+            let (data, response) = try await session.data(from: url)
             
             if let httpResponse = response as? HTTPURLResponse {
+                print("🔧 OllamaService: Connection test response: \(httpResponse.statusCode)")
                 let success = httpResponse.statusCode == 200
+                
+                if success {
+                    print("✅ OllamaService: Connection successful")
+                } else {
+                    print("❌ OllamaService: Connection failed with status \(httpResponse.statusCode)")
+                    
+                    // Log response data for debugging
+                    if let responseString = String(data: data, encoding: .utf8) {
+                        print("❌ OllamaService: Error response: \(responseString)")
+                    }
+                }
+                
                 await MainActor.run {
                     self.isConnected = success
                     self.connectionError = success ? nil : "Server returned status code \(httpResponse.statusCode)"
@@ -117,6 +132,7 @@ class OllamaService: ObservableObject {
                 return success
             }
             
+            print("❌ OllamaService: Invalid response type from server")
             await MainActor.run {
                 self.isConnected = false
                 self.connectionError = "Invalid response from server"
@@ -124,6 +140,7 @@ class OllamaService: ObservableObject {
             return false
             
         } catch {
+            print("❌ OllamaService: Connection test failed: \(error.localizedDescription)")
             await MainActor.run {
                 self.isConnected = false
                 self.connectionError = error.localizedDescription
@@ -315,7 +332,15 @@ class OllamaService: ObservableObject {
         **Summary:**
         """
         
-        return try await generateResponse(prompt: prompt, model: config.modelName, cleanForJSON: false)
+        do {
+            return try await generateResponse(prompt: prompt, model: config.modelName, cleanForJSON: false)
+        } catch OllamaError.parsingError(let message) {
+            print("❌ OllamaService: Summary generation failed with parsing error: \(message)")
+            throw OllamaError.serverError("Failed to generate summary: \(message)")
+        } catch {
+            print("❌ OllamaService: Summary generation failed: \(error)")
+            throw error
+        }
     }
     
     func generateTitle(from text: String) async throws -> String {
@@ -518,14 +543,42 @@ class OllamaService: ObservableObject {
         print("🔧 OllamaService: Request type: \(model)")
         print("🔧 OllamaService: Request body: \(String(data: request.httpBody!, encoding: .utf8) ?? "nil")")
         
-        let (data, response) = try await session.data(for: request)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+            print("🔧 OllamaService: Received response data (\(data.count) bytes)")
+        } catch {
+            print("❌ OllamaService: Network request failed: \(error.localizedDescription)")
+            throw OllamaError.serverError("Network request failed: \(error.localizedDescription)")
+        }
         
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            print("❌ OllamaService: HTTP error - Status: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
-            throw OllamaError.serverError("Failed to generate response")
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("❌ OllamaService: Invalid HTTP response type")
+            throw OllamaError.serverError("Invalid HTTP response")
+        }
+        
+        guard httpResponse.statusCode == 200 else {
+            print("❌ OllamaService: HTTP error - Status: \(httpResponse.statusCode)")
+            if let errorData = String(data: data, encoding: .utf8) {
+                print("❌ OllamaService: Error response body: \(errorData)")
+            }
+            throw OllamaError.serverError("Server returned status code \(httpResponse.statusCode)")
         }
         
         print("✅ OllamaService: Received response #\(Self.requestCounter) - Status: \(httpResponse.statusCode)")
+        
+        // Check if we have valid data first
+        guard !data.isEmpty else {
+            print("❌ OllamaService: Received empty response data")
+            throw OllamaError.parsingError("Received empty response from server")
+        }
+        
+        // Log raw response for debugging
+        if let rawResponse = String(data: data, encoding: .utf8) {
+            print("🔧 OllamaService: Raw response (\(data.count) bytes): \(rawResponse.prefix(200))...")
+        } else {
+            print("❌ OllamaService: Failed to convert response data to string")
+        }
         
         do {
             let generateResponse = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
@@ -539,7 +592,13 @@ class OllamaService: ObservableObject {
         } catch {
             print("❌ OllamaService: JSON parsing failed: \(error)")
             print("❌ OllamaService: Response data length: \(data.count) bytes")
-            throw OllamaError.parsingError("Failed to parse JSON response: \(error.localizedDescription)")
+            
+            // Try to decode raw response for better error diagnostics
+            if let rawResponse = String(data: data, encoding: .utf8) {
+                print("❌ OllamaService: Raw response that failed to parse: \(rawResponse)")
+            }
+            
+            throw OllamaError.parsingError("Failed to parse JSON response: \(error.localizedDescription). Raw response: \(String(data: data, encoding: .utf8) ?? "Unable to decode raw response")")
         }
     }
 }

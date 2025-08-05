@@ -54,14 +54,41 @@ func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws 
 struct WhisperConfig {
     let serverURL: String
     let port: Int
+    let whisperProtocol: WhisperProtocol
     
     var baseURL: String {
         return "\(serverURL):\(port)"
     }
     
+    var restAPIBaseURL: String {
+        // For REST API, always use HTTP and standard REST port
+        var restServerURL = serverURL
+        
+        // Convert WebSocket URLs to HTTP URLs for REST API
+        if restServerURL.hasPrefix("ws://") {
+            restServerURL = restServerURL.replacingOccurrences(of: "ws://", with: "http://")
+        } else if restServerURL.hasPrefix("wss://") {
+            restServerURL = restServerURL.replacingOccurrences(of: "wss://", with: "https://")
+        } else if !restServerURL.hasPrefix("http://") && !restServerURL.hasPrefix("https://") {
+            // If no scheme, assume http
+            restServerURL = "http://" + restServerURL
+        }
+        
+        // Use appropriate port for REST API (9000 is typical for Whisper REST)
+        let restPort = (whisperProtocol == .wyoming) ? 9000 : port
+        return "\(restServerURL):\(restPort)"
+    }
+    
     static let `default` = WhisperConfig(
         serverURL: "http://localhost",
-        port: 9000
+        port: 9000,
+        whisperProtocol: .rest
+    )
+    
+    static let wyomingDefault = WhisperConfig(
+        serverURL: "ws://localhost",
+        port: 10300,
+        whisperProtocol: .wyoming
     )
 }
 
@@ -109,8 +136,10 @@ struct LanguageDetectionResponse: Codable {
 class WhisperService: ObservableObject {
     private let config: WhisperConfig
     private let session: URLSession
-    // Add chunking service
     private let chunkingService: AudioFileChunkingService
+    
+    // Protocol-specific clients
+    private let wyomingClient: WyomingWhisperClient?
     
     @Published var isConnected: Bool = false
     @Published var connectionError: String?
@@ -119,9 +148,10 @@ class WhisperService: ObservableObject {
     @Published var progress: Double = 0.0
     
     init(config: WhisperConfig = .default, chunkingService: AudioFileChunkingService) {
+        print("🔧 WhisperService init - Config: URL='\(config.serverURL)', Port=\(config.port), Protocol=\(config.whisperProtocol.rawValue)")
         self.config = config
         
-        // Create a custom URLSession with longer timeout for Whisper requests
+        // Create a custom URLSession with longer timeout for REST requests
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.timeoutIntervalForRequest = 1800.0  // 30 minutes
         sessionConfig.timeoutIntervalForResource = 1800.0 // 30 minutes
@@ -130,14 +160,33 @@ class WhisperService: ObservableObject {
         sessionConfig.allowsExpensiveNetworkAccess = true
         self.session = URLSession(configuration: sessionConfig)
         self.chunkingService = chunkingService
+        
+        // Initialize Wyoming client if using Wyoming protocol
+        if config.whisperProtocol == .wyoming {
+            print("🔧 Initializing Wyoming client...")
+            self.wyomingClient = WyomingWhisperClient(config: config)
+        } else {
+            print("🔧 Using REST protocol, no Wyoming client needed")
+            self.wyomingClient = nil
+        }
     }
     
     // MARK: - Connection Management
     
     func testConnection() async -> Bool {
+        switch config.whisperProtocol {
+        case .rest:
+            return await testRESTConnection()
+        case .wyoming:
+            return await testWyomingConnection()
+        }
+    }
+    
+    private func testRESTConnection() async -> Bool {
         do {
-            // Test the /asr endpoint with a simple GET request
-            let testURL = URL(string: "\(config.baseURL)/asr")!
+            // For REST API, always use HTTP regardless of what user entered
+            let restBaseURL = config.restAPIBaseURL
+            let testURL = URL(string: "\(restBaseURL)/asr")!
             print("🔌 Testing REST API connection to: \(testURL)")
             
             let (_, response) = try await withTimeout(seconds: 10) { [self] in
@@ -174,6 +223,27 @@ class WhisperService: ObservableObject {
         }
     }
     
+    private func testWyomingConnection() async -> Bool {
+        guard let wyomingClient = wyomingClient else {
+            await MainActor.run {
+                self.isConnected = false
+                self.connectionError = "Wyoming client not initialized"
+            }
+            return false
+        }
+        
+        print("🔌 Testing Wyoming connection to: \(config.baseURL)")
+        
+        let connected = await wyomingClient.testConnection()
+        
+        await MainActor.run {
+            self.isConnected = connected
+            self.connectionError = connected ? nil : wyomingClient.connectionError
+        }
+        
+        return connected
+    }
+    
     // MARK: - Fallback for when Whisper is not available
     
     func isWhisperAvailable() async -> Bool {
@@ -193,73 +263,196 @@ class WhisperService: ObservableObject {
     // MARK: - Transcription
     
     func transcribeAudio(url: URL, recordingId: UUID? = nil) async throws -> TranscriptionResult {
+        print("🎤 WhisperService.transcribeAudio called for: \(url.lastPathComponent)")
+        
         // Check if chunking is needed
         let needsChunking = try await chunkingService.shouldChunkFile(url, for: .whisper)
+        print("🔍 WhisperService - Chunking needed: \(needsChunking)")
+        
         if needsChunking {
-            await MainActor.run {
-                self.isTranscribing = true
-                self.currentStatus = "Chunking audio file..."
-                self.progress = 0.05
-            }
-            let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .whisper)
-            let chunks = chunkingResult.chunks
-            var transcriptChunks: [TranscriptChunk] = []
-            var chunkIndex = 0
-            for audioChunk in chunks {
-                await MainActor.run {
-                    self.currentStatus = "Transcribing chunk \(chunkIndex + 1) of \(chunks.count)..."
-                    self.progress = 0.05 + 0.85 * (Double(chunkIndex) / Double(chunks.count))
-                }
-                let result = try await performSingleTranscription(url: audioChunk.chunkURL)
-                // Wrap result in TranscriptChunk
-                let transcriptChunk = TranscriptChunk(
-                    chunkId: audioChunk.id,
-                    sequenceNumber: audioChunk.sequenceNumber,
-                    transcript: result.fullText,
-                    segments: result.segments,
-                    startTime: audioChunk.startTime,
-                    endTime: audioChunk.endTime,
-                    processingTime: result.processingTime
-                )
-                transcriptChunks.append(transcriptChunk)
-                chunkIndex += 1
-            }
-            // Reassemble transcript
-            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            let creationDate = (fileAttributes[.creationDate] as? Date) ?? Date()
-            let reassembly = try await chunkingService.reassembleTranscript(
-                from: transcriptChunks,
-                originalURL: url,
-                recordingName: url.deletingPathExtension().lastPathComponent,
-                recordingDate: creationDate,
-                recordingId: recordingId ?? UUID() // Use provided recordingId or fallback to new UUID
-            )
-            // Clean up chunk files
-            try await chunkingService.cleanupChunks(chunks)
-            await MainActor.run {
-                self.currentStatus = "Transcription complete"
-                self.progress = 1.0
-                self.isTranscribing = false
-            }
-            // Return as TranscriptionResult (flattened)
-            return TranscriptionResult(
-                fullText: reassembly.transcriptData.plainText,
-                segments: reassembly.transcriptData.segments,
-                processingTime: reassembly.reassemblyTime,
-                chunkCount: chunks.count,
-                success: true,
-                error: nil
-            )
+            print("🔀 WhisperService - Using chunked transcription path")
+            return try await transcribeWithChunking(url: url, recordingId: recordingId)
         } else {
-            // No chunking needed, use single file method
+            print("📄 WhisperService - Using single file transcription path")
             return try await performSingleTranscription(url: url)
         }
+    }
+    
+    private func transcribeWithChunking(url: URL, recordingId: UUID?) async throws -> TranscriptionResult {
+        await MainActor.run {
+            self.isTranscribing = true
+            self.currentStatus = "Chunking audio file..."
+            self.progress = 0.05
+        }
+        let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .whisper)
+        let chunks = chunkingResult.chunks
+        var transcriptChunks: [TranscriptChunk] = []
+        var chunkIndex = 0
+        for audioChunk in chunks {
+            await MainActor.run {
+                self.currentStatus = "Transcribing chunk \(chunkIndex + 1) of \(chunks.count)..."
+                self.progress = 0.05 + 0.85 * (Double(chunkIndex) / Double(chunks.count))
+            }
+            let result = try await performSingleTranscription(url: audioChunk.chunkURL)
+            // Wrap result in TranscriptChunk
+            let transcriptChunk = TranscriptChunk(
+                chunkId: audioChunk.id,
+                sequenceNumber: audioChunk.sequenceNumber,
+                transcript: result.fullText,
+                segments: result.segments,
+                startTime: audioChunk.startTime,
+                endTime: audioChunk.endTime,
+                processingTime: result.processingTime
+            )
+            transcriptChunks.append(transcriptChunk)
+            chunkIndex += 1
+        }
+        // Reassemble transcript
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let creationDate = (fileAttributes[.creationDate] as? Date) ?? Date()
+        let reassembly = try await chunkingService.reassembleTranscript(
+            from: transcriptChunks,
+            originalURL: url,
+            recordingName: url.deletingPathExtension().lastPathComponent,
+            recordingDate: creationDate,
+            recordingId: recordingId ?? UUID() // Use provided recordingId or fallback to new UUID
+        )
+        // Clean up chunk files
+        try await chunkingService.cleanupChunks(chunks)
+        await MainActor.run {
+            self.currentStatus = "Transcription complete"
+            self.progress = 1.0
+            self.isTranscribing = false
+        }
+        // Return as TranscriptionResult (flattened)
+        return TranscriptionResult(
+            fullText: reassembly.transcriptData.plainText,
+            segments: reassembly.transcriptData.segments,
+            processingTime: reassembly.reassemblyTime,
+            chunkCount: chunks.count,
+            success: true,
+            error: nil
+        )
     }
     
     // MARK: - Single File Transcription
     
     private func performSingleTranscription(url: URL) async throws -> TranscriptionResult {
         print("🎯 Starting single file transcription for: \(url.lastPathComponent)")
+        print("🔍 WhisperService - Full path: \(url.path)")
+        print("🔧 WhisperService - Using protocol: \(config.whisperProtocol.rawValue)")
+        
+        // Route based on protocol
+        switch config.whisperProtocol {
+        case .rest:
+            return try await performRESTTranscription(url: url)
+        case .wyoming:
+            return try await performWyomingTranscription(url: url)
+        }
+    }
+    
+    private func performRESTTranscription(url: URL) async throws -> TranscriptionResult {
+        print("🌐 Starting REST API transcription for: \(url.lastPathComponent)")
+        
+        // Check if this looks like a very short audio file that shouldn't complete in 2.5 seconds
+        let asset = AVURLAsset(url: url)
+        let duration: TimeInterval
+        let fileSize: Int64
+        
+        do {
+            duration = try await asset.load(.duration).seconds
+            print("🔍 WhisperService - Audio duration: \(duration)s (\(duration/60) minutes)")
+            
+            if duration > 300 { // More than 5 minutes
+                print("🚨 WhisperService - ALERT: Processing \(duration/60) minute file - this should take time!")
+                print("🚨 WhisperService - Expected processing time: ~\(Int(duration/60)) minutes")
+            }
+            
+            // Additional file validation
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            fileSize = fileAttributes[.size] as? Int64 ?? 0
+            print("🔍 WhisperService - File size: \(fileSize) bytes (\(fileSize/1024/1024) MB)")
+            
+            if fileSize == 0 {
+                print("❌ WhisperService - CRITICAL: File size is 0 bytes!")
+                throw WhisperError.audioProcessingFailed("Audio file is empty")
+            }
+            
+            if duration == 0 {
+                print("❌ WhisperService - CRITICAL: Duration is 0 seconds!")
+                throw WhisperError.audioProcessingFailed("Audio file has no duration")
+            }
+            
+            // Detailed audio format analysis
+            let tracks = try await asset.loadTracks(withMediaType: .audio)
+            if let audioTrack = tracks.first {
+                let formatDescriptions = try await audioTrack.load(.formatDescriptions)
+                if let formatDescription = formatDescriptions.first {
+                    let audioStreamBasicDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)
+                    if let asbd = audioStreamBasicDescription?.pointee {
+                        print("🎵 WhisperService - Audio Format Details:")
+                        print("   - Format ID: \(asbd.mFormatID) (should be \(kAudioFormatMPEG4AAC))")
+                        print("   - Sample Rate: \(asbd.mSampleRate) Hz")
+                        print("   - Channels: \(asbd.mChannelsPerFrame)")
+                        print("   - Bits per Channel: \(asbd.mBitsPerChannel)")
+                        print("   - Bytes per Frame: \(asbd.mBytesPerFrame)")
+                        print("   - Bytes per Packet: \(asbd.mBytesPerPacket)")
+                        
+                        // Check for problematic format settings
+                        if asbd.mSampleRate < 16000 {
+                            print("⚠️ WhisperService - LOW SAMPLE RATE: \(asbd.mSampleRate) Hz may cause issues")
+                            print("   - Whisper works best with 16kHz+ sample rates")
+                        }
+                        
+                        if asbd.mFormatID != kAudioFormatMPEG4AAC && asbd.mFormatID != kAudioFormatLinearPCM {
+                            print("⚠️ WhisperService - UNCOMMON FORMAT: Format ID \(asbd.mFormatID)")
+                            print("   - Whisper prefers AAC or PCM formats")
+                        }
+                    }
+                }
+            }
+            
+            // Check if this is a recorded file vs imported file
+            let filename = url.lastPathComponent
+            if filename.starts(with: "recording_") {
+                print("📱 WhisperService - RECORDED FILE detected: \(filename)")
+                print("   - This file was created by the app's audio recorder")
+                print("   - Using app's AudioQuality settings (MPEG4AAC)")
+                
+                // Check if this is an original recording or imported copy
+                if filename.contains("_20") { // Contains timestamp pattern from import
+                    print("   - 🔄 This appears to be an IMPORTED COPY of a recording")
+                } else {
+                    print("   - 🎙️ This appears to be an ORIGINAL recording")
+                }
+            } else {
+                print("📁 WhisperService - IMPORTED FILE detected: \(filename)")
+                print("   - This file was imported from outside the app")
+                print("   - May have different encoding parameters")
+            }
+            
+            // Add detailed file system metadata analysis
+            print("🗂️ WhisperService - File System Metadata:")
+            if let creationDate = fileAttributes[FileAttributeKey.creationDate] as? Date {
+                print("   - Creation Date: \(creationDate)")
+            }
+            if let modificationDate = fileAttributes[FileAttributeKey.modificationDate] as? Date {
+                print("   - Modification Date: \(modificationDate)")
+            }
+            if let posixPermissions = fileAttributes[FileAttributeKey.posixPermissions] as? NSNumber {
+                print("   - POSIX Permissions: \(String(posixPermissions.uint16Value, radix: 8))")
+            }
+            if let ownerAccountName = fileAttributes[FileAttributeKey.ownerAccountName] as? String {
+                print("   - Owner: \(ownerAccountName)")
+            }
+            if let type = fileAttributes[FileAttributeKey.type] as? FileAttributeType {
+                print("   - File Type: \(type)")
+            }
+            
+        } catch {
+            print("⚠️ WhisperService - Could not get duration/size: \(error)")
+            throw error
+        }
         
         // First, ensure we have a valid connection
         if !isConnected {
@@ -344,14 +537,15 @@ class WhisperService: ObservableObject {
         
         // Create multipart form data request
         let boundary = UUID().uuidString
-        var request = URLRequest(url: URL(string: "\(config.baseURL)/asr")!)
+        let restBaseURL = config.restAPIBaseURL
+        var request = URLRequest(url: URL(string: "\(restBaseURL)/asr")!)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         
         var body = Data()
         
         // Add query parameters
-        var urlComponents = URLComponents(string: "\(config.baseURL)/asr")!
+        var urlComponents = URLComponents(string: "\(restBaseURL)/asr")!
         urlComponents.queryItems = [
             URLQueryItem(name: "output", value: "json"),
             URLQueryItem(name: "task", value: "transcribe"),
@@ -384,9 +578,22 @@ class WhisperService: ObservableObject {
             self.progress = 0.5
         }
         
-        // Send request with timeout
+        // Send request with timeout and timing
+        let requestStartTime = Date()
+        print("📤 Sending Whisper request at: \(requestStartTime)")
+        
         let (data, response) = try await withTimeout(seconds: 1800) { [self] in
-            try await session.data(for: request)
+            let result = try await session.data(for: request)
+            let requestDuration = Date().timeIntervalSince(requestStartTime)
+            print("📥 Whisper request completed in: \(requestDuration)s")
+            
+            if requestDuration < 10 && duration > 300 {
+                print("🚨 WhisperService - CRITICAL: Request completed too quickly!")
+                print("🚨 Expected: ~\(Int(duration/60)) minutes, Actual: \(requestDuration)s")
+                print("🚨 This indicates a server-side issue or file processing problem")
+            }
+            
+            return result
         }
         
         print("📥 Received response from server")
@@ -445,6 +652,8 @@ class WhisperService: ObservableObject {
             print("   - Raw text: '\(whisperResponse.text)'")
             print("   - Segments count: \(whisperResponse.segments?.count ?? 0)")
             print("   - Language: \(whisperResponse.language ?? "unknown")")
+            print("   - This typically indicates the audio contains no clear speech content")
+            print("   - Consider checking audio quality, volume levels, or background noise")
         } else {
             print("📝 Transcript preview: \(whisperResponse.text.prefix(100))...")
         }
@@ -512,6 +721,17 @@ class WhisperService: ObservableObject {
         return result
     }
     
+    private func performWyomingTranscription(url: URL) async throws -> TranscriptionResult {
+        print("🔮 Starting Wyoming protocol transcription for: \(url.lastPathComponent)")
+        
+        guard let wyomingClient = wyomingClient else {
+            throw WhisperError.serverError("Wyoming client not initialized")
+        }
+        
+        // Delegate to Wyoming client
+        return try await wyomingClient.transcribeAudio(url: url)
+    }
+    
     // MARK: - Chunked Transcription (for large files)
     
     func transcribeAudioInChunks(url: URL, chunkDuration: TimeInterval = 3600, recordingId: UUID? = nil) async throws -> TranscriptionResult {
@@ -573,10 +793,9 @@ class WhisperService: ObservableObject {
                 error: nil
             )
         } else {
-            // No chunking needed, use single file method
-            // Note: This would cause infinite recursion, so we need to handle single file transcription differently
-            // For now, we'll throw an error indicating that single file transcription should be handled by the caller
-            throw WhisperError.audioProcessingFailed("Single file transcription not implemented - use chunking or call the service directly")
+            // No chunking needed, use single file transcription directly
+            print("📄 Single file transcription (no chunking needed)")
+            return try await performSingleTranscription(url: url)
         }
     }
     
@@ -596,7 +815,8 @@ class WhisperService: ObservableObject {
         
         // Create multipart form data request for language detection
         let boundary = UUID().uuidString
-        var request = URLRequest(url: URL(string: "\(config.baseURL)/detect-language")!)
+        let restBaseURL = config.restAPIBaseURL
+        var request = URLRequest(url: URL(string: "\(restBaseURL)/detect-language")!)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         
@@ -642,4 +862,5 @@ class WhisperService: ObservableObject {
         
         return languageResponse
     }
+    
 } 

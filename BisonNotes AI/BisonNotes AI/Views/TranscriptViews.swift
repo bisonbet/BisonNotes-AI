@@ -550,10 +550,15 @@ struct EditableTranscriptView: View {
     let transcript: TranscriptData
     let transcriptManager: TranscriptManager
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
     @State private var editedSegments: [TranscriptSegment]
     @State private var speakerMappings: [String: String]
     @State private var showingSpeakerEditor = false
+    @State private var isRerunningTranscription = false
+    @State private var showingRerunAlert = false
+    @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
+    @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
     
     init(recording: RecordingEntry, transcript: TranscriptData, transcriptManager: TranscriptManager) {
         self.recording = recording
@@ -624,6 +629,38 @@ struct EditableTranscriptView: View {
                     .padding(.vertical, 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                
+                // Rerun Transcription Button
+                VStack(spacing: 12) {
+                    Divider()
+                        .padding(.horizontal, 16)
+                    
+                    Button(action: {
+                        showingRerunAlert = true
+                    }) {
+                        HStack {
+                            if isRerunningTranscription {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .tint(.white)
+                                Text("Rerunning Transcription...")
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                Text("Rerun Transcription")
+                            }
+                        }
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(isRerunningTranscription ? Color.orange : Color.blue)
+                        .cornerRadius(10)
+                    }
+                    .disabled(isRerunningTranscription)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("Edit Transcript")
@@ -645,6 +682,39 @@ struct EditableTranscriptView: View {
             .sheet(isPresented: $showingSpeakerEditor) {
                 SpeakerEditorView(speakerMappings: $speakerMappings)
             }
+            .alert("Rerun Transcription", isPresented: $showingRerunAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Rerun", role: .destructive) {
+                    rerunTranscription()
+                }
+            } message: {
+                Text("This will replace the current transcript with a new transcription using the currently configured transcription service. This action cannot be undone.")
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionRerunCompleted"))) { notification in
+                // Handle transcription rerun completion
+                if let userInfo = notification.userInfo,
+                   let notificationURL = userInfo["recordingURL"] as? URL,
+                   let segments = userInfo["segments"] as? [TranscriptSegment],
+                   let recordingURLString = recording.recordingURL,
+                   let recordingURL = URL(string: recordingURLString),
+                   notificationURL == recordingURL {
+                    
+                    print("🎉 Received transcription rerun completion notification")
+                    
+                    // Save the new transcript to Core Data first
+                    saveNewTranscriptToCoreData(segments: segments)
+                    
+                    // Update the UI with the new transcript
+                    editedSegments = segments
+                    
+                    // Reset speaker mappings to default
+                    speakerMappings = Dictionary(uniqueKeysWithValues: segments.map { ($0.speaker, $0.speaker) })
+                    
+                    isRerunningTranscription = false
+                    
+                    print("✅ Transcript UI updated with rerun results from notification")
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -652,6 +722,174 @@ struct EditableTranscriptView: View {
     private func saveTranscript() {
         // Note: Transcript updates are now handled through Core Data
         // This method is kept for potential future implementation
+    }
+    
+    private func rerunTranscription() {
+        print("🔄 Starting transcription rerun for: \(recording.recordingName ?? "Unknown Recording")")
+        
+        isRerunningTranscription = true
+        
+        Task {
+            do {
+                // Get the currently configured transcription engine
+                let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+                
+                print("🔧 Using transcription engine: \(selectedEngine.rawValue)")
+                
+                // Convert recording URL string to URL object
+                guard let recordingURLString = recording.recordingURL,
+                      let recordingURL = URL(string: recordingURLString) else {
+                    print("❌ Invalid recording URL: \(recording.recordingURL ?? "nil")")
+                    await MainActor.run {
+                        isRerunningTranscription = false
+                    }
+                    return
+                }
+                
+                print("🎯 Rerunning transcription for file: \(recordingURL.lastPathComponent)")
+                
+                // Start transcription job through BackgroundProcessingManager
+                try await backgroundProcessingManager.startTranscriptionJob(
+                    recordingURL: recordingURL,
+                    recordingName: recording.recordingName ?? "Unknown Recording",
+                    engine: selectedEngine
+                )
+                
+                print("✅ Transcription rerun job started through BackgroundProcessingManager")
+                
+                // Set up a one-time completion handler for this specific rerun
+                setupRerunCompletionHandler(for: recordingURL)
+                
+            } catch {
+                print("❌ Failed to start transcription rerun job: \(error)")
+                
+                // Fallback to direct transcription if background processing fails
+                print("🔄 Falling back to direct transcription for rerun...")
+                do {
+                    guard let recordingURLString = recording.recordingURL,
+                          let recordingURL = URL(string: recordingURLString) else {
+                        print("❌ Invalid recording URL for fallback transcription rerun")
+                        await MainActor.run {
+                            isRerunningTranscription = false
+                        }
+                        return
+                    }
+                    
+                    // Get the currently configured transcription engine
+                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+                    
+                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recordingURL, using: selectedEngine)
+                    
+                    print("📊 Transcription rerun result: success=\(result.success), textLength=\(result.fullText.count)")
+                    
+                    if result.success && !result.fullText.isEmpty {
+                        await MainActor.run {
+                            // Save the new transcript to Core Data first
+                            saveNewTranscriptToCoreData(segments: result.segments)
+                            
+                            // Update the UI with the new transcript
+                            editedSegments = result.segments
+                            
+                            // Reset speaker mappings to default
+                            speakerMappings = Dictionary(uniqueKeysWithValues: result.segments.map { ($0.speaker, $0.speaker) })
+                            
+                            print("✅ Transcript UI updated with rerun results")
+                        }
+                    } else {
+                        print("❌ Transcription rerun failed or returned empty result")
+                    }
+                } catch {
+                    print("❌ Fallback transcription rerun also failed: \(error)")
+                }
+                
+                await MainActor.run {
+                    isRerunningTranscription = false
+                }
+            }
+        }
+    }
+    
+    private func setupRerunCompletionHandler(for recordingURL: URL) {
+        // Set up a temporary completion handler for the background processing manager
+        let originalHandler = backgroundProcessingManager.onTranscriptionCompleted
+        
+        backgroundProcessingManager.onTranscriptionCompleted = { transcriptData, job in
+            // Only handle completion for our specific recording
+            if job.recordingURL == recordingURL {
+                Task { @MainActor in
+                    print("🎉 Background processing transcription rerun completed for: \(job.recordingName)")
+                    
+                    // Save the new transcript to Core Data and post notification
+                    print("💾 Saving rerun transcript to Core Data...")
+                    
+                    // Post notification with the new segments
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("TranscriptionRerunCompleted"),
+                        object: nil,
+                        userInfo: [
+                            "recordingURL": recordingURL,
+                            "segments": transcriptData.segments
+                        ]
+                    )
+                    
+                    print("✅ Posted transcription rerun completion notification")
+                    
+                    // Restore the original handler
+                    BackgroundProcessingManager.shared.onTranscriptionCompleted = originalHandler
+                }
+            } else {
+                // If it's not our recording, call the original handler
+                originalHandler?(transcriptData, job)
+            }
+        }
+    }
+    
+    private func saveNewTranscriptToCoreData(segments: [TranscriptSegment]) {
+        print("💾 Saving new transcript to Core Data...")
+        
+        // We need to find and update the existing transcript in Core Data
+        guard let recordingURLString = recording.recordingURL,
+              let recordingURL = URL(string: recordingURLString) else {
+            print("❌ Invalid recording URL for Core Data save")
+            return
+        }
+        
+        // Use the app coordinator from environment
+        let coordinator = appCoordinator
+        
+        // Find the recording entry
+        if let recordingEntry = coordinator.getRecording(url: recordingURL),
+           let recordingId = recordingEntry.id {
+            
+            // For rerun transcriptions, we'll create a new transcript
+            // The Core Data system should handle replacing/updating existing transcripts
+            print("🔄 Creating new transcript for recording ID: \(recordingId)")
+            
+            // Get the selected transcription engine
+            let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? "appleIntelligence"
+            let engine = TranscriptionEngine(rawValue: engineString) ?? .appleIntelligence
+            
+            // Add the new transcript
+            let transcriptId = coordinator.addTranscript(
+                for: recordingId,
+                segments: segments,
+                speakerMappings: Dictionary(uniqueKeysWithValues: segments.map { ($0.speaker, $0.speaker) }),
+                engine: engine,
+                processingTime: 0.0, // We don't track this in reruns
+                confidence: 1.0
+            )
+            
+            if transcriptId != nil {
+                print("✅ New transcript saved to Core Data with ID: \(transcriptId!)")
+                
+                // Post notification to refresh the main transcripts view
+                NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
+            } else {
+                print("❌ Failed to save new transcript to Core Data")
+            }
+        } else {
+            print("❌ Could not find recording entry in Core Data for transcript save")
+        }
     }
 }
 

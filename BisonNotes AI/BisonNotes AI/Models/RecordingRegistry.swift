@@ -732,7 +732,7 @@ public class RecordingRegistryManager: ObservableObject {
                         recordingDate: creationDate,
                         fileSize: fileSize,
                         duration: duration,
-                        audioQuality: .high
+                        audioQuality: .whisperOptimized
                     )
                     
                     recordings.append(recording)
@@ -1491,7 +1491,7 @@ public class RecordingRegistryManager: ObservableObject {
                         recordingDate: creationDate,
                         fileSize: fileSize,
                         duration: duration,
-                        audioQuality: .high
+                        audioQuality: .whisperOptimized
                     )
                     
                     recordings.append(recording)

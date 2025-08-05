@@ -9,47 +9,25 @@ import Foundation
 import AVFoundation
 
 public enum AudioQuality: String, CaseIterable, Codable {
-    case regular = "Regular Quality"
-    case high = "High Quality"
-    case maximum = "Maximum Quality"
+    case whisperOptimized = "Whisper Optimized"
     
     var settings: [String: Any] {
         switch self {
-        case .regular:
+        case .whisperOptimized:
             return [
                 AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                AVSampleRateKey: 22050,
+                AVSampleRateKey: 22050,  // Good for Whisper, compatible with AAC
                 AVNumberOfChannelsKey: 1,
                 AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
-                AVEncoderBitRateKey: 64000
-            ]
-        case .high:
-            return [
-                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                AVSampleRateKey: 44100,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-                AVEncoderBitRateKey: 128000
-            ]
-        case .maximum:
-            return [
-                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                AVSampleRateKey: 48000,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-                AVEncoderBitRateKey: 192000
+                AVEncoderBitRateKey: 64000  // Excellent quality for voice
             ]
         }
     }
     
     var description: String {
         switch self {
-        case .regular:
-            return "64 kbps, 22.05 kHz - Good for voice, smaller files"
-        case .high:
-            return "128 kbps, 44.1 kHz - Balanced quality and file size"
-        case .maximum:
-            return "192 kbps, 48 kHz - High fidelity, larger files"
+        case .whisperOptimized:
+            return "22 kHz, 64 kbps AAC - Optimized for voice transcription"
         }
     }
 }
@@ -83,10 +61,34 @@ public enum SummaryMethod: String, CaseIterable {
     }
 }
 
+public enum WhisperProtocol: String, CaseIterable, Codable {
+    case rest = "REST API"
+    case wyoming = "Wyoming"
+    
+    var description: String {
+        switch self {
+        case .rest:
+            return "Traditional HTTP REST API with file uploads"
+        case .wyoming:
+            return "Modern streaming protocol with WebSocket connection"
+        }
+    }
+    
+    var shortName: String {
+        switch self {
+        case .rest:
+            return "REST"
+        case .wyoming:
+            return "Wyoming"
+        }
+    }
+}
+
 public enum TranscriptionEngine: String, CaseIterable, Codable {
     case appleIntelligence = "Apple Intelligence (Limited)"
     case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
+    case whisperWyoming = "Whisper (Wyoming Protocol)"
     case openAI = "OpenAI"
     case openAIAPICompatible = "OpenAI API Compatible"
     
@@ -98,6 +100,8 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             return "Cloud-based transcription service with support for long audio files"
         case .whisper:
             return "High-quality transcription using OpenAI's Whisper model via REST API on your local server"
+        case .whisperWyoming:
+            return "High-quality transcription using OpenAI's Whisper model via Wyoming protocol streaming"
         case .openAI:
             return "High-quality transcription using OpenAI's GPT-4o models and Whisper via API"
         case .openAIAPICompatible:
@@ -107,7 +111,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
     
     var isAvailable: Bool {
         switch self {
-        case .appleIntelligence, .awsTranscribe, .whisper, .openAI:
+        case .appleIntelligence, .awsTranscribe, .whisper, .whisperWyoming, .openAI:
             return true
         case .openAIAPICompatible:
             return false
@@ -118,8 +122,17 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
         switch self {
         case .appleIntelligence:
             return false
-        case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible:
+        case .awsTranscribe, .whisper, .whisperWyoming, .openAI, .openAIAPICompatible:
             return true
+        }
+    }
+    
+    var usesWyomingProtocol: Bool {
+        switch self {
+        case .whisperWyoming:
+            return true
+        default:
+            return false
         }
     }
 }

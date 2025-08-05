@@ -8,9 +8,15 @@
 import SwiftUI
 
 struct WhisperSettingsView: View {
-    @AppStorage("whisperServerURL") private var serverURL: String = "http://localhost"
+    @AppStorage("whisperServerURL") private var serverURL: String = "localhost"
     @AppStorage("whisperPort") private var port: Int = 9000
+    @AppStorage("whisperProtocol") private var protocolString: String = WhisperProtocol.rest.rawValue
     @AppStorage("enableWhisper") private var enableWhisper: Bool = false
+    
+    private var selectedProtocol: WhisperProtocol {
+        get { WhisperProtocol(rawValue: protocolString) ?? .rest }
+        set { protocolString = newValue.rawValue }
+    }
     
     @Environment(\.dismiss) private var dismiss
     @State private var testResult: String?
@@ -19,15 +25,24 @@ struct WhisperSettingsView: View {
     
     init() {
         // Initialize with current settings
-        let serverURL = UserDefaults.standard.string(forKey: "whisperServerURL") ?? "http://localhost"
+        let serverURL = UserDefaults.standard.string(forKey: "whisperServerURL") ?? "localhost"
         let port = UserDefaults.standard.integer(forKey: "whisperPort")
+        let protocolString = UserDefaults.standard.string(forKey: "whisperProtocol") ?? WhisperProtocol.rest.rawValue
+        let selectedProtocol = WhisperProtocol(rawValue: protocolString) ?? .rest
         
         // Use default port if not set (UserDefaults.integer returns 0 if key doesn't exist)
-        let effectivePort = port > 0 ? port : 9000
+        let effectivePort = port > 0 ? port : (selectedProtocol == .wyoming ? 10300 : 9000)
+        
+        // Ensure URL format matches protocol
+        var processedServerURL = serverURL
+        if selectedProtocol == .rest && !serverURL.hasPrefix("http://") && !serverURL.hasPrefix("https://") {
+            processedServerURL = "http://" + serverURL
+        }
         
         let config = WhisperConfig(
-            serverURL: serverURL,
-            port: effectivePort
+            serverURL: processedServerURL,
+            port: effectivePort,
+            whisperProtocol: selectedProtocol
         )
         
         _whisperService = State(initialValue: WhisperService(config: config, chunkingService: AudioFileChunkingService()))
@@ -50,6 +65,87 @@ struct WhisperSettingsView: View {
                 }
                 
                 if enableWhisper {
+                    Section(header: Text("Protocol Selection")) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Image(systemName: "arrow.left.arrow.right")
+                                    .foregroundColor(.blue)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Communication Protocol")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                    Text("Choose how to connect to your Whisper server")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            
+                            Picker("Protocol", selection: Binding(
+                                get: { selectedProtocol },
+                                set: { newValue in 
+                                    let oldProtocol = selectedProtocol
+                                    protocolString = newValue.rawValue
+                                    
+                                    // Update default port when protocol changes
+                                    if port == 9000 || port == 10300 {
+                                        port = newValue == .wyoming ? 10300 : 9000
+                                    }
+                                    
+                                    // Update URL format based on protocol
+                                    if oldProtocol != newValue {
+                                        if newValue == .wyoming {
+                                            // When switching to Wyoming, remove protocol schemes and use plain hostname
+                                            if serverURL.hasPrefix("http://") {
+                                                serverURL = String(serverURL.dropFirst(7)) // Remove "http://"
+                                            } else if serverURL.hasPrefix("https://") {
+                                                serverURL = String(serverURL.dropFirst(8)) // Remove "https://"
+                                            } else if serverURL.hasPrefix("ws://") {
+                                                serverURL = String(serverURL.dropFirst(5)) // Remove "ws://"
+                                            } else if serverURL.hasPrefix("wss://") {
+                                                serverURL = String(serverURL.dropFirst(6)) // Remove "wss://"
+                                            }
+                                            
+                                            // If it was localhost, keep it as localhost
+                                            if serverURL == "localhost" {
+                                                serverURL = "localhost"
+                                            }
+                                        } else {
+                                            // When switching to REST, ensure http:// prefix
+                                            if !serverURL.hasPrefix("http://") && !serverURL.hasPrefix("https://") {
+                                                // If it was localhost or plain hostname, add http://
+                                                serverURL = "http://" + serverURL
+                                            }
+                                        }
+                                    }
+                                }
+                            )) {
+                                ForEach(WhisperProtocol.allCases, id: \.self) { whisperProtocol in
+                                    Text(whisperProtocol.shortName)
+                                        .tag(whisperProtocol)
+                                }
+                            }
+                            .pickerStyle(SegmentedPickerStyle())
+                            
+                            // Show description for selected protocol
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Protocol Details")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.secondary)
+                                
+                                Text(selectedProtocol.description)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.blue.opacity(0.1))
+                                    )
+                            }
+                        }
+                    }
+                    
                     Section(header: Text("Server Configuration")) {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -59,7 +155,9 @@ struct WhisperSettingsView: View {
                                     Text("Local Whisper Server")
                                         .font(.subheadline)
                                         .fontWeight(.medium)
-                                    Text("Connect to your REST API-based Whisper service")
+                                    Text(selectedProtocol == .wyoming ? 
+                                         "Connect to your Wyoming protocol Whisper service" :
+                                         "Connect to your REST API-based Whisper service")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
@@ -70,13 +168,15 @@ struct WhisperSettingsView: View {
                                     .font(.subheadline)
                                     .fontWeight(.medium)
                                 
-                                TextField("http://localhost", text: $serverURL)
+                                TextField(selectedProtocol == .wyoming ? "localhost" : "http://localhost", text: $serverURL)
                                     .textFieldStyle(RoundedBorderTextFieldStyle())
                                     .keyboardType(.URL)
                                     .autocapitalization(.none)
                                     .disableAutocorrection(true)
                                 
-                                Text("The URL of your Whisper server (e.g., http://localhost, http://192.168.1.100)")
+                                Text(selectedProtocol == .wyoming ? 
+                                     "The hostname or IP address of your Wyoming server (e.g., localhost, 192.168.1.100)" :
+                                     "The URL of your Whisper server (e.g., http://localhost, http://192.168.1.100)")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -87,12 +187,12 @@ struct WhisperSettingsView: View {
                                     .fontWeight(.medium)
                                 
                                 HStack {
-                                    TextField("10300", value: $port, format: .number.grouping(.never))
+                                    TextField(selectedProtocol == .wyoming ? "10300" : "9000", value: $port, format: .number.grouping(.never))
                                         .textFieldStyle(RoundedBorderTextFieldStyle())
                                         .keyboardType(.numberPad)
                                     
                                     Button("Default") {
-                                        port = 9000
+                                        port = selectedProtocol == .wyoming ? 10300 : 9000
                                     }
                                     .font(.caption)
                                     .padding(.horizontal, 8)
@@ -102,7 +202,9 @@ struct WhisperSettingsView: View {
                                     .cornerRadius(6)
                                 }
                                 
-                                Text("The port number your Whisper server is listening on (default: 9000)")
+                                Text(selectedProtocol == .wyoming ? 
+                                     "The port number your Wyoming server is listening on (default: 10300)" :
+                                     "The port number your Whisper server is listening on (default: 9000)")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -165,34 +267,65 @@ struct WhisperSettingsView: View {
                     
                     Section(header: Text("Setup Instructions")) {
                         VStack(alignment: .leading, spacing: 12) {
-                            WhisperInstructionRow(
-                                number: "1",
-                                title: "Install Whisper Service",
-                                description: "Install the REST API-based Whisper service on your server"
-                            )
-                            
-                            WhisperInstructionRow(
-                                number: "2",
-                                title: "Start the Service",
-                                description: "Run the Whisper service on port 9000 (or your preferred port)"
-                            )
-                            
-                            WhisperInstructionRow(
-                                number: "3",
-                                title: "Test Connection",
-                                description: "Use the test button above to verify your server is accessible"
-                            )
-                            
-                            WhisperInstructionRow(
-                                number: "4",
-                                title: "Start Transcribing",
-                                description: "Your Whisper service is ready for transcription"
-                            )
+                            if selectedProtocol == .wyoming {
+                                WhisperInstructionRow(
+                                    number: "1",
+                                    title: "Install Wyoming Whisper",
+                                    description: "Install the Wyoming protocol-based Whisper service on your server"
+                                )
+                                
+                                WhisperInstructionRow(
+                                    number: "2",
+                                    title: "Start Wyoming Service",
+                                    description: "Run the Wyoming Whisper service on port 10300 (or your preferred port)"
+                                )
+                                
+                                WhisperInstructionRow(
+                                    number: "3",
+                                    title: "Test WebSocket Connection",
+                                    description: "Use the test button above to verify your Wyoming server is accessible"
+                                )
+                                
+                                WhisperInstructionRow(
+                                    number: "4",
+                                    title: "Start Streaming Transcription",
+                                    description: "Your Wyoming Whisper service is ready for real-time transcription"
+                                )
+                            } else {
+                                WhisperInstructionRow(
+                                    number: "1",
+                                    title: "Install Whisper Service",
+                                    description: "Install the REST API-based Whisper service on your server"
+                                )
+                                
+                                WhisperInstructionRow(
+                                    number: "2",
+                                    title: "Start the Service",
+                                    description: "Run the Whisper service on port 9000 (or your preferred port)"
+                                )
+                                
+                                WhisperInstructionRow(
+                                    number: "3",
+                                    title: "Test Connection",
+                                    description: "Use the test button above to verify your server is accessible"
+                                )
+                                
+                                WhisperInstructionRow(
+                                    number: "4",
+                                    title: "Start Transcribing",
+                                    description: "Your Whisper service is ready for transcription"
+                                )
+                            }
                         }
                     }
                     
                     Section {
-                        Link("Whisper REST API Documentation", destination: URL(string: "https://github.com/guillaumekln/faster-whisper")!)
+                        if selectedProtocol == .wyoming {
+                            Link("Wyoming Protocol Documentation", destination: URL(string: "https://github.com/rhasspy/wyoming-whisper")!)
+                            Link("Wyoming Protocol Specification", destination: URL(string: "https://github.com/rhasspy/wyoming")!)
+                        } else {
+                            Link("Whisper REST API Documentation", destination: URL(string: "https://github.com/guillaumekln/faster-whisper")!)
+                        }
                         Link("Whisper Model Information", destination: URL(string: "https://openai.com/research/whisper")!)
                     }
                 }
@@ -212,6 +345,9 @@ struct WhisperSettingsView: View {
             .onChange(of: port) { _, _ in
                 updateWhisperService()
             }
+            .onChange(of: selectedProtocol) { _, _ in
+                updateWhisperService()
+            }
         }
     }
     
@@ -220,9 +356,11 @@ struct WhisperSettingsView: View {
     }
     
     private func updateWhisperService() {
+        print("🔧 WhisperSettingsView - Updating service with protocol: \(selectedProtocol.rawValue)")
         let config = WhisperConfig(
             serverURL: serverURL,
-            port: port
+            port: port,
+            whisperProtocol: selectedProtocol
         )
         whisperService = WhisperService(config: config, chunkingService: AudioFileChunkingService())
     }

@@ -100,7 +100,7 @@ struct ChunkingConfig {
         switch engine {
         case .openAI:
             return ChunkingConfig(strategy: .openAI)
-        case .whisper:
+        case .whisper, .whisperWyoming:
             return ChunkingConfig(strategy: .whisper)
         case .awsTranscribe:
             return ChunkingConfig(strategy: .aws)
@@ -157,11 +157,28 @@ struct AudioFileInfo {
     let channels: Int
     
     static func create(from url: URL) async throws -> AudioFileInfo {
+        print("🔍 AudioFileInfo.create - Analyzing file: \(url.lastPathComponent)")
+        print("🔍 AudioFileInfo.create - Full path: \(url.path)")
+        print("🔍 AudioFileInfo.create - File exists: \(FileManager.default.fileExists(atPath: url.path))")
+        
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
+        print("🔍 AudioFileInfo.create - Loaded duration: \(duration)s (\(duration/60) minutes)")
         
         let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let fileSize = fileAttributes[.size] as? Int64 ?? 0
+        print("🔍 AudioFileInfo.create - File size: \(fileSize) bytes (\(fileSize/1024/1024) MB)")
+        
+        // Validation checks
+        if duration <= 0 {
+            print("❌ AudioFileInfo.create - Invalid duration: \(duration)")
+            throw AudioChunkingError.invalidAudioFile
+        }
+        
+        if fileSize <= 0 {
+            print("❌ AudioFileInfo.create - Invalid file size: \(fileSize)")
+            throw AudioChunkingError.invalidAudioFile
+        }
         
         // Get format information
         let tracks = try await asset.loadTracks(withMediaType: .audio)
@@ -193,7 +210,7 @@ struct AudioFileInfo {
             format = fileExtension.uppercased()
         }
         
-        return AudioFileInfo(
+        let audioFileInfo = AudioFileInfo(
             url: url,
             duration: duration,
             fileSize: fileSize,
@@ -201,6 +218,15 @@ struct AudioFileInfo {
             sampleRate: sampleRate,
             channels: channels
         )
+        
+        print("✅ AudioFileInfo.create - Successfully created AudioFileInfo:")
+        print("   - Duration: \(audioFileInfo.duration)s (\(audioFileInfo.duration/60) minutes)")
+        print("   - File size: \(audioFileInfo.fileSize) bytes (\(audioFileInfo.fileSize/1024/1024) MB)")
+        print("   - Format: \(audioFileInfo.format)")
+        print("   - Sample rate: \(audioFileInfo.sampleRate)")
+        print("   - Channels: \(audioFileInfo.channels)")
+        
+        return audioFileInfo
     }
     
     private init(url: URL, duration: TimeInterval, fileSize: Int64, format: String, sampleRate: Double, channels: Int) {

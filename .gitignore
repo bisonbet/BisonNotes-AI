@@ -36,6 +36,7 @@ fastlane/test_output/
 
 # macOS
 .DS_Store
+**/.DS_Store
 .AppleDouble
 .LSOverride
 Icon?
@@ -48,6 +49,4 @@ Icon?
 *.xcodeproj/xcuserdata/
 
 # App-specific
-BisonNotes AI/BisonNotes AI/.DS_Store 
 .idx/dev.nix
-.DS_Store

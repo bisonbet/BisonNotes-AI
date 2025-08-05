@@ -15,6 +15,7 @@ struct SettingsView: View {
     @StateObject private var regenerationManager: SummaryRegenerationManager
     @StateObject private var errorHandler = ErrorHandler()
     @ObservedObject private var iCloudManager: iCloudStorageManager
+    @StateObject private var importManager = FileImportManager()
     @State private var showingEngineChangePrompt = false
     @State private var previousEngine = ""
     @State private var showingTranscriptionSettings = false
@@ -26,8 +27,9 @@ struct SettingsView: View {
     @State private var cleanupResults: CleanupResults?
     @State private var showingBackgroundProcessing = false
     @State private var showingDataMigration = false
+    @State private var showingWhisperFixAlert = false
+    @State private var isFixingWhisperFiles = false
 
-    @State private var selectedAudioQuality: AudioQuality = .regular
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "Enhanced Apple Intelligence"
     
     init() {
@@ -38,14 +40,6 @@ struct SettingsView: View {
             appCoordinator: AppDataCoordinator()
         ))
         self.iCloudManager = iCloudStorageManager()
-        
-        // Load saved audio quality setting
-        if let savedQuality = UserDefaults.standard.string(forKey: "SelectedAudioQuality"),
-           let quality = AudioQuality(rawValue: savedQuality) {
-            self._selectedAudioQuality = State(initialValue: quality)
-        } else {
-            self._selectedAudioQuality = State(initialValue: .regular)
-        }
     }
     
     var body: some View {
@@ -131,6 +125,19 @@ struct SettingsView: View {
             }
         } message: {
             Text("This will remove summaries and transcripts for recordings that no longer exist. This action cannot be undone.")
+        }
+        .alert("Fix Whisper Compatibility", isPresented: $showingWhisperFixAlert) {
+            Button("Cancel") {
+                showingWhisperFixAlert = false
+            }
+            Button("Fix Files") {
+                Task {
+                    await fixWhisperCompatibility()
+                }
+                showingWhisperFixAlert = false
+            }
+        } message: {
+            Text("This will transcode existing M4A recordings to a Whisper-optimized format (16kHz, lower bitrate) for better compatibility. This preserves all existing transcripts and summaries while improving transcription accuracy.")
         }
     }
     
@@ -223,56 +230,47 @@ struct SettingsView: View {
                 .padding(.horizontal, 24)
             
             VStack(alignment: .leading, spacing: 8) {
-                Picker("Audio Quality", selection: $selectedAudioQuality) {
-                    ForEach(AudioQuality.allCases, id: \.self) { quality in
-                        HStack {
-                            Text(getQualityDisplayName(quality))
-                                .font(.body)
-                                .fontWeight(.medium)
-                            
-                            Spacer()
-                            
-                            Text(getQualityRecommendation(quality))
-                                .font(.caption)
-                                .foregroundColor(getQualityColor(quality))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(getQualityColor(quality).opacity(0.1))
-                                )
-                        }
-                        .tag(quality)
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Whisper Optimized")
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+                        
+                        Text("22 kHz, 64 kbps AAC - Optimized for voice transcription")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text("File size: ~30 MB per hour")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
-                }
-                .pickerStyle(MenuPickerStyle())
-                .onChange(of: selectedAudioQuality) { _, newValue in
-                    UserDefaults.standard.set(newValue.rawValue, forKey: "SelectedAudioQuality")
-                }
-                
-                // Quality description
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(getQualityDisplayName(selectedAudioQuality))
-                        .font(.body)
-                        .fontWeight(.medium)
-                        .foregroundColor(.primary)
                     
-                    Text(getQualityDescription(selectedAudioQuality))
+                    Spacer()
+                    
+                    Text("OPTIMAL")
                         .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Text("File size: ~\(getQualityFileSize(selectedAudioQuality)) per hour")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.green)
+                        )
                 }
                 .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.systemGray6))
-                )
+                
+                Text("This format provides the best transcription accuracy with Whisper while keeping file sizes small. All recordings use this optimized format.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(.systemGray6))
+                    )
             }
-            .padding(.horizontal, 24)
         }
     }
 
@@ -856,6 +854,31 @@ struct SettingsView: View {
                             .fill(Color.orange)
                     )
                 }
+                
+                // Fix Whisper Compatibility Button
+                Button(action: {
+                    showingWhisperFixAlert = true
+                }) {
+                    HStack {
+                        if isFixingWhisperFiles {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "waveform.path")
+                        }
+                        Text(isFixingWhisperFiles ? "Converting..." : "Optimize for Whisper")
+                    }
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(isFixingWhisperFiles ? Color.orange : Color.blue)
+                    )
+                }
+                .disabled(isFixingWhisperFiles)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 12)
@@ -954,6 +977,22 @@ struct SettingsView: View {
                 self.errorHandler.handle(AppError.from(error, context: "Data Cleanup"), context: "Cleanup", showToUser: true)
             }
         }
+    }
+    
+    private func fixWhisperCompatibility() async {
+        await MainActor.run {
+            isFixingWhisperFiles = true
+        }
+        
+        print("🔧 Starting Whisper optimization from Settings...")
+        
+        await importManager.transcodeRecordedFilesToMP3()
+        
+        await MainActor.run {
+            isFixingWhisperFiles = false
+        }
+        
+        print("✅ Whisper optimization completed successfully")
     }
     
     private func cleanupOrphanedData() async throws -> CleanupResults {
@@ -1105,61 +1144,3 @@ struct CleanupResults {
     let freedSpaceMB: Double
 }
 
-// MARK: - Audio Quality Helper Functions
-
-extension SettingsView {
-    func getQualityDisplayName(_ quality: AudioQuality) -> String {
-        switch quality {
-        case .regular:
-            return "Regular Quality"
-        case .high:
-            return "High Quality"
-        case .maximum:
-            return "Maximum Quality"
-        }
-    }
-    
-    func getQualityRecommendation(_ quality: AudioQuality) -> String {
-        switch quality {
-        case .regular:
-            return "Good for voice"
-        case .high:
-            return "Recommended"
-        case .maximum:
-            return "High fidelity"
-        }
-    }
-    
-    func getQualityColor(_ quality: AudioQuality) -> Color {
-        switch quality {
-        case .regular:
-            return .orange
-        case .high:
-            return .green
-        case .maximum:
-            return .blue
-        }
-    }
-    
-    func getQualityDescription(_ quality: AudioQuality) -> String {
-        switch quality {
-        case .regular:
-            return "Good for voice recordings with smaller file sizes."
-        case .high:
-            return "Default quality, balanced for most recordings."
-        case .maximum:
-            return "High fidelity for professional recordings."
-        }
-    }
-    
-    func getQualityFileSize(_ quality: AudioQuality) -> String {
-        switch quality {
-        case .regular:
-            return "29 MB"
-        case .high:
-            return "58 MB"
-        case .maximum:
-            return "87 MB"
-        }
-    }
-}

@@ -696,6 +696,18 @@ class BackgroundProcessingManager: ObservableObject {
         print(message)
         DebugLogger.shared.log(message)
         
+        // Enhanced chunk diagnostics
+        print("🔍 Chunk details:")
+        print("   - ID: \(chunk.id)")
+        print("   - Sequence: \(chunk.sequenceNumber)")
+        print("   - Duration: \(chunk.duration)s (\(chunk.duration/60) minutes)")
+        print("   - Start time: \(chunk.startTime)s")
+        print("   - End time: \(chunk.endTime)s")
+        print("   - File size: \(chunk.fileSize) bytes (\(chunk.fileSize/1024/1024) MB)")
+        print("   - Original URL: \(chunk.originalURL.lastPathComponent)")
+        print("   - Chunk URL: \(chunk.chunkURL.lastPathComponent)")
+        print("   - URLs match: \(chunk.originalURL == chunk.chunkURL)")
+        
         // Verify chunk file exists and has content
         guard FileManager.default.fileExists(atPath: chunk.chunkURL.path) else {
             let error = BackgroundProcessingError.fileNotFound("Chunk file not found: \(chunk.chunkURL.path)")
@@ -747,7 +759,7 @@ class BackgroundProcessingManager: ObservableObject {
                     error: openAIResult.error
                 )
                 
-            case .whisper:
+            case .whisper, .whisperWyoming:
                 print("🎤 Using Whisper for transcription")
                 let config = getWhisperConfig()
                 let service = WhisperService(config: config, chunkingService: chunkingService)
@@ -778,6 +790,24 @@ class BackgroundProcessingManager: ObservableObject {
                 if let error = result.error {
                     DebugLogger.shared.log("   - Error: \(error.localizedDescription)")
                 }
+                
+                // Check if this is a silent audio chunk or processing issue
+                if result.success && result.segments.count > 0 {
+                    DebugLogger.shared.log("   - Audio chunk processed successfully but contains no speech content")
+                    DebugLogger.shared.log("   - This may indicate a silent audio segment or background noise only")
+                } else {
+                    DebugLogger.shared.log("   - This may indicate a processing error or invalid audio format")
+                }
+                
+                // Return a result indicating no speech detected instead of empty transcription
+                return TranscriptionResult(
+                    fullText: "[No speech detected in this audio segment]",
+                    segments: result.segments,
+                    processingTime: result.processingTime,
+                    chunkCount: result.chunkCount,
+                    success: true,
+                    error: nil
+                )
             } else {
                 let successMsg = "✅ Transcription successful: \(result.fullText.count) characters, \(result.segments.count) segments"
                 print(successMsg)
@@ -815,13 +845,26 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func getWhisperConfig() -> WhisperConfig {
-        let serverURL = UserDefaults.standard.string(forKey: "whisperServerURL") ?? "http://localhost"
+        let serverURL = UserDefaults.standard.string(forKey: "whisperServerURL") ?? "localhost"
         let port = UserDefaults.standard.integer(forKey: "whisperPort")
-        let effectivePort = port > 0 ? port : 9000
+        let protocolString = UserDefaults.standard.string(forKey: "whisperProtocol") ?? WhisperProtocol.rest.rawValue
+        let selectedProtocol = WhisperProtocol(rawValue: protocolString) ?? .rest
+        
+        print("🔍 BackgroundProcessingManager - Whisper config: serverURL=\(serverURL), port=\(port), protocol=\(selectedProtocol.rawValue)")
+        
+        // Use default port if not set (UserDefaults.integer returns 0 if key doesn't exist)
+        let effectivePort = port > 0 ? port : (selectedProtocol == .wyoming ? 10300 : 9000)
+        
+        // Ensure URL format matches protocol
+        var processedServerURL = serverURL
+        if selectedProtocol == .rest && !serverURL.hasPrefix("http://") && !serverURL.hasPrefix("https://") {
+            processedServerURL = "http://" + serverURL
+        }
         
         return WhisperConfig(
-            serverURL: serverURL,
-            port: effectivePort
+            serverURL: processedServerURL,
+            port: effectivePort,
+            whisperProtocol: selectedProtocol
         )
     }
     
@@ -861,7 +904,7 @@ class BackgroundProcessingManager: ObservableObject {
                     date: Date(),
                     fileSize: fileSize,
                     duration: duration,
-                    quality: .high,
+                    quality: .whisperOptimized,
                     locationData: nil
                 )
                 

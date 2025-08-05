@@ -26,21 +26,35 @@ class AudioFileChunkingService: ObservableObject {
     
     /// Determines if a file needs chunking based on the transcription service
     func shouldChunkFile(_ url: URL, for engine: TranscriptionEngine) async throws -> Bool {
+        print("🔍 shouldChunkFile - Checking: \(url.lastPathComponent) for engine: \(engine.rawValue)")
+        
         guard fileManager.fileExists(atPath: url.path) else {
+            print("❌ shouldChunkFile - File not found: \(url.path)")
             throw AudioChunkingError.fileNotFound
         }
         
         let config = ChunkingConfig.config(for: engine)
+        print("🔍 shouldChunkFile - Using strategy: \(config.strategy.description)")
+        
         let fileInfo = try await AudioFileInfo.create(from: url)
         
+        let needsChunking: Bool
         switch config.strategy {
         case .fileSize(let maxBytes):
-            return fileInfo.fileSize > maxBytes
+            needsChunking = fileInfo.fileSize > maxBytes
+            print("🔍 shouldChunkFile - File size check: \(fileInfo.fileSize) bytes > \(maxBytes) bytes = \(needsChunking)")
         case .duration(let maxSeconds):
-            return fileInfo.duration > maxSeconds
+            needsChunking = fileInfo.duration > maxSeconds
+            print("🔍 shouldChunkFile - Duration check: \(fileInfo.duration)s > \(maxSeconds)s = \(needsChunking)")
         case .combined(let maxBytes, let maxSeconds):
-            return fileInfo.fileSize > maxBytes || fileInfo.duration > maxSeconds
+            let exceedsSize = fileInfo.fileSize > maxBytes
+            let exceedsDuration = fileInfo.duration > maxSeconds
+            needsChunking = exceedsSize || exceedsDuration
+            print("🔍 shouldChunkFile - Combined check: size(\(exceedsSize)) || duration(\(exceedsDuration)) = \(needsChunking)")
         }
+        
+        print("✅ shouldChunkFile - Decision: \(needsChunking)")
+        return needsChunking
     }
     
     /// Chunks an audio file based on the transcription service requirements with streaming optimization
@@ -90,9 +104,11 @@ class AudioFileChunkingService: ObservableObject {
             
             // Check if chunking is needed
             let needsChunking = try await shouldChunkFile(url, for: engine)
+            print("🔍 Chunking decision - Needs chunking: \(needsChunking)")
             
             if !needsChunking {
                 EnhancedLogger.shared.logChunking("File doesn't need chunking", level: .info)
+                print("📄 Creating single chunk for file - Duration: \(fileInfo.duration)s, Size: \(fileInfo.fileSize) bytes")
                 // Create a single "chunk" representing the whole file
                 let singleChunk = AudioChunk(
                     originalURL: url,
@@ -102,6 +118,8 @@ class AudioFileChunkingService: ObservableObject {
                     endTime: fileInfo.duration,
                     fileSize: fileInfo.fileSize
                 )
+                
+                print("✅ Single chunk created - ID: \(singleChunk.id), Duration: \(singleChunk.duration)s")
                 
                 let result = ChunkingResult(
                     chunks: [singleChunk],
