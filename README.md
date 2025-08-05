@@ -32,7 +32,9 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **OpenAI Integration**: GPT-4o, GPT-4o Mini, and Whisper-1 models for transcription and summarization
 - **Google AI Studio Integration**: Gemini 2.5 Flash and Flash Lite models for AI-powered summaries
 - **Whisper Integration**: High-quality transcription using OpenAI's Whisper model via REST API
+- **Wyoming Protocol**: Streaming transcription using Whisper models via WebSocket
 - **Ollama Integration**: Local AI processing with customizable models
+- **AWS Bedrock Integration**: Cloud-based AI using AWS Bedrock foundation models
 - **AWS Transcribe**: Cloud-based transcription service for long audio files
 - **Content Classification**: Automatically categorizes content (meetings, personal journal, technical, general)
 - **Smart Summarization**: Context-aware summaries based on content type
@@ -44,13 +46,14 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **Real-Time Speech Recognition**: Powered by Apple's Speech framework
 - **OpenAI Transcription**: GPT-4o, GPT-4o Mini, and Whisper-1 models via API
 - **Whisper REST API**: High-quality transcription using local Whisper server
+- **Wyoming Protocol**: Streaming transcription using Whisper models via WebSocket
 - **AWS Transcribe**: Cloud-based transcription service for long audio files
 - **Enhanced Large File Support**: Automatic chunking for files over 5 minutes
 - **Background Processing**: Transcription and summarization in background
 - **Progress Tracking**: Real-time progress updates for long transcriptions
 - **Timeout Handling**: Configurable timeout settings to prevent hanging
-- **Speaker Diarization**: Identifies different speakers in conversations
-- **Editable Transcripts**: Full editing capabilities with speaker management
+
+- **Editable Transcripts**: Full editing capabilities with text management
 - **Time-Stamped Segments**: Precise timing for each transcript segment
 - **File Size Validation**: Automatic fallback for oversized files
 
@@ -73,7 +76,7 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 ### ⚙️ **Advanced Settings & Customization**
 - **Multiple AI Engines**: Choose between different AI processing methods
 - **Audio Quality Control**: Adjust recording quality based on needs
-- **Speaker Diarization Options**: Basic pause detection and advanced methods
+
 - **Batch Processing**: Regenerate all summaries with updated AI engines
 - **Comprehensive Settings**: Fine-tune every aspect of the app
 - **Engine Monitoring**: Automatic availability checking and recovery
@@ -187,8 +190,31 @@ Audio Journal supports high-quality transcription using OpenAI's Whisper model v
 - **Multiple Output Formats**: JSON, text, VTT, SRT, TSV
 - **Word-level Timestamps**: Precise timing for each word
 - **Voice Activity Detection**: Filter out non-speech audio
-- **Speaker Diarization**: Identify different speakers (with WhisperX)
+
 - **Broad Format Support**: FFmpeg integration for various audio/video formats
+
+### **AWS Bedrock Integration**
+
+Audio Journal supports advanced AI processing using AWS Bedrock foundation models for both transcription and summarization.
+
+#### **Setup Instructions**
+
+1. **Get AWS Credentials**: Visit [AWS Console](https://console.aws.amazon.com) to set up your AWS account
+2. **Configure in App**: Go to Settings → AI Settings → AWS Bedrock
+3. **Select Model**: Choose from available foundation models
+4. **Test Connection**: Use the test button to verify your configuration
+
+#### **Supported Models**
+- **Claude 3.5 Sonnet**: Advanced reasoning and analysis
+- **Claude 3.5 Haiku**: Fast and efficient processing
+- **Llama 2**: Open-source language model
+- **And many more**: Check AWS Bedrock console for available models
+
+#### **Features**
+- **Cloud-Based Processing**: Leverage AWS infrastructure for powerful AI processing
+- **Multiple Models**: Access to various foundation models
+- **Scalable**: Handles large files and complex processing tasks
+- **Secure**: Enterprise-grade security and compliance
 
 ### **Ollama Integration**
 
@@ -240,6 +266,45 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **Offline Capability**: Works without internet connection
 - **Resource Control**: Adjust model size based on your hardware
 
+### **Wyoming Protocol Integration**
+
+Audio Journal supports the Wyoming protocol for streaming transcription using Whisper models. This provides a modern, efficient alternative to REST API-based transcription.
+
+#### **Setup Instructions**
+
+1. **Install Wyoming Server**
+   - Visit [Wyoming](https://github.com/rhasspy/wyoming) for the official implementation
+   - Or use a Wyoming-compatible Whisper server like [whisper.cpp](https://github.com/ggerganov/whisper.cpp)
+
+2. **Quick Start with Docker**
+   ```bash
+   # Run a Wyoming-compatible Whisper server
+   docker run -d -p 10300:10300 \
+     --name wyoming-whisper \
+     rhasspy/wyoming-whisper:latest
+   ```
+
+3. **Configure Audio Journal**
+   - Open the app and go to Settings → Transcription Settings
+   - Select "Whisper (Wyoming Protocol)" as the transcription engine
+   - Set the server URL (e.g., `http://192.168.1.100` or `http://localhost`)
+   - Set the port (default: 10300)
+   - Test the connection using the "Test Connection" button
+
+#### **Features**
+- **Streaming Protocol**: Real-time transcription with minimal latency
+- **WebSocket Connection**: Efficient bidirectional communication
+- **Multiple Models**: Support for various Whisper model sizes
+- **Local Processing**: Run on your own hardware for privacy
+- **Cross-Platform**: Works on macOS, Linux, and Windows
+
+#### **Available Models**
+- `tiny`: Fastest, lowest quality
+- `base`: Good balance of speed and quality
+- `small`: Better quality, slower processing
+- `medium`: High quality, slower processing
+- `large-v3`: Best quality, slowest processing
+
 ## 🏗️ Technical Architecture
 
 ### **Core Technologies**
@@ -257,7 +322,7 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 ### **AI Processing Pipeline**
 1. **Audio Capture** → High-quality recording with location metadata
 2. **Registry Integration** → Automatic recording registration in unified data system
-3. **Speech Recognition** → Real-time transcription with speaker detection
+3. **Speech Recognition** → Real-time transcription with text processing
 4. **Content Analysis** → Natural language processing and classification
 5. **Intelligent Extraction** → Task and reminder identification
 6. **Summary Generation** → Context-aware summarization
@@ -267,7 +332,7 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 
 ### **Data Models**
 - **RegistryRecordingEntry**: Central recording data with metadata and processing status
-- **TranscriptData**: Structured transcript with speaker segments
+- **TranscriptData**: Structured transcript with text segments
 - **SummaryData**: Enhanced summaries with tasks and reminders
 - **EnhancedSummaryData**: Advanced summaries with AI metadata
 - **LocationData**: GPS coordinates with reverse geocoding
@@ -284,7 +349,9 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - For OpenAI: API key from platform.openai.com
 - For Google AI Studio: API key from aistudio.google.com
 - For Whisper: Local server running Whisper ASR Webservice
+- For Wyoming: Local Wyoming-compatible server
 - For Ollama: Local Ollama installation
+- For AWS Bedrock: AWS account with Bedrock access
 
 ### **Initialization**
 1. **First Launch**: On your first launch, the app will automatically scan for any existing audio, transcript, and summary files in your app's document directory. It will then migrate this data into Core Data, ensuring a seamless transition.
@@ -343,8 +410,8 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **Background Recording**: Enable continuous recording when app is minimized
 
 ### **AI Processing**
-- **Engine Selection**: Enhanced Apple Intelligence, OpenAI, Google AI Studio, Ollama Integration
-- **Speaker Diarization**: Basic pause detection, AWS Transcription, Whisper-based
+- **Engine Selection**: Enhanced Apple Intelligence, OpenAI, Google AI Studio, AWS Bedrock, Ollama Integration
+
 - **Batch Regeneration**: Update all summaries with new AI engines
 - **Engine Monitoring**: Automatic availability checking and recovery
 - **Performance Optimization**: Battery and memory-aware processing
@@ -384,6 +451,19 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **Model Selection**: Choose from available Ollama models
 - **Connection Testing**: Verify Ollama service connectivity
 - **Model Management**: Download and manage local models
+
+### **AWS Bedrock Settings**
+- **AWS Credentials**: Configure access keys or use AWS profiles
+- **Model Selection**: Choose from available foundation models
+- **Region Configuration**: Select appropriate AWS region
+- **Connection Testing**: Verify AWS Bedrock connectivity
+- **Usage Monitoring**: Track API usage and costs
+
+### **Wyoming Settings**
+- **Server Configuration**: URL and port settings for Wyoming server
+- **Model Selection**: Choose from available Whisper models
+- **Connection Testing**: Verify Wyoming server connectivity
+- **Streaming Options**: Configure real-time transcription settings
 
 ### **Transcription Settings**
 - **Enhanced Transcription**: Automatic handling of large audio files (60+ minutes)
@@ -477,6 +557,8 @@ Audio Journal/
 - **Automatic migration** on first launch for existing users
 - **New migration and debug tools** in the UI
 - **AudioPlayerView** and **DataMigrationView** added
+- **Wyoming Protocol Support**: Added streaming transcription via WebSocket
+- **AWS Bedrock Integration**: Full support for AWS Bedrock foundation models
 
 ### **Performance Optimization (Task 11)**
 - **Streaming File Processing**: Memory-efficient handling of large files
@@ -511,8 +593,7 @@ Audio Journal/
 ## 🔮 Future Enhancements
 
 ### **Planned Features**
-- **AWS Bedrock Integration**: Advanced AI using AWS Bedrock foundation models
-- **Enhanced Diarization**: Whisper-based speaker identification
+
 - **Export Options**: PDF, text, and calendar integration
 - **Collaboration**: Shared recordings and summaries
 - **Voice Commands**: Hands-free operation
@@ -571,10 +652,21 @@ For support, questions, or feature requests:
 - **License**: MIT License
 - **Features**: Local AI models, privacy-first, cross-platform support
 
+### **AWS Bedrock**
+- **Website**: [aws.amazon.com/bedrock](https://aws.amazon.com/bedrock)
+- **Documentation**: [docs.aws.amazon.com/bedrock](https://docs.aws.amazon.com/bedrock)
+- **Features**: Foundation models, Claude, Llama 2, and other AI models
+
 ### **AWS Transcribe**
 - **Website**: [aws.amazon.com/transcribe](https://aws.amazon.com/transcribe)
 - **Documentation**: [docs.aws.amazon.com/transcribe](https://docs.aws.amazon.com/transcribe)
-- **Features**: Real-time transcription, speaker diarization, custom vocabularies
+- **Features**: Real-time transcription, custom vocabularies
+
+### **Wyoming Protocol**
+- **Project**: [rhasspy/wyoming](https://github.com/rhasspy/wyoming)
+- **Documentation**: [wyoming.rhasspy.org](https://wyoming.rhasspy.org)
+- **License**: MIT License
+- **Features**: Streaming protocol, WebSocket communication, real-time transcription
 
 ---
 
