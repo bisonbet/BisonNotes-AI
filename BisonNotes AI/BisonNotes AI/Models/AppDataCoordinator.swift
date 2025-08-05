@@ -27,13 +27,8 @@ class AppDataCoordinator: ObservableObject {
     }
     
     private func initializeSystem() async {
-        print("🚀 Initializing Core Data system...")
-        
-        // Debug current database state
-        coreDataManager.debugDatabaseContents()
-        
+        // Core Data system initialization
         isInitialized = true
-        print("✅ Core Data system initialized")
     }
     
     // MARK: - Public Interface

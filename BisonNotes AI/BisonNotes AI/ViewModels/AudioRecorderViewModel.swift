@@ -76,7 +76,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         }
         
         // Don't configure audio session immediately - wait until user starts recording
-        print("✅ AudioRecorderViewModel initialized successfully")
+        // AudioRecorderViewModel initialized
     }
     
     deinit {

@@ -553,8 +553,6 @@ struct EditableTranscriptView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
     @State private var editedSegments: [TranscriptSegment]
-    @State private var speakerMappings: [String: String]
-    @State private var showingSpeakerEditor = false
     @State private var isRerunningTranscription = false
     @State private var showingRerunAlert = false
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
@@ -565,68 +563,38 @@ struct EditableTranscriptView: View {
         self.transcript = transcript
         self.transcriptManager = transcriptManager
         self._editedSegments = State(initialValue: transcript.segments)
-        self._speakerMappings = State(initialValue: transcript.speakerMappings)
     }
     
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                // Speaker Management Section - Compact
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Speakers")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                        
-                        // Show speaker count
-                        Text("(\(speakerMappings.keys.count))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        Button("Edit") {
-                            showingSpeakerEditor = true
-                        }
-                        .font(.caption)
-                        .foregroundColor(.accentColor)
-                    }
-                    
-                    // Compact speaker display
-                    if !speakerMappings.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(Array(speakerMappings.keys.sorted()), id: \.self) { speakerKey in
-                                    Text(speakerMappings[speakerKey] ?? speakerKey)
-                                        .font(.caption)
-                                        .foregroundColor(.primary)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.accentColor.opacity(0.2))
-                                        .cornerRadius(6)
-                                }
-                            }
-                            .padding(.horizontal, 1)
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color(.systemGray6).opacity(0.5))
                 
                 // Transcript Content
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(editedSegments.indices, id: \.self) { index in
-                            TranscriptSegmentView(
-                                segment: $editedSegments[index],
-                                speakerName: speakerMappings[editedSegments[index].speaker] ?? editedSegments[index].speaker
-                            )
+                    if editedSegments.isEmpty {
+                        VStack(spacing: 16) {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: 48))
+                                .foregroundColor(.gray)
+                            Text("No transcript content available")
+                                .font(.title2)
+                                .foregroundColor(.secondary)
+                            Text("Transcript segments: \(editedSegments.count)")
+                                .font(.caption)
+                                .foregroundColor(.gray)
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding()
+                    } else {
+                        LazyVStack(alignment: .leading, spacing: 16) {
+                            ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, segment in
+                                TranscriptSegmentView(segment: $editedSegments[index])
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .id("transcript-\(editedSegments.count)-\(editedSegments.first?.text.prefix(10).hashValue ?? 0)")
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 
@@ -679,9 +647,6 @@ struct EditableTranscriptView: View {
                     .fontWeight(.semibold)
                 }
             }
-            .sheet(isPresented: $showingSpeakerEditor) {
-                SpeakerEditorView(speakerMappings: $speakerMappings)
-            }
             .alert("Rerun Transcription", isPresented: $showingRerunAlert) {
                 Button("Cancel", role: .cancel) { }
                 Button("Rerun", role: .destructive) {
@@ -701,19 +666,24 @@ struct EditableTranscriptView: View {
                     
                     print("🎉 Received transcription rerun completion notification")
                     
-                    // Save the new transcript to Core Data first
+                    // Save the new transcript to Core Data first (this will replace the existing transcript)
                     saveNewTranscriptToCoreData(segments: segments)
-                    
-                    // Update the UI with the new transcript
-                    editedSegments = segments
-                    
-                    // Reset speaker mappings to default
-                    speakerMappings = Dictionary(uniqueKeysWithValues: segments.map { ($0.speaker, $0.speaker) })
                     
                     isRerunningTranscription = false
                     
                     print("✅ Transcript UI updated with rerun results from notification")
+                    
+                    // Force the parent view to refresh by posting a notification
+                    NotificationCenter.default.post(name: NSNotification.Name("TranscriptReplacementCompleted"), object: nil)
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionCompleted"))) { _ in
+                // Refresh transcript data from Core Data when transcription is completed
+                refreshTranscriptFromCoreData()
+            }
+            .onAppear {
+                // Always refresh transcript data when the view appears to ensure we have the latest content
+                refreshTranscriptFromCoreData()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -784,16 +754,13 @@ struct EditableTranscriptView: View {
                     
                     if result.success && !result.fullText.isEmpty {
                         await MainActor.run {
-                            // Save the new transcript to Core Data first
+                            // Save the new transcript to Core Data first (this will replace the existing transcript)
                             saveNewTranscriptToCoreData(segments: result.segments)
                             
-                            // Update the UI with the new transcript
-                            editedSegments = result.segments
-                            
-                            // Reset speaker mappings to default
-                            speakerMappings = Dictionary(uniqueKeysWithValues: result.segments.map { ($0.speaker, $0.speaker) })
-                            
                             print("✅ Transcript UI updated with rerun results")
+                            
+                            // Force the parent view to refresh by posting a notification
+                            NotificationCenter.default.post(name: NSNotification.Name("TranscriptReplacementCompleted"), object: nil)
                         }
                     } else {
                         print("❌ Transcription rerun failed or returned empty result")
@@ -861,56 +828,77 @@ struct EditableTranscriptView: View {
         if let recordingEntry = coordinator.getRecording(url: recordingURL),
            let recordingId = recordingEntry.id {
             
-            // For rerun transcriptions, we'll create a new transcript
-            // The Core Data system should handle replacing/updating existing transcripts
-            print("🔄 Creating new transcript for recording ID: \(recordingId)")
+            // For rerun transcriptions, we'll replace the existing transcript
+            // The Core Data system will update the existing transcript instead of creating a new one
+            print("🔄 Replacing transcript for recording ID: \(recordingId)")
             
             // Get the selected transcription engine
             let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? "appleIntelligence"
             let engine = TranscriptionEngine(rawValue: engineString) ?? .appleIntelligence
             
+            
             // Add the new transcript
             let transcriptId = coordinator.addTranscript(
                 for: recordingId,
                 segments: segments,
-                speakerMappings: Dictionary(uniqueKeysWithValues: segments.map { ($0.speaker, $0.speaker) }),
+                speakerMappings: [:], // No speaker mappings needed
                 engine: engine,
                 processingTime: 0.0, // We don't track this in reruns
                 confidence: 1.0
             )
             
             if transcriptId != nil {
-                print("✅ New transcript saved to Core Data with ID: \(transcriptId!)")
+                print("✅ Transcript replaced in Core Data with ID: \(transcriptId!)")
+                
+                // Immediately refresh the UI with the updated transcript data
+                refreshTranscriptFromCoreData()
                 
                 // Post notification to refresh the main transcripts view
                 NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
             } else {
-                print("❌ Failed to save new transcript to Core Data")
+                print("❌ Failed to replace transcript in Core Data")
             }
         } else {
             print("❌ Could not find recording entry in Core Data for transcript save")
+        }
+    }
+    
+    private func refreshTranscriptFromCoreData() {
+        guard let recordingURLString = recording.recordingURL,
+              let recordingURL = URL(string: recordingURLString) else {
+            return
+        }
+        
+        // Force Core Data context to refresh its cache
+        appCoordinator.coreDataManager.refreshContext()
+        
+        // Get the updated transcript data from Core Data
+        if let recordingEntry = appCoordinator.getRecording(url: recordingURL),
+           let recordingId = recordingEntry.id,
+           let updatedTranscript = appCoordinator.coreDataManager.getTranscriptData(for: recordingId) {
+            
+            // Only update if we have segments with actual content
+            let hasValidContent = updatedTranscript.segments.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            
+            guard hasValidContent else { return }
+            
+            // Force SwiftUI to detect the change by clearing first, then setting
+            editedSegments = []
+            
+            // Small delay to ensure UI updates
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.editedSegments = updatedTranscript.segments
+            }
         }
     }
 }
 
 struct TranscriptSegmentView: View {
     @Binding var segment: TranscriptSegment
-    let speakerName: String
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(speakerName)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.accentColor)
-                    .cornerRadius(8)
-                
-                Spacer()
-                
                 Text(formatTime(segment.startTime))
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -918,6 +906,8 @@ struct TranscriptSegmentView: View {
                     .padding(.vertical, 4)
                     .background(Color(.systemGray5))
                     .cornerRadius(6)
+                
+                Spacer()
             }
             
             TextEditor(text: Binding(
@@ -968,55 +958,6 @@ struct TranscriptSegmentView: View {
     }
 }
 
-struct SpeakerEditorView: View {
-    @Binding var speakerMappings: [String: String]
-    @Environment(\.dismiss) private var dismiss
-    @State private var tempMappings: [String: String] = [:]
-    
-    var body: some View {
-        NavigationView {
-            VStack {
-                List {
-                    ForEach(Array(speakerMappings.keys.sorted()), id: \.self) { speakerKey in
-                        HStack {
-                            Text(speakerKey)
-                                .font(.body)
-                                .foregroundColor(.primary)
-                            
-                            Spacer()
-                            
-                            TextField("Enter name", text: Binding(
-                                get: { tempMappings[speakerKey] ?? "" },
-                                set: { tempMappings[speakerKey] = $0 }
-                            ))
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .frame(width: 150)
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Edit Speakers")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        speakerMappings = tempMappings
-                        dismiss()
-                    }
-                    .fontWeight(.semibold)
-                }
-            }
-            .onAppear {
-                tempMappings = speakerMappings
-            }
-        }
-    }
-}
 
 struct TranscriptDetailView: View {
     let recording: RecordingEntry

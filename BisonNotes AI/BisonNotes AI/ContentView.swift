@@ -97,7 +97,7 @@ struct ContentView: View {
                         await migrationManager.performDataMigration()
                         print("✅ Migration completed")
                     } else {
-                        print("✅ Core Data already has \(coreDataRecordings.count) recordings")
+                        // Core Data has existing recordings
                         
                         // Check if any recordings have transcripts in Core Data
                         let recordingsWithTranscripts = coreDataRecordings.filter { $0.transcript != nil }
@@ -107,7 +107,7 @@ struct ContentView: View {
                             await migrationManager.performDataMigration()
                             print("✅ Migration completed")
                         } else {
-                            print("✅ Core Data has \(recordingsWithTranscripts.count) recordings with transcripts")
+                            // Core Data has existing transcripts, no migration needed
                         }
                     }
                     

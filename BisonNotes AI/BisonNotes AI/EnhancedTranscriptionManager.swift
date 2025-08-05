@@ -120,7 +120,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         let protocolString = UserDefaults.standard.string(forKey: "whisperProtocol") ?? WhisperProtocol.rest.rawValue
         let selectedProtocol = WhisperProtocol(rawValue: protocolString) ?? .rest
         
-        print("🔍 Whisper config debug - enabled: \(isEnabled), serverURL: \(serverURL), port: \(port), protocol: \(selectedProtocol.rawValue)")
         
         guard isEnabled else { 
             print("⚠️ Whisper is not enabled")
@@ -178,7 +177,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         let serverURL = UserDefaults.standard.string(forKey: "whisperServerURL")
         let port = UserDefaults.standard.integer(forKey: "whisperPort")
         
-        print("🔍 Whisper validation debug - enabled: \(isEnabled), serverURL: \(serverURL ?? "nil"), port: \(port)")
         
         guard isEnabled else {
             print("⚠️ Whisper is not enabled in settings")
@@ -237,7 +235,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         loadPendingJobs()
         
         // Don't start background checking on init - let it be controlled by the selected engine
-        print("ℹ️ Transcription manager initialized, background checks will be managed by engine selection")
+        // Transcription manager initialized
     }
     
     private func setupSpeechRecognizer() {
@@ -247,7 +245,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         if speechRecognizer == nil {
             print("❌ Failed to create speech recognizer")
         } else {
-            print("✅ Speech recognizer created successfully")
+            // Speech recognizer created
         }
     }
     
@@ -418,9 +416,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             let isWhisperAvailable = await validateWhisperService()
             if isWhisperAvailable {
                 print("🎤 Using Whisper for transcription")
-                print("🔍 DEBUG: Getting whisperConfig...")
                 if let config = whisperConfig {
-                    print("🔍 DEBUG: Got whisperConfig: \(config.whisperProtocol.rawValue)")
                     return try await transcribeWithWhisper(url: url, config: config)
                 } else {
                     print("❌ Whisper config is nil despite validation passing")
@@ -1263,7 +1259,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             print("🔌 Testing Whisper connection...")
             let isConnected = await whisperService.testConnection()
             guard isConnected else {
-                print("❌ Whisper connection failed")
                 throw TranscriptionError.whisperConnectionFailed
             }
             
@@ -1285,7 +1280,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             return result
             
         } catch {
-            print("❌ Whisper transcription failed: \(error)")
             throw TranscriptionError.whisperTranscriptionFailed(error)
         }
     }

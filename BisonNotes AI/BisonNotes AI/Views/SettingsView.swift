@@ -27,8 +27,6 @@ struct SettingsView: View {
     @State private var cleanupResults: CleanupResults?
     @State private var showingBackgroundProcessing = false
     @State private var showingDataMigration = false
-    @State private var showingWhisperFixAlert = false
-    @State private var isFixingWhisperFiles = false
 
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "Enhanced Apple Intelligence"
     
@@ -125,19 +123,6 @@ struct SettingsView: View {
             }
         } message: {
             Text("This will remove summaries and transcripts for recordings that no longer exist. This action cannot be undone.")
-        }
-        .alert("Fix Whisper Compatibility", isPresented: $showingWhisperFixAlert) {
-            Button("Cancel") {
-                showingWhisperFixAlert = false
-            }
-            Button("Fix Files") {
-                Task {
-                    await fixWhisperCompatibility()
-                }
-                showingWhisperFixAlert = false
-            }
-        } message: {
-            Text("This will transcode existing M4A recordings to a Whisper-optimized format (16kHz, lower bitrate) for better compatibility. This preserves all existing transcripts and summaries while improving transcription accuracy.")
         }
     }
     
@@ -855,30 +840,6 @@ struct SettingsView: View {
                     )
                 }
                 
-                // Fix Whisper Compatibility Button
-                Button(action: {
-                    showingWhisperFixAlert = true
-                }) {
-                    HStack {
-                        if isFixingWhisperFiles {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                                .tint(.white)
-                        } else {
-                            Image(systemName: "waveform.path")
-                        }
-                        Text(isFixingWhisperFiles ? "Converting..." : "Optimize for Whisper")
-                    }
-                    .font(.caption)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(isFixingWhisperFiles ? Color.orange : Color.blue)
-                    )
-                }
-                .disabled(isFixingWhisperFiles)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 12)
@@ -979,21 +940,6 @@ struct SettingsView: View {
         }
     }
     
-    private func fixWhisperCompatibility() async {
-        await MainActor.run {
-            isFixingWhisperFiles = true
-        }
-        
-        print("🔧 Starting Whisper optimization from Settings...")
-        
-        await importManager.transcodeRecordedFilesToMP3()
-        
-        await MainActor.run {
-            isFixingWhisperFiles = false
-        }
-        
-        print("✅ Whisper optimization completed successfully")
-    }
     
     private func cleanupOrphanedData() async throws -> CleanupResults {
         print("🧹 Starting orphaned data cleanup...")

@@ -115,7 +115,8 @@ class EnhancedFileManager: ObservableObject {
     
     private init() {
         loadFileRelationships()
-        refreshAllRelationships()
+        // Note: Automatic cleanup disabled to prevent false positives during app startup
+        // refreshAllRelationships()
     }
     
     // MARK: - Coordinator Setup
@@ -503,7 +504,7 @@ class EnhancedFileManager: ObservableObject {
         do {
             let data = try Data(contentsOf: relationshipsURL)
             fileRelationships = try JSONDecoder().decode([URL: FileRelationships].self, from: data)
-            print("✅ Loaded file relationships: \(fileRelationships.count) entries")
+            // File relationships loaded
         } catch {
             print("❌ Error loading file relationships: \(error)")
             fileRelationships = [:]

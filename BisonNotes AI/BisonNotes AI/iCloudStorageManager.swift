@@ -166,10 +166,7 @@ class iCloudStorageManager: ObservableObject {
         let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
                        ProcessInfo.processInfo.processName.contains("PreviewShell") ||
                        ProcessInfo.processInfo.arguments.contains("--enable-previews")
-        EnhancedLogger.shared.logiCloudSync("iCloudStorageManager init - Preview environment: \(isPreview)", level: .debug)
-        
         if isPreview {
-            EnhancedLogger.shared.logiCloudSync("Running in Xcode preview, skipping CloudKit initialization", level: .debug)
             return
         }
         
@@ -191,10 +188,7 @@ class iCloudStorageManager: ObservableObject {
         let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
                        ProcessInfo.processInfo.processName.contains("PreviewShell") ||
                        ProcessInfo.processInfo.arguments.contains("--enable-previews")
-        EnhancedLogger.shared.logiCloudSync("initializeCloudKit - Preview environment: \(isPreview)", level: .debug)
-        
         if isPreview {
-            EnhancedLogger.shared.logiCloudSync("Skipping CloudKit initialization in preview environment", level: .debug)
             return
         }
         
@@ -220,10 +214,9 @@ class iCloudStorageManager: ObservableObject {
         }
         
         isInitialized = true
-        EnhancedLogger.shared.logiCloudSync("CloudKit initialized successfully", level: .info)
         
         if let result = EnhancedLogger.shared.endPerformanceTracking("CloudKit Initialization") {
-            EnhancedLogger.shared.logPerformance("CloudKit initialization completed in \(String(format: "%.2f", result.duration))s", level: .info)
+            EnhancedLogger.shared.logPerformance("CloudKit initialization completed in \(String(format: "%.2f", result.duration))s", level: .debug)
         }
     }
     
@@ -656,7 +649,6 @@ class iCloudStorageManager: ObservableObject {
                        ProcessInfo.processInfo.arguments.contains("--enable-previews")
         
         if isPreview {
-            print("🔍 Skipping network monitoring setup in preview environment")
             networkStatus = .available
             return
         }
@@ -967,8 +959,6 @@ class NetworkMonitor {
                        ProcessInfo.processInfo.arguments.contains("--enable-previews")
         
         if isPreview {
-            print("🔍 Skipping network monitoring in preview environment")
-            // Set default status for preview
             statusCallback(.available)
             return
         }

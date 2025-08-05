@@ -346,14 +346,10 @@ class OllamaService: ObservableObject {
     func generateTitle(from text: String) async throws -> String {
         let prompt = RecordingNameGenerator.generateStandardizedTitlePrompt(from: text)
         
-        print("🔧 OllamaService: Sending title generation request")
         let response = try await generateResponse(prompt: prompt, model: config.modelName)
-        
-        print("🔧 OllamaService: Generated title: \(response)")
         
         // Clean up the response and ensure it's a good title
         let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(response)
-        print("🔧 OllamaService: Cleaned title: \(cleanedTitle)")
         
         return cleanedTitle
     }
@@ -399,10 +395,7 @@ class OllamaService: ObservableObject {
         \(text)
         """
         
-        print("🔧 OllamaService: Sending tasks/reminders extraction request")
         let response = try await generateResponse(prompt: prompt, model: config.modelName)
-        
-        print("🔧 OllamaService: Received response for tasks/reminders (\(response.count) chars)")
         
         // Parse JSON response
         guard let data = response.data(using: .utf8) else {
@@ -410,11 +403,7 @@ class OllamaService: ObservableObject {
         }
         
         do {
-            print("🔧 OllamaService: Attempting to parse JSON response for tasks/reminders")
             let rawResult = try JSONDecoder().decode(RawTaskReminderResult.self, from: data)
-            
-            print("✅ OllamaService: Successfully parsed tasks/reminders JSON")
-            print("🔧 OllamaService: Found \(rawResult.tasks.count) tasks and \(rawResult.reminders.count) reminders")
             
             // Convert raw results to proper TaskItem and ReminderItem objects
             let tasks = rawResult.tasks.map { rawTask in
@@ -480,10 +469,7 @@ class OllamaService: ObservableObject {
         \(text)
         """
         
-        print("🔧 OllamaService: Sending title extraction request")
         let response = try await generateResponse(prompt: prompt, model: config.modelName)
-        
-        print("🔧 OllamaService: Received response for titles (\(response.count) chars)")
         
         // Parse JSON response
         guard let data = response.data(using: .utf8) else {
@@ -491,11 +477,7 @@ class OllamaService: ObservableObject {
         }
         
         do {
-            print("🔧 OllamaService: Attempting to parse JSON response for titles")
             let rawResult = try JSONDecoder().decode(RawTitleResult.self, from: data)
-            
-            print("✅ OllamaService: Successfully parsed titles JSON")
-            print("🔧 OllamaService: Found \(rawResult.titles.count) titles")
             
             // Convert raw results to proper TitleItem objects
             let titles = rawResult.titles.map { rawTitle in
@@ -539,14 +521,10 @@ class OllamaService: ObservableObject {
         request.httpBody = try JSONEncoder().encode(generateRequest)
         
         Self.requestCounter += 1
-        print("🔧 OllamaService: Sending request #\(Self.requestCounter) to \(url)")
-        print("🔧 OllamaService: Request type: \(model)")
-        print("🔧 OllamaService: Request body: \(String(data: request.httpBody!, encoding: .utf8) ?? "nil")")
         
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await session.data(for: request)
-            print("🔧 OllamaService: Received response data (\(data.count) bytes)")
         } catch {
             print("❌ OllamaService: Network request failed: \(error.localizedDescription)")
             throw OllamaError.serverError("Network request failed: \(error.localizedDescription)")
@@ -565,7 +543,6 @@ class OllamaService: ObservableObject {
             throw OllamaError.serverError("Server returned status code \(httpResponse.statusCode)")
         }
         
-        print("✅ OllamaService: Received response #\(Self.requestCounter) - Status: \(httpResponse.statusCode)")
         
         // Check if we have valid data first
         guard !data.isEmpty else {
@@ -573,20 +550,12 @@ class OllamaService: ObservableObject {
             throw OllamaError.parsingError("Received empty response from server")
         }
         
-        // Log raw response for debugging
-        if let rawResponse = String(data: data, encoding: .utf8) {
-            print("🔧 OllamaService: Raw response (\(data.count) bytes): \(rawResponse.prefix(200))...")
-        } else {
-            print("❌ OllamaService: Failed to convert response data to string")
-        }
         
         do {
             let generateResponse = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
-            print("✅ OllamaService: Successfully parsed response")
             
             // Clean up the response based on the expected format
             let cleanedResponse = cleanForJSON ? cleanOllamaResponse(generateResponse.response) : cleanSummaryResponse(generateResponse.response)
-            print("🔧 OllamaService: Cleaned response (\(cleanedResponse.count) chars)")
             
             return cleanedResponse
         } catch {

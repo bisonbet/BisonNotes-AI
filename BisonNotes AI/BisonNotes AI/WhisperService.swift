@@ -450,7 +450,6 @@ class WhisperService: ObservableObject {
             }
             
         } catch {
-            print("⚠️ WhisperService - Could not get duration/size: \(error)")
             throw error
         }
         

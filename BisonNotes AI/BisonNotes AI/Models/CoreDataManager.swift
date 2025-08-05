@@ -21,6 +21,13 @@ class CoreDataManager: ObservableObject {
         self.context = persistenceController.container.viewContext
     }
     
+    // MARK: - Context Management
+    
+    /// Refreshes all objects in the Core Data context to ensure fresh data
+    func refreshContext() {
+        context.refreshAllObjects()
+    }
+    
     // MARK: - Recording Operations
     
     func getAllRecordings() -> [RecordingEntry] {
@@ -86,12 +93,8 @@ class CoreDataManager: ObservableObject {
     }
     
     func getRecording(url: URL) -> RecordingEntry? {
-        print("🔍 DEBUG: getRecording(url:) called with: \(url)")
-        print("🔍 DEBUG: URL absoluteString: \(url.absoluteString)")
-        
         // Extract filename from URL
         let filename = url.lastPathComponent
-        print("🔍 DEBUG: Filename: \(filename)")
         
         // First try exact URL match
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
@@ -99,7 +102,6 @@ class CoreDataManager: ObservableObject {
         
         do {
             let results = try context.fetch(fetchRequest)
-            print("🔍 DEBUG: Found \(results.count) recordings with exact URL: \(url.absoluteString)")
             if !results.isEmpty {
                 return results.first
             }
@@ -109,7 +111,6 @@ class CoreDataManager: ObservableObject {
             filenameFetchRequest.predicate = NSPredicate(format: "recordingURL ENDSWITH %@", filename)
             
             let filenameResults = try context.fetch(filenameFetchRequest)
-            print("🔍 DEBUG: Found \(filenameResults.count) recordings with filename: \(filename)")
             
             if !filenameResults.isEmpty {
                 let recording = filenameResults.first!
@@ -122,12 +123,10 @@ class CoreDataManager: ObservableObject {
             }
             
             // If still no match, try to sync URLs and search again
-            print("🔍 DEBUG: No matches found, attempting to sync URLs...")
             syncRecordingURLs()
             
             // Try filename match again after sync
             let retryResults = try context.fetch(filenameFetchRequest)
-            print("🔍 DEBUG: After sync, found \(retryResults.count) recordings with filename: \(filename)")
             
             if !retryResults.isEmpty {
                 let recording = retryResults.first!
@@ -137,15 +136,6 @@ class CoreDataManager: ObservableObject {
                     updateRecordingURL(recording: recording, newURL: url)
                 }
                 return recording
-            }
-            
-            if retryResults.isEmpty {
-                // Debug: List all recordings to see what URLs are stored
-                let allRecordings = getAllRecordings()
-                print("🔍 DEBUG: All recordings in Core Data:")
-                for recording in allRecordings {
-                    print("   - \(recording.recordingName ?? "unknown"): \(recording.recordingURL ?? "no URL")")
-                }
             }
             
             return retryResults.first
@@ -172,9 +162,12 @@ class CoreDataManager: ObservableObject {
     func getTranscript(for recordingId: UUID) -> TranscriptEntry? {
         let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
+        // Sort by lastModified to get the most recent transcript
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.lastModified, ascending: false)]
         
         do {
-            return try context.fetch(fetchRequest).first
+            let results = try context.fetch(fetchRequest)
+            return results.first
         } catch {
             print("❌ Error fetching transcript: \(error)")
             return nil
@@ -359,12 +352,8 @@ class CoreDataManager: ObservableObject {
             segments = (try? JSONDecoder().decode([TranscriptSegment].self, from: segmentsData)) ?? []
         }
         
-        // Decode speaker mappings from JSON
-        var speakerMappings: [String: String] = [:]
-        if let speakerString = transcriptEntry.speakerMappings,
-           let speakerData = speakerString.data(using: .utf8) {
-            speakerMappings = (try? JSONDecoder().decode([String: String].self, from: speakerData)) ?? [:]
-        }
+        // Speaker mappings no longer used (diarization disabled)
+        let speakerMappings: [String: String] = [:]
         
         // Convert engine string to enum
         let engine = transcriptEntry.engine.flatMap { TranscriptionEngine(rawValue: $0) }

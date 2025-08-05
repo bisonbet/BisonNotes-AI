@@ -31,12 +31,29 @@ struct BackgroundProcessingView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Remove Completed") {
-                        Task {
-                            await processingManager.removeCompletedJobs()
+                    Menu {
+                        Button("Cleanup Completed Jobs") {
+                            Task {
+                                await processingManager.cleanupCompletedJobs()
+                            }
                         }
+                        
+                        Button("Cancel All Jobs") {
+                            Task {
+                                await processingManager.cancelAllJobs()
+                            }
+                        }
+                        
+                        Divider()
+                        
+                        Button("Clear All Jobs", role: .destructive) {
+                            Task {
+                                await processingManager.clearAllJobs()
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
-                    .foregroundColor(.orange)
                 }
             }
             .sheet(isPresented: $showingJobDetails) {

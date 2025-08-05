@@ -106,7 +106,7 @@ class EnhancedLogger: ObservableObject {
     
     func enablePerformanceTracking(_ enabled: Bool) {
         performanceTracking = enabled
-        logger.info("🔧 Performance tracking \(enabled ? "enabled" : "disabled")")
+        // Performance tracking silently enabled/disabled
     }
     
     // MARK: - Logging Methods
@@ -463,7 +463,7 @@ extension EnhancedLogger {
     // MARK: - iCloud Sync Logging
     
     func logiCloudSyncStart(_ operation: String) {
-        logiCloudSync("Starting iCloud sync operation: \(operation)", level: .info)
+        logiCloudSync("Starting iCloud sync operation: \(operation)", level: .verbose)
     }
     
     func logiCloudSyncProgress(_ operation: String, progress: Double) {

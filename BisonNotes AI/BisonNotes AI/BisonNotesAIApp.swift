@@ -13,8 +13,7 @@ struct BisonNotesAIApp: App {
     @StateObject private var appCoordinator = AppDataCoordinator()
     
     init() {
-        // Initialize performance optimization and logging
-        PerformanceOptimizer.shared.optimizeStartupLogging()
+        // App initialization complete
     }
 
     var body: some Scene {

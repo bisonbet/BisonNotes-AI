@@ -579,12 +579,7 @@ class BackgroundProcessingManager: ObservableObject {
                 print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
                 print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
                 
-                // Debug: List all recordings in Core Data
-                let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
-                print("🔍 DEBUG: Found \(allRecordings.count) recordings in Core Data:")
-                for recording in allRecordings {
-                    print("   - \(recording.recordingName ?? "unknown"): \(recording.recordingURL ?? "no URL")")
-                }
+                // Use the new Core Data system
                 
                 if let recordingEntry = appCoordinator.getRecording(url: job.recordingURL),
                    let entryId = recordingEntry.id {
@@ -622,12 +617,7 @@ class BackgroundProcessingManager: ObservableObject {
                 print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
                 print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
                 
-                // Debug: List all recordings in Core Data
-                let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
-                print("🔍 DEBUG: Found \(allRecordings.count) recordings in Core Data:")
-                for recording in allRecordings {
-                    print("   - \(recording.recordingName ?? "unknown"): \(recording.recordingURL ?? "no URL")")
-                }
+                // Use the new Core Data system
                 
                 if let recordingEntry = appCoordinator.getRecording(url: job.recordingURL),
                    let entryId = recordingEntry.id {
@@ -939,19 +929,12 @@ class BackgroundProcessingManager: ObservableObject {
     private func saveTranscript(_ transcriptData: TranscriptData) async {
         // Save transcript using the Core Data coordinator
         await MainActor.run {
-            print("🔍 DEBUG: Starting transcript save for URL: \(transcriptData.recordingURL)")
-            print("🔍 DEBUG: URL absoluteString: \(transcriptData.recordingURL.absoluteString)")
             
             // Use the new Core Data system
             if let appCoordinator = enhancedFileManager.getCoordinator() {
                 print("✅ DEBUG: AppCoordinator available")
                 
-                // Debug: List all recordings in Core Data
-                let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
-                print("🔍 DEBUG: Found \(allRecordings.count) recordings in Core Data:")
-                for recording in allRecordings {
-                    print("   - \(recording.recordingName ?? "unknown"): \(recording.recordingURL ?? "no URL")")
-                }
+                // Use the new Core Data system
                 
                 // Get the recording ID from the URL
                 guard let recordingEntry = appCoordinator.getRecording(url: transcriptData.recordingURL),
@@ -966,7 +949,7 @@ class BackgroundProcessingManager: ObservableObject {
                 let transcriptId = appCoordinator.addTranscript(
                     for: recordingId,
                     segments: transcriptData.segments,
-                    speakerMappings: transcriptData.speakerMappings,
+                    speakerMappings: [:], // No speaker mappings needed
                     engine: transcriptData.engine,
                     processingTime: transcriptData.processingTime,
                     confidence: transcriptData.confidence
@@ -1412,9 +1395,12 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func checkForCompletedJobs() async {
+        // Check for stale jobs that may have been abandoned
+        await cleanupStaleJobs()
+        
         // This would check with external services (like AWS) for job completion
-        // For now, just log that we would check
-        print("🔍 Would check for completed background jobs")
+        // For now, we mainly focus on cleaning up stale local jobs
+        print("🔍 Checked for completed and stale background jobs")
     }
     
     // MARK: - Core Data Persistence
@@ -1422,7 +1408,11 @@ class BackgroundProcessingManager: ObservableObject {
     private func loadJobsFromCoreData() {
         let jobEntries = coreDataManager.getAllProcessingJobs()
         activeJobs = jobEntries.compactMap { convertToProcessingJob(from: $0) }
-        print("💾 Loaded \(activeJobs.count) jobs from Core Data")
+        
+        // Clean up stale jobs on startup
+        Task {
+            await cleanupStaleJobs()
+        }
     }
     
     private func convertToProcessingJob(from jobEntry: ProcessingJobEntry) -> ProcessingJob? {
@@ -1578,7 +1568,7 @@ class BackgroundProcessingManager: ObservableObject {
     private func setupNotifications() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if granted {
-                print("✅ Notification permission granted")
+                // Notification permission granted
             } else if let error = error {
                 print("❌ Notification permission denied: \(error)")
             } else {
@@ -1639,6 +1629,141 @@ class BackgroundProcessingManager: ObservableObject {
             try await UNUserNotificationCenter.current().setBadgeCount(0)
         } catch {
             print("⚠️ Failed to clear notification badge: \(error)")
+        }
+    }
+    
+    // MARK: - Stale Job Cleanup
+    
+    /// Cleans up jobs that have been stuck in processing state for too long
+    private func cleanupStaleJobs() async {
+        let staleThreshold: TimeInterval = 3600 // 1 hour
+        let now = Date()
+        var cleanedCount = 0
+        
+        for job in activeJobs {
+            let timeSinceStart = now.timeIntervalSince(job.startTime)
+            
+            // Check if job is stuck in processing state for too long
+            if job.status == .processing && timeSinceStart > staleThreshold {
+                // Cleanup stale job silently
+                
+                let failedJob = job.withStatus(.failed("Job timed out after \(Int(timeSinceStart/60)) minutes"))
+                await updateJobInMemoryAndCoreData(failedJob)
+                cleanedCount += 1
+            }
+        }
+        
+        if cleanedCount > 0 {
+            // Update UI on main thread
+            await MainActor.run {
+                self.objectWillChange.send()
+            }
+        }
+    }
+    
+    /// Updates job both in memory and Core Data
+    private func updateJobInMemoryAndCoreData(_ updatedJob: ProcessingJob) async {
+        // Update in memory
+        if let index = activeJobs.firstIndex(where: { $0.id == updatedJob.id }) {
+            activeJobs[index] = updatedJob
+        }
+        
+        // Update in Core Data
+        if let jobEntry = coreDataManager.getProcessingJob(id: updatedJob.id) {
+            jobEntry.status = statusToString(updatedJob.status)
+            jobEntry.error = updatedJob.error
+            jobEntry.completionTime = updatedJob.completionTime
+            jobEntry.progress = updatedJob.progress
+            
+            do {
+                try coreDataManager.saveContext()
+            } catch {
+                print("❌ Failed to update job in Core Data: \(error)")
+            }
+        }
+    }
+    
+    /// Convert JobProcessingStatus to string for Core Data storage
+    private func statusToString(_ status: JobProcessingStatus) -> String {
+        switch status {
+        case .queued:
+            return "queued"
+        case .processing:
+            return "processing"
+        case .completed:
+            return "completed"
+        case .failed(let message):
+            return "failed:\(message)"
+        }
+    }
+    
+    // MARK: - Manual Cleanup Functions
+    
+    /// Manually cleanup all failed and completed jobs
+    func cleanupCompletedJobs() async {
+        let jobsToRemove = activeJobs.filter { job in
+            job.status == .completed || job.status.isError
+        }
+        
+        for job in jobsToRemove {
+            // Remove from Core Data
+            if let jobEntry = coreDataManager.getProcessingJob(id: job.id) {
+                coreDataManager.deleteProcessingJob(jobEntry)
+            }
+        }
+        
+        // Remove from memory
+        activeJobs.removeAll { job in
+            job.status == .completed || job.status.isError
+        }
+        
+        print("🧹 Cleaned up \(jobsToRemove.count) completed/failed jobs")
+        
+        // Update UI
+        await MainActor.run {
+            self.objectWillChange.send()
+        }
+    }
+    
+    /// Cancel all processing jobs and mark them as failed
+    func cancelAllJobs() async {
+        let processingJobs = activeJobs.filter { $0.status == .processing || $0.status == .queued }
+        
+        for job in processingJobs {
+            let cancelledJob = job.withStatus(.failed("Cancelled by user"))
+            await updateJobInMemoryAndCoreData(cancelledJob)
+        }
+        
+        // Clear current job
+        currentJob = nil
+        
+        if !processingJobs.isEmpty {
+            print("🛑 Cancelled \(processingJobs.count) jobs")
+            
+            // Update UI
+            await MainActor.run {
+                self.objectWillChange.send()
+            }
+        }
+    }
+    
+    /// Force cleanup all jobs (nuclear option)
+    func clearAllJobs() async {
+        // Remove all jobs from Core Data
+        let allJobEntries = coreDataManager.getAllProcessingJobs()
+        for jobEntry in allJobEntries {
+            coreDataManager.deleteProcessingJob(jobEntry)
+        }
+        
+        // Clear from memory
+        activeJobs.removeAll()
+        currentJob = nil
+        
+        print("🧹 Cleared all background processing jobs")
+        
+        // Update UI
+        await MainActor.run {
+            self.objectWillChange.send()
         }
     }
 }

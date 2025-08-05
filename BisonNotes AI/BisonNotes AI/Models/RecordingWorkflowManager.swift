@@ -83,6 +83,12 @@ class RecordingWorkflowManager: ObservableObject {
         print("🎯 Creating transcript for recording: \(recordingEntry.recordingName ?? "unknown")")
         print("🆔 Recording UUID: \(recordingId)")
         
+        // Check if a transcript already exists for this recording
+        if let existingTranscript = recordingEntry.transcript {
+            print("🔄 Existing transcript found, replacing with new transcript...")
+            return replaceTranscript(existingTranscript, with: segments, speakerMappings: speakerMappings, engine: engine, processingTime: processingTime, confidence: confidence)
+        }
+        
         // Create transcript data with proper UUID linking
         let transcriptData = TranscriptData(
             recordingId: recordingId,
@@ -113,11 +119,8 @@ class RecordingWorkflowManager: ObservableObject {
             transcriptEntry.segments = segmentsString
         }
         
-        // Store speaker mappings as JSON
-        if let speakerData = try? JSONEncoder().encode(speakerMappings),
-           let speakerString = String(data: speakerData, encoding: .utf8) {
-            transcriptEntry.speakerMappings = speakerString
-        }
+        // Clear speaker mappings (no longer used)
+        transcriptEntry.speakerMappings = nil
         
         // Link to recording
         transcriptEntry.recording = recordingEntry
@@ -136,6 +139,40 @@ class RecordingWorkflowManager: ObservableObject {
         }
         
         return transcriptData.id
+    }
+    
+    /// Replaces an existing transcript with new content while preserving the same UUID
+    private func replaceTranscript(_ existingTranscript: TranscriptEntry, with segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {
+        
+        print("🔄 Replacing existing transcript with ID: \(existingTranscript.id?.uuidString ?? "unknown")")
+        
+        // Update the existing transcript entry with new data
+        existingTranscript.lastModified = Date() 
+        existingTranscript.engine = engine?.rawValue
+        existingTranscript.processingTime = processingTime
+        existingTranscript.confidence = confidence
+        
+        // Store new segments as JSON
+        if let segmentsData = try? JSONEncoder().encode(segments),
+           let segmentsString = String(data: segmentsData, encoding: .utf8) {
+            existingTranscript.segments = segmentsString
+        }
+        
+        // Clear speaker mappings (no longer used)
+        existingTranscript.speakerMappings = nil
+        
+        // Update the recording's last modified date
+        existingTranscript.recording?.lastModified = Date()
+        
+        // Save to Core Data
+        do {
+            try context.save()
+            print("✅ Transcript replaced successfully with ID: \(existingTranscript.id?.uuidString ?? "unknown")")
+            return existingTranscript.id
+        } catch {
+            print("❌ Failed to replace transcript in Core Data: \(error)")
+            return nil
+        }
     }
     
     // MARK: - Summary Workflow
