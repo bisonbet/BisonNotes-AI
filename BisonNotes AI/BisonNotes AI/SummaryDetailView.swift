@@ -13,6 +13,7 @@ struct SummaryDetailView: View {
     @State private var showingRegenerationAlert = false
     @State private var regenerationError: String?
     @State private var showingDeleteConfirmation = false
+    @State private var showingLocationDetail = false
     
     init(recording: RecordingFile, summaryData: EnhancedSummaryData) {
         self.recording = recording
@@ -21,88 +22,128 @@ struct SummaryDetailView: View {
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                // Map Section
-                if let locationData = recording.locationData {
-                    VStack {
-                        Map(position: .constant(.region(MKCoordinateRegion(
-                            center: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude),
-                            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-                        )))) {
-                            Marker("Recording Location", coordinate: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude))
-                                .foregroundStyle(.blue)
-                        }
-                        .frame(height: 200)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .padding(.horizontal)
+            content
+                .navigationTitle("Enhanced Summary")
+                .navigationBarTitleDisplayMode(.inline)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") {
+                    dismiss()
+                }
+            }
+        }
+    }
+    
+    private var content: some View {
+        VStack(spacing: 0) {
+            // Map Section - Enhanced to match Apple's design
+            if let locationData = recording.locationData {
+                VStack(spacing: 0) {
+                    Map(position: .constant(.region(MKCoordinateRegion(
+                        center: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude),
+                        span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005) // Tighter zoom like Apple
+                    )))) {
+                        Marker("Recording Location", coordinate: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude))
+                            .foregroundStyle(.orange) // More prominent color
+                    }
+                    .frame(height: 250) // Taller like Apple's design
+                    .clipShape(RoundedRectangle(cornerRadius: 0)) // No rounded corners for full-width effect
+                    
+                    // Location info bar below map
+                    HStack {
+                        Image(systemName: "location.fill")
+                            .font(.subheadline)
+                            .foregroundColor(.orange)
                         
-                        HStack {
-                            Image(systemName: "location.fill")
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let address = locationAddress, !address.isEmpty {
+                                Text(address)
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                            } else {
+                                Text("Recording Location")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            Text(locationData.coordinateString)
                                 .font(.caption)
-                                .foregroundColor(.accentColor)
-                            Text(locationAddress ?? locationData.coordinateString)
-                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        // Button to open full map view
+                        Button(action: {
+                            showingLocationDetail = true
+                        }) {
+                            Image(systemName: "arrow.up.right.circle.fill")
+                                .font(.title3)
                                 .foregroundColor(.accentColor)
                         }
-                        .padding(.bottom)
                     }
-                }
-                
-                // Enhanced Summary Content
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        // Header Section
-                        headerSection
-                        
-                        // Metadata Section (Expandable)
-                        metadataSection
-                        
-                        // Summary Section (Expandable)
-                        summarySection
-                        
-                        // Tasks Section (Expandable)
-                        tasksSection
-                        
-                        // Reminders Section (Expandable)
-                        remindersSection
-                        
-                        // Titles Section (Expandable)
-                        titlesSection
-                        
-                        // Regenerate Button Section
-                        regenerateSection
-                    }
-                    .padding(.vertical)
+                    .padding(.horizontal)
+                    .padding(.vertical, 12)
+                    .background(Color(.systemGray6))
                 }
             }
-            .navigationTitle("Enhanced Summary")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
+            
+            // Enhanced Summary Content
+            ScrollView([.vertical], showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Header Section
+                    headerSection
+                    
+                    // Metadata Section (Expandable)
+                    metadataSection
+                    
+                    // Summary Section (Expandable)
+                    summarySection
+                    
+                    // Tasks Section (Expandable)
+                    tasksSection
+                    
+                    // Reminders Section (Expandable)
+                    remindersSection
+                    
+                    // Titles Section (Expandable)
+                    titlesSection
+                    
+                    // Regenerate Button Section
+                    regenerateSection
+                }
+                .padding(.vertical)
+            }
+        }
+        .onAppear {
+            // Debug location data availability
+            if let locationData = recording.locationData {
+                print("📍 SummaryDetailView: Recording has location data - lat: \(locationData.latitude), lon: \(locationData.longitude)")
+            } else {
+                print("📍 SummaryDetailView: Recording has NO location data")
+            }
+            
+            // Refresh summary data from coordinator to get the latest version
+            if let recordingEntry = appCoordinator.getRecording(url: recording.url),
+               let recordingId = recordingEntry.id,
+        let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
+               let latestSummary = completeData.summary {
+                summaryData = latestSummary
+            }
+            
+            if let locationData = recording.locationData {
+                let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
+                let tempLocationManager = LocationManager()
+                tempLocationManager.reverseGeocodeLocation(location) { address in
+                    if let address = address {
+                        locationAddress = address
                     }
                 }
             }
-                    .onAppear {
-                // Refresh summary data from coordinator to get the latest version
-                if let recordingEntry = appCoordinator.getRecording(url: recording.url),
-                   let recordingId = recordingEntry.id,
-            let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
-                   let latestSummary = completeData.summary {
-                    summaryData = latestSummary
-                }
-                
-                if let locationData = recording.locationData {
-                    let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
-                    let tempLocationManager = LocationManager()
-                    tempLocationManager.reverseGeocodeLocation(location) { address in
-                        if let address = address {
-                            locationAddress = address
-                        }
-                    }
-                }
-            }
+        }
         .alert("Regeneration Error", isPresented: $showingRegenerationAlert) {
             Button("OK") {
                 regenerationError = nil
@@ -120,6 +161,10 @@ struct SummaryDetailView: View {
         } message: {
             Text("Are you sure you want to delete this summary? This action cannot be undone. The audio file and transcript will remain unchanged.")
         }
+        .sheet(isPresented: $showingLocationDetail) {
+            if let locationData = recording.locationData {
+                LocationDetailView(locationData: locationData)
+            }
         }
     }
     
@@ -340,9 +385,6 @@ struct SummaryDetailView: View {
                 }
                 .padding(.top, 4)
             }
-        }
-        .onTapGesture {
-            toggleSection("titles")
         }
         .onTapGesture {
             toggleSection("titles")

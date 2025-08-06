@@ -14,12 +14,15 @@ enum MigrationMode {
 }
 
 struct DataMigrationView: View {
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var migrationManager = DataMigrationManager()
+    @StateObject private var legacyiCloudManager = iCloudStorageManager()
     @Environment(\.dismiss) private var dismiss
     @State private var integrityReport: DataIntegrityReport?
     @State private var repairResults: DataRepairResults?
     @State private var currentMode: MigrationMode = .migration
     @State private var showingClearDatabaseAlert = false
+    @State private var isInitialized = false
     
     var body: some View {
         NavigationView {
@@ -57,15 +60,15 @@ struct DataMigrationView: View {
                     }
                 }
             }
-            .alert("Clear All Database Data", isPresented: $showingClearDatabaseAlert) {
+            .alert("⚠️ DESTRUCTIVE ACTION - Clear All Database Data", isPresented: $showingClearDatabaseAlert) {
                 Button("Cancel", role: .cancel) { }
-                Button("Clear All Data", role: .destructive) {
+                Button("I Understand - Delete Everything", role: .destructive) {
                     Task {
                         await migrationManager.clearAllCoreData()
                     }
                 }
             } message: {
-                Text("This will permanently delete all recordings, transcripts, and summaries from the database. Your audio files will remain on disk, but all database entries will be lost.\n\nThis action cannot be undone.")
+                Text("🚨 CRITICAL WARNING 🚨\n\nThis will PERMANENTLY DELETE ALL of your data from the database:\n\n❌ ALL TRANSCRIPTS (cannot be recovered)\n❌ ALL SUMMARIES (cannot be recovered)\n❌ ALL RECORDING METADATA\n\n✅ Your audio files will remain on disk\n\n⚠️ This action CANNOT be undone and you will lose all your transcribed text and AI-generated summaries forever.\n\nOnly proceed if you understand this will destroy all your transcript and summary data.")
             }
         }
     }
@@ -135,6 +138,37 @@ struct DataMigrationView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color.orange, lineWidth: 1)
+                )
+                .cornerRadius(12)
+            }
+            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            
+            // iCloud Recovery
+            Button(action: {
+                Task {
+                    // Initialize the migration manager with iCloud sync managers
+                    migrationManager.setCloudSyncManagers(legacy: legacyiCloudManager)
+                    
+                    let results = await migrationManager.recoverDataFromiCloud()
+                    // Handle recovery results
+                    print("📥 Recovery completed: \(results.transcripts) transcripts, \(results.summaries) summaries")
+                    if !results.errors.isEmpty {
+                        print("⚠️ Recovery errors: \(results.errors.joined(separator: ", "))")
+                    }
+                }
+            }) {
+                HStack {
+                    Image(systemName: "icloud.and.arrow.down")
+                    Text("Recover from iCloud")
+                }
+                .font(.headline)
+                .foregroundColor(.purple)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.purple.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.purple, lineWidth: 1)
                 )
                 .cornerRadius(12)
             }

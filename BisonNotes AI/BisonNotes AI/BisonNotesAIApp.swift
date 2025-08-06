@@ -12,9 +12,7 @@ struct BisonNotesAIApp: App {
     let persistenceController = PersistenceController.shared
     @StateObject private var appCoordinator = AppDataCoordinator()
     
-    init() {
-        // App initialization complete
-    }
+    // URL migration is now handled in ContentView initialization
 
     var body: some Scene {
         WindowGroup {

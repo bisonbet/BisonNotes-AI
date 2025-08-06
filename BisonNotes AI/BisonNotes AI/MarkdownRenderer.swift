@@ -429,13 +429,14 @@ struct MarkdownRenderer {
     /// Combines the best features from Google AI, enhanced, and standard renderers
     static func renderUnifiedRobustMarkdown(_ content: String, aiService: String = "") -> AttributedString {
         print("🚀 UnifiedMarkdownRenderer: Starting to render content from \(aiService)")
-        print("📝 Input content: \(content.prefix(200))...")
+        print("📝 Raw input content: \(content.prefix(300))...")
         
         // Step 1: Comprehensive preprocessing
         let preprocessedContent = comprehensivePreprocessing(content, aiService: aiService)
+        print("📝 After preprocessing: \(preprocessedContent.prefix(300))...")
         
-        // Step 2: Use robust custom formatting for better control over newlines and spacing
-        print("🎯 Using unified custom formatter for optimal rendering")
+        // Use our reliable custom formatter (iOS parser is unreliable)
+        print("🎯 Using custom markdown formatter")
         return createUnifiedCustomFormattedString(from: preprocessedContent)
     }
     
@@ -447,7 +448,22 @@ struct MarkdownRenderer {
         processed = processed.replacingOccurrences(of: "\\n", with: "\n")
         processed = processed.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Step 2: Service-specific preprocessing
+        // Quick check: If content already looks like well-formed markdown, do minimal processing
+        let hasValidMarkdown = processed.contains("**") && processed.contains("#") && processed.contains("-")
+        if hasValidMarkdown {
+            print("🎯 Content appears to be well-formed markdown, applying minimal preprocessing")
+            // Only apply basic cleanup
+            processed = finalCleanup(processed)
+            print("🔧 Minimally preprocessed content: \(processed.prefix(300))")
+            return processed
+        }
+        
+        print("🔧 Content needs comprehensive preprocessing")
+        
+        // Step 2: Fix common bold text issues across all AI services
+        processed = fixBoldTextPatterns(processed)
+        
+        // Step 3: Service-specific preprocessing
         switch aiService.lowercased() {
         case let service where service.contains("google") || service.contains("gemini"):
             processed = preprocessGoogleAIContent(processed)
@@ -461,13 +477,13 @@ struct MarkdownRenderer {
             processed = preprocessGenericAIContent(processed)
         }
         
-        // Step 3: Universal structural fixes
+        // Step 4: Universal structural fixes
         processed = applyUniversalStructuralFixes(processed)
         
-        // Step 4: Final cleanup
+        // Step 5: Final cleanup
         processed = finalCleanup(processed)
         
-        print("🔧 Preprocessed content sample: \(processed.prefix(300))")
+        print("🔧 Fully preprocessed content: \(processed.prefix(300))")
         return processed
     }
     
@@ -547,6 +563,25 @@ struct MarkdownRenderer {
         return processed
     }
     
+    /// Fixes common bold text patterns that different AI engines produce
+    private static func fixBoldTextPatterns(_ content: String) -> String {
+        var processed = content
+        
+        print("🔧 Bold text fix - Before: \(processed.prefix(200))...")
+        
+        // Only apply minimal fixes to avoid breaking valid markdown
+        // Fix double asterisks that are properly formed but may have excessive spacing
+        // Pattern: ** text ** -> **text** (only if more than one space)
+        processed = processed.replacingOccurrences(of: "\\*\\*  +([^*]+?)  +\\*\\*", with: "**$1**", options: .regularExpression)
+        
+        // Fix case where there are spaces inside the asterisks (very specific pattern)
+        // Pattern: * * text * * -> **text** (only exact pattern)
+        processed = processed.replacingOccurrences(of: "\\* \\* ([^*]+?) \\* \\*", with: "**$1**", options: .regularExpression)
+        
+        print("🔧 Bold text fix - After: \(processed.prefix(200))...")
+        return processed
+    }
+
     /// Final cleanup pass
     private static func finalCleanup(_ content: String) -> String {
         var processed = content
@@ -570,7 +605,9 @@ struct MarkdownRenderer {
     private static func createUnifiedCustomFormattedString(from content: String) -> AttributedString {
         var attributedString = AttributedString()
         
+        print("🔧 Custom formatter input: \(content.prefix(200))...")
         let lines = content.components(separatedBy: .newlines)
+        print("🔧 Split into \(lines.count) lines")
         
         for (index, line) in lines.enumerated() {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
@@ -579,6 +616,35 @@ struct MarkdownRenderer {
                 // Add paragraph breaks for empty lines
                 attributedString.append(AttributedString("\n"))
                 continue
+            }
+            
+            // Special handling for lines that contain both text and headers (like "Meeting Summary: ## Title")
+            if trimmedLine.contains("##") && !trimmedLine.hasPrefix("##") {
+                print("🔧 Processing mixed text/header line: '\(trimmedLine)'")
+                // Split on the header marker
+                let parts = trimmedLine.components(separatedBy: "##")
+                if parts.count >= 2 {
+                    // Process the part before the header as regular text
+                    let beforeHeader = parts[0].trimmingCharacters(in: .whitespaces)
+                    if !beforeHeader.isEmpty {
+                        let beforeText = processAdvancedInlineFormatting(beforeHeader)
+                        attributedString.append(beforeText)
+                        attributedString.append(AttributedString(" "))
+                    }
+                    
+                    // Process the header part
+                    let headerText = parts.dropFirst().joined(separator: "##").trimmingCharacters(in: .whitespaces)
+                    var headerAttributed = AttributedString(headerText)
+                    headerAttributed.font = .title.weight(.bold)
+                    headerAttributed.foregroundColor = .primary
+                    attributedString.append(headerAttributed)
+                    
+                    // Add spacing after combined line
+                    if index < lines.count - 1 {
+                        attributedString.append(AttributedString("\n\n"))
+                    }
+                    continue
+                }
             }
             
             // Enhanced header handling with better typography
@@ -646,7 +712,9 @@ struct MarkdownRenderer {
                 
             } else {
                 // Regular text with advanced inline formatting
+                print("🔧 Processing line: '\(trimmedLine.prefix(100))...'")
                 let formattedText = processAdvancedInlineFormatting(trimmedLine)
+                print("🔧 Formatted result: \(formattedText.characters.count) characters")
                 attributedString.append(formattedText)
                 
                 // Smart spacing based on context - ensure proper line breaks
@@ -717,29 +785,40 @@ struct MarkdownRenderer {
         var attributedString = AttributedString()
         var currentIndex = text.startIndex
         
-        while currentIndex < text.endIndex {
-            // Look for bold text (double asterisks)
-            if let boldMatch = findBoldMatch(in: text, startingAt: currentIndex) {
+        print("🔧 Inline formatting input: '\(text)'")
+        
+        // First, preprocess the text to fix any malformed bold patterns
+        let preprocessedText = fixInlineBoldPatterns(text)
+        print("🔧 After preprocessing: '\(preprocessedText)'")
+        
+        while currentIndex < preprocessedText.endIndex {
+            // Look for bold text (double asterisks) - prioritize this over italic
+            if let boldMatch = findBoldMatch(in: preprocessedText, startingAt: currentIndex) {
+                print("🔧 Found bold text: '\(boldMatch.content)'")
+                
                 // Add text before bold
                 if boldMatch.range.lowerBound > currentIndex {
-                    let beforeText = String(text[currentIndex..<boldMatch.range.lowerBound])
+                    let beforeText = String(preprocessedText[currentIndex..<boldMatch.range.lowerBound])
                     attributedString.append(AttributedString(beforeText))
                 }
                 
                 // Add bold text (content without the ** markers)
                 var boldString = AttributedString(boldMatch.content)
                 boldString.font = .body.weight(.bold)
+                boldString.foregroundColor = .primary
                 attributedString.append(boldString)
                 
                 currentIndex = boldMatch.range.upperBound
                 continue
             }
             
-            // Look for italic text (single asterisk)
-            if let italicMatch = findItalicMatch(in: text, startingAt: currentIndex) {
+            // Look for italic text (single asterisk) - but avoid conflicts with bold
+            if let italicMatch = findItalicMatch(in: preprocessedText, startingAt: currentIndex) {
+                print("🔧 Found italic text: '\(italicMatch.content)'")
+                
                 // Add text before italic
                 if italicMatch.range.lowerBound > currentIndex {
-                    let beforeText = String(text[currentIndex..<italicMatch.range.lowerBound])
+                    let beforeText = String(preprocessedText[currentIndex..<italicMatch.range.lowerBound])
                     attributedString.append(AttributedString(beforeText))
                 }
                 
@@ -753,12 +832,30 @@ struct MarkdownRenderer {
             }
             
             // No more formatting found - add remaining text
-            let remainingText = String(text[currentIndex...])
+            let remainingText = String(preprocessedText[currentIndex...])
+            print("🔧 Adding remaining text: '\(remainingText.prefix(50))...'")
             attributedString.append(AttributedString(remainingText))
             break
         }
         
         return attributedString
+    }
+    
+    /// Fixes inline bold patterns that might be malformed
+    private static func fixInlineBoldPatterns(_ text: String) -> String {
+        var processed = text
+        
+        // Handle cases where asterisks are separated by spaces or have inconsistent spacing
+        // Pattern: * *text* * -> **text**
+        processed = processed.replacingOccurrences(of: "\\* \\*([^*]+?)\\* \\*", with: "**$1**", options: .regularExpression)
+        
+        // Handle cases where bold text has extra spaces inside
+        // Pattern: ** text ** -> **text**
+        processed = processed.replacingOccurrences(of: "\\*\\* +([^*]+?) +\\*\\*", with: "**$1**", options: .regularExpression)
+        
+        // DON'T convert single asterisks to double - that breaks italic formatting!
+        
+        return processed
     }
     
     private struct FormatMatch {
@@ -767,15 +864,22 @@ struct MarkdownRenderer {
     }
     
     private static func findBoldMatch(in text: String, startingAt start: String.Index) -> FormatMatch? {
-        // Look for **text** pattern
+        // Look for **text** pattern with improved handling
         if let startRange = text[start...].range(of: "**") {
             let afterStart = startRange.upperBound
-            if let endRange = text[afterStart...].range(of: "**") {
+            // Look for closing ** but avoid matching with empty content
+            var searchStart = afterStart
+            
+            while let endRange = text[searchStart...].range(of: "**") {
                 let content = String(text[afterStart..<endRange.lowerBound])
-                if !content.isEmpty {
+                // Accept content that contains letters/numbers/spaces/punctuation
+                if !content.isEmpty && !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     let fullRange = startRange.lowerBound..<endRange.upperBound
                     return FormatMatch(range: fullRange, content: content)
                 }
+                // If content is empty or only whitespace, continue searching
+                searchStart = endRange.upperBound
+                if searchStart >= text.endIndex { break }
             }
         }
         return nil
@@ -1096,6 +1200,9 @@ extension View {
     /// Displays AI content using the unified robust markdown renderer
     func unifiedRobustMarkdownText(_ content: String, aiService: String = "") -> some View {
         let attributedString = MarkdownRenderer.renderUnifiedRobustMarkdown(content, aiService: aiService)
+        
+        print("📱 Final AttributedString length: \(attributedString.characters.count)")
+        print("📱 First 200 characters: \(String(attributedString.characters.prefix(200)))")
         
         return Text(attributedString)
             .textSelection(.enabled)

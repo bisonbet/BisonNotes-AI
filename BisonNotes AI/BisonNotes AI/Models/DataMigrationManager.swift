@@ -8,6 +8,7 @@
 import Foundation
 import CoreData
 import AVFoundation
+import UIKit
 
 // MARK: - Data Integrity Structures
 
@@ -91,14 +92,29 @@ enum DuplicateEntryType {
 class DataMigrationManager: ObservableObject {
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
+    private var unifiediCloudSyncManager: UnifiediCloudSyncManager?
+    private var iCloudStorageManager: iCloudStorageManager?
     
     @Published var migrationProgress: Double = 0.0
     @Published var migrationStatus: String = ""
     @Published var isCompleted: Bool = false
     
-    init(persistenceController: PersistenceController = PersistenceController.shared) {
+    init(persistenceController: PersistenceController = PersistenceController.shared,
+         unifiediCloudSyncManager: UnifiediCloudSyncManager? = nil,
+         iCloudStorageManager: iCloudStorageManager? = nil) {
         self.persistenceController = persistenceController
         self.context = persistenceController.container.viewContext
+        self.unifiediCloudSyncManager = unifiediCloudSyncManager
+        self.iCloudStorageManager = iCloudStorageManager
+    }
+    
+    func setCloudSyncManagers(unified: UnifiediCloudSyncManager? = nil, legacy: iCloudStorageManager? = nil) {
+        if let unified = unified {
+            self.unifiediCloudSyncManager = unified
+        }
+        if let legacy = legacy {
+            self.iCloudStorageManager = legacy
+        }
     }
     
     func performDataMigration() async {
@@ -224,7 +240,8 @@ class DataMigrationManager: ObservableObject {
         let recordingEntry = RecordingEntry(context: context)
         recordingEntry.id = UUID()
         recordingEntry.recordingName = recordingName
-        recordingEntry.recordingURL = audioFile.absoluteString
+        // Store relative path instead of absolute URL for resilience across app launches
+        recordingEntry.recordingURL = urlToRelativePath(audioFile)
         
         // Get file metadata
         do {
@@ -388,6 +405,117 @@ class DataMigrationManager: ObservableObject {
         }
     }
     
+    // MARK: - Data Recovery Methods
+    
+    func recoverDataFromiCloud() async -> (transcripts: Int, summaries: Int, errors: [String]) {
+        let transcriptCount = 0 // Transcript recovery not yet implemented
+        var summaryCount = 0
+        var errors: [String] = []
+        
+        print("📥 Starting iCloud data recovery...")
+        
+        // Try UnifiediCloudSyncManager first
+        if let unifiedManager = unifiediCloudSyncManager {
+            print("🔍 Using UnifiediCloudSyncManager for recovery...")
+            do {
+                if !unifiedManager.isEnabled {
+                    print("⚠️ Unified iCloud sync is disabled")
+                    errors.append("Unified iCloud sync is disabled - enable it in Settings")
+                } else {
+                    print("🔄 Fetching data from unified iCloud sync...")
+                    try await unifiedManager.fetchAllDataFromCloud()
+                    
+                    // The unified manager updates the registry, but we need Core Data entries
+                    // This would need integration with the registry to create Core Data entries
+                    print("⚠️ Unified iCloud recovery fetched data to registry, but Core Data integration needed")
+                    errors.append("Unified iCloud recovery needs Core Data integration")
+                }
+            } catch {
+                print("❌ Unified iCloud recovery failed: \(error)")
+                errors.append("Unified iCloud error: \(error.localizedDescription)")
+            }
+        }
+        
+        // Try legacy iCloudStorageManager if unified is not available
+        else if let legacyManager = iCloudStorageManager {
+            print("🔍 Using legacy iCloudStorageManager for recovery...")
+            do {
+                if !legacyManager.isEnabled {
+                    print("⚠️ Legacy iCloud sync is disabled")
+                    errors.append("Legacy iCloud sync is disabled - enable it in Settings")
+                } else {
+                    print("📥 Fetching summaries from legacy iCloud...")
+                    let summaries = try await legacyManager.fetchSummariesFromiCloud()
+                    
+                    if !summaries.isEmpty {
+                        print("📊 Found \(summaries.count) summaries in legacy iCloud")
+                        
+                        // Create Core Data entries for recovered summaries
+                        for summary in summaries {
+                            // Check if we already have this summary
+                            let summaryFetch: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+                            summaryFetch.predicate = NSPredicate(format: "id == %@", summary.id as CVarArg)
+                            
+                            let existingSummaries = try context.fetch(summaryFetch)
+                            if existingSummaries.isEmpty {
+                                // Create new SummaryEntry
+                                let summaryEntry = SummaryEntry(context: context)
+                                summaryEntry.id = summary.id
+                                summaryEntry.summary = summary.summary
+                                summaryEntry.generatedAt = Date()
+                                
+                                // Convert tasks, reminders, titles to JSON strings
+                                if let tasksData = try? JSONEncoder().encode(summary.tasks),
+                                   let tasksString = String(data: tasksData, encoding: .utf8) {
+                                    summaryEntry.tasks = tasksString
+                                }
+                                if let remindersData = try? JSONEncoder().encode(summary.reminders),
+                                   let remindersString = String(data: remindersData, encoding: .utf8) {
+                                    summaryEntry.reminders = remindersString
+                                }
+                                if let titlesData = try? JSONEncoder().encode(summary.titles),
+                                   let titlesString = String(data: titlesData, encoding: .utf8) {
+                                    summaryEntry.titles = titlesString
+                                }
+                                
+                                summaryEntry.contentType = summary.contentType.rawValue
+                                summaryEntry.aiMethod = summary.aiMethod
+                                summaryEntry.originalLength = Int32(summary.originalLength)
+                                summaryEntry.processingTime = summary.processingTime
+                                summaryEntry.recordingId = summary.recordingId
+                                summaryEntry.transcriptId = summary.transcriptId
+                                
+                                summaryCount += 1
+                                print("✅ Recovered summary: \(summary.recordingName)")
+                            } else {
+                                print("⚠️ Summary already exists: \(summary.recordingName)")
+                            }
+                        }
+                        
+                        // Save the context
+                        try context.save()
+                        print("✅ Saved \(summaryCount) recovered summaries to Core Data")
+                        
+                    } else {
+                        print("📋 No summaries found in legacy iCloud")
+                    }
+                }
+            } catch {
+                print("❌ Legacy iCloud recovery failed: \(error)")
+                errors.append("Legacy iCloud error: \(error.localizedDescription)")
+            }
+        }
+        
+        // No iCloud managers available
+        else {
+            print("⚠️ No iCloud sync managers available")
+            errors.append("No iCloud sync managers available - they need to be passed to DataMigrationManager")
+        }
+        
+        print("📊 Recovery results: \(transcriptCount) transcripts, \(summaryCount) summaries recovered")
+        return (transcriptCount, summaryCount, errors)
+    }
+    
     // MARK: - Utility Methods
     
     func clearAllCoreData() async {
@@ -445,6 +573,26 @@ class DataMigrationManager: ObservableObject {
         } catch {
             print("❌ Error fetching summaries: \(error)")
         }
+    }
+    
+    /// Converts an absolute URL to a relative path for storage
+    private func urlToRelativePath(_ url: URL) -> String? {
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        
+        // Check if URL is within documents directory
+        let urlString = url.absoluteString
+        let documentsString = documentsURL.absoluteString
+        
+        if urlString.hasPrefix(documentsString) {
+            // Remove the documents path prefix to get relative path
+            let relativePath = String(urlString.dropFirst(documentsString.count))
+            return relativePath.isEmpty ? nil : relativePath
+        }
+        
+        // If not in documents directory, store the filename only
+        return url.lastPathComponent
     }
     
     // MARK: - Enhanced Data Repair Functionality

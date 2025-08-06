@@ -156,7 +156,7 @@ class EnhancedFileManager: ObservableObject {
             
             guard let recording = coreDataRecording,
                   let recordingId = recording.id else { return false }
-            return appCoordinator.coreDataManager.getTranscriptData(for: recordingId) != nil
+            return appCoordinator.getTranscript(for: recordingId) != nil
         }
         
         let summaryExists = await MainActor.run { 
@@ -170,7 +170,7 @@ class EnhancedFileManager: ObservableObject {
             
             guard let recording = coreDataRecording,
                   let recordingId = recording.id else { return false }
-            return appCoordinator.coreDataManager.getSummaryData(for: recordingId) != nil
+            return appCoordinator.getSummary(for: recordingId) != nil
         }
         
         // Check iCloud sync status (placeholder for now)

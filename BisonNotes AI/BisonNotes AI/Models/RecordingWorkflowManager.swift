@@ -39,7 +39,8 @@ class RecordingWorkflowManager: ObservableObject {
         
         recordingEntry.id = recordingId
         recordingEntry.recordingName = name
-        recordingEntry.recordingURL = url.absoluteString
+        // Store relative path instead of absolute URL for resilience across app launches
+        recordingEntry.recordingURL = urlToRelativePath(url)
         recordingEntry.recordingDate = date
         recordingEntry.createdAt = Date()
         recordingEntry.lastModified = Date()
@@ -197,10 +198,13 @@ class RecordingWorkflowManager: ObservableObject {
         print("🆔 Transcript UUID: \(transcriptId)")
         
         // Create summary data with proper UUID linking
+        // Use proper URL resolution instead of force unwrapping
+        let recordingURL = appCoordinator?.coreDataManager.getAbsoluteURL(for: recordingEntry) ?? URL(fileURLWithPath: "")
+        
         let summaryData = EnhancedSummaryData(
             recordingId: recordingId,
             transcriptId: transcriptId,
-            recordingURL: URL(string: recordingEntry.recordingURL ?? "")!,
+            recordingURL: recordingURL,
             recordingName: recordingEntry.recordingName ?? "",
             recordingDate: recordingEntry.recordingDate ?? Date(),
             summary: summary,
@@ -385,4 +389,23 @@ class RecordingWorkflowManager: ObservableObject {
         }
     }
     
+    /// Converts an absolute URL to a relative path for storage
+    private func urlToRelativePath(_ url: URL) -> String? {
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        
+        // Check if URL is within documents directory
+        let urlString = url.absoluteString
+        let documentsString = documentsURL.absoluteString
+        
+        if urlString.hasPrefix(documentsString) {
+            // Remove the documents path prefix to get relative path
+            let relativePath = String(urlString.dropFirst(documentsString.count))
+            return relativePath.isEmpty ? nil : relativePath
+        }
+        
+        // If not in documents directory, store the filename only
+        return url.lastPathComponent
+    }
 }

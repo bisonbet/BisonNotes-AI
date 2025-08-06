@@ -1441,11 +1441,12 @@ class SummaryManager: ObservableObject {
         }
         
         // Create a markdown-formatted summary with content-type specific headers
+        // Note: Removed redundant "Summary" labels since user is already in summary context
         let contentTypeHeader = switch contentType {
-        case .meeting: "## Meeting Summary\n\n**Key Decisions & Action Items:**"
-        case .personalJournal: "## Personal Reflection\n\n**Key Insights & Experiences:**"
-        case .technical: "## Technical Summary\n\n**Key Concepts & Solutions:**"
-        case .general: "## Summary\n\n**Main Points:**"
+        case .meeting: "**Key Decisions & Action Items:**"
+        case .personalJournal: "**Key Insights & Experiences:**"
+        case .technical: "**Key Concepts & Solutions:**"  
+        case .general: "**Main Points:**"
         }
         
         // Format the top sentences as bullet points
@@ -1622,7 +1623,7 @@ class SummaryManager: ObservableObject {
             return "• \(cleanSentence)"
         }.joined(separator: "\n")
         
-        return "## Meeting Summary\n\n**Key Decisions & Action Items:**\n\n\(bulletPoints)"
+        return "**Key Decisions & Action Items:**\n\n\(bulletPoints)"
     }
     
     private func generateJournalSummary(from text: String) async throws -> String {

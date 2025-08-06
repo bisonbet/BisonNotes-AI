@@ -217,7 +217,8 @@ class FileImportManager: NSObject, ObservableObject {
         let recordingEntry = RecordingEntry(context: context)
         recordingEntry.id = UUID()
         recordingEntry.recordingName = recordingName
-        recordingEntry.recordingURL = fileURL.absoluteString
+        // Store relative path instead of absolute URL for resilience across app launches
+        recordingEntry.recordingURL = urlToRelativePath(fileURL)
         
         // Get file metadata
         do {
@@ -266,6 +267,25 @@ class FileImportManager: NSObject, ObservableObject {
         }
     }
     
+    /// Converts an absolute URL to a relative path for storage
+    private func urlToRelativePath(_ url: URL) -> String? {
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        
+        // Check if URL is within documents directory
+        let urlString = url.absoluteString
+        let documentsString = documentsURL.absoluteString
+        
+        if urlString.hasPrefix(documentsString) {
+            // Remove the documents path prefix to get relative path
+            let relativePath = String(urlString.dropFirst(documentsString.count))
+            return relativePath.isEmpty ? nil : relativePath
+        }
+        
+        // If not in documents directory, store the filename only
+        return url.lastPathComponent
+    }
 }
 
 // MARK: - Import Errors

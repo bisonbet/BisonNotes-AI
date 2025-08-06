@@ -5,6 +5,7 @@
 - Always use iPhone 16 as the build target for iOS Simulator builds
 - Use platform=iOS Simulator,name=iPhone 16,OS=latest for xcodebuild commands
 - Never ask to use iPhone 15 - always default to iPhone 16
+- **IMPORTANT**: Always ask the user for permission before running any build commands (xcodebuild) to save tokens and LLM work. Let the user decide when to build.
 
 ## Project Structure
 

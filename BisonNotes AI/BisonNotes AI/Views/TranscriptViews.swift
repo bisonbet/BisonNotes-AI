@@ -32,9 +32,8 @@ struct TranscriptsView: View {
             mainContentView
         }
         .sheet(item: $selectedRecording) { recording in
-            if let recordingURLString = recording.recordingURL,
-               let recordingURL = URL(string: recordingURLString),
-               let transcript = TranscriptManager.shared.getTranscript(for: recordingURL) {
+            if let recordingId = recording.id,
+               let transcript = appCoordinator.getTranscriptData(for: recordingId) {
                 EditableTranscriptView(recording: recording, transcript: transcript, transcriptManager: TranscriptManager.shared)
             } else {
                 TranscriptDetailView(recording: recording, transcriptText: "")
@@ -168,8 +167,7 @@ struct TranscriptsView: View {
             Text(recordingData.recording.recordingDate ?? Date(), style: .date)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            if let recordingURLString = recordingData.recording.recordingURL,
-               let recordingURL = URL(string: recordingURLString),
+            if let recordingURL = appCoordinator.getAbsoluteURL(for: recordingData.recording),
                let locationData = loadLocationDataForRecording(url: recordingURL) {
                 locationButtonView(locationData, recordingURL: recordingURL)
             }
@@ -246,10 +244,17 @@ struct TranscriptsView: View {
     }
     
     func loadLocationDataForRecording(url: URL) -> LocationData? {
-        return Self.loadLocationDataForRecording(url: url)
+        // Find the recording entry by URL
+        guard let recording = appCoordinator.getRecording(url: url) else {
+            return nil
+        }
+        
+        // Use the proper location loading system
+        return appCoordinator.loadLocationData(for: recording)
     }
     
     static func loadLocationDataForRecording(url: URL) -> LocationData? {
+        // Legacy static method - try direct file access as fallback
         let locationURL = url.deletingPathExtension().appendingPathExtension("location")
         guard let data = try? Data(contentsOf: locationURL),
               let locationData = try? JSONDecoder().decode(LocationData.self, from: data) else {
@@ -259,25 +264,23 @@ struct TranscriptsView: View {
     }
     
     private func loadLocationAddress(for recording: RecordingEntry) {
-        // Convert recording URL string to URL object
-        guard let recordingURLString = recording.recordingURL,
-              let recordingURL = URL(string: recordingURLString) else {
-            return
-        }
-        
-        // Check if there's a location file for this recording
-        let locationURL = recordingURL.deletingPathExtension().appendingPathExtension("location")
-        guard let data = try? Data(contentsOf: locationURL),
-              let locationData = try? JSONDecoder().decode(LocationData.self, from: data) else {
-            return
-        }
-        
-        let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
-        // Use a default location manager since AudioRecorderViewModel doesn't have one
-        let locationManager = LocationManager()
-        locationManager.reverseGeocodeLocation(location) { address in
-            if let address = address {
-                locationAddresses[recordingURL] = address
+        // Use async dispatch to avoid blocking main thread
+        Task {
+            // Use the proper location loading system
+            guard let locationData = appCoordinator.loadLocationData(for: recording),
+                  let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
+                return
+            }
+            
+            await MainActor.run {
+                let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
+                // Use a default location manager since AudioRecorderViewModel doesn't have one
+                let locationManager = LocationManager()
+                locationManager.reverseGeocodeLocation(location) { address in
+                    if let address = address {
+                        locationAddresses[recordingURL] = address
+                    }
+                }
             }
         }
     }
@@ -322,9 +325,8 @@ struct TranscriptsView: View {
             let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
             
             do {
-                // Convert recording URL string to URL object
-                guard let recordingURLString = recording.recordingURL,
-                      let recordingURL = URL(string: recordingURLString) else {
+                // Get the absolute URL using the coordinator
+                guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
                     print("❌ Invalid recording URL: \(recording.recordingURL ?? "nil")")
                     throw NSError(domain: "Transcription", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid recording URL"])
                 }
@@ -348,8 +350,7 @@ struct TranscriptsView: View {
                 print("🔄 Falling back to direct transcription...")
                 do {
                     // Get recording URL from the recording parameter
-                    guard let recordingURLString = recording.recordingURL,
-                          let recordingURL = URL(string: recordingURLString) else {
+                    guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
                         print("❌ Invalid recording URL for fallback transcription")
                         return
                     }
@@ -441,8 +442,7 @@ struct TranscriptsView: View {
                 
                 // Find the recording that matches this transcription
                 if let recording = recordings.first(where: { recording in
-                    guard let recordingURLString = recording.recording.recordingURL,
-                          let recordingURL = URL(string: recordingURLString) else {
+                    guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording.recording) else {
                         return false
                     }
                     return recordingURL == job.recordingURL
@@ -480,15 +480,13 @@ struct TranscriptsView: View {
                 
                 // Find the recording that matches this transcription
                 if let recording = recordings.first(where: { recording in
-                    guard let recordingURLString = recording.recording.recordingURL,
-                          let recordingURL = URL(string: recordingURLString) else {
+                    guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording.recording) else {
                         return false
                     }
                     return recordingURL == jobInfo.recordingURL
                 }) {
                     // Create transcript data and save it
-                    guard let recordingURLString = recording.recording.recordingURL,
-                          let recordingURL = URL(string: recordingURLString) else {
+                    guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording.recording) else {
                         print("❌ Invalid recording URL in completion handler")
                         return
                     }
@@ -660,8 +658,7 @@ struct EditableTranscriptView: View {
                 if let userInfo = notification.userInfo,
                    let notificationURL = userInfo["recordingURL"] as? URL,
                    let segments = userInfo["segments"] as? [TranscriptSegment],
-                   let recordingURLString = recording.recordingURL,
-                   let recordingURL = URL(string: recordingURLString),
+                   let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
                    notificationURL == recordingURL {
                     
                     print("🎉 Received transcription rerun completion notification")
@@ -706,9 +703,8 @@ struct EditableTranscriptView: View {
                 
                 print("🔧 Using transcription engine: \(selectedEngine.rawValue)")
                 
-                // Convert recording URL string to URL object
-                guard let recordingURLString = recording.recordingURL,
-                      let recordingURL = URL(string: recordingURLString) else {
+                // Get the absolute URL using the coordinator
+                guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
                     print("❌ Invalid recording URL: \(recording.recordingURL ?? "nil")")
                     await MainActor.run {
                         isRerunningTranscription = false
@@ -736,8 +732,7 @@ struct EditableTranscriptView: View {
                 // Fallback to direct transcription if background processing fails
                 print("🔄 Falling back to direct transcription for rerun...")
                 do {
-                    guard let recordingURLString = recording.recordingURL,
-                          let recordingURL = URL(string: recordingURLString) else {
+                    guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
                         print("❌ Invalid recording URL for fallback transcription rerun")
                         await MainActor.run {
                             isRerunningTranscription = false
@@ -815,8 +810,7 @@ struct EditableTranscriptView: View {
         print("💾 Saving new transcript to Core Data...")
         
         // We need to find and update the existing transcript in Core Data
-        guard let recordingURLString = recording.recordingURL,
-              let recordingURL = URL(string: recordingURLString) else {
+        guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
             print("❌ Invalid recording URL for Core Data save")
             return
         }
@@ -864,8 +858,7 @@ struct EditableTranscriptView: View {
     }
     
     private func refreshTranscriptFromCoreData() {
-        guard let recordingURLString = recording.recordingURL,
-              let recordingURL = URL(string: recordingURLString) else {
+        guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
             return
         }
         
@@ -875,10 +868,10 @@ struct EditableTranscriptView: View {
         // Get the updated transcript data from Core Data
         if let recordingEntry = appCoordinator.getRecording(url: recordingURL),
            let recordingId = recordingEntry.id,
-           let updatedTranscript = appCoordinator.coreDataManager.getTranscriptData(for: recordingId) {
+           let updatedTranscript = appCoordinator.getTranscriptData(for: recordingId) {
             
             // Only update if we have segments with actual content
-            let hasValidContent = updatedTranscript.segments.contains { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            let hasValidContent = updatedTranscript.segments.contains { !$0.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty }
             
             guard hasValidContent else { return }
             
@@ -963,6 +956,7 @@ struct TranscriptDetailView: View {
     let recording: RecordingEntry
     let transcriptText: String
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
     
     var body: some View {
@@ -989,8 +983,7 @@ struct TranscriptDetailView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             
-                            if let recordingURLString = recording.recordingURL,
-                               let recordingURL = URL(string: recordingURLString),
+                            if let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
                                let locationData = TranscriptsView.loadLocationDataForRecording(url: recordingURL) {
                                 HStack {
                                     Image(systemName: "location.fill")
@@ -1023,8 +1016,7 @@ struct TranscriptDetailView: View {
                 }
             }
             .onAppear {
-                if let recordingURLString = recording.recordingURL,
-                   let recordingURL = URL(string: recordingURLString),
+                if let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
                    let locationData = TranscriptsView.loadLocationDataForRecording(url: recordingURL) {
                     let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
                     let tempLocationManager = LocationManager()
@@ -1063,7 +1055,7 @@ struct TitleRowView: View {
                 
                 // Confidence indicator
                 HStack {
-                    Text("Confidence: \(Int(title.confidence * 100))%")
+                    Text("Confidence: \(safeConfidencePercent(title.confidence))%")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     
@@ -1122,7 +1114,7 @@ struct EnhancedTitleRowView: View {
                         Image(systemName: "chart.bar.fill")
                             .font(.caption2)
                             .foregroundColor(confidenceColor)
-                        Text("\(Int(title.confidence * 100))%")
+                        Text("\(safeConfidencePercent(title.confidence))%")
                             .font(.caption2)
                             .foregroundColor(confidenceColor)
                     }
@@ -1158,6 +1150,7 @@ struct EnhancedTitleRowView: View {
     }
     
     private var confidenceColor: Color {
+        guard title.confidence.isFinite else { return .gray }
         switch title.confidence {
         case 0.8...1.0: return .green
         case 0.6..<0.8: return .blue
@@ -1165,4 +1158,11 @@ struct EnhancedTitleRowView: View {
         default: return .red
         }
     }
+}
+
+// MARK: - Helper Functions
+
+private func safeConfidencePercent(_ confidence: Double) -> Int {
+    guard confidence.isFinite else { return 0 }
+    return Int(confidence * 100)
 }

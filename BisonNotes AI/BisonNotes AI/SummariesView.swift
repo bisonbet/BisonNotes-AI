@@ -74,7 +74,7 @@ struct SummariesView: View {
                             name: recording.recordingName ?? "Unknown",
                             date: recording.recordingDate ?? Date(),
                             duration: recording.duration,
-                            locationData: nil
+                            locationData: appCoordinator.coreDataManager.getLocationData(for: recording)
                         ),
                         summaryData: enhancedSummary
                     )
@@ -118,48 +118,15 @@ struct SummariesView: View {
     // MARK: - Main Content View
     
     private var mainContentView: some View {
-        VStack {
-            // Debug buttons at the top
-            debugButtonsView
-            
-            // Main content
-            Group {
-                if recordings.isEmpty {
-                    emptyStateView
-                } else {
-                    recordingsListView
-                }
+        Group {
+            if recordings.isEmpty {
+                emptyStateView
+            } else {
+                recordingsListView
             }
         }
     }
     
-    private var debugButtonsView: some View {
-        HStack {
-            Menu("Debug") {
-                Button("Debug Database") {
-                    appCoordinator.debugDatabaseContents()
-                }
-                
-                Button("Debug Summaries") {
-                    debugSummaries()
-                }
-                
-                Button("Sync URLs") {
-                    appCoordinator.syncRecordingURLs()
-                    loadRecordings()
-                }
-                
-                Button("Refresh Recordings") {
-                    loadRecordings()
-                    loadRecordings()
-                }
-            }
-            
-            Spacer()
-        }
-        .padding(.horizontal)
-        .padding(.top, 8)
-    }
     
     // MARK: - Empty State
     
@@ -306,8 +273,7 @@ struct SummariesView: View {
     private func loadRecordings() {
         print("🔄 loadRecordings() called in SummariesView")
         
-        // Sync URLs first to ensure they're up to date
-        appCoordinator.syncRecordingURLs()
+        // URL sync is now only needed on app startup - getAbsoluteURL() handles runtime resolution
         
         let recordingsWithData = appCoordinator.getAllRecordingsWithData()
         print("📊 Total recordings from coordinator: \(recordingsWithData.count)")
@@ -368,11 +334,10 @@ struct SummariesView: View {
                 // TODO: Update to use new Core Data system with UUID
                 // For now, find the recording by URL and get its transcript
                 
-                if let recordingURLString = recording.recordingURL,
-                   let recordingURL = URL(string: recordingURLString),
+                if let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
                    let coreDataRecording = appCoordinator.getRecording(url: recordingURL),
                    let recordingId = coreDataRecording.id,
-                   let transcript = appCoordinator.coreDataManager.getTranscriptData(for: recordingId) {
+                   let transcript = appCoordinator.getTranscriptData(for: recordingId) {
                     print("✅ Found transcript with \(transcript.segments.count) segments")
                     print("📝 Transcript text: \(transcript.plainText.prefix(100))...")
                     
@@ -494,41 +459,6 @@ struct SummariesView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
     
-    private func debugSummaries() {
-        print("🔍 Debugging summaries...")
-        
-        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
-        print("📊 Total recordings: \(recordingsWithData.count)")
-        
-        for (index, recordingData) in recordingsWithData.enumerated() {
-            let recording = recordingData.recording
-            let summary = recordingData.summary
-            
-            print("   \(index): \(recording.recordingName ?? "Unknown")")
-            print("      - Recording ID: \(recording.id?.uuidString ?? "nil")")
-            print("      - Has summary: \(summary != nil)")
-            
-            if let summary = summary {
-                print("      - Summary AI Method: \(summary.aiMethod)")
-                print("      - Summary Generated At: \(summary.generatedAt)")
-                print("      - Summary Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
-                print("      - Summary ID: \(summary.id)")
-            }
-        }
-        
-        // Also check all summaries in the database
-        print("📊 All summaries in database:")
-        let allRecordingsWithData = appCoordinator.getAllRecordingsWithData()
-        for (index, recordingData) in allRecordingsWithData.enumerated() {
-            if let summary = recordingData.summary {
-                print("   \(index): \(summary.recordingName)")
-                print("      - AI Method: \(summary.aiMethod)")
-                print("      - Generated At: \(summary.generatedAt)")
-                print("      - Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
-                print("      - Summary ID: \(summary.id)")
-            }
-        }
-    }
 }
 
 // MARK: - Preview

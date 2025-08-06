@@ -99,6 +99,11 @@ struct ContentView: View {
                     } else {
                         // Core Data has existing recordings
                         
+                        // Always run URL migration to ensure relative paths
+                        print("🔄 Running URL migration to ensure relative paths...")
+                        appCoordinator.syncRecordingURLs()
+                        print("✅ URL migration completed")
+                        
                         // Check if any recordings have transcripts in Core Data
                         let recordingsWithTranscripts = coreDataRecordings.filter { $0.transcript != nil }
                         if recordingsWithTranscripts.isEmpty {

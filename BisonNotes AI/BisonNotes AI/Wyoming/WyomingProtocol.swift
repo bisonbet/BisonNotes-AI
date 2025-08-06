@@ -37,10 +37,14 @@ struct WyomingMessage: Codable {
     let data: WyomingAnyCodable?
     let timestamp: Double?
     
-    init(type: WyomingMessageType, data: (any WyomingMessageData)? = nil, includeTimestamp: Bool = false) {
+    // Binary payload (not included in JSON)
+    var payload: Data?
+    
+    init(type: WyomingMessageType, data: (any WyomingMessageData)? = nil, payload: Data? = nil, includeTimestamp: Bool = false) {
         self.type = type
         self.data = data.map { WyomingAnyCodable($0) }
         self.timestamp = includeTimestamp ? Date().timeIntervalSince1970 : nil
+        self.payload = payload
     }
     
     enum CodingKeys: String, CodingKey {
@@ -175,6 +179,12 @@ struct WyomingTranscriptData: WyomingMessageData {
     let text: String
     let language: String?
     let confidence: Double?
+    
+    init(text: String, language: String? = nil, confidence: Double? = nil) {
+        self.text = text
+        self.language = language
+        self.confidence = confidence
+    }
 }
 
 // MARK: - Audio Messages
@@ -189,7 +199,7 @@ struct WyomingAudioStartData: WyomingMessageData {
          width: Int = WyomingConstants.audioBitDepth,
          channels: Int = WyomingConstants.audioChannels) {
         self.rate = rate
-        self.width = width
+        self.width = width / 8  // Convert bits to bytes (16 bits = 2 bytes)
         self.channels = channels
         self.timestamp = Date().timeIntervalSince1970
     }
@@ -199,6 +209,20 @@ struct WyomingAudioStopData: WyomingMessageData {
     let timestamp: Double?
     
     init() {
+        self.timestamp = Date().timeIntervalSince1970
+    }
+}
+
+struct WyomingAudioChunkData: WyomingMessageData {
+    let rate: Int
+    let width: Int
+    let channels: Int
+    let timestamp: Double?
+    
+    init(rate: Int = WyomingConstants.audioSampleRate, width: Int = WyomingConstants.audioBitDepth, channels: Int = WyomingConstants.audioChannels) {
+        self.rate = rate
+        self.width = width / 8  // Convert bits to bytes (16 bits = 2 bytes)
+        self.channels = channels
         self.timestamp = Date().timeIntervalSince1970
     }
 }
@@ -232,6 +256,11 @@ struct WyomingMessageFactory {
     static func createAudioStopMessage() -> WyomingMessage {
         let data = WyomingAudioStopData()
         return WyomingMessage(type: .audioStop, data: data)
+    }
+    
+    static func createAudioChunkMessage(audioData: Data, rate: Int = WyomingConstants.audioSampleRate, width: Int = WyomingConstants.audioBitDepth, channels: Int = WyomingConstants.audioChannels) -> WyomingMessage {
+        let data = WyomingAudioChunkData(rate: rate, width: width, channels: channels)
+        return WyomingMessage(type: .audioChunk, data: data, payload: audioData)
     }
     
     static func createErrorMessage(code: String, message: String, details: String? = nil) -> WyomingMessage {
@@ -270,7 +299,33 @@ extension WyomingMessage {
     func toJSON() throws -> Data {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
-        return try encoder.encode(self)
+        
+        // Create a reference for adding payload_length
+        let mutableSelf = self
+        
+        // Add payload_length to the JSON if we have a payload
+        if let payload = self.payload, !payload.isEmpty {
+            // We need to manually create the dictionary to add payload_length
+            var eventDict: [String: Any] = [:]
+            
+            eventDict["type"] = self.type.rawValue
+            
+            if let data = self.data {
+                let dataJSON = try JSONEncoder().encode(data)
+                let dataDict = try JSONSerialization.jsonObject(with: dataJSON) as? [String: Any]
+                eventDict["data"] = dataDict
+            }
+            
+            if let timestamp = self.timestamp {
+                eventDict["timestamp"] = timestamp
+            }
+            
+            eventDict["payload_length"] = payload.count
+            
+            return try JSONSerialization.data(withJSONObject: eventDict)
+        }
+        
+        return try encoder.encode(mutableSelf)
     }
     
     func toJSONString() throws -> String {

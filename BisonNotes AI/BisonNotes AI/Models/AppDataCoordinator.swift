@@ -79,6 +79,36 @@ class AppDataCoordinator: ObservableObject {
         return coreDataManager.getRecording(url: url)
     }
     
+    /// Gets the current absolute URL for a recording, handling container ID changes automatically
+    func getAbsoluteURL(for recording: RecordingEntry) -> URL? {
+        return coreDataManager.getAbsoluteURL(for: recording)
+    }
+    
+    /// Gets transcript entry for a recording
+    func getTranscript(for recordingId: UUID) -> TranscriptEntry? {
+        return coreDataManager.getTranscript(for: recordingId)
+    }
+    
+    /// Gets transcript data for a recording
+    func getTranscriptData(for recordingId: UUID) -> TranscriptData? {
+        return coreDataManager.getTranscriptData(for: recordingId)
+    }
+    
+    /// Gets all transcripts
+    func getAllTranscripts() -> [TranscriptEntry] {
+        return coreDataManager.getAllTranscripts()
+    }
+    
+    /// Gets summary entry for a recording
+    func getSummary(for recordingId: UUID) -> SummaryEntry? {
+        return coreDataManager.getSummary(for: recordingId)
+    }
+    
+    /// Gets all summaries
+    func getAllSummaries() -> [SummaryEntry] {
+        return coreDataManager.getAllSummaries()
+    }
+    
     func getCompleteRecordingData(id: UUID) -> (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)? {
         return coreDataManager.getCompleteRecordingData(id: id)
     }
@@ -100,7 +130,23 @@ class AppDataCoordinator: ObservableObject {
     }
     
     func syncRecordingURLs() {
+        // First, migrate any remaining absolute URLs to relative paths
+        coreDataManager.migrateURLsToRelativePaths()
+        
+        // Then run the legacy sync (should be minimal after migration)
         coreDataManager.syncRecordingURLs()
+    }
+    
+    // MARK: - Location Methods
+    
+    /// Gets the absolute URL for a location file associated with a recording
+    func getLocationFileURL(for recording: RecordingEntry) -> URL? {
+        return coreDataManager.getLocationFileURL(for: recording)
+    }
+    
+    /// Loads location data for a recording using proper URL resolution
+    func loadLocationData(for recording: RecordingEntry) -> LocationData? {
+        return coreDataManager.loadLocationData(for: recording)
     }
     
     // MARK: - Debug Methods

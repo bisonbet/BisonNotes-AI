@@ -274,6 +274,12 @@ struct RecordingsListView: View {
     }
     
     private func loadLocationDataForRecording(url: URL) -> LocationData? {
+        // First try to find the recording in Core Data and use proper URL resolution
+        if let recording = appCoordinator.getRecording(url: url) {
+            return appCoordinator.loadLocationData(for: recording)
+        }
+        
+        // Fallback: try direct file access for recordings not yet in Core Data
         let locationURL = url.deletingPathExtension().appendingPathExtension("location")
         guard let data = try? Data(contentsOf: locationURL),
               let locationData = try? JSONDecoder().decode(LocationData.self, from: data) else {

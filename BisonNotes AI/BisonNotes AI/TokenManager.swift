@@ -161,16 +161,8 @@ class TokenManager {
         // Generate meta-summary ensuring context limits are respected
         let metaSummary = try await generateMetaSummary(from: combinedText, service: service)
 
-        switch contentType {
-        case .meeting:
-            return "Meeting Summary: \(metaSummary)"
-        case .personalJournal:
-            return "Personal Reflection: \(metaSummary)"
-        case .technical:
-            return "Technical Discussion: \(metaSummary)"
-        case .general:
-            return "Summary: \(metaSummary)"
-        }
+        // Note: Removed redundant labels since user is already in summary context
+        return metaSummary
     }
 
     /// Recursively generate a meta-summary that fits within the model's context window

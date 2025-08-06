@@ -217,7 +217,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Whisper Optimized")
+                        Text("Voice Optimized")
                             .font(.body)
                             .fontWeight(.medium)
                             .foregroundColor(.primary)
@@ -246,7 +246,7 @@ struct SettingsView: View {
                 }
                 .padding(.horizontal, 24)
                 
-                Text("This format provides the best transcription accuracy with Whisper while keeping file sizes small. All recordings use this optimized format.")
+                Text("This format provides the best transcription accuracy while keeping file sizes small.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 24)
@@ -801,6 +801,35 @@ struct SettingsView: View {
                     .padding(.vertical, 12)
                 }
                 .buttonStyle(PlainButtonStyle())
+                
+                Divider()
+                    .padding(.horizontal, 24)
+                
+                Text("Database Debug Tools")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+                
+                VStack(spacing: 12) {
+                    Button("Debug Database Contents") {
+                        appCoordinator.debugDatabaseContents()
+                    }
+                    .buttonStyle(DebugButtonStyle())
+                    
+                    Button("Debug Summary Data") {
+                        debugSummaryData()
+                    }
+                    .buttonStyle(DebugButtonStyle())
+                    
+                    Button("Sync Recording URLs") {
+                        appCoordinator.syncRecordingURLs()
+                    }
+                    .buttonStyle(DebugButtonStyle())
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 8)
             }
             .background(
                 RoundedRectangle(cornerRadius: 12)
@@ -949,8 +978,8 @@ struct SettingsView: View {
         print("📁 Found \(allRecordings.count) recordings in Core Data")
         
         // Get all transcripts and summaries from Core Data
-        let allTranscripts = appCoordinator.coreDataManager.getAllTranscripts()
-        let allSummaries = appCoordinator.coreDataManager.getAllSummaries()
+        let allTranscripts = appCoordinator.getAllTranscripts()
+        let allSummaries = appCoordinator.getAllSummaries()
         
         print("📊 Found \(allSummaries.count) stored summaries and \(allTranscripts.count) stored transcripts")
         
@@ -1079,6 +1108,28 @@ struct SettingsView: View {
         regenerationManager.setEngine(selectedAIEngine)
     }
     
+    private func debugSummaryData() {
+        print("🔍 Debugging summaries...")
+        
+        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        print("📊 Total recordings: \(recordingsWithData.count)")
+        
+        for (index, recordingData) in recordingsWithData.enumerated() {
+            let recording = recordingData.recording
+            let summary = recordingData.summary
+            
+            print("   \(index): \(recording.recordingName ?? "Unknown")")
+            print("      - Recording ID: \(recording.id?.uuidString ?? "nil")")
+            print("      - Has summary: \(summary != nil)")
+            
+            if let summary = summary {
+                print("      - Summary AI Method: \(summary.aiMethod)")
+                print("      - Summary Generated At: \(summary.generatedAt)")
+                print("      - Summary Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
+                print("      - Summary ID: \(summary.id)")
+            }
+        }
+    }
 
 }
 
@@ -1088,5 +1139,22 @@ struct CleanupResults {
     let orphanedSummaries: Int
     let orphanedTranscripts: Int
     let freedSpaceMB: Double
+}
+
+struct DebugButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption)
+            .foregroundColor(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(.systemGray6))
+                    .opacity(configuration.isPressed ? 0.8 : 1.0)
+            )
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+    }
 }
 

@@ -460,7 +460,8 @@ class iCloudStorageManager: ObservableObject {
         print("📥 Fetching summaries from iCloud...")
         
         let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: NSPredicate(value: true))
-        query.sortDescriptors = [NSSortDescriptor(key: CloudKitSummaryRecord.generatedAtField, ascending: false)]
+        // Note: Removed sortDescriptors to avoid CloudKit queryable field issues
+        // CloudKit fields need to be explicitly marked as sortable in the schema
         
         var retryCount = 0
         

@@ -549,15 +549,16 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         let topSentences = sentences.prefix(2)
         let summaryText = topSentences.joined(separator: "\n\n")
         
+        // Note: Removed redundant "Summary" labels since user is already in summary context  
         switch contentType {
         case .meeting:
-            return "## Meeting Summary\n\n\(summaryText)"
+            return summaryText
         case .personalJournal:
-            return "## Personal Reflection\n\n\(summaryText)"
+            return summaryText
         case .technical:
-            return "## Technical Discussion\n\n\(summaryText)"
+            return summaryText
         case .general:
-            return "## Summary\n\n\(summaryText)"
+            return summaryText
         }
     }
     
@@ -632,17 +633,8 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         // Format summary with proper markdown bullet points for better readability
         let bulletPoints = topSentences.map { "• \($0)" }.joined(separator: "\n")
         
-        let summary: String
-        switch contentType {
-        case .meeting:
-            summary = "## Meeting Summary\n\n\(bulletPoints)"
-        case .personalJournal:
-            summary = "## Personal Reflection\n\n\(bulletPoints)"
-        case .technical:
-            summary = "## Technical Discussion\n\n\(bulletPoints)"
-        case .general:
-            summary = "## Summary\n\n\(bulletPoints)"
-        }
+        // Note: Removed redundant "Summary" labels since user is already in summary context
+        let summary: String = bulletPoints
         
         print("📄 Generated summary markdown:")
         print(summary)
@@ -756,17 +748,8 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
         // Format summary with proper markdown bullet points for better readability
         let bulletPoints = topSentences.map { "• \($0)" }.joined(separator: "\n")
         
-        let summary: String
-        switch contentType {
-        case .meeting:
-            summary = "## Meeting Summary\n\n\(bulletPoints)"
-        case .personalJournal:
-            summary = "## Personal Reflection\n\n\(bulletPoints)"
-        case .technical:
-            summary = "## Technical Discussion\n\n\(bulletPoints)"
-        case .general:
-            summary = "## Summary\n\n\(bulletPoints)"
-        }
+        // Note: Removed redundant "Summary" labels since user is already in summary context
+        let summary: String = bulletPoints
         
         print("📄 Generated long summary markdown:")
         print(summary)

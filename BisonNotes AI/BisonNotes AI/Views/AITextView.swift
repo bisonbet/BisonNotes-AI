@@ -59,8 +59,8 @@ struct AITextView: View {
     
     var body: some View {
         // Use the unified robust markdown renderer for all AI services
+        // Don't apply lineSpacing as it can interfere with AttributedString formatting
         unifiedRobustMarkdownText(text, aiService: aiService.description)
-            .lineSpacing(4)
     }
     
     // Fallback to original custom rendering if needed
@@ -207,6 +207,25 @@ struct AITextView: View {
 }
 
 #Preview {
-    AITextView(text: "- **President Trump** is in Scotland, meeting with **Ursula von der Leyen** and **Keir Starmer**, leveraging his **Scottish heritage** and **royal admiration** to foster diplomatic ties.  \\n- **Anti-Trump protests** have erupted in multiple UK cities amid his visit.  \\n- **Secretary of State Marco Rubio** condemned **Hong Kong's arrest warrants** targeting **US-based activists**, accusing the government of eroding autonomy and threatening **American citizens**.", aiService: .googleAI)
-        .padding()
+    VStack(spacing: 20) {
+        Text("Original Test Text:")
+            .font(.headline)
+        
+        AITextView(text: "- **President Trump** is in Scotland, meeting with **Ursula von der Leyen** and **Keir Starmer**, leveraging his **Scottish heritage** and **royal admiration** to foster diplomatic ties.  \\n- **Anti-Trump protests** have erupted in multiple UK cities amid his visit.  \\n- **Secretary of State Marco Rubio** condemned **Hong Kong's arrest warrants** targeting **US-based activists**, accusing the government of eroding autonomy and threatening **American citizens**.", aiService: .googleAI)
+        
+        Divider()
+        
+        Text("Enhanced Summary Test (like your screenshot):")
+            .font(.headline)
+        
+        AITextView(text: "**Key Tax Changes and Industry Impact**\n\n• New tax provision reduces gambling loss deductions from 100% to 90%, meaning gamblers who break even could still owe taxes on 10% of their net winnings (e.g., $10,000 on a $100,000 win/loss scenario).\n\n• *Advancing American Freedom*, led by Mike Pence, argues this creates an unfair advantage for gamblers over other industries (e.g., stock market losses capped at $3,000).", aiService: .googleAI)
+        
+        Divider()
+        
+        Text("Bold Text Edge Cases Test:")
+            .font(.headline)
+        
+        AITextView(text: "** Key Tax Changes and Industry Impact **\n\n* * Malformed Bold Text * *\n\n*Key Tax Changes*\n\n**Industry and Policy Concerns**", aiService: .googleAI)
+    }
+    .padding()
 } 

@@ -71,8 +71,13 @@ class TranscriptManager: ObservableObject {
     
     private func convertCoreDataToTranscriptData(transcriptEntry: TranscriptEntry, recordingEntry: RecordingEntry) -> TranscriptData? {
         guard let recordingId = recordingEntry.id,
-              let recordingURL = recordingEntry.recordingURL,
-              let url = URL(string: recordingURL) else {
+              let recordingURLString = recordingEntry.recordingURL else {
+            return nil
+        }
+        
+        // Get absolute URL using local logic to avoid main actor issues
+        guard let url = getAbsoluteURL(from: recordingURLString) else {
+            print("❌ Could not resolve URL for recording: \(recordingEntry.recordingName ?? "unknown")")
             return nil
         }
         
@@ -107,5 +112,62 @@ class TranscriptManager: ObservableObject {
             createdAt: transcriptEntry.createdAt,
             lastModified: transcriptEntry.lastModified
         )
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func getAbsoluteURL(from urlString: String) -> URL? {
+        // First, try to parse as absolute URL (legacy format)
+        if let url = URL(string: urlString), url.scheme != nil {
+            // This is an absolute URL, check if file exists
+            if FileManager.default.fileExists(atPath: url.path) {
+                return url
+            }
+            
+            // File doesn't exist at absolute path, try to find by filename
+            if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                let filename = url.lastPathComponent
+                let newURL = documentsURL.appendingPathComponent(filename)
+                if FileManager.default.fileExists(atPath: newURL.path) {
+                    return newURL
+                }
+            }
+        } else {
+            // This is a relative path, convert to absolute URL
+            if let absoluteURL = relativePathToURL(urlString) {
+                if FileManager.default.fileExists(atPath: absoluteURL.path) {
+                    return absoluteURL
+                }
+                
+                // File doesn't exist, try to find by filename
+                if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                    let filename = URL(fileURLWithPath: urlString).lastPathComponent
+                    let searchURL = documentsURL.appendingPathComponent(filename)
+                    if FileManager.default.fileExists(atPath: searchURL.path) {
+                        return searchURL
+                    }
+                }
+            }
+        }
+        
+        return nil
+    }
+    
+    private func relativePathToURL(_ relativePath: String) -> URL? {
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        
+        // Decode URL-encoded characters (like %20 for spaces)
+        let decodedPath = relativePath.removingPercentEncoding ?? relativePath
+        
+        // If it's just a filename, append directly to documents
+        if !decodedPath.contains("/") {
+            return documentsURL.appendingPathComponent(decodedPath)
+        }
+        
+        // If it's a relative path, construct the full URL using appendingPathComponent
+        // This is more reliable than URL(string:relativeTo:) for file paths
+        return documentsURL.appendingPathComponent(decodedPath)
     }
 }

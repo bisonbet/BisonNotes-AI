@@ -42,6 +42,146 @@ class CoreDataManager: ObservableObject {
         }
     }
     
+    // MARK: - URL Management Helpers
+    
+    /// Migrates all existing absolute URL paths to relative paths for resilience
+    func migrateURLsToRelativePaths() {
+        print("🔄 Migrating absolute URLs to relative paths...")
+        let allRecordings = getAllRecordings()
+        var updatedCount = 0
+        
+        for recording in allRecordings {
+            guard let urlString = recording.recordingURL,
+                  let url = URL(string: urlString),
+                  url.scheme != nil else { continue } // Skip if already relative
+            
+            // Convert absolute URL to relative path
+            if let relativePath = urlToRelativePath(url) {
+                recording.recordingURL = relativePath
+                recording.lastModified = Date()
+                updatedCount += 1
+                print("✅ Migrated URL to relative path: \(url.lastPathComponent)")
+            }
+        }
+        
+        if updatedCount > 0 {
+            do {
+                try context.save()
+                print("✅ Migrated \(updatedCount) URLs to relative paths")
+            } catch {
+                print("❌ Failed to save URL migrations: \(error)")
+            }
+        } else {
+            print("ℹ️ No URLs needed migration")
+        }
+    }
+    
+    /// Converts an absolute URL to a relative path for storage
+    func urlToRelativePath(_ url: URL) -> String? {
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        
+        // Check if URL is within documents directory
+        let urlString = url.absoluteString
+        let documentsString = documentsURL.absoluteString
+        
+        if urlString.hasPrefix(documentsString) {
+            // Remove the documents path prefix to get relative path
+            let relativePath = String(urlString.dropFirst(documentsString.count))
+            return relativePath.isEmpty ? nil : relativePath
+        }
+        
+        // If not in documents directory, store the filename only
+        return url.lastPathComponent
+    }
+    
+    /// Converts a relative path back to an absolute URL
+    private func relativePathToURL(_ relativePath: String) -> URL? {
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        
+        // Decode URL-encoded characters (like %20 for spaces)
+        let decodedPath = relativePath.removingPercentEncoding ?? relativePath
+        print("🔧 Decoded path: '\(relativePath)' -> '\(decodedPath)'")
+        
+        // If it's just a filename, append directly to documents
+        if !decodedPath.contains("/") {
+            return documentsURL.appendingPathComponent(decodedPath)
+        }
+        
+        // If it's a relative path, construct the full URL using appendingPathComponent
+        // This is more reliable than URL(string:relativeTo:) for file paths
+        return documentsURL.appendingPathComponent(decodedPath)
+    }
+    
+    /// Gets the current absolute URL for a recording, handling container ID changes
+    func getAbsoluteURL(for recording: RecordingEntry) -> URL? {
+        guard let urlString = recording.recordingURL else { 
+            print("❌ No URL string stored for recording: \(recording.recordingName ?? "unknown")")
+            return nil 
+        }
+        
+        print("🔍 Resolving URL for recording: \(recording.recordingName ?? "unknown")")
+        print("📝 Stored URL string: \(urlString)")
+        
+        // First, try to parse as absolute URL (legacy format)
+        if let url = URL(string: urlString), url.scheme != nil {
+            print("📍 Treating as absolute URL: \(url.path)")
+            // This is an absolute URL, check if file exists
+            if FileManager.default.fileExists(atPath: url.path) {
+                print("✅ File found at absolute path")
+                return url
+            }
+            
+            print("⚠️ File not found at absolute path, trying filename search")
+            // File doesn't exist at absolute path, try to find by filename
+            if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                let filename = url.lastPathComponent
+                let newURL = documentsURL.appendingPathComponent(filename)
+                print("🔍 Searching for file: \(newURL.path)")
+                if FileManager.default.fileExists(atPath: newURL.path) {
+                    print("✅ File found by filename, updating stored path")
+                    // Update the stored URL to relative path for future resilience
+                    recording.recordingURL = urlToRelativePath(newURL)
+                    try? context.save()
+                    return newURL
+                }
+            }
+        } else {
+            print("📍 Treating as relative path")
+            // This is a relative path, convert to absolute URL
+            if let absoluteURL = relativePathToURL(urlString) {
+                print("🔍 Converted to absolute path: \(absoluteURL.path)")
+                if FileManager.default.fileExists(atPath: absoluteURL.path) {
+                    print("✅ File found at relative path")
+                    return absoluteURL
+                }
+                
+                print("⚠️ File not found at relative path, trying filename search")
+                // File doesn't exist, try to find by filename
+                if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                    let filename = absoluteURL.lastPathComponent
+                    let newURL = documentsURL.appendingPathComponent(filename)
+                    print("🔍 Searching for file: \(newURL.path)")
+                    if FileManager.default.fileExists(atPath: newURL.path) {
+                        print("✅ File found by filename, updating stored path")
+                        // Update the stored relative path
+                        recording.recordingURL = urlToRelativePath(newURL)
+                        try? context.save()
+                        return newURL
+                    }
+                }
+            } else {
+                print("❌ Failed to convert relative path to absolute URL")
+            }
+        }
+        
+        print("❌ File not found anywhere for recording: \(recording.recordingName ?? "unknown")")
+        return nil
+    }
+    
     // MARK: - Location Data Helpers
     
     func getLocationData(for recording: RecordingEntry) -> LocationData? {
@@ -93,56 +233,36 @@ class CoreDataManager: ObservableObject {
     }
     
     func getRecording(url: URL) -> RecordingEntry? {
-        // Extract filename from URL
         let filename = url.lastPathComponent
         
-        // First try exact URL match
+        // Get all recordings and check if any resolve to this URL
+        let allRecordings = getAllRecordings()
+        
+        for recording in allRecordings {
+            if let recordingURL = getAbsoluteURL(for: recording) {
+                if recordingURL.path == url.path || recordingURL.lastPathComponent == filename {
+                    return recording
+                }
+            }
+        }
+        
+        // If no match found, try legacy URL matching for migration cases
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "recordingURL == %@", url.absoluteString)
+        fetchRequest.predicate = NSPredicate(format: "recordingURL ENDSWITH %@", filename)
         
         do {
             let results = try context.fetch(fetchRequest)
-            if !results.isEmpty {
-                return results.first
-            }
-            
-            // If no exact match, try matching by filename
-            let filenameFetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
-            filenameFetchRequest.predicate = NSPredicate(format: "recordingURL ENDSWITH %@", filename)
-            
-            let filenameResults = try context.fetch(filenameFetchRequest)
-            
-            if !filenameResults.isEmpty {
-                let recording = filenameResults.first!
-                // Update the URL if it doesn't match the actual file URL
-                if recording.recordingURL != url.absoluteString {
-                    print("🔄 Updating recording URL to match actual file location")
-                    updateRecordingURL(recording: recording, newURL: url)
-                }
+            if let recording = results.first {
+                // Update to relative path format
+                recording.recordingURL = urlToRelativePath(url)
+                try? context.save()
                 return recording
             }
-            
-            // If still no match, try to sync URLs and search again
-            syncRecordingURLs()
-            
-            // Try filename match again after sync
-            let retryResults = try context.fetch(filenameFetchRequest)
-            
-            if !retryResults.isEmpty {
-                let recording = retryResults.first!
-                // Update the URL if it doesn't match the actual file URL
-                if recording.recordingURL != url.absoluteString {
-                    print("🔄 Updating recording URL to match actual file location (after sync)")
-                    updateRecordingURL(recording: recording, newURL: url)
-                }
-                return recording
-            }
-            
-            return retryResults.first
         } catch {
             print("❌ Error fetching recording by URL: \(error)")
-            return nil
         }
+        
+        return nil
     }
     
     func getRecording(name: String) -> RecordingEntry? {
@@ -340,8 +460,8 @@ class CoreDataManager: ObservableObject {
     private func convertToTranscriptData(transcriptEntry: TranscriptEntry, recordingEntry: RecordingEntry) -> TranscriptData? {
         guard let _ = transcriptEntry.id,
               let recordingId = recordingEntry.id,
-              let recordingURL = recordingEntry.recordingURL,
-              let url = URL(string: recordingURL) else {
+              let url = getAbsoluteURL(for: recordingEntry) else {
+            print("❌ Could not get absolute URL for recording: \(recordingEntry.recordingName ?? "unknown")")
             return nil
         }
         
@@ -377,8 +497,8 @@ class CoreDataManager: ObservableObject {
     private func convertToEnhancedSummaryData(summaryEntry: SummaryEntry, recordingEntry: RecordingEntry) -> EnhancedSummaryData? {
         guard let _ = summaryEntry.id,
               let recordingId = recordingEntry.id,
-              let recordingURL = recordingEntry.recordingURL,
-              let url = URL(string: recordingURL) else {
+              let url = getAbsoluteURL(for: recordingEntry) else {
+            print("❌ Could not get absolute URL for recording: \(recordingEntry.recordingName ?? "unknown")")
             return nil
         }
         
@@ -552,14 +672,36 @@ class CoreDataManager: ObservableObject {
     
     /// Syncs Core Data recording URLs with actual files on disk
     func syncRecordingURLs() {
-        print("🔄 Starting URL synchronization...")
-        
         let allRecordings = getAllRecordings()
         var updatedCount = 0
         
+        // Pre-check if any work is needed to avoid unnecessary logging
+        let needsWork = allRecordings.contains { recording in
+            guard let urlString = recording.recordingURL else { return false }
+            // Skip relative paths - these don't need sync
+            if !urlString.contains("/") && !urlString.hasPrefix("file://") {
+                return false
+            }
+            guard let oldURL = URL(string: urlString), oldURL.scheme != nil else { return false }
+            return !FileManager.default.fileExists(atPath: oldURL.path)
+        }
+        
+        if needsWork {
+            print("🔄 Starting URL synchronization...")
+        }
+        
         for recording in allRecordings {
-            guard let urlString = recording.recordingURL,
-                  let oldURL = URL(string: urlString) else { continue }
+            guard let urlString = recording.recordingURL else { continue }
+            
+            // Skip relative paths (just filenames) - these are handled by getAbsoluteURL()
+            if !urlString.contains("/") && !urlString.hasPrefix("file://") {
+                continue
+            }
+            
+            guard let oldURL = URL(string: urlString) else { continue }
+            
+            // Only process absolute URLs that need fixing
+            guard oldURL.scheme != nil else { continue }
             
             // Check if the file exists at the stored URL
             if !FileManager.default.fileExists(atPath: oldURL.path) {
@@ -577,7 +719,12 @@ class CoreDataManager: ObservableObject {
                         recording.recordingURL = newURL.absoluteString
                         recording.lastModified = Date()
                         updatedCount += 1
-                        print("✅ Updated URL for \(recording.recordingName ?? "unknown"): \(oldURL.lastPathComponent) → \(newURL.lastPathComponent)")
+                        // Only log if the filename actually changed or if this is a real path change
+                        if oldURL.lastPathComponent != newURL.lastPathComponent {
+                            print("✅ Updated URL for \(recording.recordingName ?? "unknown"): \(oldURL.lastPathComponent) → \(newURL.lastPathComponent)")
+                        } else {
+                            print("🔗 Fixed path for \(recording.recordingName ?? "unknown"): \(newURL.lastPathComponent)")
+                        }
                     } else {
                         // If no exact filename match, try to find by recording name
                         // This handles cases where the file was renamed but Core Data still has old name
@@ -618,9 +765,10 @@ class CoreDataManager: ObservableObject {
             } catch {
                 print("❌ Failed to save URL updates: \(error)")
             }
-        } else {
+        } else if needsWork {
             print("ℹ️ No URL updates needed")
         }
+        // If needsWork was false, we don't log anything to reduce console spam
     }
     
     /// Updates a recording's URL when it's found by filename but the URL is outdated
@@ -634,5 +782,29 @@ class CoreDataManager: ObservableObject {
         } catch {
             print("❌ Failed to save URL update: \(error)")
         }
+    }
+    
+    // MARK: - Location File Helpers
+    
+    /// Gets the absolute URL for a location file associated with a recording
+    func getLocationFileURL(for recording: RecordingEntry) -> URL? {
+        guard let recordingURL = getAbsoluteURL(for: recording) else {
+            return nil
+        }
+        return recordingURL.deletingPathExtension().appendingPathExtension("location")
+    }
+    
+    /// Loads location data for a recording using proper URL resolution
+    func loadLocationData(for recording: RecordingEntry) -> LocationData? {
+        guard let locationURL = getLocationFileURL(for: recording) else {
+            return nil
+        }
+        
+        guard let data = try? Data(contentsOf: locationURL),
+              let locationData = try? JSONDecoder().decode(LocationData.self, from: data) else {
+            return nil
+        }
+        
+        return locationData
     }
 }
