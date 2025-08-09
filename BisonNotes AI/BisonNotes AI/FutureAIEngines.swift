@@ -1637,11 +1637,47 @@ class GoogleAIStudioEngine: SummarizationEngine {
     }
 }
 
+// MARK: - No-Op Engine for "None" selection
+
+class NoOpEngine: SummarizationEngine {
+    let name: String = "None"
+    let description: String = "No AI summarization engine selected"
+    let version: String = "1.0"
+    let isAvailable: Bool = true
+    
+    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
+        return "AI summarization is disabled. Please select an AI engine in Settings > AI Processing to generate summaries."
+    }
+    
+    func extractTasks(from text: String) async throws -> [TaskItem] {
+        return []
+    }
+    
+    func extractReminders(from text: String) async throws -> [ReminderItem] {
+        return []
+    }
+    
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        return []
+    }
+    
+    func classifyContent(_ text: String) async throws -> ContentType {
+        return .general
+    }
+    
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        let summary = "AI summarization is disabled. Please select an AI engine in Settings > AI Processing to generate summaries."
+        return (summary, [], [], [], .general)
+    }
+}
+
 // MARK: - Engine Factory
 
 class AIEngineFactory {
     static func createEngine(type: AIEngineType) -> SummarizationEngine {
         switch type {
+        case .none:
+            return NoOpEngine()
         case .enhancedAppleIntelligence:
             return EnhancedAppleIntelligenceEngine()
         case .openAI:
@@ -1670,6 +1706,7 @@ class AIEngineFactory {
 }
 
 enum AIEngineType: String, CaseIterable {
+    case none = "None"
     case enhancedAppleIntelligence = "Enhanced Apple Intelligence"
     case openAI = "OpenAI"
     case awsBedrock = "AWS Bedrock"
@@ -1679,6 +1716,8 @@ enum AIEngineType: String, CaseIterable {
     
     var description: String {
         switch self {
+        case .none:
+            return "No AI summarization engine selected"
         case .enhancedAppleIntelligence:
             return "Advanced natural language processing using Apple's frameworks"
         case .openAI:
@@ -1696,7 +1735,7 @@ enum AIEngineType: String, CaseIterable {
     
     var isComingSoon: Bool {
         switch self {
-        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio:
+        case .none, .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio:
             return false
         case .awsBedrock:
             return false
@@ -1705,6 +1744,8 @@ enum AIEngineType: String, CaseIterable {
     
     var requirements: [String] {
         switch self {
+        case .none:
+            return ["No requirements - AI features disabled"]
         case .enhancedAppleIntelligence:
             return ["iOS 15.0+", "Built-in frameworks"]
         case .openAI:

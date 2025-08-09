@@ -231,12 +231,38 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     }
     
     private func setupSpeechRecognizer() {
-        speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        // Try to create speech recognizer with user's preferred locale first
+        speechRecognizer = SFSpeechRecognizer(locale: Locale.current)
+        
+        // If that fails, try en-US as fallback
+        if speechRecognizer == nil {
+            speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        }
+        
+        // If that still fails, try without specifying locale (uses system default)
+        if speechRecognizer == nil {
+            speechRecognizer = SFSpeechRecognizer()
+        }
+        
         speechRecognizer?.delegate = self
         
-        if speechRecognizer == nil {
-            print("❌ Failed to create speech recognizer")
+        if let recognizer = speechRecognizer {
+            print("✅ Speech recognizer created with locale: \(recognizer.locale.identifier)")
+            print("🔧 Speech recognizer availability: \(recognizer.isAvailable)")
+            
+            // Check if we need to request authorization
+            let authStatus = SFSpeechRecognizer.authorizationStatus()
+            print("🔧 Speech recognition authorization status: \(authStatus.rawValue)")
+            
+            if authStatus == .notDetermined {
+                print("🎤 Requesting speech recognition authorization...")
+                SFSpeechRecognizer.requestAuthorization { status in
+                    print("🔧 Speech recognition authorization updated: \(status.rawValue)")
+                }
+            }
         } else {
+            print("❌ Failed to create speech recognizer with any locale")
+            print("🔧 This may be due to simulator limitations or device restrictions")
         }
     }
     
@@ -378,11 +404,27 @@ return try await transcribeWithAWS(url: url, config: config)
             switchToAppleTranscription()
             
             // Ensure speech recognizer is available
+            if speechRecognizer == nil {
+                print("❌ Apple Intelligence speech recognizer is nil - attempting to recreate")
+                setupSpeechRecognizer()
+                guard speechRecognizer != nil else {
+                    print("❌ Failed to recreate speech recognizer")
+                    throw TranscriptionError.speechRecognizerUnavailable
+                }
+                print("✅ Successfully recreated speech recognizer")
+            }
+            
             guard let recognizer = speechRecognizer, recognizer.isAvailable else {
                 print("❌ Apple Intelligence speech recognizer is not available")
+                if let recognizer = speechRecognizer {
+                    print("🔧 Recognizer locale: \(recognizer.locale.identifier)")
+                }
+                print("🔧 Authorization status: \(SFSpeechRecognizer.authorizationStatus().rawValue)")
+                print("🔧 This may be due to simulator limitations or missing permissions")
                 throw TranscriptionError.speechRecognizerUnavailable
             }
             
+            print("✅ Speech recognizer is available, starting transcription")
             return try await transcribeWithAppleIntelligence(url: url, duration: duration)
             
         case .whisper, .whisperWyoming:
@@ -431,10 +473,31 @@ if let config = openAIConfig {
     }
     
     private func transcribeWithAppleIntelligence(url: URL, duration: TimeInterval) async throws -> TranscriptionResult {
+        // Ensure transcription state is properly initialized
+        await MainActor.run {
+            isTranscribing = true
+            currentStatus = "Initializing Apple Intelligence transcription..."
+        }
+        
+        print("🎤 Starting Apple Intelligence transcription for file: \(url.lastPathComponent)")
+        print("⏱️ Duration: \(duration) seconds")
+        
+        // Double-check speech recognizer availability right before transcription
+        guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+            await MainActor.run {
+                isTranscribing = false
+                currentStatus = "Speech recognition unavailable"
+            }
+            print("❌ Speech recognizer check failed at transcription start")
+            throw TranscriptionError.speechRecognizerUnavailable
+        }
+        
         // Use the existing logic for Apple Intelligence transcription
-if !enableEnhancedTranscription || duration <= maxChunkDuration {
+        if !enableEnhancedTranscription || duration <= maxChunkDuration {
+            print("📝 Using single chunk transcription (duration: \(duration)s <= \(maxChunkDuration)s)")
             return try await transcribeSingleChunk(url: url)
         } else {
+            print("📝 Using large file transcription (duration: \(duration)s > \(maxChunkDuration)s)")
             return try await transcribeLargeFile(url: url, duration: duration)
         }
     }
@@ -723,13 +786,24 @@ for (index, chunk) in chunks.enumerated() {
             
             
             do {
-// Check if transcription was cancelled
+                // Check if transcription was cancelled
                 guard isTranscribing else {
-                    throw TranscriptionError.recognitionFailed(NSError(domain: "TranscriptionCancelled", code: -1, userInfo: nil))
+                    print("🛑 Transcription cancelled during chunk \(index + 1) processing")
+                    throw TranscriptionError.recognitionFailed(NSError(domain: "TranscriptionCancelled", code: -1, userInfo: [NSLocalizedDescriptionKey: "Transcription was cancelled by user or system"]))
                 }
                 
                 // Check if speech recognizer is still available
-                guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+                guard let recognizer = speechRecognizer else {
+                    print("❌ Speech recognizer is nil during chunk \(index + 1)")
+                    isTranscribing = false
+                    currentStatus = "Speech recognition unavailable - recognizer is nil"
+                    throw TranscriptionError.speechRecognizerUnavailable
+                }
+                
+                guard recognizer.isAvailable else {
+                    print("❌ Speech recognizer became unavailable during chunk \(index + 1)")
+                    print("🔧 Recognizer locale: \(recognizer.locale.identifier)")
+                    print("🔧 Authorization status: \(SFSpeechRecognizer.authorizationStatus().rawValue)")
                     isTranscribing = false
                     currentStatus = "Speech recognition unavailable"
                     throw TranscriptionError.speechRecognizerUnavailable
@@ -1589,7 +1663,7 @@ enum TranscriptionError: LocalizedError {
         case .fileNotFound:
             return "Audio file not found"
         case .speechRecognizerUnavailable:
-            return "Speech recognition is not available"
+            return "Speech recognition is not available. This may be due to simulator limitations, missing permissions, or device restrictions. Try running on a physical device or check Settings > Privacy & Security > Speech Recognition."
         case .recognitionFailed(let error):
             return "Recognition failed: \(error.localizedDescription)"
         case .noSpeechDetected:

@@ -260,9 +260,9 @@
 </head>
 <body>
     <div class="audio-journal-guide">
-        <h1>🎙️ Audio Journal - Complete User Guide</h1>
+        <h1>🎙️ BisonNotes AI - Complete User Guide</h1>
         
-        <p>Welcome to Audio Journal! This comprehensive guide will walk you through every aspect of using the app, from basic recording to advanced AI configuration.</p>
+        <p>Welcome to BisonNotes AI! This comprehensive guide will walk you through every aspect of using the app, from basic recording to advanced AI configuration.</p>
         
         <div class="toc">
             <h3>📋 Table of Contents</h3>
@@ -285,7 +285,7 @@
 
         <h3>First Launch</h3>
         <ol class="step-list">
-            <li><strong>Install the App</strong>: Download Audio Journal from the App Store</li>
+            <li><strong>Install the App</strong>: Download BisonNotes AI from the App Store</li>
             <li><strong>Grant Permissions</strong>: When prompted, allow:
                 <ul>
                     <li><strong>Microphone Access</strong>: Required for recording audio</li>
@@ -305,13 +305,6 @@
 
         <h2 id="recording-features">🎙️ Recording Features</h2>
 
-        <h3>Audio Quality Settings</h3>
-        <ul>
-            <li><strong>Low Quality (64kbps)</strong>: Small file size, good for voice memos</li>
-            <li><strong>Medium Quality (128kbps)</strong>: Balanced quality and file size</li>
-            <li><strong>High Quality (256kbps)</strong>: Best audio quality, larger files</li>
-        </ul>
-
         <h3>Location Tracking</h3>
         <ul>
             <li><strong>Automatic</strong>: GPS location is captured with each recording</li>
@@ -330,7 +323,7 @@
 
         <div class="info-box">
             <h3>Overview</h3>
-            <p>Audio Journal supports multiple AI engines for transcription and summarization. Each has different capabilities and requirements.</p>
+            <p>BisonNotes AI supports multiple AI engines for transcription and summarization. Each has different capabilities and requirements.</p>
         </div>
 
         <div class="engine-grid">
@@ -341,7 +334,8 @@
                 <p><strong>Type</strong>: On-device processing<br>
                 <strong>Cost</strong>: Free<br>
                 <strong>Privacy</strong>: 100% local<br>
-                <strong>Internet</strong>: Not required</p>
+                <strong>Internet</strong>: Not required<br>
+                <strong>Requirements</strong>: iPhone 15 Pro, iPhone 16+, iOS 18.1+</p>
                 <p><strong>Setup</strong>: No configuration needed - works out of the box</p>
                 <p><strong>Best for</strong>: Privacy-conscious users, offline use, basic transcription and summarization</p>
             </div>
@@ -452,35 +446,21 @@
             </thead>
             <tbody>
                 <tr>
-                    <td><strong>GPT-4o</strong></td>
+                    <td><strong>GPT-41</strong></td>
                     <td>Summarization</td>
                     <td>Most powerful, best quality</td>
                 </tr>
                 <tr>
-                    <td><strong>GPT-4o Mini</strong></td>
+                    <td><strong>GPT-41 Mini</strong></td>
                     <td>Summarization</td>
                     <td>Fast and economical</td>
                 </tr>
                 <tr>
-                    <td><strong>GPT-4o Nano</strong></td>
+                    <td><strong>GPT-41 Nano</strong></td>
                     <td>Summarization</td>
                     <td>Fastest and most economical</td>
                 </tr>
-                <tr>
-                    <td><strong>GPT-4o Transcribe</strong></td>
-                    <td>Transcription</td>
-                    <td>Best transcription quality</td>
-                </tr>
-                <tr>
-                    <td><strong>GPT-4o Mini Transcribe</strong></td>
-                    <td>Transcription</td>
-                    <td>Fast transcription</td>
-                </tr>
-                <tr>
-                    <td><strong>Whisper-1</strong></td>
-                    <td>Transcription</td>
-                    <td>Legacy high-quality transcription</td>
-                </tr>
+                
             </tbody>
         </table>
 
@@ -540,16 +520,17 @@ docker run -d -p 10300:10300 \
         <h4>Ollama Integration</h4>
         <ol class="step-list">
             <li><strong>Install Ollama</strong>: Visit <a href="https://ollama.com" target="_blank">ollama.com</a></li>
-            <li><strong>Download Models</strong>:
-                <pre><code>ollama pull llama2
-ollama pull mistral</code></pre>
+            <li><strong>Download Recommended Models</strong>:
+                <pre><code>ollama pull qwen3:30b</code></pre>
             </li>
             <li><strong>Configure in App</strong>:
                 <ul>
                     <li>Go to Settings → AI Settings → Ollama</li>
-                    <li>Set server URL (default: <code>http://localhost</code>)</li>
+                    <li>Set server URL (default: <code>http://localhost:11434</code>)</li>
                     <li>Set port (default: 11434)</li>
-                    <li>Select your preferred model</li>
+                    <li>Select your preferred model:
+                        <strong>Recommended</strong>: qwen3:30b, gpt-oss:20b, magistral
+                    </li>
                     <li>Test the connection</li>
                 </ul>
             </li>
@@ -858,8 +839,8 @@ ollama pull mistral</code></pre>
 
         <div class="success-box">
             <h3>🎯 Ready to Get Started?</h3>
-            <p><strong>Audio Journal</strong> - Transform your spoken words into actionable intelligence with advanced AI processing and comprehensive data management.</p>
-            <p>Download the app and start recording your first audio journal today!</p>
+            <p><strong>BisonNotes AI</strong> - Transform your spoken words into actionable intelligence with advanced AI processing and comprehensive data management.</p>
+            <p>Download the app and start recording your first BisonNotes today!</p>
         </div>
 
         <hr style="margin: 3em 0; border: none; border-top: 2px solid currentColor;">

@@ -476,26 +476,32 @@ class SummaryManager: ObservableObject {
                 logger.warning("Saved engine '\(savedEngineName)' not available, using '\(availableEngine.name)' temporarily", category: "SummaryManager")
             }
         } else if savedEngineName == nil {
-            // No saved preference, set Enhanced Apple Intelligence as the default if supported
-            if DeviceCompatibility.isAppleIntelligenceSupported {
-                if let defaultEngine = availableEngines["Enhanced Apple Intelligence"], defaultEngine.isAvailable {
+            // No saved preference, try to set Enhanced Apple Intelligence as the default
+            // First try to use it from available engines
+            if let defaultEngine = availableEngines["Enhanced Apple Intelligence"], defaultEngine.isAvailable {
+                currentEngine = defaultEngine
+                UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
+                logger.info("No saved preference, set Enhanced Apple Intelligence as default engine", category: "SummaryManager")
+            } else {
+                // Fallback: create Enhanced Apple Intelligence and test if it's available
+                let defaultEngine = AIEngineFactory.createEngine(type: .enhancedAppleIntelligence)
+                if defaultEngine.isAvailable {
+                    availableEngines[defaultEngine.name] = defaultEngine
                     currentEngine = defaultEngine
                     UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
-                    logger.info("No saved preference, set Enhanced Apple Intelligence as default engine", category: "SummaryManager")
+                    logger.info("Created and set Enhanced Apple Intelligence as default engine", category: "SummaryManager")
                 } else {
-                    // Fallback: create Enhanced Apple Intelligence if not in available engines
-                    let defaultEngine = AIEngineFactory.createEngine(type: .enhancedAppleIntelligence)
-                    if defaultEngine.isAvailable {
-                        availableEngines[defaultEngine.name] = defaultEngine
-                        currentEngine = defaultEngine
-                        UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
-                        logger.info("Created and set Enhanced Apple Intelligence as default engine", category: "SummaryManager")
+                    // If Enhanced Apple Intelligence is not available, try to find any available engine
+                    if let anyAvailableEngine = availableEngines.values.first(where: { $0.isAvailable && $0.name != "None" }) {
+                        currentEngine = anyAvailableEngine
+                        UserDefaults.standard.set(anyAvailableEngine.name, forKey: "SelectedAIEngine")
+                        logger.info("Enhanced Apple Intelligence not available, using '\(anyAvailableEngine.name)' as default", category: "SummaryManager")
+                    } else {
+                        // Last resort: set to None
+                        UserDefaults.standard.set("None", forKey: "SelectedAIEngine")
+                        logger.info("No engines available, setting default engine to None", category: "SummaryManager")
                     }
                 }
-            } else {
-                // Apple Intelligence is not supported, set default to "none"
-                UserDefaults.standard.set("None", forKey: "SelectedAIEngine")
-                logger.info("Apple Intelligence not supported, setting default engine to None.", category: "SummaryManager")
             }
         }
 

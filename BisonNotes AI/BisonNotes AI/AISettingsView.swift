@@ -80,6 +80,8 @@ final class AISettingsViewModel: ObservableObject {
     
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
+        case .none:
+            return true // "None" is always available
         case .enhancedAppleIntelligence:
             return true // Always available on iOS 15+
         case .openAI:
@@ -178,6 +180,8 @@ struct AISettingsView: View {
     
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
+        case .none:
+            return true // "None" is always available
         case .enhancedAppleIntelligence:
             return true // Always available on iOS 15+
         case .openAI:
@@ -210,6 +214,8 @@ struct AISettingsView: View {
     
     private func getEngineVersion(_ engineType: AIEngineType) -> String {
         switch engineType {
+        case .none:
+            return "N/A"
         case .enhancedAppleIntelligence:
             return "iOS 15.0+"
         case .openAI:
@@ -422,6 +428,8 @@ private extension AISettingsView {
         return Group {
             if let currentEngine = AIEngineType.allCases.first(where: { $0.rawValue == currentEngineName }) {
                 switch currentEngine {
+                case .none:
+                    noneConfigurationSection
                 case .enhancedAppleIntelligence:
                     appleIntelligenceConfigurationSection
                 case .openAI:
@@ -436,6 +444,61 @@ private extension AISettingsView {
                     awsBedrockConfigurationSection
                 }
             }
+        }
+    }
+    
+    var noneConfigurationSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("No AI Engine Selected")
+                .font(.headline)
+                .padding(.horizontal, 24)
+            
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("AI Summarization Disabled")
+                            .font(.body)
+                        Text("Select an AI engine above to enable summarization, task extraction, and reminder identification")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Status:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color.gray)
+                                .frame(width: 8, height: 8)
+                            Text("Disabled")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    
+                    HStack {
+                        Text("Features:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("None")
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.gray.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
         }
     }
     
