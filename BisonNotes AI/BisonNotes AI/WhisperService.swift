@@ -263,15 +263,12 @@ class WhisperService: ObservableObject {
     // MARK: - Transcription
     
     func transcribeAudio(url: URL, recordingId: UUID? = nil) async throws -> TranscriptionResult {
-        print("🎤 WhisperService.transcribeAudio called for: \(url.lastPathComponent)")
         
         // Check if chunking is needed
         let needsChunking = try await chunkingService.shouldChunkFile(url, for: .whisper)
-        print("🔍 WhisperService - Chunking needed: \(needsChunking)")
         
         if needsChunking {
-            print("🔀 WhisperService - Using chunked transcription path")
-            return try await transcribeWithChunking(url: url, recordingId: recordingId)
+                return try await transcribeWithChunking(url: url, recordingId: recordingId)
         } else {
             print("📄 WhisperService - Using single file transcription path")
             return try await performSingleTranscription(url: url)
@@ -569,7 +566,6 @@ class WhisperService: ObservableObject {
         
         request.httpBody = body
         
-        print("📤 Sending REST API request to: \(request.url?.absoluteString ?? "unknown")")
         print("📊 Request body size: \(body.count) bytes")
         
         await MainActor.run {
@@ -579,12 +575,10 @@ class WhisperService: ObservableObject {
         
         // Send request with timeout and timing
         let requestStartTime = Date()
-        print("📤 Sending Whisper request at: \(requestStartTime)")
         
         let (data, response) = try await withTimeout(seconds: 1800) { [self] in
             let result = try await session.data(for: request)
             let requestDuration = Date().timeIntervalSince(requestStartTime)
-            print("📥 Whisper request completed in: \(requestDuration)s")
             
             if requestDuration < 10 && duration > 300 {
                 print("🚨 WhisperService - CRITICAL: Request completed too quickly!")
@@ -595,7 +589,6 @@ class WhisperService: ObservableObject {
             return result
         }
         
-        print("📥 Received response from server")
         
         guard let httpResponse = response as? HTTPURLResponse else {
             await MainActor.run {
@@ -833,7 +826,6 @@ class WhisperService: ObservableObject {
         
         request.httpBody = body
         
-        print("📤 Sending language detection request...")
         
         // Send request with timeout
         let (data, response) = try await withTimeout(seconds: 60) { [self] in

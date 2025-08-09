@@ -210,7 +210,6 @@ class AWSTranscribeService: NSObject, ObservableObject {
     
     /// Retrieve completed transcript from S3
     func retrieveTranscript(jobName: String) async throws -> AWSTranscribeResult {
-        print("📥 Retrieving transcript for job: \(jobName)")
         
         // First check if job is completed
         let jobStatus = try await checkJobStatus(jobName: jobName)
@@ -370,7 +369,6 @@ class AWSTranscribeService: NSObject, ObservableObject {
                 contentType = "audio/mp4" // Default fallback
             }
             
-            print("📤 Uploading \(fileData.count) bytes to S3 as \(s3Key)")
             
             let putRequest = PutObjectInput(
                 body: .data(fileData),
@@ -520,7 +518,6 @@ class AWSTranscribeService: NSObject, ObservableObject {
             throw AWSTranscribeError.invalidTranscriptURI
         }
         
-        print("📥 Downloading transcript from: \(url)")
         
         // Extract S3 key from the URI
         // URI format: https://s3.us-east-1.amazonaws.com/bucket-name/key
@@ -542,7 +539,6 @@ class AWSTranscribeService: NSObject, ObservableObject {
                 key: s3Key
             )
             
-            print("📤 Requesting S3 object: \(config.bucketName)/\(s3Key)")
             
             let response = try await client.getObject(input: getRequest)
             

@@ -21,6 +21,10 @@ class TokenManager {
     
     /// GPT-4.1 series context window (leaving 20% buffer for response)
     static let gpt41ContextWindow = Int(1_047_576 * 0.8) // ~838K tokens for all GPT-4.1 models
+    
+    /// Google AI Studio (Gemini) context window (leaving 20% buffer for response)
+    static let googleAIStudioContextWindow = Int(1_000_000 * 0.8) // ~800K tokens for Gemini models
+    
     static let estimatedTokensPerWord = 1.3 // Conservative estimate for English text
     
     // MARK: - Token Counting

@@ -32,7 +32,7 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **OpenAI Integration**: GPT-4o, GPT-4o Mini, and Whisper-1 models for transcription and summarization
 - **Google AI Studio Integration**: Gemini 2.5 Flash and Flash Lite models for AI-powered summaries
 - **Whisper Integration**: High-quality transcription using OpenAI's Whisper model via REST API
-- **Wyoming Protocol**: Streaming transcription using Whisper models via WebSocket
+- **Wyoming Protocol**: Streaming transcription using Whisper models via WebSocket and TCP
 - **Ollama Integration**: Local AI processing with customizable models
 - **AWS Bedrock Integration**: Cloud-based AI using AWS Bedrock foundation models
 - **AWS Transcribe**: Cloud-based transcription service for long audio files
@@ -46,13 +46,12 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **Real-Time Speech Recognition**: Powered by Apple's Speech framework
 - **OpenAI Transcription**: GPT-4o, GPT-4o Mini, and Whisper-1 models via API
 - **Whisper REST API**: High-quality transcription using local Whisper server
-- **Wyoming Protocol**: Streaming transcription using Whisper models via WebSocket
+- **Wyoming Protocol**: Streaming transcription using Whisper models via WebSocket and TCP
 - **AWS Transcribe**: Cloud-based transcription service for long audio files
 - **Enhanced Large File Support**: Automatic chunking for files over 5 minutes
 - **Background Processing**: Transcription and summarization in background
 - **Progress Tracking**: Real-time progress updates for long transcriptions
 - **Timeout Handling**: Configurable timeout settings to prevent hanging
-
 - **Editable Transcripts**: Full editing capabilities with text management
 - **Time-Stamped Segments**: Precise timing for each transcript segment
 - **File Size Validation**: Automatic fallback for oversized files
@@ -65,6 +64,7 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **Metadata Display**: AI method, generation time, content type, word count, compression ratio
 - **Quality Validation**: Automatic quality assessment and recovery mechanisms
 - **Enhanced Summary Detail View**: Comprehensive display with location mapping
+- **Location Maps**: Interactive maps showing recording locations with Apple-style design
 
 ### 🗺️ **Location Intelligence**
 - **GPS Integration**: Automatic location capture with each recording
@@ -72,11 +72,11 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **Location History**: View recording locations on interactive maps
 - **Privacy-First**: Optional location tracking with user control
 - **Location Detail View**: Enhanced location display with map integration
+- **Interactive Maps**: Full-screen map views with navigation integration
 
 ### ⚙️ **Advanced Settings & Customization**
 - **Multiple AI Engines**: Choose between different AI processing methods
 - **Audio Quality Control**: Adjust recording quality based on needs
-
 - **Batch Processing**: Regenerate all summaries with updated AI engines
 - **Comprehensive Settings**: Fine-tune every aspect of the app
 - **Engine Monitoring**: Automatic availability checking and recovery
@@ -91,6 +91,8 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **Battery Monitoring**: Real-time battery state tracking and optimization
 - **Memory Management**: Intelligent cache management and cleanup
 - **Error Recovery System**: Comprehensive error handling and recovery strategies
+- **Stale Job Detection**: Automatic cleanup of abandoned processing jobs
+- **Timeout Management**: Configurable timeouts for long-running operations
 
 ### 🛠️ **Enhanced File Management**
 - **Selective File Deletion**: Confirmation dialogs and complete cleanup
@@ -103,6 +105,8 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 ### 🧩 **Data Migration & Debugging**
 - **DataMigrationView**: Run and monitor migration from legacy storage to Core Data
 - **Clear & Debug Tools**: Clear the database or inspect its contents from the UI
+- **Data Integrity Checks**: Comprehensive validation of Core Data relationships
+- **Repair Tools**: Automatic fixing of data inconsistencies and orphaned entries
 
 ### 🧑‍💻 **Audio Playback**
 - **AudioPlayerView**: New SwiftUI view for playing back audio recordings with metadata and controls
@@ -190,8 +194,47 @@ Audio Journal supports high-quality transcription using OpenAI's Whisper model v
 - **Multiple Output Formats**: JSON, text, VTT, SRT, TSV
 - **Word-level Timestamps**: Precise timing for each word
 - **Voice Activity Detection**: Filter out non-speech audio
-
 - **Broad Format Support**: FFmpeg integration for various audio/video formats
+
+### **Wyoming Protocol Integration**
+
+Audio Journal supports the Wyoming protocol for streaming transcription using Whisper models. This provides a modern, efficient alternative to REST API-based transcription.
+
+#### **Setup Instructions**
+
+1. **Install Wyoming Server**
+   - Visit [Wyoming](https://github.com/rhasspy/wyoming) for the official implementation
+   - Or use a Wyoming-compatible Whisper server like [whisper.cpp](https://github.com/ggerganov/whisper.cpp)
+
+2. **Quick Start with Docker**
+   ```bash
+   # Run a Wyoming-compatible Whisper server
+   docker run -d -p 10300:10300 \
+     --name wyoming-whisper \
+     rhasspy/wyoming-whisper:latest
+   ```
+
+3. **Configure Audio Journal**
+   - Open the app and go to Settings → Transcription Settings
+   - Select "Whisper (Wyoming Protocol)" as the transcription engine
+   - Set the server URL (e.g., `http://192.168.1.100` or `http://localhost`)
+   - Set the port (default: 10300)
+   - Test the connection using the "Test Connection" button
+
+#### **Features**
+- **Streaming Protocol**: Real-time transcription with minimal latency
+- **WebSocket & TCP Support**: Both connection types supported
+- **Multiple Models**: Support for various Whisper model sizes
+- **Local Processing**: Run on your own hardware for privacy
+- **Cross-Platform**: Works on macOS, Linux, and Windows
+- **Background Processing**: Continues transcription when app is minimized
+
+#### **Available Models**
+- `tiny`: Fastest, lowest quality
+- `base`: Good balance of speed and quality
+- `small`: Better quality, slower processing
+- `medium`: High quality, slower processing
+- `large-v3`: Best quality, slowest processing
 
 ### **AWS Bedrock Integration**
 
@@ -266,44 +309,23 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 - **Offline Capability**: Works without internet connection
 - **Resource Control**: Adjust model size based on your hardware
 
-### **Wyoming Protocol Integration**
+### **AWS Transcribe Integration**
 
-Audio Journal supports the Wyoming protocol for streaming transcription using Whisper models. This provides a modern, efficient alternative to REST API-based transcription.
+Audio Journal supports cloud-based transcription using AWS Transcribe service for handling large audio files.
 
 #### **Setup Instructions**
 
-1. **Install Wyoming Server**
-   - Visit [Wyoming](https://github.com/rhasspy/wyoming) for the official implementation
-   - Or use a Wyoming-compatible Whisper server like [whisper.cpp](https://github.com/ggerganov/whisper.cpp)
-
-2. **Quick Start with Docker**
-   ```bash
-   # Run a Wyoming-compatible Whisper server
-   docker run -d -p 10300:10300 \
-     --name wyoming-whisper \
-     rhasspy/wyoming-whisper:latest
-   ```
-
-3. **Configure Audio Journal**
-   - Open the app and go to Settings → Transcription Settings
-   - Select "Whisper (Wyoming Protocol)" as the transcription engine
-   - Set the server URL (e.g., `http://192.168.1.100` or `http://localhost`)
-   - Set the port (default: 10300)
-   - Test the connection using the "Test Connection" button
+1. **Get AWS Credentials**: Visit [AWS Console](https://console.aws.amazon.com) to set up your AWS account
+2. **Configure in App**: Go to Settings → Transcription Settings → AWS Transcribe
+3. **Select Region**: Choose appropriate AWS region
+4. **Test Connection**: Use the test button to verify your configuration
 
 #### **Features**
-- **Streaming Protocol**: Real-time transcription with minimal latency
-- **WebSocket Connection**: Efficient bidirectional communication
-- **Multiple Models**: Support for various Whisper model sizes
-- **Local Processing**: Run on your own hardware for privacy
-- **Cross-Platform**: Works on macOS, Linux, and Windows
-
-#### **Available Models**
-- `tiny`: Fastest, lowest quality
-- `base`: Good balance of speed and quality
-- `small`: Better quality, slower processing
-- `medium`: High quality, slower processing
-- `large-v3`: Best quality, slowest processing
+- **Cloud-Based Processing**: Leverage AWS infrastructure for large files
+- **Multiple Languages**: Support for various languages and accents
+- **Custom Vocabularies**: Train models on domain-specific terminology
+- **Real-Time Processing**: Stream audio for immediate transcription
+- **Batch Processing**: Handle files up to 4GB in size
 
 ## 🏗️ Technical Architecture
 
@@ -411,7 +433,6 @@ Audio Journal supports the Wyoming protocol for streaming transcription using Wh
 
 ### **AI Processing**
 - **Engine Selection**: Enhanced Apple Intelligence, OpenAI, Google AI Studio, AWS Bedrock, Ollama Integration
-
 - **Batch Regeneration**: Update all summaries with new AI engines
 - **Engine Monitoring**: Automatic availability checking and recovery
 - **Performance Optimization**: Battery and memory-aware processing
@@ -421,6 +442,7 @@ Audio Journal supports the Wyoming protocol for streaming transcription using Wh
 - **Queue Management**: Monitor job queue and processing status
 - **Performance Monitoring**: Real-time performance metrics
 - **Error Recovery**: Comprehensive error handling and recovery
+- **Stale Job Cleanup**: Automatic detection and cleanup of abandoned jobs
 
 ### **Registry Management**
 - **Refresh Recordings**: Scan and add missing recordings from disk
@@ -446,6 +468,13 @@ Audio Journal supports the Wyoming protocol for streaming transcription using Wh
 - **Connection Testing**: Verify server connectivity
 - **Output Format**: JSON, text, VTT, SRT, TSV
 
+### **Wyoming Settings**
+- **Server Configuration**: URL and port settings for Wyoming server
+- **Model Selection**: Choose from available Whisper models
+- **Connection Testing**: Verify Wyoming server connectivity
+- **Streaming Options**: Configure real-time transcription settings
+- **Connection Type**: WebSocket or TCP connection options
+
 ### **Ollama Settings**
 - **Server Configuration**: URL and port settings
 - **Model Selection**: Choose from available Ollama models
@@ -459,11 +488,11 @@ Audio Journal supports the Wyoming protocol for streaming transcription using Wh
 - **Connection Testing**: Verify AWS Bedrock connectivity
 - **Usage Monitoring**: Track API usage and costs
 
-### **Wyoming Settings**
-- **Server Configuration**: URL and port settings for Wyoming server
-- **Model Selection**: Choose from available Whisper models
-- **Connection Testing**: Verify Wyoming server connectivity
-- **Streaming Options**: Configure real-time transcription settings
+### **AWS Transcribe Settings**
+- **AWS Credentials**: Configure access keys or use AWS profiles
+- **Region Configuration**: Select appropriate AWS region
+- **Language Selection**: Choose from supported languages
+- **Connection Testing**: Verify AWS Transcribe connectivity
 
 ### **Transcription Settings**
 - **Enhanced Transcription**: Automatic handling of large audio files (60+ minutes)
@@ -518,6 +547,8 @@ Audio Journal supports the Wyoming protocol for streaming transcription using Wh
 - **ThumbnailErrorHandling**: Gracefully handles thumbnail generation errors during file operations, preventing interruptions
 - **Robust Migration**: Migration process is resilient to missing/corrupt files and provides progress and error feedback
 - **Comprehensive Logging**: All data operations and errors are logged for easier debugging
+- **File Path Resolution**: Enhanced URL handling with proper decoding and fallback mechanisms
+- **Markdown Rendering**: Improved text formatting with custom preprocessing for AI-generated content
 
 ## 🛠️ Development
 
@@ -539,6 +570,11 @@ Audio Journal/
 │   ├── ... (other views)
 ├── ViewModels/
 │   └── AudioRecorderViewModel.swift # Recording logic with Core Data integration
+├── Wyoming/                        # Wyoming protocol implementation
+│   ├── WyomingProtocol.swift       # Protocol message definitions
+│   ├── WyomingTCPClient.swift      # TCP client implementation
+│   ├── WyomingWebSocketClient.swift # WebSocket client implementation
+│   └── WyomingWhisperClient.swift  # Whisper-specific client
 ├── ... (AI engines, managers, etc.)
 ```
 
@@ -549,18 +585,36 @@ Audio Journal/
 - **AppDataCoordinator**: Unified interface for all data operations
 - **AudioPlayerView**: Audio playback UI
 - **DataMigrationView**: Migration and debug UI
+- **WyomingWhisperClient**: Streaming transcription via Wyoming protocol
 
 ## 🔮 Recent Enhancements
 
-### **Core Data-Only Architecture (Latest)**
+### **Location Maps & File Path Resolution (Latest)**
+- **Interactive Location Maps**: Enhanced summary views now display recording locations with Apple-style maps
+- **File Path Resolution**: Fixed critical URL resolution issues preventing access to transcripts and summaries
+- **Markdown Rendering**: Improved text formatting with custom preprocessing for AI-generated content
+- **Data Integrity**: Enhanced Core Data relationship management and URL handling
+
+### **Wyoming Protocol Integration**
+- **Streaming Transcription**: Real-time transcription using Wyoming protocol via WebSocket and TCP
+- **Background Processing**: Continues transcription when app is minimized
+- **Multiple Connection Types**: Support for both WebSocket and TCP connections
+- **Timeout Management**: Configurable timeouts for long-running transcriptions
+
+### **Background Processing Improvements**
+- **Stale Job Detection**: Automatic cleanup of abandoned processing jobs
+- **Timeout Management**: Configurable timeouts for long-running operations
+- **Enhanced Error Recovery**: Comprehensive error handling and recovery strategies
+- **Performance Monitoring**: Real-time performance metrics and analytics
+
+### **Core Data-Only Architecture**
 - **All data is now managed via Core Data**—no legacy registry or file-based storage
 - **Automatic migration** on first launch for existing users
 - **New migration and debug tools** in the UI
 - **AudioPlayerView** and **DataMigrationView** added
-- **Wyoming Protocol Support**: Added streaming transcription via WebSocket
 - **AWS Bedrock Integration**: Full support for AWS Bedrock foundation models
 
-### **Performance Optimization (Task 11)**
+### **Performance Optimization**
 - **Streaming File Processing**: Memory-efficient handling of large files
 - **Battery Monitoring**: Real-time battery state tracking and optimization
 - **Adaptive Processing**: Dynamic optimization based on system resources
@@ -582,7 +636,6 @@ Audio Journal/
 ### **Mixed Audio Recording**
 - **Background Audio**: Record without interrupting system audio playback
 - **Audio Session Management**: Robust audio interruption handling
-- **Enhanced Recording**: Improved audio quality and reliability
 
 ### **Large File Processing**
 - **Intelligent Chunking**: Automatic chunking for files over 5 minutes

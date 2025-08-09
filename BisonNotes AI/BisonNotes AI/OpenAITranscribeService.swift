@@ -184,7 +184,6 @@ class OpenAITranscribeService: NSObject, ObservableObject {
             throw OpenAITranscribeError.authenticationFailed("HTTP \(httpResponse.statusCode)")
         }
         
-        print("✅ OpenAI API connection test successful")
     }
     
     func transcribeAudioFile(at url: URL, recordingId: UUID? = nil) async throws -> OpenAITranscribeResult {
@@ -345,7 +344,6 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         
         request.httpBody = body
         
-        print("📤 Sending request to OpenAI API...")
         print("🔧 Using model: \(config.model.displayName)")
         print("📊 Request body size: \(body.count) bytes")
         
@@ -391,7 +389,6 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         
         let processingTime = Date().timeIntervalSince(startTime)
         
-        print("✅ OpenAI transcription successful!")
         print("📝 Transcript length: \(transcribeResponse.text.count) characters")
         print("⏱️ Processing time: \(processingTime) seconds")
         

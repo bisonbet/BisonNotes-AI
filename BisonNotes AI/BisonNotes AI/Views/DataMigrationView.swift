@@ -23,6 +23,9 @@ struct DataMigrationView: View {
     @State private var currentMode: MigrationMode = .migration
     @State private var showingClearDatabaseAlert = false
     @State private var isInitialized = false
+    @State private var showingCleanupAlert = false
+    @State private var isPerformingCleanup = false
+    @State private var cleanupResults: CleanupResults?
     
     var body: some View {
         NavigationView {
@@ -69,6 +72,19 @@ struct DataMigrationView: View {
                 }
             } message: {
                 Text("🚨 CRITICAL WARNING 🚨\n\nThis will PERMANENTLY DELETE ALL of your data from the database:\n\n❌ ALL TRANSCRIPTS (cannot be recovered)\n❌ ALL SUMMARIES (cannot be recovered)\n❌ ALL RECORDING METADATA\n\n✅ Your audio files will remain on disk\n\n⚠️ This action CANNOT be undone and you will lose all your transcribed text and AI-generated summaries forever.\n\nOnly proceed if you understand this will destroy all your transcript and summary data.")
+            }
+            .alert("Cleanup Orphaned Data", isPresented: $showingCleanupAlert) {
+                Button("Cancel") {
+                    showingCleanupAlert = false
+                }
+                Button("Clean Up") {
+                    Task {
+                        await performCleanup()
+                    }
+                    showingCleanupAlert = false
+                }
+            } message: {
+                Text("This will remove summaries and transcripts for recordings that no longer exist. This action cannot be undone.")
             }
         }
     }
@@ -173,6 +189,175 @@ struct DataMigrationView: View {
                 .cornerRadius(12)
             }
             .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            
+            // Fix filename/title duplicates (the new advanced repair)
+            Button(action: {
+                Task {
+                    let result = await migrationManager.fixSpecificDataIssues()
+                    print("🎯 Fixed \(result.resolved) data issues, saved: \(result.saved)")
+                }
+            }) {
+                HStack {
+                    Image(systemName: "arrow.triangle.merge")
+                    Text("Fix Filename/Title Duplicates")
+                }
+                .font(.headline)
+                .foregroundColor(.white)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.green)
+                .cornerRadius(12)
+            }
+            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            
+            // Fix current naming and transcript listing issues
+            Button(action: {
+                Task {
+                    let result = await migrationManager.fixCurrentIssues()
+                    print("🎯 Fixed current issues: \(result.renames) renames, \(result.validations) validations")
+                }
+            }) {
+                HStack {
+                    Image(systemName: "textformat")
+                    Text("Fix Names & Transcript Listings")
+                }
+                .font(.headline)
+                .foregroundColor(.white)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.purple)
+                .cornerRadius(12)
+            }
+            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            
+            // Import orphaned audio files
+            Button(action: {
+                Task {
+                    let count = await migrationManager.findAndImportOrphanedAudioFiles()
+                    print("📥 Imported \(count) orphaned audio files")
+                }
+            }) {
+                HStack {
+                    Image(systemName: "plus.rectangle.on.folder")
+                    Text("Import Orphaned Audio Files")
+                }
+                .font(.headline)
+                .foregroundColor(.white)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.orange)
+                .cornerRadius(12)
+            }
+            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+
+            // Diagnostic for UI vs Database disconnect
+            Button(action: {
+                Task {
+                    await migrationManager.diagnoseRecordingDisplayIssue()
+                }
+            }) {
+                HStack {
+                    Image(systemName: "stethoscope")
+                    Text("Diagnose Display Issue")
+                }
+                .font(.headline)
+                .foregroundColor(.white)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.red)
+                .cornerRadius(12)
+            }
+
+            // Debug tools section
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Database Debug Tools")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 4)
+                
+                VStack(spacing: 8) {
+                    HStack(spacing: 12) {
+                        Button("Debug Database") {
+                            appCoordinator.debugDatabaseContents()
+                        }
+                        .buttonStyle(CompactDebugButtonStyle())
+                        
+                        Button("Debug Summary Data") {
+                            debugSummaryData()
+                        }
+                        .buttonStyle(CompactDebugButtonStyle())
+                        
+                        Button("Sync URLs") {
+                            appCoordinator.syncRecordingURLs()
+                        }
+                        .buttonStyle(CompactDebugButtonStyle())
+                    }
+                    
+                    // Cleanup Orphaned Data section
+                    VStack(spacing: 8) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Cleanup Orphaned Data")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                                Text("Remove summaries and transcripts for deleted recordings")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Button(action: {
+                                showingCleanupAlert = true
+                            }) {
+                                HStack {
+                                    if isPerformingCleanup {
+                                        ProgressView()
+                                            .scaleEffect(0.8)
+                                            .padding(.trailing, 4)
+                                    }
+                                    Text(isPerformingCleanup ? "Cleaning..." : "Clean Up")
+                                }
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(isPerformingCleanup ? Color.gray : Color.orange)
+                                )
+                            }
+                            .disabled(isPerformingCleanup)
+                        }
+                        
+                        if let results = cleanupResults {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Last Cleanup Results:")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.secondary)
+                                
+                                Text("• Removed \(results.orphanedSummaries) orphaned summaries")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                Text("• Removed \(results.orphanedTranscripts) orphaned transcripts")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                Text("• Freed \(results.freedSpaceMB, specifier: "%.1f") MB of space")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.top, 4)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .background(Color(.systemGray6).opacity(0.5))
+                    .cornerRadius(8)
+                }
+            }
             
             // Debug info
             Button(action: {
@@ -466,5 +651,194 @@ struct DataMigrationView: View {
         case .repair:
             return "Automatically repair the data integrity issues found during the scan to restore missing transcripts and summaries."
         }
+    }
+    
+    // MARK: - Debug Helper Functions
+    
+    private func debugSummaryData() {
+        print("🔍 Debugging summaries...")
+        
+        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        print("📊 Total recordings: \(recordingsWithData.count)")
+        
+        for (index, recordingData) in recordingsWithData.enumerated() {
+            let recording = recordingData.recording
+            let summary = recordingData.summary
+            
+            print("   \(index): \(recording.recordingName ?? "Unknown")")
+            print("      - Recording ID: \(recording.id?.uuidString ?? "nil")")
+            print("      - Has summary: \(summary != nil)")
+            
+            if let summary = summary {
+                print("      - Summary AI Method: \(summary.aiMethod)")
+                print("      - Summary Generated At: \(summary.generatedAt)")
+                print("      - Summary Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
+                print("      - Summary ID: \(summary.id)")
+            }
+        }
+    }
+    
+    // MARK: - Cleanup Functions
+    
+    private func performCleanup() async {
+        isPerformingCleanup = true
+        
+        do {
+            let results = try await cleanupOrphanedData()
+            await MainActor.run {
+                self.cleanupResults = results
+                self.isPerformingCleanup = false
+            }
+        } catch {
+            await MainActor.run {
+                self.isPerformingCleanup = false
+                print("❌ Cleanup error: \(error)")
+            }
+        }
+    }
+    
+    private func cleanupOrphanedData() async throws -> CleanupResults {
+        print("🧹 Starting orphaned data cleanup...")
+        
+        // Get all recordings from Core Data
+        let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
+        print("📁 Found \(allRecordings.count) recordings in Core Data")
+        
+        // Get all transcripts and summaries from Core Data
+        let allTranscripts = appCoordinator.getAllTranscripts()
+        let allSummaries = appCoordinator.getAllSummaries()
+        
+        print("📊 Found \(allSummaries.count) stored summaries and \(allTranscripts.count) stored transcripts")
+        
+        var orphanedSummaries = 0
+        var orphanedTranscripts = 0
+        var freedSpaceBytes: Int64 = 0
+        
+        // Create a set of valid recording IDs for quick lookup
+        let validRecordingIds = Set(allRecordings.compactMap { $0.id })
+        
+        print("🔍 Valid recording IDs: \(validRecordingIds.count)")
+        
+        // Check for orphaned summaries
+        for summary in allSummaries {
+            let recordingId = summary.recordingId
+            
+            // Check if the recording ID exists in Core Data
+            let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
+            
+            if !hasValidID {
+                print("🗑️ Found orphaned summary for recording ID: \(recordingId?.uuidString ?? "nil")")
+                print("   ID exists: \(hasValidID)")
+                
+                // Delete the orphaned summary
+                do {
+                    try appCoordinator.coreDataManager.deleteSummary(id: summary.id)
+                    orphanedSummaries += 1
+                } catch {
+                    print("❌ Failed to delete orphaned summary: \(error)")
+                }
+                
+                // Calculate freed space (rough estimate)
+                freedSpaceBytes += Int64(summary.summary?.count ?? 0 * 2) // Approximate UTF-8 bytes
+            }
+        }
+        
+        // Check for orphaned transcripts
+        for transcript in allTranscripts {
+            let recordingId = transcript.recordingId
+            
+            // Check if the recording ID exists in Core Data
+            let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
+            
+            if !hasValidID {
+                print("🗑️ Found orphaned transcript for recording ID: \(recordingId?.uuidString ?? "nil")")
+                print("   ID exists: \(hasValidID)")
+                
+                // Delete the orphaned transcript
+                appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
+                orphanedTranscripts += 1
+                
+                // Calculate freed space
+                let transcriptText = transcript.segments ?? ""
+                freedSpaceBytes += Int64(transcriptText.count * 2) // Approximate UTF-8 bytes
+            } else {
+                // Log when we find a transcript that's actually valid
+                print("✅ Found valid transcript for recording ID: \(recordingId?.uuidString ?? "nil")")
+            }
+        }
+        
+        // Check for transcripts where the recording file doesn't exist on disk
+        for transcript in allTranscripts {
+            guard let recordingId = transcript.recordingId,
+                  let recording = appCoordinator.coreDataManager.getRecording(id: recordingId),
+                  let recordingURLString = recording.recordingURL,
+                  let recordingURL = URL(string: recordingURLString) else {
+                continue
+            }
+            
+            // Check if the recording file exists on disk
+            let fileExists = FileManager.default.fileExists(atPath: recordingURL.path)
+            
+            // Check if the recording exists in Core Data
+            let hasValidID = validRecordingIds.contains(recordingId)
+            
+            // Only remove if the file doesn't exist AND it's not in Core Data
+            if !fileExists && !hasValidID {
+                print("🗑️ Found transcript for non-existent recording file: \(recordingURL.lastPathComponent)")
+                print("   File exists: \(fileExists), ID in Core Data: \(hasValidID)")
+                
+                // Delete the orphaned transcript
+                appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
+                orphanedTranscripts += 1
+                
+                // Calculate freed space
+                let transcriptText = transcript.segments ?? ""
+                freedSpaceBytes += Int64(transcriptText.count * 2) // Approximate UTF-8 bytes
+            } else if !fileExists {
+                // Log when file doesn't exist but recording is in Core Data
+                print("⚠️  File not found on disk but recording exists in Core Data: \(recordingURL.lastPathComponent)")
+                print("   File exists: \(fileExists), ID in Core Data: \(hasValidID)")
+            }
+        }
+        
+        let freedSpaceMB = Double(freedSpaceBytes) / (1024 * 1024)
+        
+        print("✅ Cleanup complete:")
+        print("   • Removed \(orphanedSummaries) orphaned summaries")
+        print("   • Removed \(orphanedTranscripts) orphaned transcripts")
+        print("   • Freed \(String(format: "%.1f", freedSpaceMB)) MB of space")
+        
+        return CleanupResults(
+            orphanedSummaries: orphanedSummaries,
+            orphanedTranscripts: orphanedTranscripts,
+            freedSpaceMB: freedSpaceMB
+        )
+    }
+}
+
+// MARK: - Supporting Structures
+
+struct CleanupResults {
+    let orphanedSummaries: Int
+    let orphanedTranscripts: Int
+    let freedSpaceMB: Double
+}
+
+// MARK: - Compact Debug Button Style
+
+struct CompactDebugButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption)
+            .foregroundColor(.primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(.systemGray6))
+                    .opacity(configuration.isPressed ? 0.8 : 1.0)
+            )
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }

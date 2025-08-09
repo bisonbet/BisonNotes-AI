@@ -12,10 +12,7 @@ struct RecordingFile: Identifiable {
     let locationData: LocationData?
     
     var dateString: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        return UserPreferences.shared.formatMediumDateTime(date)
     }
     
     var durationString: String {

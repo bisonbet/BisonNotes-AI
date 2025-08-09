@@ -214,7 +214,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     
     private func setupRecording() {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let audioFilename = documentsPath.appendingPathComponent("recording_\(Date().timeIntervalSince1970).m4a")
+        let audioFilename = documentsPath.appendingPathComponent(generateAppRecordingFilename())
         recordingURL = audioFilename
         
         // Capture current location before starting recording
@@ -442,7 +442,7 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                             
                             let recordingId = workflowManager.createRecording(
                                 url: recordingURL,
-                                name: recordingURL.deletingPathExtension().lastPathComponent,
+                                name: generateAppRecordingDisplayName(),
                                 date: Date(),
                                 fileSize: fileSize,
                                 duration: duration,
@@ -460,6 +460,35 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                 }
             }
         }
+    }
+    
+    // MARK: - Standardized Naming Convention
+    
+    /// Generates a standardized filename for app-created recordings
+    private func generateAppRecordingFilename() -> String {
+        let timestamp = Date().timeIntervalSince1970
+        return "apprecording-\(Int(timestamp)).m4a"
+    }
+    
+    /// Generates a standardized display name for app-created recordings
+    private func generateAppRecordingDisplayName() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let timestamp = formatter.string(from: Date())
+        return "apprecording-\(timestamp)"
+    }
+    
+    /// Creates a standardized name for imported files
+    static func generateImportedFileName(originalName: String) -> String {
+        // Remove file extension if present
+        let nameWithoutExtension = (originalName as NSString).deletingPathExtension
+        
+        // Truncate to iOS standard title length (around 60 characters for display)
+        let maxLength = 60
+        let truncatedName = nameWithoutExtension.count > maxLength ? 
+            String(nameWithoutExtension.prefix(maxLength)) : nameWithoutExtension
+        
+        return "importedfile-\(truncatedName)"
     }
 }
 

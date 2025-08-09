@@ -69,13 +69,13 @@ struct GoogleAIStudioSettingsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                         
-                        Text("Max Tokens: \(maxTokens)")
+                        Text("Max Output Tokens: \(maxTokens)")
                             .font(.headline)
                         
                         Stepper("", value: $maxTokens, in: 1000...8192, step: 512)
                             .labelsHidden()
                         
-                        Text("Maximum number of tokens in the response")
+                        Text("Maximum tokens in response (Gemini has 1M token context)")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }

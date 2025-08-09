@@ -196,7 +196,8 @@ class FileImportManager: NSObject, ObservableObject {
     // MARK: - Core Data Integration
     
     private func createRecordingEntryForImportedFile(at fileURL: URL) async throws {
-        let recordingName = fileURL.deletingPathExtension().lastPathComponent
+        let originalName = fileURL.deletingPathExtension().lastPathComponent
+        let recordingName = AudioRecorderViewModel.generateImportedFileName(originalName: originalName)
         
         // Check if recording already exists
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()

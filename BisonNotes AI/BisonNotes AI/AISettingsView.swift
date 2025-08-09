@@ -756,14 +756,15 @@ private extension AISettingsView {
     
     var awsBedrockConfigurationSection: some View {
         // FIX: Logic moved outside the ViewBuilder closure.
-        let accessKeyId = UserDefaults.standard.string(forKey: "awsBedrockAccessKeyId") ?? ""
-        let secretAccessKey = UserDefaults.standard.string(forKey: "awsBedrockSecretAccessKey") ?? ""
         let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
         let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
         let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
         let modelName = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude35Haiku.rawValue
         let model = AWSBedrockModel(rawValue: modelName) ?? .claude35Haiku
         let region = UserDefaults.standard.string(forKey: "awsBedrockRegion") ?? "us-east-1"
+        
+        // Use unified credentials manager for configuration validation
+        let credentials = AWSCredentialsManager.shared.credentials
         
         // The return statement is now required because the property contains more than a single expression.
         return VStack(alignment: .leading, spacing: 16) {
@@ -802,7 +803,7 @@ private extension AISettingsView {
                             .foregroundColor(.secondary)
                         Spacer()
                         HStack(spacing: 4) {
-                            let isConfigured = isEnabled && (useProfile ? !profileName.isEmpty : (!accessKeyId.isEmpty && !secretAccessKey.isEmpty))
+                            let isConfigured = isEnabled && (useProfile ? !profileName.isEmpty : credentials.isValid)
                             Circle()
                                 .fill(isConfigured ? Color.green : Color.red)
                                 .frame(width: 8, height: 8)
@@ -840,7 +841,7 @@ private extension AISettingsView {
                         Text(useProfile ? "AWS Profile (\(profileName.isEmpty ? "Not Set" : profileName))" : "Access Keys")
                             .font(.body)
                             .fontWeight(.medium)
-                            .foregroundColor(useProfile ? (profileName.isEmpty ? .red : .green) : (!accessKeyId.isEmpty && !secretAccessKey.isEmpty ? .green : .red))
+                            .foregroundColor(useProfile ? (profileName.isEmpty ? .red : .green) : (credentials.isValid ? .green : .red))
                     }
                 }
             }

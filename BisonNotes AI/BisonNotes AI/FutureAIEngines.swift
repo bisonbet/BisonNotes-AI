@@ -761,21 +761,68 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     }
     
     private func processSingleChunk(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        print("🔄 LocalLLMEngine: Processing single chunk with Ollama using complete processing")
+        
+        do {
+            // Use the new single-call method for complete processing
+            let result = try await service.processComplete(from: text)
+            print("✅ LocalLLMEngine: Complete processing successful")
+            print("📊 LocalLLMEngine: Summary: \(result.summary.count) chars, Tasks: \(result.tasks.count), Reminders: \(result.reminders.count), Titles: \(result.titles.count)")
+            
+            return result
+            
+        } catch {
+            print("⚠️ LocalLLMEngine: Complete processing failed, falling back to individual calls: \(error)")
+            
+            // Fallback to individual calls if the complete processing fails
+            return try await processSingleChunkFallback(text, service: service)
+        }
+    }
+    
+    private func processSingleChunkFallback(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        print("🔄 LocalLLMEngine: Using fallback individual processing")
+        
         // Process requests sequentially to avoid overwhelming the Ollama server
         let summary = try await service.generateSummary(from: text)
+        print("✅ LocalLLMEngine: Summary generated successfully")
         
         // Small delay between requests to prevent overwhelming the server
         try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
         
-        let extraction = try await service.extractTasksAndReminders(from: text)
+        // Try to extract tasks and reminders, but don't fail if it doesn't work
+        var tasks: [TaskItem] = []
+        var reminders: [ReminderItem] = []
+        
+        do {
+            let extraction = try await service.extractTasksAndReminders(from: text)
+            tasks = extraction.tasks
+            reminders = extraction.reminders
+            print("✅ LocalLLMEngine: Tasks and reminders extracted successfully")
+        } catch {
+            print("⚠️ LocalLLMEngine: Failed to extract tasks/reminders, continuing with empty arrays: \(error)")
+            // Continue with empty arrays instead of failing
+        }
         
         // Small delay between requests to prevent overwhelming the server
         try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
         
-        let titles = try await service.extractTitles(from: text)
+        // Try to extract titles, but don't fail if it doesn't work
+        var titles: [TitleItem] = []
+        
+        do {
+            titles = try await service.extractTitles(from: text)
+            print("✅ LocalLLMEngine: Titles extracted successfully")
+        } catch {
+            print("⚠️ LocalLLMEngine: Failed to extract titles, continuing with empty array: \(error)")
+            // Continue with empty array instead of failing
+        }
+        
         let contentType = try await classifyContent(text)
         
-        return (summary, extraction.tasks, extraction.reminders, titles, contentType)
+        print("✅ LocalLLMEngine: Fallback processing completed")
+        print("📊 LocalLLMEngine: Summary: \(summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)")
+        
+        return (summary, tasks, reminders, titles, contentType)
     }
     
     private func processChunkedText(_ text: String, service: OllamaService, maxTokens: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
@@ -1004,6 +1051,68 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         return models.map { $0.name }
     }
     
+    // MARK: - Debug Methods
+    
+    func testCompleteProcessing() async throws -> String {
+        print("🧪 LocalLLMEngine: Testing complete processing with simple prompt")
+        
+        updateConfiguration()
+        
+        guard let service = ollamaService else {
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama service not configured")
+        }
+        
+        // Test connection first
+        let isConnected = await service.testConnection()
+        guard isConnected else {
+            throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server")
+        }
+        
+        // Simple test to see what Ollama returns
+        let testText = "I need to call John tomorrow and buy groceries. Don't forget the meeting at 3pm. We discussed the quarterly budget and decided to increase marketing spend."
+        
+        do {
+            let result = try await service.processComplete(from: testText)
+            let summary = "Successfully processed: Summary (\(result.summary.count) chars), \(result.tasks.count) tasks, \(result.reminders.count) reminders, \(result.titles.count) titles, content type: \(result.contentType.rawValue)"
+            print("✅ LocalLLMEngine: Complete processing test successful - \(summary)")
+            return summary
+        } catch {
+            let errorMessage = "Complete processing test failed: \(error.localizedDescription)"
+            print("❌ LocalLLMEngine: \(errorMessage)")
+            throw SummarizationError.aiServiceUnavailable(service: errorMessage)
+        }
+    }
+    
+    func testJSONParsing() async throws -> String {
+        print("🧪 LocalLLMEngine: Testing JSON parsing with simple prompt")
+        
+        updateConfiguration()
+        
+        guard let service = ollamaService else {
+            throw SummarizationError.aiServiceUnavailable(service: "Ollama service not configured")
+        }
+        
+        // Test connection first
+        let isConnected = await service.testConnection()
+        guard isConnected else {
+            throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server")
+        }
+        
+        // Simple test to see what Ollama returns
+        let testText = "I need to call John tomorrow and buy groceries. Don't forget the meeting at 3pm."
+        
+        do {
+            let result = try await service.extractTasksAndReminders(from: testText)
+            let summary = "Successfully parsed \(result.tasks.count) tasks and \(result.reminders.count) reminders"
+            print("✅ LocalLLMEngine: JSON parsing test successful - \(summary)")
+            return summary
+        } catch {
+            let errorMessage = "JSON parsing test failed: \(error.localizedDescription)"
+            print("❌ LocalLLMEngine: \(errorMessage)")
+            throw SummarizationError.aiServiceUnavailable(service: errorMessage)
+        }
+    }
+    
 
 }
 
@@ -1088,6 +1197,31 @@ class GoogleAIStudioEngine: SummarizationEngine {
             throw SummarizationError.aiServiceUnavailable(service: name)
         }
         
+        // Check if text needs chunking based on token count
+        let tokenCount = TokenManager.getTokenCount(text)
+        print("📊 GoogleAI: Text token count: \(tokenCount)")
+        
+        do {
+            // Use Google AI Studio's context window for chunking decision
+            if TokenManager.needsChunking(text, maxTokens: TokenManager.googleAIStudioContextWindow) {
+                print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+                return try await processChunkedText(text)
+            } else {
+                print("📝 Processing single chunk (\(tokenCount) tokens)")
+                return try await processSingleChunk(text)
+            }
+        } catch {
+            // If the server reports a context window issue, retry with chunked processing
+            let errorMessage = error.localizedDescription.lowercased()
+            if errorMessage.contains("context") || errorMessage.contains("token") {
+                print("⚠️ Context limit reached, falling back to chunked processing")
+                return try await processChunkedText(text)
+            }
+            throw error
+        }
+    }
+    
+    private func processSingleChunk(_ text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         // Create a comprehensive prompt for complete processing
         let prompt = createCompleteProcessingPrompt(text: text)
         
@@ -1103,6 +1237,90 @@ class GoogleAIStudioEngine: SummarizationEngine {
             reminders: components.reminders,
             titles: components.titles,
             contentType: components.contentType
+        )
+    }
+    
+    // MARK: - Chunked Processing
+    
+    private func processChunkedText(_ text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        let startTime = Date()
+        
+        print("🔄 GoogleAI: Starting chunked processing...")
+        
+        // Use Google AI Studio's context window for chunking
+        let chunks = TokenManager.chunkText(text, maxTokens: TokenManager.googleAIStudioContextWindow)
+        print("📊 GoogleAI: Split into \(chunks.count) chunks")
+        
+        var allTasks: [TaskItem] = []
+        var allReminders: [ReminderItem] = []
+        var allTitles: [TitleItem] = []
+        var summaries: [String] = []
+        
+        // Process each chunk
+        for (index, chunk) in chunks.enumerated() {
+            print("🔄 GoogleAI: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+            
+            do {
+                let chunkResult = try await processSingleChunk(chunk)
+                
+                summaries.append(chunkResult.summary)
+                allTasks.append(contentsOf: chunkResult.tasks)
+                allReminders.append(contentsOf: chunkResult.reminders)
+                allTitles.append(contentsOf: chunkResult.titles)
+                
+                // Add delay between chunks to respect rate limits
+                if index < chunks.count - 1 {
+                    try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                }
+            } catch {
+                print("❌ GoogleAI: Error processing chunk \(index + 1): \(error)")
+                // Continue with other chunks instead of failing completely
+            }
+        }
+        
+        // Combine all summaries into a final meta-summary
+        let combinedSummary = summaries.joined(separator: "\n\n")
+        let finalSummary: String
+        
+        if TokenManager.needsChunking(combinedSummary, maxTokens: TokenManager.googleAIStudioContextWindow) {
+            // If combined summary is still too long, use the first summary as base
+            finalSummary = summaries.first ?? "Summary not available"
+        } else {
+            // Generate a meta-summary from all chunk summaries
+            let metaPrompt = """
+            Please create a comprehensive summary by combining these section summaries:
+            
+            \(combinedSummary)
+            
+            Create a cohesive, well-structured summary using proper Markdown formatting.
+            """
+            
+            do {
+                finalSummary = try await service.generateContent(prompt: metaPrompt, useStructuredOutput: false)
+            } catch {
+                // Fallback to combined summary if meta-summary fails
+                finalSummary = combinedSummary
+            }
+        }
+        
+        // Deduplicate and limit results
+        let deduplicatedTasks = Array(Set(allTasks.map { $0.text })).prefix(15).map { TaskItem(text: $0, priority: .medium, confidence: 0.8) }
+        let deduplicatedReminders = Array(Set(allReminders.map { $0.text })).prefix(15).map { ReminderItem(text: $0, timeReference: ReminderItem.TimeReference(originalText: $0), urgency: .later, confidence: 0.8) }
+        let deduplicatedTitles = Array(Set(allTitles.map { $0.text })).prefix(5).map { TitleItem(text: $0, confidence: 0.8) }
+        
+        // Use the most common content type or default to general
+        let contentType: ContentType = .general
+        
+        let processingTime = Date().timeIntervalSince(startTime)
+        print("✅ GoogleAI: Chunked processing completed in \(processingTime)s")
+        print("📊 GoogleAI: Final results - Tasks: \(deduplicatedTasks.count), Reminders: \(deduplicatedReminders.count), Titles: \(deduplicatedTitles.count)")
+        
+        return (
+            summary: finalSummary,
+            tasks: deduplicatedTasks,
+            reminders: deduplicatedReminders,
+            titles: deduplicatedTitles,
+            contentType: contentType
         )
     }
     

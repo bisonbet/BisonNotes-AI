@@ -9,6 +9,7 @@ struct SummariesView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
+    @StateObject private var iCloudManager = iCloudStorageManager()
     @State private var recordings: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = []
     @State private var selectedRecording: RecordingEntry?
     @State private var isGeneratingSummary = false
@@ -18,6 +19,9 @@ struct SummariesView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var refreshTrigger = false
+    @State private var showingFirstTimeiCloudPrompt = false
+    
+    @AppStorage("hasSeeniCloudPrompt") private var hasSeeniCloudPrompt = false
 
 
     // MARK: - Body
@@ -33,6 +37,9 @@ struct SummariesView: View {
                     enhancedTranscriptionManager.updateTranscriptionEngine(selectedEngine)
                     // Refresh file relationships
                     enhancedFileManager.refreshAllRelationships()
+                    
+                    // Show first-time iCloud prompt if not seen before and there are summaries
+                    checkForFirstTimeiCloudPrompt()
                 }
                 .onReceive(appCoordinator.objectWillChange) { _ in
                     // Refresh the view when coordinator changes
@@ -112,6 +119,20 @@ struct SummariesView: View {
         } message: {
             Text(errorMessage)
         }
+        .alert("Enable iCloud Sync?", isPresented: $showingFirstTimeiCloudPrompt) {
+            Button("Not Now") {
+                hasSeeniCloudPrompt = true
+            }
+            Button("Enable iCloud Sync") {
+                hasSeeniCloudPrompt = true
+                iCloudManager.isEnabled = true
+                Task {
+                    await syncAllSummaries()
+                }
+            }
+        } message: {
+            Text("Sync your summaries to iCloud to access them across all your devices. You can change this setting later in Advanced Settings.")
+        }
 
     }
     
@@ -176,7 +197,7 @@ struct SummariesView: View {
                         .font(.headline)
                         .foregroundColor(.primary)
                     
-                    Text(recording.recordingDate ?? Date(), style: .date)
+                    Text(UserPreferences.shared.formatMediumDateTime(recording.recordingDate ?? Date()))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -312,6 +333,9 @@ struct SummariesView: View {
         }
         
         print("📊 Final result: \(recordings.count) recordings with transcripts out of \(recordingsWithData.count) total recordings")
+        
+        // Check if we should show the first-time iCloud prompt
+        checkForFirstTimeiCloudPrompt()
     }
     
     private func generateSummary(for recording: RecordingEntry) {
@@ -457,6 +481,35 @@ struct SummariesView: View {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    private func checkForFirstTimeiCloudPrompt() {
+        // Only show prompt if:
+        // 1. User hasn't seen it before
+        // 2. iCloud sync is not already enabled
+        // 3. There are recordings with summaries to sync
+        if !hasSeeniCloudPrompt && !iCloudManager.isEnabled {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                let recordingsWithSummaries = recordings.filter { $0.summary != nil }
+                if !recordingsWithSummaries.isEmpty {
+                    showingFirstTimeiCloudPrompt = true
+                }
+            }
+        }
+    }
+    
+    private func syncAllSummaries() async {
+        do {
+            // TODO: Implement iCloud sync with new Core Data system
+            let allSummaries: [EnhancedSummaryData] = [] // Placeholder
+            try await iCloudManager.performBidirectionalSync(localSummaries: allSummaries)
+        } catch {
+            print("❌ Sync error: \(error)")
+            await MainActor.run {
+                errorMessage = "iCloud sync failed: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
     }
     
 }

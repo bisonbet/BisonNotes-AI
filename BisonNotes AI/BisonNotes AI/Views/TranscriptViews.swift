@@ -164,7 +164,7 @@ struct TranscriptsView: View {
             Text(recordingData.recording.recordingName ?? "Unknown Recording")
                 .font(.headline)
                 .foregroundColor(.primary)
-            Text(recordingData.recording.recordingDate ?? Date(), style: .date)
+            Text(UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()))
                 .font(.caption)
                 .foregroundColor(.secondary)
             if let recordingURL = appCoordinator.getAbsoluteURL(for: recordingData.recording),
@@ -237,10 +237,8 @@ struct TranscriptsView: View {
         // Sort by date
         recordings = processedRecordings.sorted { $0.recording.recordingDate ?? Date() > $1.recording.recordingDate ?? Date() }
         
-        // Geocode locations for all recordings
-        for recording in recordings {
-            loadLocationAddress(for: recording.recording)
-        }
+        // Geocode locations for all recordings (with rate limiting)
+        loadLocationAddressesBatch(for: recordings.map { $0.recording })
     }
     
     func loadLocationDataForRecording(url: URL) -> LocationData? {
@@ -263,6 +261,20 @@ struct TranscriptsView: View {
         return locationData
     }
     
+    private func loadLocationAddressesBatch(for recordings: [RecordingEntry]) {
+        // Filter recordings that have location data and don't already have cached addresses
+        let recordingsNeedingGeocode = recordings.filter { recording in
+            guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
+                  let _ = appCoordinator.loadLocationData(for: recording) else { return false }
+            return locationAddresses[recordingURL] == nil
+        }
+        
+        // Process recordings one by one to respect rate limiting
+        for recording in recordingsNeedingGeocode {
+            loadLocationAddress(for: recording)
+        }
+    }
+    
     private func loadLocationAddress(for recording: RecordingEntry) {
         // Use async dispatch to avoid blocking main thread
         Task {
@@ -272,13 +284,18 @@ struct TranscriptsView: View {
                 return
             }
             
+            // Skip if we already have an address for this recording
+            if locationAddresses[recordingURL] != nil {
+                return
+            }
+            
             await MainActor.run {
                 let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
                 // Use a default location manager since AudioRecorderViewModel doesn't have one
                 let locationManager = LocationManager()
                 locationManager.reverseGeocodeLocation(location) { address in
                     if let address = address {
-                        locationAddresses[recordingURL] = address
+                        self.locationAddresses[recordingURL] = address
                     }
                 }
             }
@@ -286,7 +303,6 @@ struct TranscriptsView: View {
     }
     
     private func forceRefreshUI() {
-        print("🔄 TranscriptsView: Forcing UI refresh")
         DispatchQueue.main.async {
             self.refreshTrigger.toggle()
             self.loadRecordings()
@@ -316,8 +332,6 @@ struct TranscriptsView: View {
     }
     
     private func performEnhancedTranscription(for recording: RecordingEntry) {
-        print("🚀 Starting enhanced transcription for: \(recording.recordingName ?? "Unknown Recording")")
-        
         // Progress is now shown inline on the button, no modal needed
         
         Task {
@@ -979,7 +993,7 @@ struct TranscriptDetailView: View {
                                 .fontWeight(.bold)
                                 .foregroundColor(.primary)
                             
-                            Text(recording.recordingDate ?? Date(), style: .date)
+                            Text(UserPreferences.shared.formatMediumDateTime(recording.recordingDate ?? Date()))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             

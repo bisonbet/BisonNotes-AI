@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Journal - Complete User Guide</title>
+    <style>
+        /* WordPress-friendly styles */
+        .audio-journal-guide {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .audio-journal-guide h1 {
+            color: #2c3e50;
+            font-size: 2.5em;
+            margin-bottom: 0.5em;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        
+        .audio-journal-guide h2 {
+            color: #34495e;
+            font-size: 1.8em;
+            margin-top: 2em;
+            margin-bottom: 1em;
+            padding: 10px 0;
+            background: linear-gradient(90deg, #3498db, #2980b9);
+            color: white;
+            padding-left: 15px;
+            border-radius: 5px;
+        }
+        
+        .audio-journal-guide h3 {
+            color: #2c3e50;
+            font-size: 1.4em;
+            margin-top: 1.5em;
+            margin-bottom: 0.8em;
+            border-left: 4px solid #e74c3c;
+            padding-left: 15px;
+        }
+        
+        .audio-journal-guide h4 {
+            color: #34495e;
+            font-size: 1.2em;
+            margin-top: 1.2em;
+            margin-bottom: 0.6em;
+            font-weight: 600;
+        }
+        
+        .audio-journal-guide p {
+            margin-bottom: 1em;
+        }
+        
+        .audio-journal-guide ul, .audio-journal-guide ol {
+            margin-bottom: 1.5em;
+            padding-left: 2em;
+        }
+        
+        .audio-journal-guide li {
+            margin-bottom: 0.5em;
+        }
+        
+        .audio-journal-guide strong {
+            color: #2c3e50;
+            font-weight: 600;
+        }
+        
+        .audio-journal-guide em {
+            color: #7f8c8d;
+        }
+        
+        .audio-journal-guide code {
+            background-color: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            color: #e74c3c;
+        }
+        
+        .audio-journal-guide pre {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 1em 0;
+        }
+        
+        .audio-journal-guide pre code {
+            background: none;
+            color: inherit;
+            padding: 0;
+        }
+        
+        .audio-journal-guide blockquote {
+            border-left: 4px solid #3498db;
+            padding-left: 20px;
+            margin: 1.5em 0;
+            font-style: italic;
+            color: #7f8c8d;
+        }
+        
+        .audio-journal-guide .feature-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 1.5em 0;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .audio-journal-guide .info-box {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 1.5em 0;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .audio-journal-guide .warning-box {
+            background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+            color: #8b4513;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 1.5em 0;
+            border-left: 5px solid #ff6b35;
+        }
+        
+        .audio-journal-guide .success-box {
+            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+            color: #2c5530;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 1.5em 0;
+            border-left: 5px solid #27ae60;
+        }
+        
+        .audio-journal-guide .step-list {
+            counter-reset: step-counter;
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .audio-journal-guide .step-list li {
+            counter-increment: step-counter;
+            margin-bottom: 1em;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+            position: relative;
+        }
+        
+        .audio-journal-guide .step-list li::before {
+            content: counter(step-counter);
+            background: #3498db;
+            color: white;
+            width: 25px;
+            height: 25px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 10px;
+            font-size: 0.9em;
+        }
+        
+        .audio-journal-guide .engine-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 2em 0;
+        }
+        
+        .audio-journal-guide .engine-card {
+            background: white;
+            border: 2px solid #e1e8ed;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s ease;
+        }
+        
+        .audio-journal-guide .engine-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        
+        .audio-journal-guide .engine-card h4 {
+            color: #2c3e50;
+            margin-top: 0;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        
+        .audio-journal-guide .engine-type {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .audio-journal-guide .type-local {
+            background: #d5f4e6;
+            color: #27ae60;
+        }
+        
+        .audio-journal-guide .type-cloud {
+            background: #d6eaf8;
+            color: #2980b9;
+        }
+        
+        .audio-journal-guide .type-free {
+            background: #fdebd0;
+            color: #f39c12;
+        }
+        
+        .audio-journal-guide .type-paid {
+            background: #fadbd8;
+            color: #e74c3c;
+        }
+        
+        .audio-journal-guide table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5em 0;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .audio-journal-guide th {
+            background: #3498db;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        .audio-journal-guide td {
+            padding: 12px;
+            border-bottom: 1px solid #e1e8ed;
+        }
+        
+        .audio-journal-guide tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .audio-journal-guide .toc {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 2em 0;
+            border-left: 4px solid #3498db;
+        }
+        
+        .audio-journal-guide .toc h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        
+        .audio-journal-guide .toc ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .audio-journal-guide .toc li {
+            margin-bottom: 0.5em;
+        }
+        
+        .audio-journal-guide .toc a {
+            color: #3498db;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .audio-journal-guide .toc a:hover {
+            text-decoration: underline;
+        }
+        
+        @media (max-width: 768px) {
+            .audio-journal-guide {
+                padding: 15px;
+            }
+            
+            .audio-journal-guide h1 {
+                font-size: 2em;
+            }
+            
+            .audio-journal-guide h2 {
+                font-size: 1.5em;
+            }
+            
+            .audio-journal-guide .engine-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="audio-journal-guide">
+        <h1>🎙️ Audio Journal - Complete User Guide</h1>
+        
+        <p>Welcome to Audio Journal! This comprehensive guide will walk you through every aspect of using the app, from basic recording to advanced AI configuration.</p>
+        
+        <div class="toc">
+            <h3>📋 Table of Contents</h3>
+            <ul>
+                <li><a href="#getting-started">📱 Getting Started</a></li>
+                <li><a href="#recording-features">🎙️ Recording Features</a></li>
+                <li><a href="#ai-engine-configuration">🤖 AI Engine Configuration</a></li>
+                <li><a href="#transcription-configuration">📝 Transcription Configuration</a></li>
+                <li><a href="#working-with-summaries">📊 Working with Summaries</a></li>
+                <li><a href="#audio-playback">🎵 Audio Playback</a></li>
+                <li><a href="#settings-configuration">⚙️ Settings & Configuration</a></li>
+                <li><a href="#troubleshooting">🔧 Troubleshooting</a></li>
+                <li><a href="#advanced-features">📱 Advanced Features</a></li>
+                <li><a href="#best-practices">🎯 Best Practices</a></li>
+                <li><a href="#external-resources">🔗 External Resources</a></li>
+            </ul>
+        </div>
+
+        <h2 id="getting-started">📱 Getting Started</h2>
+
+        <h3>First Launch</h3>
+        <ol class="step-list">
+            <li><strong>Install the App</strong>: Download Audio Journal from the App Store</li>
+            <li><strong>Grant Permissions</strong>: When prompted, allow:
+                <ul>
+                    <li><strong>Microphone Access</strong>: Required for recording audio</li>
+                    <li><strong>Location Services</strong>: Optional but recommended for location tracking</li>
+                </ul>
+            </li>
+            <li><strong>Automatic Migration</strong>: On first launch, the app will automatically scan for any existing audio files and migrate them into the database</li>
+        </ol>
+
+        <h3>Basic Recording</h3>
+        <ol class="step-list">
+            <li><strong>Start Recording</strong>: Tap the large microphone button on the main screen</li>
+            <li><strong>Recording Status</strong>: You'll see a red recording indicator and timer</li>
+            <li><strong>Stop Recording</strong>: Tap the stop button to end recording</li>
+            <li><strong>Background Recording</strong>: The app continues recording even when minimized</li>
+        </ol>
+
+        <h2 id="recording-features">🎙️ Recording Features</h2>
+
+        <h3>Audio Quality Settings</h3>
+        <ul>
+            <li><strong>Low Quality (64kbps)</strong>: Small file size, good for voice memos</li>
+            <li><strong>Medium Quality (128kbps)</strong>: Balanced quality and file size</li>
+            <li><strong>High Quality (256kbps)</strong>: Best audio quality, larger files</li>
+        </ul>
+
+        <h3>Location Tracking</h3>
+        <ul>
+            <li><strong>Automatic</strong>: GPS location is captured with each recording</li>
+            <li><strong>Manual</strong>: Add or edit location later in summary view</li>
+            <li><strong>Privacy</strong>: Location tracking can be disabled in settings</li>
+        </ul>
+
+        <h3>Import Existing Audio</h3>
+        <ol class="step-list">
+            <li>Tap "Import Audio Files" on the main screen</li>
+            <li>Select audio files from your device</li>
+            <li>Files are automatically added to your recordings library</li>
+        </ol>
+
+        <h2 id="ai-engine-configuration">🤖 AI Engine Configuration</h2>
+
+        <div class="info-box">
+            <h3>Overview</h3>
+            <p>Audio Journal supports multiple AI engines for transcription and summarization. Each has different capabilities and requirements.</p>
+        </div>
+
+        <div class="engine-grid">
+            <div class="engine-card">
+                <h4>1. Enhanced Apple Intelligence</h4>
+                <span class="engine-type type-local">On-device</span>
+                <span class="engine-type type-free">Free</span>
+                <p><strong>Type</strong>: On-device processing<br>
+                <strong>Cost</strong>: Free<br>
+                <strong>Privacy</strong>: 100% local<br>
+                <strong>Internet</strong>: Not required</p>
+                <p><strong>Setup</strong>: No configuration needed - works out of the box</p>
+                <p><strong>Best for</strong>: Privacy-conscious users, offline use, basic transcription and summarization</p>
+            </div>
+
+            <div class="engine-card">
+                <h4>2. OpenAI Integration</h4>
+                <span class="engine-type type-cloud">Cloud-based</span>
+                <span class="engine-type type-paid">Pay-per-use</span>
+                <p><strong>Type</strong>: Cloud-based AI<br>
+                <strong>Cost</strong>: Pay-per-use (very affordable)<br>
+                <strong>Privacy</strong>: Data sent to OpenAI<br>
+                <strong>Internet</strong>: Required</p>
+                <p><strong>Best for</strong>: High-quality results, advanced features</p>
+            </div>
+
+            <div class="engine-card">
+                <h4>3. Google AI Studio</h4>
+                <span class="engine-type type-cloud">Cloud-based</span>
+                <span class="engine-type type-free">Free tier</span>
+                <p><strong>Type</strong>: Cloud-based AI<br>
+                <strong>Cost</strong>: Free tier available, then pay-per-use<br>
+                <strong>Privacy</strong>: Data sent to Google<br>
+                <strong>Internet</strong>: Required</p>
+                <p><strong>Best for</strong>: Balanced performance and cost</p>
+            </div>
+
+            <div class="engine-card">
+                <h4>4. Whisper Integration</h4>
+                <span class="engine-type type-local">Local server</span>
+                <span class="engine-type type-free">Free</span>
+                <p><strong>Type</strong>: Local AI processing<br>
+                <strong>Cost</strong>: Free (requires your own server)<br>
+                <strong>Privacy</strong>: 100% local<br>
+                <strong>Internet</strong>: Not required for processing</p>
+                <p><strong>Best for</strong>: Privacy, custom setup</p>
+            </div>
+
+            <div class="engine-card">
+                <h4>5. Wyoming Protocol</h4>
+                <span class="engine-type type-local">Local streaming</span>
+                <span class="engine-type type-free">Free</span>
+                <p><strong>Type</strong>: Local streaming transcription<br>
+                <strong>Cost</strong>: Free (requires your own server)<br>
+                <strong>Privacy</strong>: 100% local<br>
+                <strong>Internet</strong>: Not required for processing</p>
+                <p><strong>Best for</strong>: Real-time transcription</p>
+            </div>
+
+            <div class="engine-card">
+                <h4>6. Ollama Integration</h4>
+                <span class="engine-type type-local">Local AI</span>
+                <span class="engine-type type-free">Free</span>
+                <p><strong>Type</strong>: Local AI processing<br>
+                <strong>Cost</strong>: Free<br>
+                <strong>Privacy</strong>: 100% local<br>
+                <strong>Internet</strong>: Not required for processing</p>
+                <p><strong>Best for</strong>: Privacy, customizable models</p>
+            </div>
+
+            <div class="engine-card">
+                <h4>7. AWS Bedrock</h4>
+                <span class="engine-type type-cloud">Cloud-based</span>
+                <span class="engine-type type-paid">Pay-per-use</span>
+                <p><strong>Type</strong>: Cloud-based AI<br>
+                <strong>Cost</strong>: Pay-per-use<br>
+                <strong>Privacy</strong>: Data sent to AWS<br>
+                <strong>Internet</strong>: Required</p>
+                <p><strong>Best for</strong>: Enterprise features</p>
+            </div>
+
+            <div class="engine-card">
+                <h4>8. AWS Transcribe</h4>
+                <span class="engine-type type-cloud">Cloud-based</span>
+                <span class="engine-type type-paid">Pay-per-use</span>
+                <p><strong>Type</strong>: Cloud-based transcription<br>
+                <strong>Cost</strong>: Pay-per-use<br>
+                <strong>Privacy</strong>: Data sent to AWS<br>
+                <strong>Internet</strong>: Required</p>
+                <p><strong>Best for</strong>: Large file processing</p>
+            </div>
+        </div>
+
+        <h3>Setup Instructions for Each Engine</h3>
+
+        <h4>OpenAI Integration</h4>
+        <ol class="step-list">
+            <li><strong>Get API Key</strong>: Visit <a href="https://platform.openai.com" target="_blank">platform.openai.com</a></li>
+            <li><strong>Create Account</strong>: Sign up for an OpenAI account</li>
+            <li><strong>Generate API Key</strong>: Go to API Keys section and create a new key</li>
+            <li><strong>Configure in App</strong>: 
+                <ul>
+                    <li>Go to Settings → AI Settings → OpenAI</li>
+                    <li>Enter your API key</li>
+                    <li>Select your preferred model</li>
+                    <li>Test the connection</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h4>Available OpenAI Models</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Type</th>
+                    <th>Best For</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>GPT-4o</strong></td>
+                    <td>Summarization</td>
+                    <td>Most powerful, best quality</td>
+                </tr>
+                <tr>
+                    <td><strong>GPT-4o Mini</strong></td>
+                    <td>Summarization</td>
+                    <td>Fast and economical</td>
+                </tr>
+                <tr>
+                    <td><strong>GPT-4o Nano</strong></td>
+                    <td>Summarization</td>
+                    <td>Fastest and most economical</td>
+                </tr>
+                <tr>
+                    <td><strong>GPT-4o Transcribe</strong></td>
+                    <td>Transcription</td>
+                    <td>Best transcription quality</td>
+                </tr>
+                <tr>
+                    <td><strong>GPT-4o Mini Transcribe</strong></td>
+                    <td>Transcription</td>
+                    <td>Fast transcription</td>
+                </tr>
+                <tr>
+                    <td><strong>Whisper-1</strong></td>
+                    <td>Transcription</td>
+                    <td>Legacy high-quality transcription</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4>Google AI Studio Integration</h4>
+        <ol class="step-list">
+            <li><strong>Get API Key</strong>: Visit <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a></li>
+            <li><strong>Create Account</strong>: Sign up for Google AI Studio</li>
+            <li><strong>Generate API Key</strong>: Create a new API key</li>
+            <li><strong>Configure in App</strong>:
+                <ul>
+                    <li>Go to Settings → AI Settings → Google AI Studio</li>
+                    <li>Enter your API key</li>
+                    <li>Select model (Gemini 2.5 Flash or Flash Lite)</li>
+                    <li>Test the connection</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h4>Whisper Integration (Local Server)</h4>
+        <ol class="step-list">
+            <li><strong>Install Whisper Server</strong>: 
+                <pre><code># Using Docker (recommended)
+docker run -d -p 9000:9000 \
+  -e ASR_MODEL=base \
+  -e ASR_ENGINE=openai_whisper \
+  onerahmet/openai-whisper-asr-webservice:latest</code></pre>
+            </li>
+            <li><strong>Configure in App</strong>:
+                <ul>
+                    <li>Go to Settings → Transcription Settings → Whisper</li>
+                    <li>Set server URL (e.g., <code>http://localhost</code> or <code>http://192.168.1.100</code>)</li>
+                    <li>Set port (default: 9000)</li>
+                    <li>Select model size (tiny, base, small, medium, large-v3)</li>
+                    <li>Test the connection</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h4>Wyoming Protocol Integration</h4>
+        <ol class="step-list">
+            <li><strong>Install Wyoming Server</strong>:
+                <pre><code># Using Docker
+docker run -d -p 10300:10300 \
+  --name wyoming-whisper \
+  rhasspy/wyoming-whisper:latest</code></pre>
+            </li>
+            <li><strong>Configure in App</strong>:
+                <ul>
+                    <li>Go to Settings → Transcription Settings</li>
+                    <li>Select "Whisper (Wyoming Protocol)"</li>
+                    <li>Set server URL and port (default: 10300)</li>
+                    <li>Test the connection</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h4>Ollama Integration</h4>
+        <ol class="step-list">
+            <li><strong>Install Ollama</strong>: Visit <a href="https://ollama.com" target="_blank">ollama.com</a></li>
+            <li><strong>Download Models</strong>:
+                <pre><code>ollama pull llama2
+ollama pull mistral</code></pre>
+            </li>
+            <li><strong>Configure in App</strong>:
+                <ul>
+                    <li>Go to Settings → AI Settings → Ollama</li>
+                    <li>Set server URL (default: <code>http://localhost</code>)</li>
+                    <li>Set port (default: 11434)</li>
+                    <li>Select your preferred model</li>
+                    <li>Test the connection</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h4>AWS Bedrock Integration</h4>
+        <ol class="step-list">
+            <li><strong>AWS Account</strong>: Create an AWS account</li>
+            <li><strong>Enable Bedrock</strong>: Enable AWS Bedrock service</li>
+            <li><strong>Create IAM User</strong>: Create user with Bedrock permissions</li>
+            <li><strong>Get Credentials</strong>: Generate access keys</li>
+            <li><strong>Configure in App</strong>:
+                <ul>
+                    <li>Go to Settings → AI Settings → AWS Bedrock</li>
+                    <li>Enter AWS credentials</li>
+                    <li>Select region</li>
+                    <li>Choose foundation model</li>
+                    <li>Test the connection</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h4>AWS Transcribe Integration</h4>
+        <ol class="step-list">
+            <li><strong>AWS Account</strong>: Create an AWS account</li>
+            <li><strong>Enable Transcribe</strong>: Enable AWS Transcribe service</li>
+            <li><strong>Create IAM User</strong>: Create user with Transcribe permissions</li>
+            <li><strong>Get Credentials</strong>: Generate access keys</li>
+            <li><strong>Configure in App</strong>:
+                <ul>
+                    <li>Go to Settings → Transcription Settings → AWS Transcribe</li>
+                    <li>Enter AWS credentials</li>
+                    <li>Select region</li>
+                    <li>Choose language</li>
+                    <li>Test the connection</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h2 id="transcription-configuration">📝 Transcription Configuration</h2>
+
+        <h3>Engine Selection</h3>
+        <ol class="step-list">
+            <li>Go to Settings → Transcription Settings</li>
+            <li>Select your preferred transcription engine</li>
+            <li>Configure the selected engine (if required)</li>
+            <li>Test the connection</li>
+        </ol>
+
+        <h3>Available Engines</h3>
+        <ul>
+            <li><strong>Apple Intelligence</strong>: On-device, no setup required</li>
+            <li><strong>OpenAI</strong>: Cloud-based, requires API key</li>
+            <li><strong>Whisper (Local)</strong>: Local server, requires setup</li>
+            <li><strong>Whisper (Wyoming)</strong>: Local streaming, requires setup</li>
+            <li><strong>AWS Transcribe</strong>: Cloud-based, requires AWS account</li>
+        </ul>
+
+        <h3>Large File Processing</h3>
+        <ul>
+            <li><strong>Automatic Chunking</strong>: Files over 5 minutes are automatically split</li>
+            <li><strong>Progress Tracking</strong>: Real-time progress updates</li>
+            <li><strong>Background Processing</strong>: Continues when app is minimized</li>
+            <li><strong>Timeout Settings</strong>: Configurable processing time limits</li>
+        </ul>
+
+        <h2 id="working-with-summaries">📊 Working with Summaries</h2>
+
+        <h3>Viewing Summaries</h3>
+        <ol class="step-list">
+            <li>Tap the "Summaries" tab</li>
+            <li>Browse your recordings with AI-generated summaries</li>
+            <li>Tap any summary to view details</li>
+        </ol>
+
+        <h3>Summary Features</h3>
+        <ul>
+            <li><strong>Expandable Sections</strong>: Tap to expand/collapse sections</li>
+            <li><strong>Task Extraction</strong>: AI-identified actionable items</li>
+            <li><strong>Reminder Detection</strong>: Time-sensitive reminders</li>
+            <li><strong>Priority Indicators</strong>: Color-coded task priorities</li>
+            <li><strong>Location Maps</strong>: Interactive maps showing recording location</li>
+        </ul>
+
+        <h3>Editing Recording Metadata</h3>
+
+        <h4>Changing Recording Title</h4>
+        <ol class="step-list">
+            <li>Open a summary</li>
+            <li>Scroll to "Titles" section</li>
+            <li>Tap "Edit" next to any title</li>
+            <li>Enter new title or select from AI-generated alternatives</li>
+            <li>Tap "Use This Title"</li>
+        </ol>
+
+        <h4>Setting Custom Date & Time</h4>
+        <ol class="step-list">
+            <li>Open a summary</li>
+            <li>Scroll to "Recording Date & Time" section</li>
+            <li>Tap "Set Custom Date & Time"</li>
+            <li>Use date and time pickers</li>
+            <li>Tap "Save"</li>
+        </ol>
+
+        <h4>Adding/Editing Location</h4>
+        <ol class="step-list">
+            <li>Open a summary</li>
+            <li>In the location section, tap "Add Location" or "Edit Location"</li>
+            <li>Choose from:
+                <ul>
+                    <li><strong>Current Location</strong>: Use device GPS</li>
+                    <li><strong>Map Selection</strong>: Pick location on map</li>
+                    <li><strong>Manual Entry</strong>: Enter coordinates manually</li>
+                </ul>
+            </li>
+            <li>Tap "Save"</li>
+        </ol>
+
+        <h2 id="audio-playback">🎵 Audio Playback</h2>
+
+        <h3>Basic Playback</h3>
+        <ol class="step-list">
+            <li>Go to "Recordings" tab</li>
+            <li>Tap any recording to play</li>
+            <li>Use playback controls:
+                <ul>
+                    <li><strong>Play/Pause</strong>: Center button</li>
+                    <li><strong>Skip 15s</strong>: Side buttons</li>
+                    <li><strong>Scrub</strong>: Drag progress bar</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h3>Advanced Playback</h3>
+        <ul>
+            <li><strong>Seek Control</strong>: Drag the scrubber for precise positioning</li>
+            <li><strong>Background Playback</strong>: Audio continues when app is minimized</li>
+            <li><strong>Audio Session Management</strong>: Handles interruptions gracefully</li>
+        </ul>
+
+        <h2 id="settings-configuration">⚙️ Settings & Configuration</h2>
+
+        <h3>Audio Settings</h3>
+        <ul>
+            <li><strong>Quality</strong>: Low (64kbps), Medium (128kbps), High (256kbps)</li>
+            <li><strong>Input Selection</strong>: Built-in mic, Bluetooth, USB devices</li>
+            <li><strong>Mixed Audio</strong>: Record without interrupting system audio</li>
+            <li><strong>Background Recording</strong>: Continue recording when app is minimized</li>
+        </ul>
+
+        <h3>AI Settings</h3>
+        <ul>
+            <li><strong>Engine Selection</strong>: Choose your preferred AI engine</li>
+            <li><strong>Model Configuration</strong>: Adjust settings for selected engine</li>
+            <li><strong>Connection Testing</strong>: Verify API connectivity</li>
+            <li><strong>Batch Regeneration</strong>: Update all summaries with new engine</li>
+        </ul>
+
+        <h3>Background Processing</h3>
+        <ul>
+            <li><strong>Job Management</strong>: View active and completed jobs</li>
+            <li><strong>Progress Tracking</strong>: Monitor long-running operations</li>
+            <li><strong>Error Recovery</strong>: Automatic retry and error handling</li>
+            <li><strong>Performance Monitoring</strong>: Real-time metrics</li>
+        </ul>
+
+        <h3>Data Management</h3>
+        <ul>
+            <li><strong>Migration Tools</strong>: Import legacy data</li>
+            <li><strong>Database Maintenance</strong>: Clear and repair data</li>
+            <li><strong>File Relationships</strong>: Manage audio, transcript, and summary files</li>
+            <li><strong>Debug Tools</strong>: Advanced troubleshooting options</li>
+        </ul>
+
+        <h2 id="troubleshooting">🔧 Troubleshooting</h2>
+
+        <h3>Common Issues</h3>
+
+        <h4>Recording Problems</h4>
+        <ul>
+            <li><strong>No Audio</strong>: Check microphone permissions</li>
+            <li><strong>Poor Quality</strong>: Adjust audio quality settings</li>
+            <li><strong>Background Recording</strong>: Enable in settings</li>
+        </ul>
+
+        <h4>AI Engine Issues</h4>
+        <ul>
+            <li><strong>Connection Failed</strong>: Check internet and API keys</li>
+            <li><strong>Timeout Errors</strong>: Increase timeout settings</li>
+            <li><strong>Authentication Errors</strong>: Verify API credentials</li>
+        </ul>
+
+        <h4>Transcription Problems</h4>
+        <ul>
+            <li><strong>No Transcription</strong>: Check engine configuration</li>
+            <li><strong>Poor Quality</strong>: Try different engine or model</li>
+            <li><strong>Large File Issues</strong>: Enable chunking for files over 5 minutes</li>
+        </ul>
+
+        <h4>Data Issues</h4>
+        <ul>
+            <li><strong>Missing Recordings</strong>: Use Data Migration tools</li>
+            <li><strong>Corrupted Data</strong>: Clear and re-import data</li>
+            <li><strong>Sync Problems</strong>: Check iCloud settings</li>
+        </ul>
+
+        <h3>Performance Optimization</h3>
+        <ul>
+            <li><strong>Battery Life</strong>: Use local engines for offline processing</li>
+            <li><strong>Memory Usage</strong>: Close other apps during large file processing</li>
+            <li><strong>Storage</strong>: Regularly clean up old recordings</li>
+            <li><strong>Network</strong>: Use local engines to reduce data usage</li>
+        </ul>
+
+        <h2 id="advanced-features">📱 Advanced Features</h2>
+
+        <h3>Background Processing</h3>
+        <ul>
+            <li><strong>Job Queue</strong>: Multiple operations run in background</li>
+            <li><strong>Progress Tracking</strong>: Real-time updates for long operations</li>
+            <li><strong>Error Recovery</strong>: Automatic retry for failed operations</li>
+            <li><strong>Stale Job Cleanup</strong>: Automatic cleanup of abandoned jobs</li>
+        </ul>
+
+        <h3>File Management</h3>
+        <ul>
+            <li><strong>Import/Export</strong>: Support for various audio formats</li>
+            <li><strong>File Relationships</strong>: Maintains connections between audio, transcripts, and summaries</li>
+            <li><strong>Orphaned File Detection</strong>: Identifies and manages disconnected files</li>
+            <li><strong>Selective Deletion</strong>: Choose what to keep when deleting recordings</li>
+        </ul>
+
+        <h3>Location Intelligence</h3>
+        <ul>
+            <li><strong>GPS Integration</strong>: Automatic location capture</li>
+            <li><strong>Reverse Geocoding</strong>: Converts coordinates to addresses</li>
+            <li><strong>Interactive Maps</strong>: View recording locations</li>
+            <li><strong>Manual Location</strong>: Add locations after recording</li>
+        </ul>
+
+        <h3>Data Migration</h3>
+        <ul>
+            <li><strong>Legacy Import</strong>: Migrate from old file-based storage</li>
+            <li><strong>Data Integrity</strong>: Validate and repair data relationships</li>
+            <li><strong>Batch Operations</strong>: Process multiple files at once</li>
+            <li><strong>Progress Tracking</strong>: Monitor migration progress</li>
+        </ul>
+
+        <h2 id="best-practices">🎯 Best Practices</h2>
+
+        <h3>Recording</h3>
+        <ul>
+            <li><strong>Environment</strong>: Record in quiet environments for best quality</li>
+            <li><strong>Distance</strong>: Keep microphone 6-12 inches from mouth</li>
+            <li><strong>Duration</strong>: Break long recordings into segments</li>
+            <li><strong>Background</strong>: Minimize background noise</li>
+        </ul>
+
+        <h3>AI Configuration</h3>
+        <ul>
+            <li><strong>Privacy</strong>: Use local engines for sensitive content</li>
+            <li><strong>Cost</strong>: Start with free engines, upgrade as needed</li>
+            <li><strong>Quality</strong>: Experiment with different models for best results</li>
+            <li><strong>Reliability</strong>: Have backup engines configured</li>
+        </ul>
+
+        <h3>Data Management</h3>
+        <ul>
+            <li><strong>Regular Backups</strong>: Export important recordings</li>
+            <li><strong>Cleanup</strong>: Remove old recordings periodically</li>
+            <li><strong>Organization</strong>: Use descriptive titles for easy finding</li>
+            <li><strong>Metadata</strong>: Add location and custom dates for context</li>
+        </ul>
+
+        <h3>Performance</h3>
+        <ul>
+            <li><strong>Battery</strong>: Use local engines when battery is low</li>
+            <li><strong>Storage</strong>: Monitor available space</li>
+            <li><strong>Network</strong>: Use local engines when internet is slow</li>
+            <li><strong>Memory</strong>: Close other apps during processing</li>
+        </ul>
+
+        <h2 id="external-resources">🔗 External Resources</h2>
+
+        <h3>AI Service Documentation</h3>
+        <ul>
+            <li><strong>OpenAI</strong>: <a href="https://platform.openai.com/docs" target="_blank">platform.openai.com/docs</a></li>
+            <li><strong>Google AI</strong>: <a href="https://ai.google.dev" target="_blank">ai.google.dev</a></li>
+            <li><strong>AWS Bedrock</strong>: <a href="https://docs.aws.amazon.com/bedrock" target="_blank">docs.aws.amazon.com/bedrock</a></li>
+            <li><strong>AWS Transcribe</strong>: <a href="https://docs.aws.amazon.com/transcribe" target="_blank">docs.aws.amazon.com/transcribe</a></li>
+        </ul>
+
+        <h3>Local Server Setup</h3>
+        <ul>
+            <li><strong>Whisper ASR</strong>: <a href="https://github.com/ahmetoner/whisper-asr-webservice" target="_blank">github.com/ahmetoner/whisper-asr-webservice</a></li>
+            <li><strong>Wyoming Protocol</strong>: <a href="https://github.com/rhasspy/wyoming" target="_blank">github.com/rhasspy/wyoming</a></li>
+            <li><strong>Ollama</strong>: <a href="https://ollama.com" target="_blank">ollama.com</a></li>
+        </ul>
+
+        <h3>Support</h3>
+        <ul>
+            <li><strong>GitHub Issues</strong>: Report bugs and request features</li>
+            <li><strong>Documentation</strong>: Check the README for technical details</li>
+            <li><strong>Community</strong>: Join discussions and share tips</li>
+        </ul>
+
+        <div class="success-box">
+            <h3>🎯 Ready to Get Started?</h3>
+            <p><strong>Audio Journal</strong> - Transform your spoken words into actionable intelligence with advanced AI processing and comprehensive data management.</p>
+            <p>Download the app and start recording your first audio journal today!</p>
+        </div>
+
+        <hr style="margin: 3em 0; border: none; border-top: 2px solid #3498db;">
+
+        <p style="text-align: center; color: #7f8c8d; font-size: 0.9em;">
+            <em>This documentation is regularly updated. For the latest information, check the app's built-in help or visit our support resources.</em>
+        </p>
+    </div>
+</body>
+</html>

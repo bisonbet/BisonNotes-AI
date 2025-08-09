@@ -197,21 +197,10 @@ class WyomingTCPClient: ObservableObject {
         
         let jsonString = try message.toJSONString()
         
-        // Comment out individual message logging for audio chunks to reduce log volume
+        // Only log non-audio chunk messages
         if message.type != .audioChunk {
-            print("📤 Sending Wyoming TCP message: \(message.type)")
-            
-            // Truncate JSON payload logging to avoid massive logs
-            if jsonString.count > 200 {
-                let truncated = String(jsonString.prefix(200)) + "... (\(jsonString.count) chars total)"
-                print("📤 JSON payload: \(truncated)")
-            } else {
-                print("📤 JSON payload: \(jsonString)")
-            }
+            print("📤 \(message.type)")
         }
-        // Commented out for audio chunks:
-        // print("📤 Sending Wyoming TCP message: \(message.type)")
-        // print("📤 JSON payload: \(truncated or full JSON)")
         
         
         // Wyoming protocol uses JSONL (JSON Lines) - each message on a separate line
@@ -243,8 +232,6 @@ class WyomingTCPClient: ObservableObject {
                     }
                 })
             }
-        } else {
-            print("✅ Wyoming TCP message sent successfully")
         }
     }
     
@@ -275,10 +262,9 @@ class WyomingTCPClient: ObservableObject {
         var consecutiveErrors = 0
         let maxConsecutiveErrors = 5
         
-        print("🔄 Starting to send \(totalChunks) chunks to Wyoming server...")
+        print("🔄 Sending \(totalChunks) audio chunks...")
         
         for (index, chunk) in audioDataChunks.enumerated() {
-            print("📤 Sending chunk \(index + 1)/\(totalChunks) (\(chunk.count) bytes)")
             var chunkSent = false
             var retryCount = 0
             let maxRetries = 3
@@ -290,7 +276,6 @@ class WyomingTCPClient: ObservableObject {
                         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                             connection.send(content: chunk, completion: .contentProcessed { error in
                                 if let error = error {
-                                    print("❌ Wyoming chunk \(index + 1) send error: \(error)")
                                     continuation.resume(throwing: error)
                                 } else {
                                     continuation.resume()
@@ -302,16 +287,13 @@ class WyomingTCPClient: ObservableObject {
                     sentChunks += 1
                     chunkSent = true
                     consecutiveErrors = 0 // Reset error counter on success
-                    print("✅ Chunk \(index + 1) sent successfully")
                     
                 } catch {
                     retryCount += 1
                     consecutiveErrors += 1
                     
-                    print("⚠️ Wyoming chunk \(index + 1) send failed (attempt \(retryCount)/\(maxRetries)): \(error)")
-                    
                     if consecutiveErrors >= maxConsecutiveErrors {
-                        print("❌ Too many consecutive Wyoming streaming errors (\(consecutiveErrors)), aborting")
+                        print("❌ Too many consecutive errors (\(consecutiveErrors)), aborting")
                         throw WyomingError.serverError("Network streaming failed after \(consecutiveErrors) consecutive errors")
                     }
                     
@@ -320,7 +302,7 @@ class WyomingTCPClient: ObservableObject {
                         let delayMs = 100 * (1 << (retryCount - 1))
                         try await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
                     } else {
-                        print("❌ Wyoming chunk \(index + 1) failed after \(maxRetries) retries")
+                        print("❌ Chunk \(index + 1) failed after \(maxRetries) retries")
                         throw error
                     }
                 }
@@ -370,12 +352,9 @@ class WyomingTCPClient: ObservableObject {
             return
         }
         
-        // Truncate raw TCP data logging to keep logs manageable
-        if text.count > 200 {
-            let truncated = String(text.prefix(200)) + "... (\(text.count) chars total)"
-            print("📨 Raw TCP data received: \(truncated)")
-        } else {
-            print("📨 Raw TCP data received: \(text)")
+        // Minimal TCP data logging
+        if text.contains("\"type\"") {
+            print("📨 Wyoming message received")
         }
         
         // Wyoming protocol uses JSONL - split by newlines
@@ -390,37 +369,22 @@ class WyomingTCPClient: ObservableObject {
     }
     
     private func handleTextMessage(_ text: String) async {
-        // Truncate message line logging to keep logs manageable
-        if text.count > 200 {
-            let truncated = String(text.prefix(200)) + "... (\(text.count) chars total)"
-            print("📨 Processing Wyoming message line: \(truncated)")
-        } else {
-            print("📨 Processing Wyoming message line: \(text)")
-        }
-        
         // First, try to parse as a Wyoming message with type
         do {
             let wyomingMessage = try WyomingMessage.fromJSONString(text)
-            print("📨 Parsed Wyoming message: \(wyomingMessage.type)")
             
             // Call registered handler for this message type
             if let handler = messageHandlers[wyomingMessage.type] {
-                print("📨 Calling handler for message type: \(wyomingMessage.type)")
                 handler(wyomingMessage)
             } else {
-                print("⚠️ No handler registered for message type: \(wyomingMessage.type)")
+                print("⚠️ No handler for: \(wyomingMessage.type)")
             }
             
         } catch {
-            // If it fails to parse as a Wyoming message, it might be raw transcript data
-            print("📨 Received raw data (not a Wyoming message): \(text.prefix(100))...")
-            
             // Try to parse as raw transcript JSON
             if let textData = text.data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: textData) as? [String: Any],
                let transcriptText = json["text"] as? String {
-                
-                print("📝 Parsed raw transcript text: \(transcriptText.prefix(100))...")
                 
                 // Create a synthetic WyomingMessage for the transcript handler
                 let transcriptData = WyomingTranscriptData(text: transcriptText, language: nil, confidence: nil)
@@ -430,6 +394,8 @@ class WyomingTCPClient: ObservableObject {
                 if let handler = messageHandlers[.transcript] {
                     handler(syntheticMessage)
                 }
+            } else {
+                print("⚠️ Failed to parse message")
             }
         }
     }

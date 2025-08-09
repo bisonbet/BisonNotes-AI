@@ -30,12 +30,9 @@ class RecordingWorkflowManager: ObservableObject {
     
     /// Creates a new recording with proper Core Data entry and UUID
     func createRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
-        print("🎵 Creating new recording: \(name)")
-        
         // Create Core Data entry
         let recordingEntry = RecordingEntry(context: context)
         let recordingId = UUID()
-        print("🆔 Recording UUID: \(recordingId)")
         
         recordingEntry.id = recordingId
         recordingEntry.recordingName = name
@@ -62,7 +59,6 @@ class RecordingWorkflowManager: ObservableObject {
         // Save to Core Data
         do {
             try context.save()
-            print("✅ Recording saved to Core Data with ID: \(recordingId)")
         } catch {
             print("❌ Failed to save recording to Core Data: \(error)")
         }
@@ -80,9 +76,6 @@ class RecordingWorkflowManager: ObservableObject {
             print("❌ Recording not found for ID: \(recordingId)")
             return nil
         }
-        
-        print("🎯 Creating transcript for recording: \(recordingEntry.recordingName ?? "unknown")")
-        print("🆔 Recording UUID: \(recordingId)")
         
         // Check if a transcript already exists for this recording
         if let existingTranscript = recordingEntry.transcript {
@@ -102,7 +95,6 @@ class RecordingWorkflowManager: ObservableObject {
             processingTime: processingTime,
             confidence: confidence
         )
-        print("🆔 Transcript UUID: \(transcriptData.id)")
         
         // Create Core Data transcript entry
         let transcriptEntry = TranscriptEntry(context: context)
@@ -133,7 +125,6 @@ class RecordingWorkflowManager: ObservableObject {
         // Save to Core Data
         do {
             try context.save()
-            print("✅ Transcript saved to Core Data with ID: \(transcriptData.id)")
         } catch {
             print("❌ Failed to save transcript to Core Data: \(error)")
             return nil
@@ -260,6 +251,15 @@ class RecordingWorkflowManager: ObservableObject {
         do {
             try context.save()
             print("✅ Summary saved to Core Data with ID: \(summaryData.id)")
+            
+            // Post notification to refresh UI views
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("SummaryCreated"),
+                    object: nil,
+                    userInfo: ["recordingId": recordingId, "summaryId": summaryData.id]
+                )
+            }
         } catch {
             print("❌ Failed to save summary to Core Data: \(error)")
             return nil

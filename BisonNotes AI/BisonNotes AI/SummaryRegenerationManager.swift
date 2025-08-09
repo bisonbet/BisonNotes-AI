@@ -81,7 +81,25 @@ class SummaryRegenerationManager: ObservableObject {
                 // Delete the old summary from Core Data
                 try appCoordinator.coreDataManager.deleteSummary(id: summary.id)
                 
-                // Create new summary entry in Core Data
+                // Debug: Show what names we're comparing (bulk regeneration)
+                print("🔍 Bulk regeneration name check for '\(summary.recordingName)':")
+                print("   Old name: '\(summary.recordingName)'")
+                print("   New name: '\(newEnhancedSummary.recordingName)'")
+                print("   Names equal: \(newEnhancedSummary.recordingName == summary.recordingName)")
+                
+                // Update the recording name if it changed during regeneration
+                if newEnhancedSummary.recordingName != summary.recordingName {
+                    print("📝 Bulk regeneration: Recording name updated from '\(summary.recordingName)' to '\(newEnhancedSummary.recordingName)'")
+                    // Update recording name in Core Data
+                    try appCoordinator.coreDataManager.updateRecordingName(
+                        for: recordingId,
+                        newName: newEnhancedSummary.recordingName
+                    )
+                } else {
+                    print("⚠️ Bulk regeneration: Recording name did not change")
+                }
+                
+                // Create new summary entry in Core Data with the updated name
                 let newSummaryId = appCoordinator.workflowManager.createSummary(
                     for: recordingId,
                     transcriptId: summary.transcriptId ?? UUID(),
@@ -151,7 +169,25 @@ class SummaryRegenerationManager: ObservableObject {
             try appCoordinator.coreDataManager.deleteSummary(id: summary.id)
             print("🗑️ Deleted old summary with ID: \(summary.id)")
             
-            // Create new summary entry in Core Data
+            // Debug: Show what names we're comparing
+            print("🔍 Regeneration name check:")
+            print("   Old name: '\(summary.recordingName)'")
+            print("   New name: '\(newEnhancedSummary.recordingName)'")
+            print("   Names equal: \(newEnhancedSummary.recordingName == summary.recordingName)")
+            
+            // Update the recording name if it changed during regeneration
+            if newEnhancedSummary.recordingName != summary.recordingName {
+                print("📝 Recording name updated from '\(summary.recordingName)' to '\(newEnhancedSummary.recordingName)'")
+                // Update recording name in Core Data
+                try appCoordinator.coreDataManager.updateRecordingName(
+                    for: recordingId,
+                    newName: newEnhancedSummary.recordingName
+                )
+            } else {
+                print("⚠️ Recording name did not change during regeneration")
+            }
+            
+            // Create new summary entry in Core Data with the updated name
             let newSummaryId = appCoordinator.workflowManager.createSummary(
                 for: recordingId,
                 transcriptId: summary.transcriptId ?? UUID(),

@@ -48,12 +48,7 @@ struct RecordingsListView: View {
                 recordingsContent
             }
             .sheet(isPresented: $showingEnhancedDeleteDialog) {
-                let _ = print("🗑️ Sheet is being presented")
-                let _ = print("🗑️ recordingToDelete in sheet: \(deletionData.recordingToDelete?.name ?? "nil")")
-                let _ = print("🗑️ fileRelationships in sheet: \(deletionData.fileRelationships != nil ? "exists" : "nil")")
-                
                 if let recording = deletionData.recordingToDelete, let relationships = deletionData.fileRelationships {
-                    let _ = print("🗑️ Creating EnhancedDeleteDialog")
                     EnhancedDeleteDialog(
                         recording: recording,
                         relationships: relationships,
@@ -69,7 +64,6 @@ struct RecordingsListView: View {
                         }
                     )
                 } else {
-                    let _ = print("🗑️ Showing fallback dialog")
                     // Loading or error state
                     VStack(spacing: 20) {
                         if deletionData.recordingToDelete != nil {
@@ -119,13 +113,22 @@ struct RecordingsListView: View {
                     AudioPlayerView(recording: recording)
                         .environmentObject(recorderVM)
                 }
-                .onAppear {
-                    print("🎵 Creating AudioPlayerView for: \(recording.name)")
-                }
             }
         }
         .onAppear {
             loadRecordings()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SummaryCreated"))) { _ in
+            loadRecordings()
+            refreshFileRelationships()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SummaryDeleted"))) { _ in
+            loadRecordings()
+            refreshFileRelationships()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
+            loadRecordings()
+            refreshFileRelationships()
         }
     }
     
@@ -175,8 +178,6 @@ struct RecordingsListView: View {
         HStack {
             // Main content area - clickable for playback
             Button(action: {
-                print("🎵 Opening audio player for: \(recording.name)")
-                print("🎵 Setting selectedRecordingForPlayer to: \(recording)")
                 selectedRecordingForPlayer = recording
             }) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -251,26 +252,34 @@ struct RecordingsListView: View {
     }
     
     private func loadRecordings() {
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        do {
-            let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
-            recordings = fileURLs
-                .filter { ["m4a", "mp3", "wav"].contains($0.pathExtension.lowercased()) }
-                .compactMap { url -> AudioRecordingFile? in
-                    guard let creationDate = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate else { return nil }
-                    let duration = getRecordingDuration(url: url)
-                    let locationData = loadLocationDataForRecording(url: url)
-                    return AudioRecordingFile(url: url, name: url.deletingPathExtension().lastPathComponent, date: creationDate, duration: duration, locationData: locationData)
-                }
-                .sorted { $0.date > $1.date }
-            
-            // Geocode locations for all recordings
-            for recording in recordings {
-                loadLocationAddress(for: recording)
+        // Use the app coordinator to get recordings with proper database names
+        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        
+        recordings = recordingsWithData.compactMap { recordingData -> AudioRecordingFile? in
+            let recording = recordingData.recording
+            guard let recordingName = recording.recordingName,
+                  let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
+                  FileManager.default.fileExists(atPath: recordingURL.path) else {
+                print("⚠️ Skipping recording with missing data: \(recording.recordingName ?? "unknown")")
+                return nil
             }
-        } catch {
-            print("Error loading recordings: \(error)")
+            
+            let date = recording.recordingDate ?? recording.createdAt ?? Date()
+            let duration = recording.duration > 0 ? recording.duration : getRecordingDuration(url: recordingURL)
+            let locationData = appCoordinator.loadLocationData(for: recording)
+            
+            return AudioRecordingFile(
+                url: recordingURL, 
+                name: recordingName,  // Use the database name instead of filename!
+                date: date, 
+                duration: duration, 
+                locationData: locationData
+            )
         }
+        .sorted { $0.date > $1.date }
+        
+        // Geocode locations for all recordings (with rate limiting)
+        loadLocationAddressesBatch(for: recordings)
     }
     
     private func loadLocationDataForRecording(url: URL) -> LocationData? {
@@ -292,76 +301,62 @@ struct RecordingsListView: View {
         selectedLocationData = locationData
     }
     
+    private func loadLocationAddressesBatch(for recordings: [AudioRecordingFile]) {
+        // Filter recordings that have location data and don't already have cached addresses
+        let recordingsNeedingGeocode = recordings.filter { recording in
+            guard let _ = recording.locationData else { return false }
+            return locationAddresses[recording.url] == nil
+        }
+        
+        // Process recordings one by one to respect rate limiting
+        for recording in recordingsNeedingGeocode {
+            loadLocationAddress(for: recording)
+        }
+    }
+    
     private func loadLocationAddress(for recording: AudioRecordingFile) {
         guard let locationData = recording.locationData else { return }
+        
+        // Skip if we already have an address for this recording
+        if locationAddresses[recording.url] != nil {
+            return
+        }
         
         let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
         // Use a default location manager since AudioRecorderViewModel doesn't have one
         let locationManager = LocationManager()
         locationManager.reverseGeocodeLocation(location) { address in
             if let address = address {
-                locationAddresses[recording.url] = address
+                self.locationAddresses[recording.url] = address
             }
         }
     }
     
     private func deleteRecording(_ recording: AudioRecordingFile) {
-        print("🗑️ deleteRecording called for: \(recording.name)")
-        print("🗑️ recordingToDelete before: \(deletionData.recordingToDelete?.name ?? "nil")")
-        
         // Set the recording to delete immediately
         deletionData.recordingToDelete = recording
-        print("🗑️ recordingToDelete set immediately: \(deletionData.recordingToDelete?.name ?? "nil")")
         
         // Set up relationships for enhanced deletion
         Task {
-            print("🗑️ Starting relationship setup for: \(recording.url)")
-            
             // First try to get existing relationships
             var relationships = enhancedFileManager.getFileRelationships(for: recording.url)
-            print("🗑️ Initial relationships: \(relationships != nil ? "found" : "nil")")
             
             // If no relationships exist, create them on demand
             if relationships == nil {
-                print("🗑️ No relationships found, refreshing...")
                 await enhancedFileManager.refreshRelationships(for: recording.url)
                 relationships = enhancedFileManager.getFileRelationships(for: recording.url)
-                print("🗑️ After refresh relationships: \(relationships != nil ? "found" : "nil")")
             }
             
             await MainActor.run {
-                print("🗑️ MainActor: setting up dialog")
-                print("🗑️ recordingToDelete in MainActor: \(self.deletionData.recordingToDelete?.name ?? "nil")")
-                
                 if let relationships = relationships {
                     // Use enhanced deletion with relationships
-                    print("🗑️ Setting fileRelationships")
-                    print("🗑️ Relationships details:")
-                    print("   - Recording URL: \(relationships.recordingURL?.lastPathComponent ?? "nil")")
-                    print("   - Recording Name: \(relationships.recordingName)")
-                    print("   - Transcript Exists: \(relationships.transcriptExists)")
-                    print("   - Summary Exists: \(relationships.summaryExists)")
-                    print("   - Has Recording: \(relationships.hasRecording)")
-                    print("   - Availability Status: \(relationships.availabilityStatus)")
-                    
                     self.deletionData.fileRelationships = relationships
-                    print("🗑️ fileRelationships set: \(self.deletionData.fileRelationships != nil ? "yes" : "no")")
-                    
                     self.showingEnhancedDeleteDialog = true
-                    print("🗑️ showingEnhancedDeleteDialog set to true")
-                    
-                    // Log dialog setup details
-                    if let recording = self.deletionData.recordingToDelete, let relationships = self.deletionData.fileRelationships {
-                        print("🗑️ Dialog setup - Recording: \(recording.name)")
-                        print("🗑️ Dialog setup - Relationships: \(relationships.recordingName)")
-                    }
                 } else {
-                    print("🗑️ No relationships available, falling back to simple deletion")
                     // Fallback to simple deletion if we still can't get relationships
                     do {
                         try FileManager.default.removeItem(at: recording.url)
                         loadRecordings() // Reload the list
-                        print("🗑️ Simple deletion completed")
                     } catch {
                         print("Failed to delete recording: \(error)")
                     }
@@ -388,6 +383,20 @@ struct RecordingsListView: View {
         } catch {
             print("Error getting duration for \(url.lastPathComponent): \(error)")
             return 0.0
+        }
+    }
+    
+    private func refreshFileRelationships() {
+        Task {
+            // Refresh relationships for all recordings in the background
+            for recording in recordings {
+                await enhancedFileManager.refreshRelationships(for: recording.url)
+            }
+            
+            await MainActor.run {
+                // Force a UI refresh by updating the published object
+                enhancedFileManager.objectWillChange.send()
+            }
         }
     }
 }

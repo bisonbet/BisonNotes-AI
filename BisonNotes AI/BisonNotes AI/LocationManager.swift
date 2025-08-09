@@ -135,43 +135,182 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
     }
     
-    func reverseGeocodeLocation(_ location: CLLocation, completion: @escaping (String?) -> Void) {
-        let geocoder = CLGeocoder()
-        geocoder.reverseGeocodeLocation(location) { placemarks, error in
+    // MARK: - One-time location request with completion handler
+    
+    private var locationCompletionHandlers: [(CLLocation?) -> Void] = []
+    
+    func requestCurrentLocation(completion: @escaping (CLLocation?) -> Void) {
+        // Add completion handler to the list
+        locationCompletionHandlers.append(completion)
+        
+        // Check location services availability on background queue to avoid UI blocking
+        DispatchQueue.global(qos: .utility).async {
+            let servicesEnabled = CLLocationManager.locationServicesEnabled()
+            
             DispatchQueue.main.async {
-                if let error = error {
-                    print("Reverse geocoding error: \(error)")
-                    completion(nil)
+                guard servicesEnabled else {
+                    self.locationError = "Location services are disabled on this device"
+                    // Call all completion handlers with nil
+                    self.locationCompletionHandlers.forEach { $0(nil) }
+                    self.locationCompletionHandlers.removeAll()
                     return
                 }
                 
-                guard let placemark = placemarks?.first else {
-                    completion(nil)
-                    return
-                }
-                
-                // Create a formatted address string
-                var addressComponents: [String] = []
-                
-                // Add city
-                if let locality = placemark.locality {
-                    addressComponents.append(locality)
-                }
-                
-                // Add state/province
-                if let administrativeArea = placemark.administrativeArea {
-                    addressComponents.append(administrativeArea)
-                }
-                
-                // Add country (only if not USA to avoid redundancy)
-                if let country = placemark.country, country != "United States" {
-                    addressComponents.append(country)
-                }
-                
-                let formattedAddress = addressComponents.joined(separator: ", ")
-                completion(formattedAddress.isEmpty ? nil : formattedAddress)
+                // Now proceed with authorization check
+                self.proceedWithLocationRequest()
             }
         }
+    }
+    
+    private func proceedWithLocationRequest() {
+        switch locationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            // If we already have a recent location (less than 30 seconds old), use it
+            if let currentLoc = currentLocation,
+               Date().timeIntervalSince(currentLoc.timestamp) < 30 {
+                // Call all completion handlers with current location
+                locationCompletionHandlers.forEach { $0(currentLoc) }
+                locationCompletionHandlers.removeAll()
+            } else {
+                // Request a fresh location
+                locationManager.requestLocation()
+            }
+        case .denied, .restricted:
+            locationError = "Location access denied. Please enable in Settings."
+            // Call all completion handlers with nil
+            locationCompletionHandlers.forEach { $0(nil) }
+            locationCompletionHandlers.removeAll()
+        case .notDetermined:
+            // Request permission first
+            locationManager.requestWhenInUseAuthorization()
+            // Don't call completion handlers yet - wait for authorization response
+        @unknown default:
+            locationError = "Unknown location authorization status"
+            // Call all completion handlers with nil
+            locationCompletionHandlers.forEach { $0(nil) }
+            locationCompletionHandlers.removeAll()
+        }
+    }
+    
+    // MARK: - Geocoding Cache and Rate Limiting
+    
+    private static var geocodingCache: [String: String] = [:]
+    private static var lastGeocodingRequest: Date = Date.distantPast
+    private static let geocodingDelay: TimeInterval = 1.2 // 1.2 seconds between requests to stay under 50/minute
+    private static var pendingGeocodingRequests: [String: [(String?) -> Void]] = [:]
+    
+    func reverseGeocodeLocation(_ location: CLLocation, completion: @escaping (String?) -> Void) {
+        // Create a cache key based on location (rounded to ~100m precision to allow cache hits)
+        let lat = round(location.coordinate.latitude * 1000) / 1000
+        let lon = round(location.coordinate.longitude * 1000) / 1000
+        let cacheKey = "\(lat),\(lon)"
+        
+        // Check cache first
+        if let cachedAddress = Self.geocodingCache[cacheKey] {
+            print("📍 LocationManager: Using cached address for \(cacheKey)")
+            completion(cachedAddress)
+            return
+        }
+        
+        // Check if there's already a pending request for this location
+        if Self.pendingGeocodingRequests[cacheKey] != nil {
+            print("📍 LocationManager: Adding to pending request for \(cacheKey)")
+            Self.pendingGeocodingRequests[cacheKey]?.append(completion)
+            return
+        }
+        
+        // Initialize pending requests array for this location
+        Self.pendingGeocodingRequests[cacheKey] = [completion]
+        
+        // Rate limiting: ensure we don't make requests too frequently
+        let now = Date()
+        let timeSinceLastRequest = now.timeIntervalSince(Self.lastGeocodingRequest)
+        
+        let delay = max(0, Self.geocodingDelay - timeSinceLastRequest)
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            Self.lastGeocodingRequest = Date()
+            
+            print("📍 LocationManager: Making geocoding request for \(cacheKey) (delayed \(String(format: "%.1f", delay))s)")
+            
+            let geocoder = CLGeocoder()
+            geocoder.reverseGeocodeLocation(location) { placemarks, error in
+                DispatchQueue.main.async {
+                    let pendingCompletions = Self.pendingGeocodingRequests[cacheKey] ?? []
+                    Self.pendingGeocodingRequests.removeValue(forKey: cacheKey)
+                    
+                    if let error = error {
+                        print("❌ LocationManager: Reverse geocoding error: \(error)")
+                        // Call all pending completions with nil
+                        pendingCompletions.forEach { $0(nil) }
+                        return
+                    }
+                    
+                    guard let placemark = placemarks?.first else {
+                        print("⚠️ LocationManager: No placemark found for \(cacheKey)")
+                        pendingCompletions.forEach { $0(nil) }
+                        return
+                    }
+                    
+                    // Create a formatted address string
+                    var addressComponents: [String] = []
+                    
+                    // Add city
+                    if let locality = placemark.locality {
+                        addressComponents.append(locality)
+                    }
+                    
+                    // Add state/province
+                    if let administrativeArea = placemark.administrativeArea {
+                        addressComponents.append(administrativeArea)
+                    }
+                    
+                    // Add country (only if not USA to avoid redundancy)
+                    if let country = placemark.country, country != "United States" {
+                        addressComponents.append(country)
+                    }
+                    
+                    let formattedAddress = addressComponents.joined(separator: ", ")
+                    let finalAddress = formattedAddress.isEmpty ? nil : formattedAddress
+                    
+                    // Cache the result (even if nil)
+                    Self.geocodingCache[cacheKey] = finalAddress ?? "Unknown Location"
+                    
+                    print("✅ LocationManager: Cached address for \(cacheKey): \(finalAddress ?? "nil")")
+                    
+                    // Call all pending completions
+                    pendingCompletions.forEach { $0(finalAddress) }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Cache Management
+    
+    static func clearGeocodingCache() {
+        geocodingCache.removeAll()
+        pendingGeocodingRequests.removeAll()
+        print("🧹 LocationManager: Geocoding cache and pending requests cleared")
+    }
+    
+    static func getGeocodingCacheSize() -> Int {
+        return geocodingCache.count
+    }
+    
+    static func getGeocodingCacheStats() -> (cached: Int, pending: Int) {
+        return (geocodingCache.count, pendingGeocodingRequests.count)
+    }
+    
+    // Method to check if we're currently rate limited
+    static func isRateLimited() -> Bool {
+        let timeSinceLastRequest = Date().timeIntervalSince(lastGeocodingRequest)
+        return timeSinceLastRequest < geocodingDelay
+    }
+    
+    // Method to get time until next request is allowed
+    static func timeUntilNextRequest() -> TimeInterval {
+        let timeSinceLastRequest = Date().timeIntervalSince(lastGeocodingRequest)
+        return max(0, geocodingDelay - timeSinceLastRequest)
     }
     
     // MARK: - CLLocationManagerDelegate
@@ -180,6 +319,12 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         guard let location = locations.last else { return }
         currentLocation = location
         locationError = nil
+        
+        // Call any pending completion handlers
+        if !locationCompletionHandlers.isEmpty {
+            locationCompletionHandlers.forEach { $0(location) }
+            locationCompletionHandlers.removeAll()
+        }
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -203,32 +348,48 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
         
         isLocationEnabled = false
-        print("Location error details: \(error)")
+        
+        // Call any pending completion handlers with nil (indicating failure)
+        if !locationCompletionHandlers.isEmpty {
+            locationCompletionHandlers.forEach { $0(nil) }
+            locationCompletionHandlers.removeAll()
+        }
     }
     
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        print("📍 Location authorization changed to: \(status.rawValue)")
-        
         // Ensure UI updates happen on main queue
         DispatchQueue.main.async {
             self.locationStatus = status
             
             switch status {
             case .authorizedWhenInUse, .authorizedAlways:
-                print("✅ Location authorized, starting updates")
                 self.startLocationUpdates()
+                
+                // If we have pending completion handlers, trigger a location request
+                if !self.locationCompletionHandlers.isEmpty {
+                    self.locationManager.requestLocation()
+                }
             case .denied, .restricted:
-                print("❌ Location access denied or restricted")
                 self.locationError = "Location access denied. Please enable in Settings."
                 self.isLocationEnabled = false
+                
+                // Call any pending completion handlers with nil
+                if !self.locationCompletionHandlers.isEmpty {
+                    self.locationCompletionHandlers.forEach { $0(nil) }
+                    self.locationCompletionHandlers.removeAll()
+                }
             case .notDetermined:
-                print("⏳ Location authorization not determined")
                 self.locationError = nil
                 self.isLocationEnabled = false
             @unknown default:
-                print("⚠️ Unknown location authorization status: \(status.rawValue)")
                 self.locationError = "Unknown authorization status"
                 self.isLocationEnabled = false
+                
+                // Call any pending completion handlers with nil
+                if !self.locationCompletionHandlers.isEmpty {
+                    self.locationCompletionHandlers.forEach { $0(nil) }
+                    self.locationCompletionHandlers.removeAll()
+                }
             }
         }
     }
@@ -246,24 +407,36 @@ struct LocationData: Codable, Identifiable {
     
     init(location: CLLocation) {
         self.id = UUID()
-        self.latitude = location.coordinate.latitude
-        self.longitude = location.coordinate.longitude
+        // Ensure coordinates are valid and not NaN
+        let lat = location.coordinate.latitude
+        let lng = location.coordinate.longitude
+        self.latitude = (lat.isFinite && !lat.isNaN) ? lat : 0.0
+        self.longitude = (lng.isFinite && !lng.isNaN) ? lng : 0.0
         self.timestamp = location.timestamp
-        self.accuracy = location.horizontalAccuracy
+        let acc = location.horizontalAccuracy
+        self.accuracy = (acc.isFinite && !acc.isNaN) ? acc : nil
         self.address = nil // Could be populated with reverse geocoding if needed
     }
     
     init(id: UUID = UUID(), latitude: Double, longitude: Double, timestamp: Date, accuracy: Double?, address: String?) {
         self.id = id
-        self.latitude = latitude
-        self.longitude = longitude
+        // Ensure coordinates are valid and not NaN
+        self.latitude = (latitude.isFinite && !latitude.isNaN) ? latitude : 0.0
+        self.longitude = (longitude.isFinite && !longitude.isNaN) ? longitude : 0.0
         self.timestamp = timestamp
-        self.accuracy = accuracy
+        // Ensure accuracy is valid if provided
+        if let accuracy = accuracy {
+            self.accuracy = (accuracy.isFinite && !accuracy.isNaN) ? accuracy : nil
+        } else {
+            self.accuracy = nil
+        }
         self.address = address
     }
     
     var coordinateString: String {
-        return String(format: "%.6f, %.6f", latitude, longitude)
+        let safeLat = latitude.isFinite && !latitude.isNaN ? latitude : 0.0
+        let safeLng = longitude.isFinite && !longitude.isNaN ? longitude : 0.0
+        return String(format: "%.6f, %.6f", safeLat, safeLng)
     }
     
     var formattedAddress: String {

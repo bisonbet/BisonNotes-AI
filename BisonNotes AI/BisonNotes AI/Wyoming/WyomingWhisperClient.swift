@@ -227,9 +227,9 @@ class WyomingWhisperClient: ObservableObject {
         print("🎤 WyomingWhisperClient.transcribeAudioStandard called for: \(url.lastPathComponent)")
         
         // Start background task for long-running transcription
-        print("🔍 DEBUG: About to call beginBackgroundTask()")
+        // print("🔍 DEBUG: About to call beginBackgroundTask()")
         beginBackgroundTask()
-        print("🔍 DEBUG: beginBackgroundTask completed successfully")
+        // print("🔍 DEBUG: beginBackgroundTask completed successfully")
         
         // Ensure we're connected
         if !isConnected {
@@ -248,7 +248,7 @@ class WyomingWhisperClient: ObservableObject {
         // Start timeout for large files (estimate 1 minute per 5MB of audio)
         let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         print("📁 File size: \(fileSize) bytes (\(Double(fileSize) / (1024 * 1024))MB)")
-        print("🔍 DEBUG: About to calculate timeout for file size: \(fileSize)")
+        // print("🔍 DEBUG: About to calculate timeout for file size: \(fileSize)")
         
         // Safely calculate timeout with bounds checking
         let fileSizeMB = Double(fileSize) / (1024.0 * 1024.0)
@@ -268,10 +268,10 @@ class WyomingWhisperClient: ObservableObject {
         }
         
         print("⏰ Setting Wyoming timeout: \(timeoutSeconds) seconds (\(timeoutSeconds/60) minutes)")
-        print("🔍 DEBUG: About to call startStreamingTimeout with: \(timeoutSeconds)")
+        // print("🔍 DEBUG: About to call startStreamingTimeout with: \(timeoutSeconds)")
         
         startStreamingTimeout(seconds: timeoutSeconds)
-        print("🔍 DEBUG: startStreamingTimeout completed successfully")
+        // print("🔍 DEBUG: startStreamingTimeout completed successfully")
         
         do {
             return try await withCheckedThrowingContinuation { continuation in
@@ -376,7 +376,7 @@ class WyomingWhisperClient: ObservableObject {
         
         let totalChunks = (audioData.count + chunkSize - 1) / chunkSize
         
-        print("🔄 Streaming \(audioData.count) bytes in \(totalChunks) chunks of \(chunkSize) bytes each")
+        print("🔄 Streaming audio (\(String(format: "%.1f", Double(audioData.count)/1024/1024))MB)")
         
         let startTime = Date()
         
@@ -409,13 +409,13 @@ class WyomingWhisperClient: ObservableObject {
         
         let totalTime = Date().timeIntervalSince(startTime)
         let avgRate = totalTime > 0 ? Double(totalChunks) / totalTime : 0
-        let safeAvgRate = min(avgRate, Double(Int.max - 1))
+        let _ = min(avgRate, Double(Int.max - 1))
         
-        print("✅ Streamed \(totalChunks) audio chunks (\(audioData.count) bytes total) in \(String(format: "%.2f", totalTime))s at \(Int(safeAvgRate)) chunks/sec")
+        print("✅ Audio streamed in \(String(format: "%.1f", totalTime))s")
     }
     
     private func convertToPCMData(url: URL) async throws -> Data {
-        print("🔄 Converting audio to PCM for Wyoming...")
+        // Converting audio to PCM for Wyoming
         
         let asset = AVURLAsset(url: url)
         
@@ -472,7 +472,6 @@ class WyomingWhisperClient: ObservableObject {
             }
         }
         
-        print("✅ Converted to PCM: \(pcmData.count) bytes at \(WyomingConstants.audioSampleRate)Hz")
         return pcmData
     }
     
@@ -723,35 +722,35 @@ class WyomingWhisperClient: ObservableObject {
     // MARK: - Background Task Management
     
     private func beginBackgroundTask() {
-        print("🔍 DEBUG: Inside beginBackgroundTask(), checking backgroundTaskID")
+        // print("🔍 DEBUG: Inside beginBackgroundTask(), checking backgroundTaskID")
         guard backgroundTaskID == .invalid else { 
-            print("🔍 DEBUG: backgroundTaskID already exists, returning early")
+            // print("🔍 DEBUG: backgroundTaskID already exists, returning early")
             return 
         }
         
-        print("🔍 DEBUG: About to call UIApplication.shared.beginBackgroundTask")
+        // print("🔍 DEBUG: About to call UIApplication.shared.beginBackgroundTask")
         backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WyomingTranscription") { [weak self] in
             print("⚠️ Wyoming background task is about to expire")
             Task { @MainActor in
                 await self?.handleBackgroundTaskExpiration()
             }
         }
-        print("🔍 DEBUG: UIApplication.shared.beginBackgroundTask completed")
+        // print("🔍 DEBUG: UIApplication.shared.beginBackgroundTask completed")
         
-        print("🔍 DEBUG: Checking if backgroundTaskID is valid")
+        // print("🔍 DEBUG: Checking if backgroundTaskID is valid")
         if backgroundTaskID == .invalid {
             print("❌ Failed to start Wyoming background task")
         } else {
-            print("🔍 DEBUG: About to check backgroundTimeRemaining")
+            // print("🔍 DEBUG: About to check backgroundTimeRemaining")
             let remainingTime = UIApplication.shared.backgroundTimeRemaining
-            print("🔍 DEBUG: Got remainingTime: \(remainingTime)")
+            // print("🔍 DEBUG: Got remainingTime: \(remainingTime)")
             if remainingTime.isFinite {
                 print("✅ Started Wyoming background task with \(String(format: "%.0f", remainingTime)) seconds remaining")
             } else {
                 print("✅ Started Wyoming background task with unlimited time remaining")
             }
         }
-        print("🔍 DEBUG: beginBackgroundTask completed successfully")
+        // print("🔍 DEBUG: beginBackgroundTask completed successfully")
     }
     
     private func endBackgroundTask() {

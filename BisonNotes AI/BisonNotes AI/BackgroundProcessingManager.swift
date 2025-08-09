@@ -576,8 +576,8 @@ class BackgroundProcessingManager: ObservableObject {
             // Get the recording ID first
             let recordingId: UUID
             if let appCoordinator = enhancedFileManager.getCoordinator() {
-                print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
-                print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
+                // print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
+                // print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
                 
                 // Use the new Core Data system
                 
@@ -614,8 +614,8 @@ class BackgroundProcessingManager: ObservableObject {
             // Get the recording ID first
             let recordingId: UUID
             if let appCoordinator = enhancedFileManager.getCoordinator() {
-                print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
-                print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
+                // print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
+                // print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
                 
                 // Use the new Core Data system
                 
@@ -750,18 +750,15 @@ class BackgroundProcessingManager: ObservableObject {
                 )
                 
             case .whisper, .whisperWyoming:
-                print("🎤 Using Whisper for transcription")
                 let config = getWhisperConfig()
                 let service = WhisperService(config: config, chunkingService: chunkingService)
                 result = try await service.transcribeAudio(url: chunk.chunkURL, recordingId: recordingId)
 
             case .awsTranscribe:
-                print("☁️ Using AWS Transcribe for transcription")
                 let manager = EnhancedTranscriptionManager()
                 result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .awsTranscribe)
 
             case .appleIntelligence:
-                print("🍎 Using Apple Intelligence for transcription")
                 let manager = EnhancedTranscriptionManager()
                 result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .appleIntelligence)
                 
@@ -932,7 +929,7 @@ class BackgroundProcessingManager: ObservableObject {
             
             // Use the new Core Data system
             if let appCoordinator = enhancedFileManager.getCoordinator() {
-                print("✅ DEBUG: AppCoordinator available")
+                // print("✅ DEBUG: AppCoordinator available")
                 
                 // Use the new Core Data system
                 
@@ -940,7 +937,7 @@ class BackgroundProcessingManager: ObservableObject {
                 guard let recordingEntry = appCoordinator.getRecording(url: transcriptData.recordingURL),
                       let recordingId = recordingEntry.id else {
                     print("❌ No recording found for URL: \(transcriptData.recordingURL)")
-                    print("❌ DEBUG: URL absoluteString: \(transcriptData.recordingURL.absoluteString)")
+                    // print("❌ DEBUG: URL absoluteString: \(transcriptData.recordingURL.absoluteString)")
                     return
                 }
                 
