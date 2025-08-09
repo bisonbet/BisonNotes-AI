@@ -1944,7 +1944,9 @@ class OllamaService: ObservableObject {
     }
     
     private func parseGPTOSSToolCall(_ response: String) -> (function: String, arguments: [String: Any]?)? {
+#if DEBUG
         print("🔍 OllamaService: Parsing GPT-OSS response: '\(response)'")
+#endif
 
         // Look for commentary channel function calls - GPT-OSS uses JSON format in commentary channel
         // Try to find JSON function call pattern, allowing for more flexible formatting
