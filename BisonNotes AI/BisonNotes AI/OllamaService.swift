@@ -1944,10 +1944,12 @@ class OllamaService: ObservableObject {
     }
     
     private func parseGPTOSSToolCall(_ response: String) -> (function: String, arguments: [String: Any]?)? {
+#if DEBUG
+        print("🔍 OllamaService: Parsing GPT-OSS response: '\(response)'")
+#endif
+
         // Look for commentary channel function calls - GPT-OSS uses JSON format in commentary channel
-        // Pattern: function calls typically appear as JSON objects with function name and arguments
-        
-        // Try to find JSON function call pattern
+        // Try to find JSON function call pattern, allowing for more flexible formatting
         let jsonPattern = #"\{[\s\S]*?"function"\s*:\s*"(create_summary|complete_analysis)"[\s\S]*?\}"#
         
         if let match = response.range(of: jsonPattern, options: .regularExpression) {
@@ -1968,21 +1970,22 @@ class OllamaService: ObservableObject {
             }
         }
         
-        // Alternative: look for direct function calls with parameters
-        if response.contains("create_summary") || response.contains("complete_analysis") {
-            let lines = response.components(separatedBy: .newlines)
-            for line in lines {
-                if line.contains("create_summary") {
-                    // Try to extract summary content
-                    if let summaryMatch = line.range(of: #""summary"\s*:\s*"([^"]+)""#, options: .regularExpression) {
-                        let summaryContent = String(line[summaryMatch])
-                        print("🔍 OllamaService: Found direct GPT-OSS summary call")
-                        return ("create_summary", ["summary": summaryContent])
-                    }
+        // Fallback: if the regex fails, try to extract any JSON from the response
+        if let extractedJson = extractJSONFromResponse(response),
+           let data = extractedJson.data(using: .utf8) {
+            print("🔍 OllamaService: Attempting to parse extracted JSON from GPT-OSS response")
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let functionName = json["function"] as? String {
+                    let arguments = json["arguments"] as? [String: Any] ?? json
+                    print("✅ OllamaService: Successfully parsed extracted GPT-OSS JSON: \(functionName)")
+                    return (functionName, arguments)
                 }
+            } catch {
+                print("❌ OllamaService: Failed to parse extracted GPT-OSS JSON: \(error)")
             }
         }
-        
+
         print("⚠️ OllamaService: No GPT-OSS function call found in response")
         return nil
     }
