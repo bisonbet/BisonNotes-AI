@@ -39,8 +39,7 @@ struct SettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
-            ScrollView {
+        ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     headerSection
                     preferencesSection
@@ -55,8 +54,6 @@ struct SettingsView: View {
                     Spacer(minLength: 40)
                 }
             }
-            .navigationBarHidden(true)
-        }
         .alert("Regeneration Complete", isPresented: $regenerationManager.showingRegenerationAlert) {
             Button("OK") {
                 regenerationManager.showingRegenerationAlert = false
@@ -113,12 +110,23 @@ struct SettingsView: View {
     }
     
     private var headerSection: some View {
-        Text("Settings")
-            .font(.largeTitle)
-            .fontWeight(.bold)
-            .foregroundColor(.primary)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Settings")
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
+                
+                Spacer()
+            }
             .padding(.top, 20)
             .padding(.horizontal, 24)
+            
+            Text("Advanced settings for comprehensive configuration")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 24)
+        }
     }
     
     private var preferencesSection: some View {

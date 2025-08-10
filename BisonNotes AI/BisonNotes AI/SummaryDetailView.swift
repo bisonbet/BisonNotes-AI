@@ -96,12 +96,19 @@ struct SummaryDetailView: View {
                 summaryData = latestSummary
             }
             
+            // Perform reverse geocoding on background queue to avoid blocking UI
             if let locationData = recording.locationData {
-                let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
-                let tempLocationManager = LocationManager()
-                tempLocationManager.reverseGeocodeLocation(location) { address in
-                    if let address = address {
-                        locationAddress = address
+                Task {
+                    let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
+                    
+                    // Use a temporary LocationManager for reverse geocoding
+                    let tempLocationManager = LocationManager()
+                    tempLocationManager.reverseGeocodeLocation(location) { address in
+                        DispatchQueue.main.async {
+                            if let address = address {
+                                locationAddress = address
+                            }
+                        }
                     }
                 }
             }
@@ -235,7 +242,7 @@ struct SummaryDetailView: View {
                                 ProgressView()
                                     .scaleEffect(0.8)
                             } else {
-                                Image(systemName: "location.badge.plus")
+                                Image(systemName: "location.circle.fill")
                             }
                             Text(isUpdatingLocation ? "Adding..." : "Add Location")
                         }
@@ -625,7 +632,7 @@ struct SummaryDetailView: View {
                             ProgressView()
                                 .scaleEffect(0.8)
                         } else {
-                            Image(systemName: "calendar.badge.plus")
+                            Image(systemName: "calendar.circle")
                         }
                         Text(isUpdatingDate ? "Updating..." : "Set Custom Date & Time")
                     }
@@ -711,7 +718,7 @@ struct SummaryDetailView: View {
             
             VStack(spacing: 12) {
                 HStack {
-                    Image(systemName: "location.badge.plus")
+                    Image(systemName: "location.circle.fill")
                         .foregroundColor(.green)
                     Text("Recording Location")
                         .font(.headline)
@@ -777,7 +784,7 @@ struct SummaryDetailView: View {
                                     ProgressView()
                                         .scaleEffect(0.8)
                                 } else {
-                                    Image(systemName: "location.badge.plus")
+                                    Image(systemName: "location.circle.fill")
                                 }
                                 Text(isUpdatingLocation ? "Adding..." : "Add Location")
                             }
@@ -2001,6 +2008,7 @@ struct LocationPickerView: View {
     @State private var searchText = ""
     @State private var searchResults: [LocationSearchResult] = []
     @State private var isSearching = false
+    @State private var searchError: String?
     @State private var showingManualEntry = false
     @State private var manualLatitude = ""
     @State private var manualLongitude = ""
@@ -2097,7 +2105,22 @@ struct LocationPickerView: View {
                                 }
                             }
                             
-                            // Search results
+                            // Search error message
+                            if let searchError = searchError {
+                                HStack {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .foregroundColor(.orange)
+                                        .font(.caption)
+                                    
+                                    Text(searchError)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .multilineTextAlignment(.leading)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            
+                            // Search results (limited to top 3)
                             if !searchResults.isEmpty {
                                 VStack(spacing: 8) {
                                     ForEach(searchResults, id: \.id) { result in
@@ -2250,31 +2273,71 @@ struct LocationPickerView: View {
     }
     
     private func searchForLocation() {
-        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let trimmedText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+            searchError = "Please enter a location to search for"
             return
         }
         
         isSearching = true
         searchResults = []
+        searchError = nil
         
+        // Try multiple search strategies
+        performSearchWithFallbacks(originalQuery: trimmedText)
+    }
+    
+    private func performSearchWithFallbacks(originalQuery: String, attemptNumber: Int = 1) {
+        let searchQueries = generateSearchQueries(for: originalQuery, attempt: attemptNumber)
+        
+        guard !searchQueries.isEmpty else {
+            // No more fallbacks to try
+            isSearching = false
+            searchError = "Could not find '\(originalQuery)'. Try searching for a city, state, or well-known landmark."
+            return
+        }
+        
+        let currentQuery = searchQueries[0]
         let geocoder = CLGeocoder()
         
-        geocoder.geocodeAddressString(searchText) { placemarks, error in
+        print("🔍 Searching for location (attempt \(attemptNumber)): '\(currentQuery)'")
+        
+        geocoder.geocodeAddressString(currentQuery) { placemarks, error in
             DispatchQueue.main.async {
-                self.isSearching = false
-                
-                if let error = error {
-                    print("❌ Location search error: \(error)")
-                    return
+                if let error = error as NSError? {
+                    print("❌ Location search error (attempt \(attemptNumber)): \(error)")
+                    
+                    // Try next fallback if this one failed
+                    if attemptNumber < 3 {
+                        print("🔄 Trying fallback search strategy...")
+                        self.performSearchWithFallbacks(originalQuery: originalQuery, attemptNumber: attemptNumber + 1)
+                        return
+                    } else {
+                        // All attempts failed
+                        self.isSearching = false
+                        self.handleSearchError(error, originalQuery: originalQuery)
+                        return
+                    }
                 }
                 
-                guard let placemarks = placemarks else {
-                    print("⚠️ No placemarks found for search: \(self.searchText)")
-                    return
+                guard let placemarks = placemarks, !placemarks.isEmpty else {
+                    print("⚠️ No placemarks found for search (attempt \(attemptNumber)): \(currentQuery)")
+                    
+                    // Try next fallback
+                    if attemptNumber < 3 {
+                        print("🔄 Trying fallback search strategy...")
+                        self.performSearchWithFallbacks(originalQuery: originalQuery, attemptNumber: attemptNumber + 1)
+                        return
+                    } else {
+                        // All attempts failed
+                        self.isSearching = false
+                        self.searchError = "No locations found for '\(originalQuery)'. Try searching for a city, state, or address."
+                        return
+                    }
                 }
                 
-                // Convert placemarks to search results
-                self.searchResults = placemarks.compactMap { placemark in
+                // Success! Convert placemarks to search results and limit to top 3
+                let allResults: [LocationSearchResult] = placemarks.compactMap { placemark -> LocationSearchResult? in
                     guard let coordinate = placemark.location?.coordinate else {
                         return nil
                     }
@@ -2302,16 +2365,147 @@ struct LocationPickerView: View {
                     
                     return LocationSearchResult(
                         id: UUID(),
-                        name: placemark.name ?? self.searchText,
+                        name: self.enhanceResultName(originalName: placemark.name, originalQuery: originalQuery, searchedQuery: currentQuery),
                         address: formattedAddress,
                         latitude: coordinate.latitude,
                         longitude: coordinate.longitude
                     )
                 }
                 
-                print("✅ Found \(self.searchResults.count) location results for: \(self.searchText)")
+                // Limit to top 3 results
+                self.searchResults = Array(allResults.prefix(3))
+                self.searchError = nil
+                self.isSearching = false
+                
+                if attemptNumber > 1 {
+                    print("✅ Found \(allResults.count) results using fallback strategy \(attemptNumber) for: \(originalQuery) -> \(currentQuery)")
+                } else {
+                    print("✅ Found \(allResults.count) total results, showing top \(self.searchResults.count) for: \(originalQuery)")
+                }
             }
         }
+    }
+    
+    private func generateSearchQueries(for originalQuery: String, attempt: Int) -> [String] {
+        switch attempt {
+        case 1:
+            // First attempt: use original query as-is
+            return [originalQuery]
+            
+        case 2:
+            // Second attempt: try university-specific fallbacks
+            return generateUniversityFallbacks(for: originalQuery)
+            
+        case 3:
+            // Third attempt: try generic city/state fallbacks
+            return generateGenericFallbacks(for: originalQuery)
+            
+        default:
+            return []
+        }
+    }
+    
+    private func generateUniversityFallbacks(for query: String) -> [String] {
+        let lowercaseQuery = query.lowercased()
+        var fallbacks: [String] = []
+        
+        // Common university mappings
+        let universityMappings: [String: String] = [
+            "university of oklahoma": "Norman, Oklahoma",
+            "university of texas": "Austin, Texas",
+            "university of california": "Berkeley, California",
+            "harvard university": "Cambridge, Massachusetts",
+            "stanford university": "Palo Alto, California",
+            "mit": "Cambridge, Massachusetts",
+            "yale university": "New Haven, Connecticut",
+            "princeton university": "Princeton, New Jersey",
+            "columbia university": "New York, New York",
+            "university of michigan": "Ann Arbor, Michigan",
+            "university of florida": "Gainesville, Florida",
+            "ohio state university": "Columbus, Ohio",
+            "penn state": "University Park, Pennsylvania",
+            "texas a&m": "College Station, Texas",
+            "university of georgia": "Athens, Georgia"
+        ]
+        
+        // Check for exact matches first
+        if let cityState = universityMappings[lowercaseQuery] {
+            fallbacks.append(cityState)
+        }
+        
+        // Check for partial matches
+        for (university, location) in universityMappings {
+            if lowercaseQuery.contains(university.lowercased().components(separatedBy: " ")[0]) {
+                fallbacks.append(location)
+            }
+        }
+        
+        // Try removing "university" and adding common state abbreviations
+        if lowercaseQuery.contains("university") {
+            let withoutUniversity = query.replacingOccurrences(of: "University of ", with: "")
+                                        .replacingOccurrences(of: "university of ", with: "")
+                                        .replacingOccurrences(of: " University", with: "")
+                                        .replacingOccurrences(of: " university", with: "")
+            if !withoutUniversity.isEmpty && withoutUniversity != query {
+                fallbacks.append(withoutUniversity)
+            }
+        }
+        
+        return Array(Set(fallbacks)) // Remove duplicates
+    }
+    
+    private func generateGenericFallbacks(for query: String) -> [String] {
+        var fallbacks: [String] = []
+        
+        // Try just the state name if query contains state
+        let stateNames = ["Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming"]
+        
+        for state in stateNames {
+            if query.lowercased().contains(state.lowercased()) {
+                fallbacks.append(state)
+                break
+            }
+        }
+        
+        // Try extracting city names (words that are capitalized)
+        let words = query.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        for word in words {
+            if word.first?.isUppercase == true && word.count > 3 &&
+               !["University", "College", "Institute", "School", "The", "Of", "And"].contains(word) {
+                fallbacks.append(word)
+            }
+        }
+        
+        return Array(Set(fallbacks)) // Remove duplicates
+    }
+    
+    private func enhanceResultName(originalName: String?, originalQuery: String, searchedQuery: String) -> String {
+        // If we used a fallback search and found results, enhance the name to show what the user originally searched for
+        if searchedQuery != originalQuery, let name = originalName {
+            return "\(originalQuery) (\(name))"
+        }
+        return originalName ?? originalQuery
+    }
+    
+    private func handleSearchError(_ error: NSError, originalQuery: String) {
+        switch error.code {
+        case 0: // kCLErrorLocationUnknown
+            searchError = "Unable to find location. Please check your internet connection and try again."
+        case 1: // kCLErrorDenied 
+            searchError = "Location access denied. Please enable location services in Settings."
+        case 8: // kCLErrorGeocodeFoundNoResult or timeout
+            if error.localizedDescription.lowercased().contains("timeout") || 
+               error.localizedDescription.lowercased().contains("time") {
+                searchError = "Search timed out. Please try a simpler search term or check your internet connection."
+            } else {
+                searchError = "No results found for '\(originalQuery)'. Try a different search term like a city or landmark."
+            }
+        case 2: // kCLErrorNetwork
+            searchError = "Network error. Please check your internet connection and try again."
+        default:
+            searchError = "Search failed. Please try again with a different search term."
+        }
+        print("❌ Location search error handled: \(searchError ?? "unknown")")
     }
     
     private func useManualLocation() {

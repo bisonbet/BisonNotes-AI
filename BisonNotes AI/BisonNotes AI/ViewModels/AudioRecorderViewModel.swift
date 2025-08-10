@@ -227,6 +227,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         do {
             audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
             audioRecorder?.delegate = self
+            
+            #if targetEnvironment(simulator)
+            print("🤖 Running on iOS Simulator - audio recording may have limitations")
+            print("💡 For best results, test on a physical device or ensure simulator microphone is enabled")
+            #endif
             audioRecorder?.record()
             
             isRecording = true
@@ -234,7 +239,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             startRecordingTimer()
             
         } catch {
+            #if targetEnvironment(simulator)
+            errorMessage = "Recording failed on simulator. Enable Device → Microphone → Internal Microphone in simulator menu, or test on a physical device."
+            print("🤖 Simulator audio error: \(error.localizedDescription)")
+            #else
             errorMessage = "Failed to start recording: \(error.localizedDescription)"
+            #endif
         }
     }
     

@@ -250,16 +250,10 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             print("✅ Speech recognizer created with locale: \(recognizer.locale.identifier)")
             print("🔧 Speech recognizer availability: \(recognizer.isAvailable)")
             
-            // Check if we need to request authorization
+            // Check current authorization status (but don't request it yet)
             let authStatus = SFSpeechRecognizer.authorizationStatus()
             print("🔧 Speech recognition authorization status: \(authStatus.rawValue)")
-            
-            if authStatus == .notDetermined {
-                print("🎤 Requesting speech recognition authorization...")
-                SFSpeechRecognizer.requestAuthorization { status in
-                    print("🔧 Speech recognition authorization updated: \(status.rawValue)")
-                }
-            }
+            // Note: Speech authorization will be requested when user actually tries to use Apple Intelligence transcription
         } else {
             print("❌ Failed to create speech recognizer with any locale")
             print("🔧 This may be due to simulator limitations or device restrictions")
@@ -482,13 +476,41 @@ if let config = openAIConfig {
         print("🎤 Starting Apple Intelligence transcription for file: \(url.lastPathComponent)")
         print("⏱️ Duration: \(duration) seconds")
         
+        // Check authorization status first
+        let authStatus = SFSpeechRecognizer.authorizationStatus()
+        print("🔐 Speech recognition authorization status: \(authStatus.rawValue)")
+        
+        guard authStatus == .authorized else {
+            await MainActor.run {
+                isTranscribing = false
+                currentStatus = "Speech recognition not authorized"
+            }
+            
+            let statusMessage: String
+            switch authStatus {
+            case .denied:
+                statusMessage = "Speech recognition access denied. Enable in Settings > Privacy & Security > Speech Recognition."
+            case .restricted:
+                statusMessage = "Speech recognition is restricted on this device."
+            case .notDetermined:
+                statusMessage = "Speech recognition permission not requested. Please try again."
+            case .authorized:
+                statusMessage = "Speech recognition authorized but failed."
+            @unknown default:
+                statusMessage = "Speech recognition authorization failed."
+            }
+            
+            print("❌ Speech recognition authorization failed: \(statusMessage)")
+            throw TranscriptionError.speechRecognizerUnavailable
+        }
+        
         // Double-check speech recognizer availability right before transcription
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
             await MainActor.run {
                 isTranscribing = false
-                currentStatus = "Speech recognition unavailable"
+                currentStatus = "Speech recognition service unavailable"
             }
-            print("❌ Speech recognizer check failed at transcription start")
+            print("❌ Speech recognizer service check failed at transcription start")
             throw TranscriptionError.speechRecognizerUnavailable
         }
         
@@ -1593,6 +1615,7 @@ if status.isCompleted {
         let nonCriticalErrors: [(domain: String, code: Int)] = [
             ("kAFAssistantErrorDomain", 1101), // Local speech recognition service error
             ("kAFAssistantErrorDomain", 1100), // Another common local speech recognition error
+            ("kAFAssistantErrorDomain", 1107), // Speech recognition authorization/service unavailable
             ("com.apple.speech.recognition.error", 203), // Recognition service temporarily unavailable
             ("com.apple.speech.recognition.error", 204)  // Recognition service busy
         ]

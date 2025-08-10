@@ -14,11 +14,20 @@ struct ContentView: View {
     @State private var selectedTab = 0
     @State private var isInitialized = false
     @State private var initializationError: String?
+    @State private var isFirstLaunch = false
+    @State private var showingLocationPermission = false
     
     var body: some View {
         Group {
             if isInitialized {
-                TabView(selection: $selectedTab) {
+            if isFirstLaunch {
+                SimpleSettingsView()
+                    .onAppear {
+                        // Mark first launch as complete when they finish setup
+                        UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
+                    }
+            } else {
+                    TabView(selection: $selectedTab) {
                     RecordingsView()
                         .environmentObject(recorderVM)
                         .environmentObject(appCoordinator)
@@ -46,7 +55,7 @@ struct ContentView: View {
                         }
                         .tag(2)
                     
-                    SettingsView()
+                    SimpleSettingsView()
                         .environmentObject(recorderVM)
                         .environmentObject(appCoordinator)
                         .tabItem {
@@ -55,8 +64,19 @@ struct ContentView: View {
                         }
                         .tag(3)
                 }
-            } else {
-                // Loading state
+                .alert("Enable Location Services", isPresented: $showingLocationPermission) {
+                    Button("Enable") {
+                        recorderVM.locationManager.requestLocationPermission()
+                    }
+                    Button("Skip") {
+                        // Do nothing, just dismiss
+                    }
+                } message: {
+                    Text("Location services help add context to your recordings by capturing where they were made. This can be useful for organizing and remembering your audio notes.")
+                }
+            }
+        } else {
+            // Loading state
                 VStack {
                     ProgressView()
                         .scaleEffect(1.5)
@@ -82,9 +102,20 @@ struct ContentView: View {
                 initializeApp()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("FirstSetupCompleted"))) { _ in
+            isFirstLaunch = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RequestLocationPermission"))) { _ in
+            showingLocationPermission = true
+            UserDefaults.standard.set(true, forKey: "hasAskedLocationPermission")
+        }
     }
     
     private func initializeApp() {
+        // Check if this is first launch
+        let hasCompletedSetup = UserDefaults.standard.bool(forKey: "hasCompletedFirstSetup")
+        isFirstLaunch = !hasCompletedSetup
+        
         // Use a longer delay to ensure the app is fully loaded
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             Task { @MainActor in
@@ -129,6 +160,14 @@ struct ContentView: View {
                     try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
                     
                     isInitialized = true
+                    
+                    // Show location permission prompt after initialization (only if not first launch)
+                    if !isFirstLaunch && !UserDefaults.standard.bool(forKey: "hasAskedLocationPermission") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            showingLocationPermission = true
+                            UserDefaults.standard.set(true, forKey: "hasAskedLocationPermission")
+                        }
+                    }
                 } catch {
                     initializationError = error.localizedDescription
                     isInitialized = true // Still show the app even if there's an error

@@ -314,20 +314,28 @@ struct TranscriptsView: View {
     private func generateTranscript(for recording: RecordingEntry) {
         isGeneratingTranscript = true
         
-        // First request speech recognition permission
-        SFSpeechRecognizer.requestAuthorization { authStatus in
-            DispatchQueue.main.async {
-                switch authStatus {
-                case .authorized:
-                    self.performEnhancedTranscription(for: recording)
-                case .denied, .restricted:
-                    self.isGeneratingTranscript = false
-                case .notDetermined:
-                    self.isGeneratingTranscript = false
-                @unknown default:
-                    self.isGeneratingTranscript = false
+        // Get the selected transcription engine
+        let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+        
+        // Only request Apple Speech recognition permission for Apple Intelligence engine
+        if selectedEngine == .appleIntelligence {
+            SFSpeechRecognizer.requestAuthorization { authStatus in
+                DispatchQueue.main.async {
+                    switch authStatus {
+                    case .authorized:
+                        self.performEnhancedTranscription(for: recording)
+                    case .denied, .restricted:
+                        self.isGeneratingTranscript = false
+                    case .notDetermined:
+                        self.isGeneratingTranscript = false
+                    @unknown default:
+                        self.isGeneratingTranscript = false
+                    }
                 }
             }
+        } else {
+            // For non-Apple engines (OpenAI, AWS, Whisper), skip Apple Speech permission
+            self.performEnhancedTranscription(for: recording)
         }
     }
     

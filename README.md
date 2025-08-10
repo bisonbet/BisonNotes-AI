@@ -6,6 +6,16 @@
 
 Audio Journal is your personal AI assistant for capturing, transcribing, and analyzing audio recordings. **All data is now managed exclusively via Core Data**—the legacy registry and file-based storage have been fully replaced. On first launch, the app will automatically migrate any legacy data into Core Data, ensuring seamless upgrades for existing users. The app features advanced background processing, performance optimization, comprehensive error handling, and a unified data model.
 
+## 🆕 Recent Updates
+
+### **Enhanced Location Search & Performance (Latest)**
+- **Smart Location Search**: Intelligent 3-tier fallback system for failed location searches
+- **University Database**: Built-in mapping for major universities (University of Oklahoma → Norman, Oklahoma)
+- **Search Retry Logic**: Automatic retry with different search strategies for better results
+- **Performance Improvements**: Fixed SF Symbol issues causing UI hangs and optimized background processing
+- **Better Error Handling**: User-friendly error messages with actionable suggestions
+- **UI Optimization**: Background location processing prevents typing delays and UI blocking
+
 ## ✨ Key Features
 
 ### 🎙️ **Advanced Audio Recording**
@@ -69,10 +79,14 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 ### 🗺️ **Location Intelligence**
 - **GPS Integration**: Automatic location capture with each recording
 - **Reverse Geocoding**: Converts coordinates to human-readable addresses
+- **Smart Location Search**: Advanced search with fallback strategies for landmarks and universities
+- **University Mapping**: Built-in database of major universities and their locations
+- **Search Fallbacks**: Intelligent retry logic for failed location searches
 - **Location History**: View recording locations on interactive maps
 - **Privacy-First**: Optional location tracking with user control
 - **Location Detail View**: Enhanced location display with map integration
 - **Interactive Maps**: Full-screen map views with navigation integration
+- **Performance Optimized**: Background location processing to prevent UI blocking
 
 ### ⚙️ **Advanced Settings & Customization**
 - **Multiple AI Engines**: Choose between different AI processing methods
@@ -93,6 +107,7 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 - **Error Recovery System**: Comprehensive error handling and recovery strategies
 - **Stale Job Detection**: Automatic cleanup of abandoned processing jobs
 - **Timeout Management**: Configurable timeouts for long-running operations
+- **UI Performance Fixes**: Fixed SF Symbol issues and background threading for smooth interactions
 
 ### 🛠️ **Enhanced File Management**
 - **Selective File Deletion**: Confirmation dialogs and complete cleanup

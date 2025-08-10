@@ -48,12 +48,12 @@ class UserPreferences: ObservableObject {
     }
     
     private init() {
-        // Load time format preference, defaulting to 24-hour
+        // Load time format preference, defaulting to 12-hour
         if let savedTimeFormat = UserDefaults.standard.string(forKey: Keys.timeFormat),
            let timeFormat = TimeFormat(rawValue: savedTimeFormat) {
             self.timeFormat = timeFormat
         } else {
-            self.timeFormat = .twentyFourHour // Default to 24-hour time
+            self.timeFormat = .twelveHour // Default to 12-hour time
         }
     }
     

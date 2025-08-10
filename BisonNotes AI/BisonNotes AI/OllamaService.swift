@@ -1971,8 +1971,8 @@ class OllamaService: ObservableObject {
         }
         
         // Fallback: if the regex fails, try to extract any JSON from the response
-        if let extractedJson = extractJSONFromResponse(response),
-           let data = extractedJson.data(using: .utf8) {
+        let extractedJson = extractJSONFromResponse(response)
+        if let data = extractedJson.data(using: .utf8) {
             print("🔍 OllamaService: Attempting to parse extracted JSON from GPT-OSS response")
             do {
                 if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],

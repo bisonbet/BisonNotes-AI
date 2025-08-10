@@ -1563,18 +1563,21 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - Notifications
     
     private func setupNotifications() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if granted {
-                // Notification permission granted
-            } else if let error = error {
-                print("❌ Notification permission denied: \(error)")
-            } else {
-                print("❌ Notification permission denied by user")
-            }
-        }
+        // Set up notification center but don't request permission yet
+        // Permission will be requested when we actually implement user notifications
+        print("📱 Notification center configured (permission request deferred)")
     }
     
     private func sendNotification(title: String, body: String, identifier: String? = nil, userInfo: [String: Any] = [:]) async {
+        // Check if we have notification permission first
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        
+        guard settings.authorizationStatus == .authorized else {
+            print("📱 Notification not sent - permission not granted or not requested yet")
+            return
+        }
+        
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
