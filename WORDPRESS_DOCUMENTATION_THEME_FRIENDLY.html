@@ -264,18 +264,15 @@
         
         <p>Welcome to BisonNotes AI! This comprehensive guide will walk you through every aspect of using the app, from basic recording to advanced AI configuration.</p>
         
+        <!-- Recent Updates Section - Add content here when needed
         <div class="info-box">
             <h3>🆕 Recent Updates</h3>
-            <h4>Enhanced Location Search & Performance (Latest)</h4>
+            <h4>Update Title (Date)</h4>
             <ul>
-                <li><strong>Smart Location Search</strong>: Intelligent 3-tier fallback system for failed location searches</li>
-                <li><strong>University Database</strong>: Built-in mapping for major universities (e.g., "University of Oklahoma" → Norman, Oklahoma)</li>
-                <li><strong>Search Retry Logic</strong>: Automatic retry with different search strategies for better results</li>
-                <li><strong>Performance Improvements</strong>: Fixed SF Symbol issues causing UI hangs and optimized background processing</li>
-                <li><strong>Better Error Handling</strong>: User-friendly error messages with actionable suggestions</li>
-                <li><strong>UI Optimization</strong>: Background location processing prevents typing delays and UI blocking</li>
+                <li><strong>Feature</strong>: Description</li>
             </ul>
         </div>
+        -->
         
         <div class="toc">
             <h3>📋 Table of Contents</h3>
@@ -296,24 +293,173 @@
 
         <h2 id="getting-started">📱 Getting Started</h2>
 
-        <h3>First Launch</h3>
+        <h3>First Launch Setup</h3>
         <ol class="step-list">
             <li><strong>Install the App</strong>: Download BisonNotes AI from the App Store</li>
-            <li><strong>Grant Permissions</strong>: When prompted, allow:
+            <li><strong>Simple Settings Welcome Screen</strong>: Upon first launch, you'll see a streamlined setup screen with essential options:
+                <div class="info-box">
+                    <h4>🎯 Initial Setup Options</h4>
+                    <ul>
+                        <li><strong>AI Engine Selection</strong>: Choose your preferred AI engine for transcription and summaries:
+                            <ul>
+                                <li><strong>OpenAI</strong> (Recommended): Most powerful and capable, requires API key, pay-per-use</li>
+                                <li><strong>Enhanced Apple Intelligence</strong>: Free, on-device processing, best for privacy but limited in advanced capabilities</li>
+                                <li><strong>Other engines</strong>: Google AI Studio, Ollama, AWS Bedrock (can be configured later)</li>
+                            </ul>
+                        </li>
+                        <li><strong>Audio Quality</strong>: Select recording quality (64kbps to 256kbps) - Higher quality means larger files</li>
+                        <li><strong>Location Tracking</strong>: Enable to automatically capture where recordings are made</li>
+                    </ul>
+                    <p><strong>💡 Tip</strong>: You can change these settings anytime in the full Settings view</p>
+                </div>
+            </li>
+            <li><strong>Location Permission</strong>: The app will ask for location access if you enabled location tracking:
                 <ul>
-                    <li><strong>Microphone Access</strong>: Required for recording audio</li>
-                    <li><strong>Location Services</strong>: Optional but recommended for location tracking</li>
+                    <li><strong>"Allow While Using App"</strong>: Recommended - captures location during recording</li>
+                    <li><strong>"Don't Allow"</strong>: You can still manually add locations later</li>
                 </ul>
             </li>
             <li><strong>Automatic Migration</strong>: On first launch, the app will automatically scan for any existing audio files and migrate them into the database</li>
         </ol>
 
-        <h3>Basic Recording</h3>
+        <h3>Your First Recording</h3>
         <ol class="step-list">
             <li><strong>Start Recording</strong>: Tap the large microphone button on the main screen</li>
-            <li><strong>Recording Status</strong>: You'll see a red recording indicator and timer</li>
+            <li><strong>Microphone Permission</strong>: On your first recording, iOS will ask for microphone access:
+                <ul>
+                    <li><strong>Tap "OK"</strong>: Required for the app to function</li>
+                    <li>If denied, you can re-enable it in Settings → Privacy & Security → Microphone</li>
+                </ul>
+            </li>
+            <li><strong>Recording Status</strong>: You'll see:
+                <ul>
+                    <li>Red recording indicator</li>
+                    <li>Live timer showing duration</li>
+                    <li>Location indicator (if location services enabled)</li>
+                </ul>
+            </li>
             <li><strong>Stop Recording</strong>: Tap the stop button to end recording</li>
-            <li><strong>Background Recording</strong>: The app continues recording even when minimized</li>
+            <li><strong>Background Recording</strong>: The app continues recording even when minimized or phone is locked</li>
+        </ol>
+
+        <h3>Generate Your First Transcript</h3>
+        <ol class="step-list">
+            <li><strong>Access Recording</strong>: After stopping your recording, you'll see it in the main recordings list</li>
+            <li><strong>Start Transcription</strong>: 
+                <ul>
+                    <li>Tap on your recording to open the detail view</li>
+                    <li>Tap the "Generate Transcript" button</li>
+                    <li>The app will process your audio using your selected AI engine</li>
+                </ul>
+            </li>
+            <li><strong>Transcription Progress</strong>: You'll see a progress indicator showing:
+                <ul>
+                    <li>Processing status</li>
+                    <li>Time remaining estimate</li>
+                    <li>You can continue using the app while it processes in the background</li>
+                </ul>
+            </li>
+            <li><strong>View Results</strong>: Once complete, you'll see the full transcript with:
+                <ul>
+                    <li>Editable text</li>
+                    <li>Time stamps (if supported by your AI engine)</li>
+                    <li>Confidence indicators</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h3>Generate Your First Summary</h3>
+        <ol class="step-list">
+            <li><strong>Prerequisites</strong>: You must have a transcript before generating a summary</li>
+            <li><strong>Access Summary Options</strong>: In the recording detail view, tap "Generate Summary"</li>
+            <li><strong>AI Processing</strong>: The app will analyze your transcript and create:
+                <ul>
+                    <li><strong>Enhanced Summary</strong>: Main content overview</li>
+                    <li><strong>Action Items</strong>: Extracted tasks with priority levels</li>
+                    <li><strong>Reminders</strong>: Time-sensitive items with urgency indicators</li>
+                    <li><strong>Alternative Titles</strong>: AI-generated recording names</li>
+                </ul>
+            </li>
+            <li><strong>Review Results</strong>: The summary view shows:
+                <ul>
+                    <li>Expandable sections for each content type</li>
+                    <li>Visual priority and confidence indicators</li>
+                    <li>Interactive maps (if location data available)</li>
+                    <li>Integration options for tasks and reminders</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h3>iCloud Sync Setup</h3>
+        <div class="info-box">
+            <p><strong>🔄 When Does This Appear?</strong> After generating your first successful summary, the app will prompt you about iCloud syncing.</p>
+        </div>
+        <ol class="step-list">
+            <li><strong>iCloud Prompt</strong>: You'll see a dialog asking about iCloud sync for summaries</li>
+            <li><strong>Choose Your Option</strong>:
+                <ul>
+                    <li><strong>"Enable iCloud Sync"</strong>: Summaries sync across all your devices
+                        <ul>
+                            <li>Requires iCloud to be enabled on your device</li>
+                            <li>Uses your iCloud storage quota</li>
+                            <li>Provides backup and cross-device access</li>
+                        </ul>
+                    </li>
+                    <li><strong>"Keep Local Only"</strong>: Summaries stay on this device only
+                        <ul>
+                            <li>No cloud storage used</li>
+                            <li>Better for privacy-sensitive content</li>
+                            <li>Can be changed later in Settings</li>
+                        </ul>
+                    </li>
+                </ul>
+            </li>
+            <li><strong>Configuration</strong>: If you enable iCloud, the app will automatically configure CloudKit sync</li>
+        </ol>
+
+        <h3>Managing and Deleting Recordings</h3>
+        <ol class="step-list">
+            <li><strong>Access Recording Options</strong>: 
+                <ul>
+                    <li>Long press on any recording in the main list</li>
+                    <li>Or tap the recording and look for the "..." menu</li>
+                </ul>
+            </li>
+            <li><strong>Deletion Options</strong>: When you tap "Delete", you'll see comprehensive options:
+                <div class="info-box">
+                    <h4>🗑️ What Gets Deleted?</h4>
+                    <ul>
+                        <li><strong>Audio File Only</strong>: Keeps transcript and summary, removes audio
+                            <ul>
+                                <li>Best for: Saving storage while keeping the processed content</li>
+                                <li>Note: You can't regenerate transcript or play audio after this</li>
+                            </ul>
+                        </li>
+                        <li><strong>Everything</strong>: Removes audio file, transcript, and summary
+                            <ul>
+                                <li>Complete removal from device and iCloud (if syncing)</li>
+                                <li>Cannot be undone</li>
+                            </ul>
+                        </li>
+                        <li><strong>Summary Only</strong>: Keeps audio and transcript, removes AI-generated summary
+                            <ul>
+                                <li>Useful if you want to regenerate summary with different AI engine</li>
+                                <li>Can regenerate summary anytime</li>
+                            </ul>
+                        </li>
+                    </ul>
+                    <p><strong>⚠️ Important</strong>: Deletion is permanent. Make sure you have backups if needed.</p>
+                </div>
+            </li>
+            <li><strong>Confirmation</strong>: The app will ask you to confirm the deletion to prevent accidents</li>
+            <li><strong>Background Cleanup</strong>: After deletion, the app automatically:
+                <ul>
+                    <li>Removes files from device storage</li>
+                    <li>Updates iCloud sync (if enabled)</li>
+                    <li>Cleans up any orphaned data</li>
+                    <li>Updates the recordings list</li>
+                </ul>
+            </li>
         </ol>
 
         <h2 id="recording-features">🎙️ Recording Features</h2>
