@@ -1464,6 +1464,11 @@ class DataMigrationManager: ObservableObject {
                     titled.locationTimestamp = generic.locationTimestamp
                 }
                 
+                // Always keep the titled recording's human-friendly name
+                if let titledName = titled.recordingName, !titledName.isEmpty {
+                    generic.recordingName = titledName
+                }
+
                 // Use the recording URL from whichever exists
                 if titled.recordingURL == nil && generic.recordingURL != nil {
                     titled.recordingURL = generic.recordingURL
@@ -1481,6 +1486,18 @@ class DataMigrationManager: ObservableObject {
                 // Update modification time
                 titled.lastModified = Date()
                 
+                // Before deleting generic, ensure all relationships point to the titled recording
+                if let transcript = generic.transcript {
+                    transcript.recording = titled
+                    titled.transcript = transcript
+                    titled.transcriptId = transcript.id
+                }
+                if let summary = generic.summary {
+                    summary.recording = titled
+                    titled.summary = summary
+                    titled.summaryId = summary.id
+                }
+
                 // Delete the generic recording
                 context.delete(generic)
                 resolvedCount += 1
@@ -1533,10 +1550,17 @@ class DataMigrationManager: ObservableObject {
         do {
             let summaries = try context.fetch(summaryFetch)
             for summary in summaries {
-                if summary.recording == nil {
+                // Preserve summaries associated with recordings intentionally kept without audio
+                // A preserved summary will have a recordingId set, even if the recording has no URL
+                let hasAnchorRecordingId = (summary.recordingId != nil)
+                let isFullyOrphaned = (summary.recording == nil && summary.recordingId == nil)
+                if isFullyOrphaned {
                     print("🗑️ Removing orphaned summary: \(summary.id?.uuidString ?? "unknown")")
                     context.delete(summary)
                     cleanedCount += 1
+                } else if summary.recording == nil && hasAnchorRecordingId {
+                    // Keep: preserved summary; do not delete
+                    print("🛑 Keeping preserved summary (anchor recordingId present): \(summary.id?.uuidString ?? "unknown")")
                 }
             }
         } catch {

@@ -316,23 +316,26 @@ struct SummariesView: View {
             print("      - Recording has summary flag: \(recording.summary != nil)")
         }
         
-        // Filter to show recordings that have transcripts (so summaries can be generated)
+        // Show recordings that either have a transcript (can generate) OR already have a summary
         recordings = recordingsWithData.compactMap { recordingData in
             let recording = recordingData.recording
             let transcript = recordingData.transcript
             let summary = recordingData.summary
             
-            // Include recordings that have transcripts (so summaries can be generated)
-            if transcript != nil {
-                print("✅ Including recording with transcript: \(recording.recordingName ?? "Unknown")")
+            if transcript != nil || summary != nil || recording.summary != nil {
+                if transcript != nil {
+                    print("✅ Including recording with transcript: \(recording.recordingName ?? "Unknown")")
+                } else {
+                    print("✅ Including recording with preserved summary (no transcript): \(recording.recordingName ?? "Unknown")")
+                }
                 return (recording: recording, transcript: transcript, summary: summary)
             } else {
-                print("❌ Excluding recording without transcript: \(recording.recordingName ?? "Unknown")")
+                print("❌ Excluding recording without transcript or summary: \(recording.recordingName ?? "Unknown")")
                 return nil
             }
         }
         
-        print("📊 Final result: \(recordings.count) recordings with transcripts out of \(recordingsWithData.count) total recordings")
+        print("📊 Final result: \(recordings.count) recordings shown (has transcript or summary) out of \(recordingsWithData.count) total recordings")
         
         // Check if we should show the first-time iCloud prompt
         checkForFirstTimeiCloudPrompt()

@@ -34,24 +34,24 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         
         static let mixedAudioRecording = AudioSessionConfig(
             category: .playAndRecord,
-            mode: .default,
-            options: [.mixWithOthers, .allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker],
+            mode: .voiceChat,
+            options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker],
             allowMixedAudio: true,
             backgroundRecording: false
         )
         
         static let backgroundRecording = AudioSessionConfig(
             category: .playAndRecord,
-            mode: .default,
-            options: [.mixWithOthers, .allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker],
+            mode: .voiceChat,
+            options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker],
             allowMixedAudio: true,
             backgroundRecording: true
         )
         
         static let standardRecording = AudioSessionConfig(
             category: .playAndRecord,
-            mode: .default,
-            options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP],
+            mode: .voiceChat,
+            options: [.defaultToSpeaker, .allowBluetooth],
             allowMixedAudio: false,
             backgroundRecording: false
         )
@@ -90,6 +90,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             isConfigured = true
             
             print("✅ Mixed audio session configured successfully")
+
+            // Prefer Bluetooth HFP if available for recording input
+            await autoSelectBestInput()
             
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Mixed audio configuration failed: \(error.localizedDescription)")
@@ -117,6 +120,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             isConfigured = true
             
             print("✅ Background recording session configured successfully")
+
+            // Prefer Bluetooth HFP if available for recording input
+            await autoSelectBestInput()
             
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Background recording configuration failed: \(error.localizedDescription)")
@@ -224,6 +230,14 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     
     private func applyConfiguration(_ config: AudioSessionConfig) async throws {
         try session.setCategory(config.category, mode: config.mode, options: config.options)
+
+        // Prefer telephony-friendly settings when recording with Bluetooth HFP
+        if config.category == .playAndRecord {
+            // These are best-effort; if they fail it's okay to continue
+            try? session.setPreferredSampleRate(16000)
+            try? session.setPreferredIOBufferDuration(0.02)
+        }
+
         try session.setActive(true)
         
         // Additional configuration for background recording
@@ -291,6 +305,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                     let newUserInfo: [String: Any] = [AVAudioSessionRouteChangeReasonKey: reason.rawValue]
                     let newNotification = Notification(name: AVAudioSession.routeChangeNotification, object: nil, userInfo: newUserInfo)
                     self.handleRouteChange(newNotification)
+                    if reason == .newDeviceAvailable {
+                        // Prefer Bluetooth HFP when it becomes available
+                        await self.autoSelectBestInput()
+                    }
                 }
             }
         }
@@ -358,6 +376,21 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             
         default:
             EnhancedLogger.shared.logAudioSession("Audio route changed: \(reason)", level: .info)
+        }
+    }
+
+    // MARK: - Input Selection
+
+    /// Selects Bluetooth HFP input if available, otherwise falls back to built-in mic
+    @MainActor
+    private func autoSelectBestInput() async {
+        guard let inputs = session.availableInputs else { return }
+        if let bluetoothHFP = inputs.first(where: { $0.portType == .bluetoothHFP }) {
+            do { try session.setPreferredInput(bluetoothHFP) } catch { /* best-effort */ }
+            return
+        }
+        if let builtInMic = inputs.first(where: { $0.portType == .builtInMic }) {
+            do { try session.setPreferredInput(builtInMic) } catch { /* best-effort */ }
         }
     }
 }

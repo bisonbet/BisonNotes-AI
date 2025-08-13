@@ -64,28 +64,7 @@ struct TranscriptsView: View {
             }
         }
         .navigationTitle("Transcripts")
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: {
-                    isCheckingForCompletions = true
-                    Task {
-                        await enhancedTranscriptionManager.checkForCompletedTranscriptions()
-                        await MainActor.run {
-                            isCheckingForCompletions = false
-                        }
-                    }
-                }) {
-                    HStack {
-                        if isCheckingForCompletions {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        }
-                        Text("Check Status")
-                    }
-                }
-                .disabled(isCheckingForCompletions)
-            }
-        }
+        // Toolbar status checker removed per request
         .onAppear {
             loadRecordings()
             setupTranscriptionCompletionCallback()
@@ -224,21 +203,48 @@ struct TranscriptsView: View {
     }
     
     private func loadRecordings() {
-        // Use Core Data to get recordings
-        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
-        
-        // Convert to the format expected by this view
-        var processedRecordings: [(recording: RecordingEntry, transcript: TranscriptData?)] = []
-        
-        for recordingData in recordingsWithData {
-            processedRecordings.append((recording: recordingData.recording, transcript: recordingData.transcript))
-        }
-        
-        // Sort by date
-        recordings = processedRecordings.sorted { $0.recording.recordingDate ?? Date() > $1.recording.recordingDate ?? Date() }
-        
-        // Geocode locations for all recordings (with rate limiting)
-        loadLocationAddressesBatch(for: recordings.map { $0.recording })
+		// Use Core Data to get recordings
+		let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+		
+		// Deduplicate by resolved filename; prefer items with transcript and non-generic titles
+		var bestByFilename: [String: (recording: RecordingEntry, transcript: TranscriptData?)] = [:]
+		
+		func isGenericName(_ name: String) -> Bool {
+			if name.hasPrefix("recording_") { return true }
+			if name.hasPrefix("V20210426-") || name.hasPrefix("V20210427-") { return true }
+			if name.hasPrefix("apprecording-") { return true }
+			if name.hasPrefix("importedfile-recording_") { return true }
+			if name.count > 20 && (name.contains("1754") || name.contains("2025") || name.contains("2024")) { return true }
+			return false
+		}
+		
+		func score(_ entry: (recording: RecordingEntry, transcript: TranscriptData?)) -> Int {
+			var s = 0
+			if entry.transcript != nil { s += 3 }
+			if let name = entry.recording.recordingName, !isGenericName(name) { s += 2 }
+			if entry.recording.summary != nil { s += 1 }
+			if entry.recording.duration > 0 { s += 1 }
+			return s
+		}
+		
+		for rd in recordingsWithData {
+			guard let url = appCoordinator.getAbsoluteURL(for: rd.recording) else { continue }
+			let key = url.lastPathComponent
+			let candidate = (recording: rd.recording, transcript: rd.transcript)
+			if let existing = bestByFilename[key] {
+				bestByFilename[key] = score(existing) >= score(candidate) ? existing : candidate
+			} else {
+				bestByFilename[key] = candidate
+			}
+		}
+		
+		let deduped = Array(bestByFilename.values)
+		
+		// Sort by date
+		recordings = deduped.sorted { $0.recording.recordingDate ?? Date() > $1.recording.recordingDate ?? Date() }
+		
+		// Geocode locations for all recordings (with rate limiting)
+		loadLocationAddressesBatch(for: recordings.map { $0.recording })
     }
     
     func loadLocationDataForRecording(url: URL) -> LocationData? {

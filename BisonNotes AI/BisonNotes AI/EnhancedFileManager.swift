@@ -316,36 +316,41 @@ class EnhancedFileManager: ObservableObject {
         
         // Handle selective deletion based on preserveSummary parameter
         if preserveSummary && relationships.summaryExists {
-            // Delete recording and transcript, but preserve summary
-            // We need to manually handle this since cascade deletion would delete everything
-            
-            // First, get the summary entry and update its relationships to preserve it
-            if let summaryEntry = await appCoordinator.coreDataManager.getSummary(for: recordingId) {
-                // Update the summary to remove its relationship to the recording
-                // This will preserve the summary even when the recording is deleted
-                summaryEntry.recording = nil
-                summaryEntry.transcript = nil
-                
-                // Save the context to persist the changes
-                do {
-                    try await appCoordinator.coreDataManager.saveContext()
-                    print("✅ Preserved summary for: \(relationships.recordingName)")
-                } catch {
-                    print("❌ Error preserving summary: \(error)")
-                }
+            // Preserve summary: remove audio + transcript, keep the recording entry to anchor the summary in UI
+
+            // Delete transcript if present
+            if let transcript = await appCoordinator.coreDataManager.getTranscript(for: recordingId) {
+                await appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
+                print("✅ Deleted transcript for: \(relationships.recordingName)")
             }
-            
-            // Now delete the recording (this will cascade delete the transcript)
-            await appCoordinator.deleteRecording(id: recordingId)
-            print("✅ Deleted recording and transcript for: \(relationships.recordingName)")
-            
+
+            // Keep summary linked to the recording; ensure IDs/relationships are consistent
+            if let summary = await appCoordinator.coreDataManager.getSummary(for: recordingId) {
+                summary.recording = recordingEntry
+                summary.recordingId = recordingId
+                summary.transcript = nil
+                summary.transcriptId = nil
+            }
+
+            // Clear recording's file URL so it won't appear in audio listings
+            recordingEntry.recordingURL = nil
+            recordingEntry.lastModified = Date()
+
+            // Persist changes
+            do {
+                try await appCoordinator.coreDataManager.saveContext()
+                print("✅ Preserved summary (kept recording entry, removed transcript) for: \(relationships.recordingName)")
+            } catch {
+                print("❌ Error saving preservation changes: \(error)")
+            }
+
             // Update relationships to reflect that only summary remains
             let updatedRelationships = FileRelationships(
-                recordingURL: nil, // Recording no longer available
+                recordingURL: nil,
                 recordingName: relationships.recordingName,
                 recordingDate: relationships.recordingDate,
-                transcriptExists: false, // Transcript deleted with recording
-                summaryExists: true, // Summary preserved
+                transcriptExists: false,
+                summaryExists: true,
                 iCloudSynced: relationships.iCloudSynced
             )
             await updateFileRelationships(for: url, relationships: updatedRelationships)

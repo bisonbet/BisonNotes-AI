@@ -32,9 +32,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     private var audioRecorder: AVAudioRecorder?
     private var audioPlayer: AVAudioPlayer?
     private var recordingTimer: Timer?
-    private var playingTimer: Timer?
-    private var interruptionObserver: NSObjectProtocol?
+	private var playingTimer: Timer?
+	private var interruptionObserver: NSObjectProtocol?
+	private var routeChangeObserver: NSObjectProtocol?
     private var willEnterForegroundObserver: NSObjectProtocol?
+    // Failsafe tracking to detect stalled recordings when input disappears
+    private var lastRecordedFileSize: Int64 = -1
+    private var stalledTickCount: Int = 0
     
     override init() {
         // Initialize the managers first
@@ -84,6 +88,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         if let observer = interruptionObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+		if let observer = routeChangeObserver {
+			NotificationCenter.default.removeObserver(observer)
+		}
         if let observer = willEnterForegroundObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -109,6 +116,25 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
                 }
             }
         }
+		
+		// Route change observer (e.g., Bluetooth mic disconnects)
+		routeChangeObserver = NotificationCenter.default.addObserver(
+			forName: AVAudioSession.routeChangeNotification,
+			object: nil,
+			queue: .main
+		) { [weak self] notification in
+			let userInfo = notification.userInfo
+			let routeChangeReason = userInfo?[AVAudioSessionRouteChangeReasonKey] as? AVAudioSession.RouteChangeReason
+			
+			Task { @MainActor in
+				guard let self = self else { return }
+				if let reason = routeChangeReason {
+					let newUserInfo: [String: Any] = [AVAudioSessionRouteChangeReasonKey: reason.rawValue]
+					let newNotification = Notification(name: AVAudioSession.routeChangeNotification, object: nil, userInfo: newUserInfo)
+					self.handleRouteChange(newNotification)
+				}
+			}
+		}
         
         willEnterForegroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.willEnterForegroundNotification,
@@ -122,18 +148,64 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         }
     }
     
-    private func removeNotificationObservers() {
-        if let observer = interruptionObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = willEnterForegroundObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-    }
+	private func removeNotificationObservers() {
+		if let observer = interruptionObserver {
+			NotificationCenter.default.removeObserver(observer)
+		}
+		if let observer = routeChangeObserver {
+			NotificationCenter.default.removeObserver(observer)
+		}
+		if let observer = willEnterForegroundObserver {
+			NotificationCenter.default.removeObserver(observer)
+		}
+	}
     
-    private func handleAudioInterruption(_ notification: Notification) {
-        enhancedAudioSessionManager.handleAudioInterruption(notification)
-    }
+	private func handleAudioInterruption(_ notification: Notification) {
+		// Forward to session manager for logging and restoration
+		enhancedAudioSessionManager.handleAudioInterruption(notification)
+		
+		// Also ensure our recording UI/state reflects actual recorder state
+		guard let userInfo = notification.userInfo,
+				let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+				let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+			return
+		}
+		
+		switch type {
+		case .began:
+			if isRecording {
+				audioRecorder?.stop()
+				isRecording = false
+				stopRecordingTimer()
+				errorMessage = "Recording stopped due to audio interruption."
+			}
+		case .ended:
+			break
+		@unknown default:
+			break
+		}
+	}
+
+	private func handleRouteChange(_ notification: Notification) {
+		guard let userInfo = notification.userInfo,
+				let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+				let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+			return
+		}
+		
+		switch reason {
+		case .oldDeviceUnavailable, .categoryChange:
+			// Input likely lost (e.g., Bluetooth mic disconnected)
+			if isRecording {
+				audioRecorder?.stop()
+				isRecording = false
+				stopRecordingTimer()
+				errorMessage = "Recording stopped because the microphone became unavailable."
+			}
+		default:
+			break
+		}
+	}
     
     func fetchInputs() async {
         do {
@@ -301,6 +373,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         audioRecorder?.stop()
         isRecording = false
         stopRecordingTimer()
+        audioRecorder = nil
+        lastRecordedFileSize = -1
+        stalledTickCount = 0
     }
     
     func playRecording(url: URL) {
@@ -353,9 +428,38 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     }
     
     private func startRecordingTimer() {
+        // Reset stall tracking at start
+        lastRecordedFileSize = -1
+        stalledTickCount = 0
+
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
-                self?.recordingTime += 1
+                guard let self = self else { return }
+                // Failsafe: if the underlying recorder stopped, sync UI state
+                if self.isRecording, let recorder = self.audioRecorder, !recorder.isRecording {
+                    self.isRecording = false
+                    self.stopRecordingTimer()
+                    self.errorMessage = "Recording stopped because the microphone became unavailable."
+                    return
+                }
+                // Failsafe: detect stalled writes (no bytes changing for several seconds)
+                if self.isRecording, let url = self.recordingURL {
+                    let currentSize = self.getFileSize(url: url)
+                    if self.lastRecordedFileSize >= 0 && currentSize == self.lastRecordedFileSize {
+                        self.stalledTickCount += 1
+                    } else {
+                        self.stalledTickCount = 0
+                        self.lastRecordedFileSize = currentSize
+                    }
+                    if self.stalledTickCount >= 3 { // ~3 seconds of no data
+                        self.audioRecorder?.stop()
+                        self.isRecording = false
+                        self.stopRecordingTimer()
+                        self.errorMessage = "Recording stopped due to no audio data being received."
+                        return
+                    }
+                }
+                self.recordingTime += 1
             }
         }
     }
@@ -408,12 +512,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     }
     
     private func getRecordingDuration(url: URL) -> TimeInterval {
-        let asset = AVURLAsset(url: url)
-        
-        // Use async loading for duration (required for iOS 16+)
+        // Prefer AVAudioPlayer's parsed duration (often more accurate/playable length)
+        if let player = try? AVAudioPlayer(contentsOf: url) {
+            let d = player.duration
+            if d > 0 { return d }
+        }
+        // Fallback to AVURLAsset with precise timing
+        let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
         let semaphore = DispatchSemaphore(value: 0)
         var loadedDuration: TimeInterval = 0
-        
         Task {
             do {
                 let loadedDurationValue = try await asset.load(.duration)
@@ -423,16 +530,26 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             }
             semaphore.signal()
         }
-        
-        // Wait for the async loading to complete (with timeout)
         _ = semaphore.wait(timeout: .now() + 2.0)
-        
-        return loadedDuration
+        if loadedDuration > 0 { return loadedDuration }
+        // Final fallback to the timer value we tracked during recording
+        return recordingTime
     }
     
 }
 
 extension AudioRecorderViewModel: AVAudioRecorderDelegate {
+    nonisolated func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
+        Task { @MainActor in
+            if isRecording {
+                audioRecorder?.stop()
+                isRecording = false
+                stopRecordingTimer()
+            }
+            errorMessage = "Recording stopped due to an encoding error\(error.map { ": \($0.localizedDescription)" } ?? ".")"
+        }
+    }
+
     nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
         Task {
             await MainActor.run {

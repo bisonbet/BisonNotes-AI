@@ -26,6 +26,13 @@ struct DataMigrationView: View {
     @State private var showingCleanupAlert = false
     @State private var isPerformingCleanup = false
     @State private var cleanupResults: CleanupResults?
+    // Safety confirmations for data-changing operations
+    @State private var confirmImportLegacy = false
+    @State private var confirmRecoverCloud = false
+    @State private var confirmRepairDuplicates = false
+    @State private var confirmFixNamesListings = false
+    @State private var confirmImportOrphans = false
+    @State private var confirmSyncURLs = false
     
     var body: some View {
         NavigationView {
@@ -138,9 +145,7 @@ struct DataMigrationView: View {
             
             // Legacy migration (for old data format)
             Button(action: {
-                Task {
-                    await migrationManager.performDataMigration()
-                }
+                confirmImportLegacy = true
             }) {
                 HStack {
                     Image(systemName: "arrow.triangle.2.circlepath")
@@ -161,17 +166,7 @@ struct DataMigrationView: View {
             
             // iCloud Recovery
             Button(action: {
-                Task {
-                    // Initialize the migration manager with iCloud sync managers
-                    migrationManager.setCloudSyncManagers(legacy: legacyiCloudManager)
-                    
-                    let results = await migrationManager.recoverDataFromiCloud()
-                    // Handle recovery results
-                    print("📥 Recovery completed: \(results.transcripts) transcripts, \(results.summaries) summaries")
-                    if !results.errors.isEmpty {
-                        print("⚠️ Recovery errors: \(results.errors.joined(separator: ", "))")
-                    }
-                }
+                confirmRecoverCloud = true
             }) {
                 HStack {
                     Image(systemName: "icloud.and.arrow.down")
@@ -192,14 +187,11 @@ struct DataMigrationView: View {
             
             // Fix filename/title duplicates (the new advanced repair)
             Button(action: {
-                Task {
-                    let result = await migrationManager.fixSpecificDataIssues()
-                    print("🎯 Fixed \(result.resolved) data issues, saved: \(result.saved)")
-                }
+                confirmRepairDuplicates = true
             }) {
                 HStack {
                     Image(systemName: "arrow.triangle.merge")
-                    Text("Fix Filename/Title Duplicates")
+                    Text("Repair Duplicates (Keep Summary Title)")
                 }
                 .font(.headline)
                 .foregroundColor(.white)
@@ -212,10 +204,7 @@ struct DataMigrationView: View {
             
             // Fix current naming and transcript listing issues
             Button(action: {
-                Task {
-                    let result = await migrationManager.fixCurrentIssues()
-                    print("🎯 Fixed current issues: \(result.renames) renames, \(result.validations) validations")
-                }
+                confirmFixNamesListings = true
             }) {
                 HStack {
                     Image(systemName: "textformat")
@@ -232,10 +221,7 @@ struct DataMigrationView: View {
             
             // Import orphaned audio files
             Button(action: {
-                Task {
-                    let count = await migrationManager.findAndImportOrphanedAudioFiles()
-                    print("📥 Imported \(count) orphaned audio files")
-                }
+                confirmImportOrphans = true
             }) {
                 HStack {
                     Image(systemName: "plus.rectangle.on.folder")
@@ -289,7 +275,7 @@ struct DataMigrationView: View {
                         .buttonStyle(CompactDebugButtonStyle())
                         
                         Button("Sync URLs") {
-                            appCoordinator.syncRecordingURLs()
+                            confirmSyncURLs = true
                         }
                         .buttonStyle(CompactDebugButtonStyle())
                     }
@@ -402,6 +388,66 @@ struct DataMigrationView: View {
             }
         }
         .padding(.horizontal)
+        // MARK: - Safety Alerts
+        .alert("Import Legacy Files", isPresented: $confirmImportLegacy) {
+            Button("Cancel", role: .cancel) { }
+            Button("Import", role: .destructive) {
+                Task {
+                    await migrationManager.performDataMigration()
+                }
+            }
+        } message: {
+            Text("This will scan Documents and create database entries for legacy audio/transcript/summary files. No existing records will be deleted, but new entries may be added.")
+        }
+        .alert("Recover from iCloud", isPresented: $confirmRecoverCloud) {
+            Button("Cancel", role: .cancel) { }
+            Button("Recover", role: .destructive) {
+                Task {
+                    migrationManager.setCloudSyncManagers(legacy: legacyiCloudManager)
+                    let _ = await migrationManager.recoverDataFromiCloud()
+                }
+            }
+        } message: {
+            Text("This will fetch summaries from iCloud and add any missing entries to your database. It will not overwrite existing local summaries.")
+        }
+        .alert("Repair Duplicates", isPresented: $confirmRepairDuplicates) {
+            Button("Cancel", role: .cancel) { }
+            Button("Repair", role: .destructive) {
+                Task {
+                    let _ = await migrationManager.fixSpecificDataIssues()
+                }
+            }
+        } message: {
+            Text("Merges duplicate recordings that point to the same file and deletes the duplicate entries. The summary-generated title will be preserved.")
+        }
+        .alert("Fix Names & Transcript Listings", isPresented: $confirmFixNamesListings) {
+            Button("Cancel", role: .cancel) { }
+            Button("Fix", role: .destructive) {
+                Task {
+                    let _ = await migrationManager.fixCurrentIssues()
+                }
+            }
+        } message: {
+            Text("Renames generic recordings to better titles where available and validates statuses. No files will be deleted.")
+        }
+        .alert("Import Orphaned Audio Files", isPresented: $confirmImportOrphans) {
+            Button("Cancel", role: .cancel) { }
+            Button("Import", role: .destructive) {
+                Task {
+                    let _ = await migrationManager.findAndImportOrphanedAudioFiles()
+                }
+            }
+        } message: {
+            Text("Adds database entries for audio files that exist on disk but not in the database. No deletions will occur.")
+        }
+        .alert("Sync Recording URLs", isPresented: $confirmSyncURLs) {
+            Button("Cancel", role: .cancel) { }
+            Button("Sync", role: .destructive) {
+                appCoordinator.syncRecordingURLs()
+            }
+        } message: {
+            Text("Converts stored absolute paths to resilient relative paths and fixes broken path references. No files are deleted.")
+        }
     }
     
     private var integrityCheckSection: some View {

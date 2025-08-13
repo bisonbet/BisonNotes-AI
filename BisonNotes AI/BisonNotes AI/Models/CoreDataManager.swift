@@ -484,11 +484,12 @@ class CoreDataManager: ObservableObject {
     
     private func convertToEnhancedSummaryData(summaryEntry: SummaryEntry, recordingEntry: RecordingEntry) -> EnhancedSummaryData? {
         guard let _ = summaryEntry.id,
-              let recordingId = recordingEntry.id,
-              let url = getAbsoluteURL(for: recordingEntry) else {
-            print("❌ Could not get absolute URL for recording: \(recordingEntry.recordingName ?? "unknown")")
+              let recordingId = recordingEntry.id else {
+            print("❌ Missing IDs for summary/recording conversion")
             return nil
         }
+        // Allow preserved summaries without an audio URL by falling back to an empty URL
+        let url = getAbsoluteURL(for: recordingEntry) ?? URL(fileURLWithPath: "")
         
         // Decode structured data from JSON
         var titles: [TitleItem] = []

@@ -254,8 +254,32 @@ struct RecordingsListView: View {
     private func loadRecordings() {
         // Use the app coordinator to get recordings with proper database names
         let recordingsWithData = appCoordinator.getAllRecordingsWithData()
-        
-        recordings = recordingsWithData.compactMap { recordingData -> AudioRecordingFile? in
+
+        // Deduplicate by resolved filename; prefer entries with content and non-generic titles
+        var bestByFilename: [String: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = [:]
+
+        func score(_ e: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)) -> Int {
+            var s = 0
+            if e.summary != nil { s += 3 }
+            if e.transcript != nil { s += 2 }
+            if let name = e.recording.recordingName, !isGenericName(name) { s += 1 }
+            if e.recording.duration > 0 { s += 1 }
+            return s
+        }
+
+        for entry in recordingsWithData {
+            guard let url = appCoordinator.getAbsoluteURL(for: entry.recording) else { continue }
+            let key = url.lastPathComponent
+            if let existing = bestByFilename[key] {
+                bestByFilename[key] = score(existing) >= score(entry) ? existing : entry
+            } else {
+                bestByFilename[key] = entry
+            }
+        }
+
+        let deduped = Array(bestByFilename.values)
+
+        recordings = deduped.compactMap { recordingData -> AudioRecordingFile? in
             let recording = recordingData.recording
             guard let recordingName = recording.recordingName,
                   let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
@@ -263,23 +287,32 @@ struct RecordingsListView: View {
                 print("⚠️ Skipping recording with missing data: \(recording.recordingName ?? "unknown")")
                 return nil
             }
-            
+
             let date = recording.recordingDate ?? recording.createdAt ?? Date()
             let duration = recording.duration > 0 ? recording.duration : getRecordingDuration(url: recordingURL)
             let locationData = appCoordinator.loadLocationData(for: recording)
-            
+
             return AudioRecordingFile(
-                url: recordingURL, 
-                name: recordingName,  // Use the database name instead of filename!
-                date: date, 
-                duration: duration, 
+                url: recordingURL,
+                name: recordingName,
+                date: date,
+                duration: duration,
                 locationData: locationData
             )
         }
         .sorted { $0.date > $1.date }
-        
+
         // Geocode locations for all recordings (with rate limiting)
         loadLocationAddressesBatch(for: recordings)
+    }
+
+    private func isGenericName(_ name: String) -> Bool {
+        if name.hasPrefix("recording_") { return true }
+        if name.hasPrefix("V20210426-") || name.hasPrefix("V20210427-") { return true }
+        if name.hasPrefix("apprecording-") { return true }
+        if name.hasPrefix("importedfile-recording_") { return true }
+        if name.count > 20 && (name.contains("1754") || name.contains("2025") || name.contains("2024")) { return true }
+        return false
     }
     
     private func loadLocationDataForRecording(url: URL) -> LocationData? {

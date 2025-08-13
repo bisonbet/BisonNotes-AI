@@ -18,27 +18,24 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>NSCalendarsUsageDescription</key>
+	<string>This app uses calendar access to add events from your audio recordings.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>This app uses your location to add location data to your audio recordings.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app uses your location to add location data to your audio recordings.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app requires access to the microphone to record audio notes.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>This app uses speech recognition to generate transcripts of your audio recordings.</string>
-	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<true/>
-	<key>UIFileSharingEnabled</key>
-	<true/>
-	<key>NSCalendarsUsageDescription</key>
-	<string>This app uses calendar access to add events from your audio recordings.</string>
 	<key>NSRemindersUsageDescription</key>
 	<string>This app uses reminders access to add tasks and reminders from your audio recordings.</string>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
-
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>This app uses speech recognition to generate transcripts of your audio recordings.</string>
 	<key>NSUbiquitousContainers</key>
 	<dict>
 		<key>iCloud.$(CFBundleIdentifier)</key>
@@ -51,12 +48,14 @@
 			<string>Any</string>
 		</dict>
 	</dict>
-
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>bluetooth-central</string>
+		<string>processing</string>
 	</array>
-
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

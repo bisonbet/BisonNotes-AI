@@ -852,19 +852,27 @@ struct SummaryDetailView: View {
             try appCoordinator.coreDataManager.deleteSummary(id: summaryData.id)
             print("✅ Summary deleted from Core Data")
             
-            // Update the recording to remove summary reference (if recording still exists)
+            // If this was a preserved summary, also remove the now-empty recording anchor
             if let recordingId = summaryData.recordingId,
                let recording = appCoordinator.getRecording(id: recordingId) {
                 recording.summaryId = nil
                 recording.summaryStatus = ProcessingStatus.notStarted.rawValue
                 recording.lastModified = Date()
-                
-                // Save the updated recording
-                do {
-                    try appCoordinator.coreDataManager.saveContext()
-                    print("✅ Recording updated to remove summary reference")
-                } catch {
-                    print("❌ Failed to update recording: \(error)")
+
+                let hadNoURL = (recording.recordingURL == nil)
+                let hadNoTranscript = (recording.transcript == nil && recording.transcriptId == nil)
+                if hadNoURL && hadNoTranscript {
+                    // Safe to delete the anchor recording entry
+                    appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+                    print("🗑️ Deleted empty anchor recording entry after summary deletion")
+                } else {
+                    // Save the updated recording if we keep it
+                    do {
+                        try appCoordinator.coreDataManager.saveContext()
+                        print("✅ Recording updated to remove summary reference")
+                    } catch {
+                        print("❌ Failed to update recording: \(error)")
+                    }
                 }
             } else {
                 print("ℹ️ Recording no longer exists (orphaned summary) - skipping recording update")
