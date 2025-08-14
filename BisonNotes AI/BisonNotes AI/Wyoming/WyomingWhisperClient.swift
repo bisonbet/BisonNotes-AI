@@ -27,6 +27,8 @@ class WyomingWhisperClient: ObservableObject {
     private var serverInfo: WyomingInfoData?
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var streamingTimeoutTask: Task<Void, Never>?
+    private var isProcessingChunk = false
+    private var shouldManageBackgroundTask = true // Can be disabled when called from another background context
     
     // MARK: - Initialization
     
@@ -39,6 +41,16 @@ class WyomingWhisperClient: ObservableObject {
         
         self.tcpClient = WyomingTCPClient(host: host, port: config.port)
         setupMessageHandlers()
+    }
+    
+    /// Disable background task management when called from another background context
+    func disableBackgroundTaskManagement() {
+        shouldManageBackgroundTask = false
+    }
+    
+    /// Re-enable background task management
+    func enableBackgroundTaskManagement() {
+        shouldManageBackgroundTask = true
     }
     
     private static func extractHost(from serverURL: String) -> String {
@@ -116,7 +128,7 @@ class WyomingWhisperClient: ObservableObject {
         transcriptionResult = transcriptData.text
         
         // Complete the transcription
-        if let continuation = currentTranscription {
+        if let activeContinuation = currentTranscription {
             let result = TranscriptionResult(
                 fullText: transcriptData.text,
                 segments: [TranscriptSegment(
@@ -131,16 +143,25 @@ class WyomingWhisperClient: ObservableObject {
                 error: nil
             )
             
-            continuation.resume(returning: result)
             currentTranscription = nil
             
             isTranscribing = false
             currentStatus = "Transcription completed"
             progress = 1.0
             
-            // Clean up background task and timeout
-            cancelStreamingTimeout()
-            endBackgroundTask()
+            // Clean up background task and timeout (only for standalone transcriptions)
+            self.cancelStreamingTimeout()
+            if !self.isProcessingChunk && self.shouldManageBackgroundTask {
+                self.endBackgroundTask()
+            }
+            
+            // For standalone transcriptions (not chunks), disconnect to clean up
+            if !self.isProcessingChunk {
+                print("🔌 Disconnecting after standalone transcription completion")
+                self.tcpClient.disconnect()
+            }
+            
+            activeContinuation.resume(returning: result)
         }
     }
     
@@ -152,19 +173,39 @@ class WyomingWhisperClient: ObservableObject {
         
         print("❌ Wyoming server error: \(errorData.code) - \(errorData.message)")
         
-        if let continuation = currentTranscription {
-            let error = WyomingError.serverError("\(errorData.code): \(errorData.message)")
-            continuation.resume(throwing: error)
+        // Thread-safe continuation handling for server errors
+        if let activeContinuation = currentTranscription {
             currentTranscription = nil
+            isTranscribing = false
+            currentStatus = "Error: \(errorData.message)"
+            self.cancelStreamingTimeout()
+            if !self.isProcessingChunk && self.shouldManageBackgroundTask {
+                self.endBackgroundTask()
+            }
+            
+            // For standalone transcriptions (not chunks), disconnect on error
+            if !self.isProcessingChunk {
+                print("🔌 Disconnecting after standalone transcription error")
+                self.tcpClient.disconnect()
+            }
+            
+            let error = WyomingError.serverError("\(errorData.code): \(errorData.message)")
+            activeContinuation.resume(throwing: error)
+        } else {
+            isTranscribing = false
+            currentStatus = "Error: \(errorData.message)"
+            connectionError = errorData.message
+            
+            // Clean up background task and timeout on error
+            cancelStreamingTimeout()
+            if shouldManageBackgroundTask {
+                endBackgroundTask()
+            }
+            
+            // Disconnect connection on error
+            print("🔌 Disconnecting after error without active transcription")
+            tcpClient.disconnect()
         }
-        
-        isTranscribing = false
-        currentStatus = "Error: \(errorData.message)"
-        connectionError = errorData.message
-        
-        // Clean up background task and timeout on error
-        cancelStreamingTimeout()
-        endBackgroundTask()
     }
     
     // MARK: - Connection Management
@@ -226,17 +267,32 @@ class WyomingWhisperClient: ObservableObject {
     private func transcribeAudioStandard(url: URL, recordingId: UUID? = nil) async throws -> TranscriptionResult {
         print("🎤 WyomingWhisperClient.transcribeAudioStandard called for: \(url.lastPathComponent)")
         
-        // Start background task for long-running transcription
-        // print("🔍 DEBUG: About to call beginBackgroundTask()")
-        beginBackgroundTask()
-        // print("🔍 DEBUG: beginBackgroundTask completed successfully")
+        // Only start background task if this is not a chunk (chunks are managed by parent method)
+        isProcessingChunk = url.lastPathComponent.contains("chunk_")
+        if !isProcessingChunk && shouldManageBackgroundTask {
+            beginBackgroundTask()
+        }
         
-        // Ensure we're connected
+        // CRITICAL: If we're being called from BackgroundProcessingManager, don't manage our own background task
+        if !shouldManageBackgroundTask {
+            print("🔧 Wyoming client background task management disabled - parent is handling background tasks")
+        }
+        
+        // Ensure we're connected (but only test if this is not a chunk)
         if !isConnected {
-            let connected = await testConnection()
-            if !connected {
-                endBackgroundTask()
+            if isProcessingChunk {
+                // For chunks, assume connection was already tested by parent
+                print("⚠️ Connection lost during chunked processing")
                 throw WyomingError.connectionFailed
+            } else {
+                // For standalone files, test connection
+                let connected = await testConnection()
+                if !connected {
+                    if !isProcessingChunk && shouldManageBackgroundTask {
+                        endBackgroundTask()
+                    }
+                    throw WyomingError.connectionFailed
+                }
             }
         }
         
@@ -248,7 +304,6 @@ class WyomingWhisperClient: ObservableObject {
         // Start timeout for large files (estimate 1 minute per 5MB of audio)
         let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         print("📁 File size: \(fileSize) bytes (\(Double(fileSize) / (1024 * 1024))MB)")
-        // print("🔍 DEBUG: About to calculate timeout for file size: \(fileSize)")
         
         // Safely calculate timeout with bounds checking
         let fileSizeMB = Double(fileSize) / (1024.0 * 1024.0)
@@ -268,10 +323,8 @@ class WyomingWhisperClient: ObservableObject {
         }
         
         print("⏰ Setting Wyoming timeout: \(timeoutSeconds) seconds (\(timeoutSeconds/60) minutes)")
-        // print("🔍 DEBUG: About to call startStreamingTimeout with: \(timeoutSeconds)")
         
         startStreamingTimeout(seconds: timeoutSeconds)
-        // print("🔍 DEBUG: startStreamingTimeout completed successfully")
         
         do {
             return try await withCheckedThrowingContinuation { continuation in
@@ -282,19 +335,31 @@ class WyomingWhisperClient: ObservableObject {
                         try await performWyomingTranscription(url: url)
                     } catch {
                         await MainActor.run {
-                            self.isTranscribing = false
-                            self.currentStatus = "Transcription failed"
-                            self.currentTranscription = nil
-                            self.cancelStreamingTimeout()
-                            self.endBackgroundTask()
+                            // Thread-safe continuation handling
+                            if let activeContinuation = self.currentTranscription {
+                                self.currentTranscription = nil
+                                self.isTranscribing = false
+                                self.currentStatus = "Transcription failed"
+                                self.cancelStreamingTimeout()
+                                if !self.isProcessingChunk {
+                                    self.endBackgroundTask()
+                                }
+                                // Disconnect on error
+                                if !self.isProcessingChunk {
+                                    print("🔌 Disconnecting after transcription error")
+                                    self.tcpClient.disconnect()
+                                }
+                                activeContinuation.resume(throwing: error)
+                            }
                         }
-                        continuation.resume(throwing: error)
                     }
                 }
             }
         } catch {
-            cancelStreamingTimeout()
-            endBackgroundTask()
+            self.cancelStreamingTimeout()
+            if !self.isProcessingChunk && self.shouldManageBackgroundTask {
+                self.endBackgroundTask()
+            }
             throw error
         }
     }
@@ -486,8 +551,26 @@ class WyomingWhisperClient: ObservableObject {
     private func transcribeAudioWithChunking(url: URL, recordingId: UUID?, maxChunkDuration: TimeInterval) async throws -> TranscriptionResult {
         print("🎯 Starting chunked Wyoming transcription for: \(url.lastPathComponent)")
         
-        // Start background task for long-running transcription
-        beginBackgroundTask()
+        // Start background task for long-running transcription (only if we should manage background tasks)
+        if shouldManageBackgroundTask {
+            beginBackgroundTask()
+            print("🔧 Wyoming client managing its own background task for chunked transcription")
+        } else {
+            print("🔧 Wyoming client background task management disabled - parent is handling chunked transcription background tasks")
+        }
+        
+        // Test connection once at the beginning
+        if !isConnected {
+            print("🔌 Testing Wyoming connection before chunked transcription...")
+            let connected = await testConnection()
+            if !connected {
+                if shouldManageBackgroundTask {
+                    endBackgroundTask()
+                }
+                throw WyomingError.connectionFailed
+            }
+            print("✅ Wyoming connection verified for chunked transcription")
+        }
         
         // Get audio duration and calculate chunks
         let totalDuration = try await getAudioDuration(url: url)
@@ -524,23 +607,25 @@ class WyomingWhisperClient: ObservableObject {
             let chunkURL = tempDir.appendingPathComponent("chunk_\(chunkIndex).m4a")
             try await createAudioChunk(sourceURL: url, outputURL: chunkURL, startTime: chunkStartTime, duration: chunkDuration)
             
-            // Transcribe the chunk with fresh connection
+            // Transcribe the chunk - disconnect and reconnect for each chunk
             do {
-                // Ensure fresh connection for each chunk to avoid Wyoming server issues
+                // For all chunks after the first, always disconnect and reconnect
+                // Wyoming servers typically expect fresh connections for each transcription
                 if chunkIndex > 0 {
-                    print("🔄 Resetting Wyoming connection for chunk \(chunkIndex + 1)")
+                    print("🔄 Disconnecting and reconnecting for chunk \(chunkIndex + 1) (Wyoming server cleanup)")
                     tcpClient.disconnect()
-                    try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+                    try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay for server cleanup
                     
                     // Re-register message handlers after disconnect (they get cleared)
                     setupMessageHandlers()
                     
-                    // Test connection to ensure it's ready
+                    // Establish fresh connection for this chunk
                     let connected = await testConnection()
                     if !connected {
-                        print("❌ Failed to establish connection for chunk \(chunkIndex + 1)")
+                        print("❌ Failed to establish fresh connection for chunk \(chunkIndex + 1)")
                         continue
                     }
+                    print("✅ Fresh connection established for chunk \(chunkIndex + 1)")
                 }
                 
                 let chunkResult = try await transcribeAudioStandard(url: chunkURL, recordingId: recordingId)
@@ -563,39 +648,62 @@ class WyomingWhisperClient: ObservableObject {
             } catch {
                 print("❌ Failed to transcribe chunk \(chunkIndex + 1): \(error)")
                 
-                // Try connection reset and retry once for failed chunks
-                print("🔄 Attempting connection reset and retry for chunk \(chunkIndex + 1)")
-                tcpClient.disconnect()
-                try await Task.sleep(nanoseconds: 2_000_000_000) // 2 second delay for retry
+                // Check if this is a connection error that we can retry
+                let shouldRetry = if let wyomingError = error as? WyomingError {
+                    switch wyomingError {
+                    case .connectionFailed, .timeout:
+                        true
+                    default:
+                        false
+                    }
+                } else if error.localizedDescription.contains("Connection reset") ||
+                         error.localizedDescription.contains("connection lost") ||
+                         error.localizedDescription.contains("network") {
+                    true
+                } else {
+                    false
+                }
                 
-                // Re-register message handlers after disconnect (they get cleared)
-                setupMessageHandlers()
-                
-                let reconnected = await testConnection()
-                if reconnected {
-                    do {
-                        let retryResult = try await transcribeAudioStandard(url: chunkURL, recordingId: recordingId)
-                        
-                        let adjustedSegments = retryResult.segments.map { segment in
-                            TranscriptSegment(
-                                speaker: segment.speaker,
-                                text: segment.text,
-                                startTime: segment.startTime + chunkStartTime,
-                                endTime: segment.endTime + chunkStartTime
-                            )
+                if shouldRetry {
+                    print("🔄 Connection error detected for chunk \(chunkIndex + 1), establishing fresh connection")
+                    tcpClient.disconnect()
+                    
+                    // Longer delay for connection reset issues and server cleanup
+                    try await Task.sleep(nanoseconds: 2_000_000_000) // 2 second delay
+                    
+                    // Re-register message handlers after disconnect (they get cleared)
+                    setupMessageHandlers()
+                    
+                    let reconnected = await testConnection()
+                    if reconnected {
+                        print("✅ Fresh connection established for chunk \(chunkIndex + 1) retry")
+                        do {
+                            let retryResult = try await transcribeAudioStandard(url: chunkURL, recordingId: recordingId)
+                            
+                            let adjustedSegments = retryResult.segments.map { segment in
+                                TranscriptSegment(
+                                    speaker: segment.speaker,
+                                    text: segment.text,
+                                    startTime: segment.startTime + chunkStartTime,
+                                    endTime: segment.endTime + chunkStartTime
+                                )
+                            }
+                            
+                            allSegments.append(contentsOf: adjustedSegments)
+                            totalProcessingTime += retryResult.processingTime
+                            
+                            print("✅ Chunk \(chunkIndex + 1) completed on retry: \(adjustedSegments.count) segments")
+                        } catch {
+                            print("❌ Retry also failed for chunk \(chunkIndex + 1): \(error)")
+                            // Continue with next chunk - don't fail entire transcription for one chunk
+                            continue
                         }
-                        
-                        allSegments.append(contentsOf: adjustedSegments)
-                        totalProcessingTime += retryResult.processingTime
-                        
-                        print("✅ Chunk \(chunkIndex + 1) completed on retry: \(adjustedSegments.count) segments")
-                    } catch {
-                        print("❌ Retry also failed for chunk \(chunkIndex + 1): \(error)")
-                        // Continue with next chunk - don't fail entire transcription for one chunk
+                    } else {
+                        print("❌ Could not reconnect for chunk \(chunkIndex + 1) retry")
                         continue
                     }
                 } else {
-                    print("❌ Could not reconnect for chunk \(chunkIndex + 1) retry")
+                    print("❌ Non-connection error for chunk \(chunkIndex + 1), skipping retry: \(error)")
                     continue
                 }
             }
@@ -604,7 +712,15 @@ class WyomingWhisperClient: ObservableObject {
             try? FileManager.default.removeItem(at: chunkURL)
         }
         
-        endBackgroundTask()
+        if shouldManageBackgroundTask {
+            endBackgroundTask()
+        } else {
+            print("🔧 Wyoming client not ending background task - parent is managing it")
+        }
+        
+        // Clean up connection after all chunks are processed
+        print("🔌 Disconnecting after chunked transcription completion")
+        tcpClient.disconnect()
         
         // Merge segments and create final result
         let mergedSegments = mergeAdjacentSegments(allSegments)
@@ -768,18 +884,33 @@ class WyomingWhisperClient: ObservableObject {
         streamingTimeoutTask?.cancel()
         streamingTimeoutTask = nil
         
-        // If we have an active transcription, complete it with a timeout error
-        if let continuation = currentTranscription {
+        // Cancel TCP connection to prevent hanging operations
+        tcpClient.disconnect()
+        
+        // Thread-safe continuation handling for background task expiration
+        if let activeContinuation = currentTranscription {
             currentTranscription = nil
-            continuation.resume(throwing: WyomingError.timeout)
+            isTranscribing = false
+            currentStatus = "Background task expired"
+            connectionError = "Processing was interrupted when app went to background"
+            cancelStreamingTimeout()
+            if shouldManageBackgroundTask {
+                endBackgroundTask()
+            }
+            
+            // Disconnect on background task expiration
+            print("🔌 Disconnecting after background task expiration")
+            tcpClient.disconnect()
+            
+            activeContinuation.resume(throwing: WyomingError.timeout)
+        } else {
+            // No active transcription, just clean up
+            isTranscribing = false
+            currentStatus = "Background task expired"
+            if shouldManageBackgroundTask {
+                endBackgroundTask()
+            }
         }
-        
-        // Reset state
-        isTranscribing = false
-        currentStatus = "Background task expired"
-        
-        // End the background task
-        endBackgroundTask()
     }
     
     // MARK: - Timeout Management
@@ -811,15 +942,33 @@ class WyomingWhisperClient: ObservableObject {
     private func handleStreamingTimeout() async {
         print("⏰ Wyoming streaming timeout after extended period")
         
-        if let continuation = currentTranscription {
+        // Thread-safe continuation handling for streaming timeout
+        if let activeContinuation = currentTranscription {
             currentTranscription = nil
-            continuation.resume(throwing: WyomingError.timeout)
+            isTranscribing = false
+            currentStatus = "Streaming timeout"
+            if shouldManageBackgroundTask {
+                endBackgroundTask()
+            }
+            
+            // Disconnect on streaming timeout
+            print("🔌 Disconnecting after streaming timeout")
+            tcpClient.disconnect()
+            
+            activeContinuation.resume(throwing: WyomingError.timeout)
+        } else {
+            // No active transcription, just clean up
+            isTranscribing = false
+            currentStatus = "Streaming timeout"
+            connectionError = "Transcription timed out during streaming"
+            
+            // Disconnect on timeout cleanup
+            print("🔌 Disconnecting after streaming timeout (no active transcription)")
+            tcpClient.disconnect()
+            
+            if shouldManageBackgroundTask {
+                endBackgroundTask()
+            }
         }
-        
-        isTranscribing = false
-        currentStatus = "Streaming timeout"
-        connectionError = "Transcription timed out during streaming"
-        
-        endBackgroundTask()
     }
 }

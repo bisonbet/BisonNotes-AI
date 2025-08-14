@@ -149,6 +149,23 @@ class AppDataCoordinator: ObservableObject {
         return coreDataManager.loadLocationData(for: recording)
     }
     
+    // MARK: - Cleanup Methods
+    
+    /// Cleans up orphaned recordings that have no audio file and no meaningful content
+    func cleanupOrphanedRecordings() -> Int {
+        return coreDataManager.cleanupOrphanedRecordings()
+    }
+    
+    /// Fixes recordings that should have been deleted completely but still exist as orphans
+    func fixIncompletelyDeletedRecordings() -> Int {
+        return coreDataManager.fixIncompletelyDeletedRecordings()
+    }
+    
+    /// Cleans up recordings that reference missing files
+    func cleanupRecordingsWithMissingFiles() -> Int {
+        return coreDataManager.cleanupRecordingsWithMissingFiles()
+    }
+    
     // MARK: - Debug Methods
     
     func debugDatabaseContents() {

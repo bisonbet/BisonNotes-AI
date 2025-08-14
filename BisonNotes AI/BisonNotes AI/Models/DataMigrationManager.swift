@@ -1976,16 +1976,27 @@ class DataMigrationManager: ObservableObject {
     func fixCurrentIssues() async -> (renames: Int, validations: Int) {
         print("🎯 Starting comprehensive fix for current issues...")
         
-        // Step 1: Force name synchronization
+        // Step 1: Clean up orphaned recordings first
+        let coreDataManager = CoreDataManager()
+        let cleanedOrphans = coreDataManager.cleanupOrphanedRecordings()
+        let fixedIncomplete = coreDataManager.fixIncompletelyDeletedRecordings()
+        
+        // Step 2: Force name synchronization
         let renames = await forceNameSynchronization()
         
-        // Step 2: Validate transcript listings
+        // Step 3: Validate transcript listings
         let validations = await validateTranscriptListings()
         
-        // Step 3: Fix the specific issue where recordings have generic names
+        // Step 4: Fix the specific issue where recordings have generic names
         let specificFixes = await fixGenericNamedRecordingsIssue()
         
-        print("✅ Comprehensive fix completed: \(renames) renames, \(validations) validations, \(specificFixes) specific fixes")
+        print("✅ Comprehensive fix completed:")
+        print("   - Orphaned records cleaned: \(cleanedOrphans)")
+        print("   - Incomplete deletions fixed: \(fixedIncomplete)")
+        print("   - Recordings renamed: \(renames)")
+        print("   - Validations: \(validations)")
+        print("   - Specific fixes: \(specificFixes)")
+        
         return (renames: renames + specificFixes, validations: validations)
     }
     

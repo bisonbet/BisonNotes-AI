@@ -111,6 +111,7 @@ struct ContentView: View {
         }
     }
     
+    @MainActor
     private func initializeApp() {
         // Check if this is first launch
         let hasCompletedSetup = UserDefaults.standard.bool(forKey: "hasCompletedFirstSetup")
@@ -134,6 +135,23 @@ struct ContentView: View {
                         print("🔄 Running URL migration to ensure relative paths...")
                         appCoordinator.syncRecordingURLs()
                         print("✅ URL migration completed")
+                        
+                        // Clean up any orphaned records and missing files
+                        print("🔄 Cleaning up orphaned records...")
+                        let cleanedCount = appCoordinator.cleanupOrphanedRecordings()
+                        let fixedCount = appCoordinator.fixIncompletelyDeletedRecordings()
+                        
+                        // Also clean up recordings that reference missing files
+                        print("🔄 Cleaning up recordings with missing files...")
+                        let missingFileCount = appCoordinator.cleanupRecordingsWithMissingFiles()
+                        
+                        let totalCleaned = cleanedCount + fixedCount + missingFileCount
+                        
+                        if totalCleaned > 0 {
+                            print("✅ Cleaned up \(totalCleaned) orphaned records (\(cleanedCount) orphaned, \(fixedCount) incomplete deletions, \(missingFileCount) missing files)")
+                        } else {
+                            print("ℹ️ No orphaned records found")
+                        }
                         
                         // Check if any recordings have transcripts in Core Data
                         let recordingsWithTranscripts = coreDataRecordings.filter { $0.transcript != nil }

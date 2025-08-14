@@ -742,6 +742,12 @@ struct EditableTranscriptView: View {
                 
                 print("🎯 Rerunning transcription for file: \(recordingURL.lastPathComponent)")
                 
+                // Check current job status before starting
+                print("🔍 Current job status check:")
+                print("   - Active jobs count: \(backgroundProcessingManager.activeJobs.count)")
+                print("   - Current job: \(backgroundProcessingManager.currentJob?.recordingName ?? "None")")
+                print("   - Processing status: \(backgroundProcessingManager.processingStatus)")
+                
                 // Start transcription job through BackgroundProcessingManager
                 try await backgroundProcessingManager.startTranscriptionJob(
                     recordingURL: recordingURL,
@@ -750,6 +756,12 @@ struct EditableTranscriptView: View {
                 )
                 
                 print("✅ Transcription rerun job started through BackgroundProcessingManager")
+                
+                // Check job status after starting
+                print("🔍 Job status after starting:")
+                print("   - Active jobs count: \(backgroundProcessingManager.activeJobs.count)")
+                print("   - Current job: \(backgroundProcessingManager.currentJob?.recordingName ?? "None")")
+                print("   - Processing status: \(backgroundProcessingManager.processingStatus)")
                 
                 // Set up a one-time completion handler for this specific rerun
                 setupRerunCompletionHandler(for: recordingURL)

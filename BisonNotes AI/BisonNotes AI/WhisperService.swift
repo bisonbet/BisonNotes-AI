@@ -164,11 +164,28 @@ class WhisperService: ObservableObject {
         // Initialize Wyoming client if using Wyoming protocol
         if config.whisperProtocol == .wyoming {
             print("🔧 Initializing Wyoming client...")
-            self.wyomingClient = WyomingWhisperClient(config: config)
+            let client = WyomingWhisperClient(config: config)
+            // Disable background task management since we're already in a background context
+            client.disableBackgroundTaskManagement()
+            self.wyomingClient = client
         } else {
             print("🔧 Using REST protocol, no Wyoming client needed")
             self.wyomingClient = nil
         }
+    }
+    
+    // MARK: - Background Task Management
+    
+    /// Disable background task management in Wyoming client when called from background processing manager
+    func disableWyomingBackgroundTaskManagement() {
+        wyomingClient?.disableBackgroundTaskManagement()
+        print("🔧 WhisperService: Disabled Wyoming background task management for parent coordination")
+    }
+    
+    /// Re-enable background task management in Wyoming client
+    func enableWyomingBackgroundTaskManagement() {
+        wyomingClient?.enableBackgroundTaskManagement()
+        print("🔧 WhisperService: Enabled Wyoming background task management")
     }
     
     // MARK: - Connection Management

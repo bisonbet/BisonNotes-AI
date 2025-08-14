@@ -46,9 +46,19 @@ class CoreDataManager: ObservableObject {
     
     /// Migrates all existing absolute URL paths to relative paths for resilience
     func migrateURLsToRelativePaths() {
-        print("🔄 Migrating absolute URLs to relative paths...")
         let allRecordings = getAllRecordings()
         var updatedCount = 0
+        
+        // Only show migration progress if there's work to do
+        let needsMigration = allRecordings.contains { recording in
+            guard let urlString = recording.recordingURL,
+                  let url = URL(string: urlString) else { return false }
+            return url.scheme != nil
+        }
+        
+        if needsMigration {
+            print("🔄 Migrating absolute URLs to relative paths...")
+        }
         
         for recording in allRecordings {
             guard let urlString = recording.recordingURL,
@@ -60,7 +70,6 @@ class CoreDataManager: ObservableObject {
                 recording.recordingURL = relativePath
                 recording.lastModified = Date()
                 updatedCount += 1
-                print("✅ Migrated URL to relative path: \(url.lastPathComponent)")
             }
         }
         
@@ -71,7 +80,7 @@ class CoreDataManager: ObservableObject {
             } catch {
                 print("❌ Failed to save URL migrations: \(error)")
             }
-        } else {
+        } else if needsMigration {
             print("ℹ️ No URLs needed migration")
         }
     }
@@ -118,7 +127,7 @@ class CoreDataManager: ObservableObject {
     /// Gets the current absolute URL for a recording, handling container ID changes
     func getAbsoluteURL(for recording: RecordingEntry) -> URL? {
         guard let urlString = recording.recordingURL else { 
-            print("❌ No URL string stored for recording: \(recording.recordingName ?? "unknown")")
+            // Don't log anything - orphaned records are cleaned up at app startup
             return nil 
         }
         
@@ -586,7 +595,7 @@ class CoreDataManager: ObservableObject {
         job.id = id
         job.jobType = jobType
         job.engine = engine
-        job.recordingURL = recordingURL.absoluteString
+        job.recordingURL = recordingURL.lastPathComponent
         job.recordingName = recordingName
         job.status = "queued"
         job.progress = 0.0
@@ -633,6 +642,146 @@ class CoreDataManager: ObservableObject {
         } catch {
             print("❌ Error deleting completed processing jobs: \(error)")
         }
+    }
+    
+    // MARK: - Cleanup Operations
+    
+    /// Cleans up orphaned recordings that have no audio file and no meaningful content
+    func cleanupOrphanedRecordings() -> Int {
+        let allRecordings = getAllRecordings()
+        var cleanedCount = 0
+        
+        for recording in allRecordings {
+            // Check if this is an orphaned recording
+            let hasNoURL = recording.recordingURL == nil
+            let hasNoTranscript = recording.transcript == nil
+            let hasNoSummary = recording.summary == nil
+            
+            // Only clean up recordings that have absolutely no content
+            if hasNoURL && hasNoTranscript && hasNoSummary {
+                print("🗑️ Cleaning up orphaned recording: \(recording.recordingName ?? "unknown")")
+                context.delete(recording)
+                cleanedCount += 1
+            }
+            // For recordings with summaries but no audio, just mark them properly
+            else if hasNoURL && recording.summary != nil {
+                print("📝 Preserving summary-only recording: \(recording.recordingName ?? "unknown")")
+                // These are intentionally preserved summaries
+            }
+        }
+        
+        if cleanedCount > 0 {
+            do {
+                try context.save()
+                print("✅ Cleaned up \(cleanedCount) orphaned recordings")
+            } catch {
+                print("❌ Failed to save cleanup: \(error)")
+            }
+        }
+        
+        return cleanedCount
+    }
+    
+    /// Fixes recordings that should have been deleted completely but still exist as orphans
+    func fixIncompletelyDeletedRecordings() -> Int {
+        print("🔍 Checking for incompletely deleted recordings...")
+        let allRecordings = getAllRecordings()
+        var fixedCount = 0
+        
+        for recording in allRecordings {
+            // Look for recordings with no URL and no content that appear to be leftover from deletions
+            let hasNoURL = recording.recordingURL == nil
+            let hasNoTranscript = recording.transcript == nil
+            let hasNoSummary = recording.summary == nil
+            
+            if hasNoURL && hasNoTranscript && hasNoSummary {
+                let recordingName = recording.recordingName ?? "unknown"
+                print("🗑️ Found incompletely deleted recording: \(recordingName)")
+                print("   - This appears to be leftover from a partial deletion")
+                
+                // Delete this orphaned record
+                context.delete(recording)
+                fixedCount += 1
+            }
+        }
+        
+        if fixedCount > 0 {
+            do {
+                try context.save()
+                print("✅ Fixed \(fixedCount) incompletely deleted recordings")
+            } catch {
+                print("❌ Failed to save fixes: \(error)")
+            }
+        } else {
+            print("ℹ️ No incompletely deleted recordings found")
+        }
+        
+        return fixedCount
+    }
+    
+    /// Cleans up recordings that reference files that no longer exist
+    func cleanupRecordingsWithMissingFiles() -> Int {
+        let allRecordings = getAllRecordings()
+        var cleanedCount = 0
+        
+        for recording in allRecordings {
+            guard let urlString = recording.recordingURL else { continue }
+            
+            // Skip if this is a summary-only recording (no URL expected)
+            if recording.summary != nil && urlString.isEmpty {
+                continue
+            }
+            
+            // Check if the file actually exists
+            if let url = getAbsoluteURL(for: recording) {
+                if !FileManager.default.fileExists(atPath: url.path) {
+                    let recordingName = recording.recordingName ?? "unknown"
+                    print("🗑️ Cleaning up recording with missing file: \(recordingName)")
+                    print("   - Missing file: \(url.lastPathComponent)")
+                    
+                    // Only delete if there's no transcript or summary to preserve
+                    let hasTranscript = recording.transcript != nil
+                    let hasSummary = recording.summary != nil
+                    
+                    if !hasTranscript && !hasSummary {
+                        // No valuable content to preserve, delete the record
+                        context.delete(recording)
+                        cleanedCount += 1
+                    } else {
+                        // Has transcript or summary, just clear the URL
+                        print("   - Preserving recording with transcript/summary, clearing URL")
+                        recording.recordingURL = nil
+                        recording.lastModified = Date()
+                    }
+                }
+            } else {
+                // Could not resolve URL at all
+                let recordingName = recording.recordingName ?? "unknown"
+                print("🗑️ Recording with unresolvable URL: \(recordingName)")
+                
+                let hasTranscript = recording.transcript != nil
+                let hasSummary = recording.summary != nil
+                
+                if !hasTranscript && !hasSummary {
+                    context.delete(recording)
+                    cleanedCount += 1
+                } else {
+                    recording.recordingURL = nil
+                    recording.lastModified = Date()
+                }
+            }
+        }
+        
+        if cleanedCount > 0 {
+            do {
+                try context.save()
+                print("✅ Cleaned up \(cleanedCount) recordings with missing files")
+            } catch {
+                print("❌ Failed to save missing file cleanup: \(error)")
+            }
+        }
+        
+        return cleanedCount
     }
     
     // MARK: - Debug Operations
