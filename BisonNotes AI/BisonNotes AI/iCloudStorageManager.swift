@@ -414,10 +414,12 @@ class iCloudStorageManager: ObservableObject {
 
     /// Convenience wrapper that loads all locally stored summaries and syncs them
     func syncAllSummaries() async throws {
+    /// Convenience wrapper that loads all locally stored summaries and syncs them
+    func syncAllSummaries() async throws {
         // Load summaries from the local store
-        let summaryManager = SummaryManager()
-        let allSummaries = summaryManager.enhancedSummaries
+        let allSummaries = SummaryManager.shared.enhancedSummaries
         try await syncAllSummaries(allSummaries)
+    }
     }
     
     func deleteSummaryFromiCloud(_ summaryId: UUID) async throws {
