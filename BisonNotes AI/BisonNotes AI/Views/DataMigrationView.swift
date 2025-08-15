@@ -778,7 +778,7 @@ struct DataMigrationView: View {
                 
                 // Delete the orphaned summary
                 do {
-                    try appCoordinator.coreDataManager.deleteSummary(id: summary.id)
+                    try await appCoordinator.deleteSummary(id: summary.id)
                     orphanedSummaries += 1
                 } catch {
                     print("❌ Failed to delete orphaned summary: \(error)")

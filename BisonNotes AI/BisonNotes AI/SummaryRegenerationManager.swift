@@ -78,8 +78,8 @@ class SummaryRegenerationManager: ObservableObject {
                     recordingDate: summary.recordingDate
                 )
                 
-                // Delete the old summary from Core Data
-                try appCoordinator.coreDataManager.deleteSummary(id: summary.id)
+                // Delete the old summary from Core Data and iCloud
+                try await appCoordinator.deleteSummary(id: summary.id)
                 
                 // Debug: Show what names we're comparing (bulk regeneration)
                 print("🔍 Bulk regeneration name check for '\(summary.recordingName)':")
@@ -165,8 +165,8 @@ class SummaryRegenerationManager: ObservableObject {
                 recordingDate: summary.recordingDate
             )
             
-            // Delete the old summary from Core Data
-            try appCoordinator.coreDataManager.deleteSummary(id: summary.id)
+            // Delete the old summary from Core Data and iCloud
+            try await appCoordinator.deleteSummary(id: summary.id)
             print("🗑️ Deleted old summary with ID: \(summary.id)")
             
             // Debug: Show what names we're comparing
