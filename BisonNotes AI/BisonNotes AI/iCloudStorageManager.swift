@@ -374,17 +374,17 @@ class iCloudStorageManager: ObservableObject {
             print("⚠️ iCloud sync is disabled, skipping batch sync")
             return
         }
-        
+
         await updateSyncStatus(.syncing)
         await MainActor.run {
             self.pendingSyncCount = summaries.count
         }
-        
+
         print("🔄 Starting batch sync of \(summaries.count) summaries...")
-        
+
         var syncedCount = 0
         var failedCount = 0
-        
+
         for summary in summaries {
             do {
                 try await syncSummary(summary)
@@ -393,12 +393,12 @@ class iCloudStorageManager: ObservableObject {
                 print("❌ Failed to sync summary \(summary.recordingName): \(error)")
                 failedCount += 1
             }
-            
+
             await MainActor.run {
                 self.pendingSyncCount = summaries.count - syncedCount - failedCount
             }
         }
-        
+
         if failedCount == 0 {
             await updateSyncStatus(.completed)
             print("✅ Successfully synced all \(syncedCount) summaries")
@@ -406,10 +406,17 @@ class iCloudStorageManager: ObservableObject {
             await updateSyncStatus(.failed("Synced \(syncedCount), failed \(failedCount)"))
             print("⚠️ Batch sync completed with errors: \(syncedCount) synced, \(failedCount) failed")
         }
-        
+
         await MainActor.run {
             self.pendingSyncCount = 0
         }
+    }
+
+    /// Convenience wrapper that loads all locally stored summaries and syncs them
+    func syncAllSummaries() async throws {
+        // Load summaries from the local store
+        let allSummaries = SummaryManager.shared.enhancedSummaries
+        try await syncAllSummaries(allSummaries)
     }
     
     func deleteSummaryFromiCloud(_ summaryId: UUID) async throws {
@@ -771,7 +778,7 @@ class iCloudStorageManager: ObservableObject {
             try await syncSummariesInBatches(batchSize: batchSize)
         } else {
             // Use standard sync
-            try await syncAllSummaries([]) // Pass empty array for now
+            try await syncAllSummaries()
         }
     }
     
@@ -781,7 +788,7 @@ class iCloudStorageManager: ObservableObject {
         
         // This would implement batch processing for network efficiency
         // For now, just call the standard sync
-        try await syncAllSummaries([]) // Pass empty array for now
+        try await syncAllSummaries()
     }
     
 

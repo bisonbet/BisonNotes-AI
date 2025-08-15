@@ -124,7 +124,18 @@ class AppDataCoordinator: ObservableObject {
     func deleteRecording(id: UUID) {
         coreDataManager.deleteRecording(id: id)
     }
-    
+
+    func deleteSummary(id: UUID) async throws {
+        try coreDataManager.deleteSummary(id: id)
+        do {
+            try await SummaryManager.shared.getiCloudManager().deleteSummaryFromiCloud(id)
+        } catch {
+            print("⚠️ Failed to delete summary from iCloud: \(error)")
+            // Re-throw the error so caller can handle the partial failure
+            throw error
+        }
+    }
+
     func updateRecordingName(recordingId: UUID, newName: String) {
         workflowManager.updateRecordingName(recordingId: recordingId, newName: newName)
     }

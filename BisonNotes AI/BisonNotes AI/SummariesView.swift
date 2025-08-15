@@ -503,9 +503,7 @@ struct SummariesView: View {
     
     private func syncAllSummaries() async {
         do {
-            // TODO: Implement iCloud sync with new Core Data system
-            let allSummaries: [EnhancedSummaryData] = [] // Placeholder
-            try await iCloudManager.performBidirectionalSync(localSummaries: allSummaries)
+            try await iCloudManager.syncAllSummaries()
         } catch {
             print("❌ Sync error: \(error)")
             await MainActor.run {

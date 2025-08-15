@@ -846,49 +846,51 @@ struct SummaryDetailView: View {
     private func deleteSummary() {
         print("🗑️ Deleting summary for: \(summaryData.recordingName)")
         print("🆔 Summary ID: \(summaryData.id)")
-        
-        do {
-            // Delete the summary from Core Data
-            try appCoordinator.coreDataManager.deleteSummary(id: summaryData.id)
-            print("✅ Summary deleted from Core Data")
-            
-            // If this was a preserved summary, also remove the now-empty recording anchor
-            if let recordingId = summaryData.recordingId,
-               let recording = appCoordinator.getRecording(id: recordingId) {
-                recording.summaryId = nil
-                recording.summaryStatus = ProcessingStatus.notStarted.rawValue
-                recording.lastModified = Date()
 
-                let hadNoURL = (recording.recordingURL == nil)
-                let hadNoTranscript = (recording.transcript == nil && recording.transcriptId == nil)
-                if hadNoURL && hadNoTranscript {
-                    // Safe to delete the anchor recording entry
-                    appCoordinator.coreDataManager.deleteRecording(id: recordingId)
-                    print("🗑️ Deleted empty anchor recording entry after summary deletion")
-                } else {
-                    // Save the updated recording if we keep it
-                    do {
-                        try appCoordinator.coreDataManager.saveContext()
-                        print("✅ Recording updated to remove summary reference")
-                    } catch {
-                        print("❌ Failed to update recording: \(error)")
+        Task {
+            do {
+                // Delete the summary locally and from iCloud
+                try await appCoordinator.deleteSummary(id: summaryData.id)
+                print("✅ Summary deleted from Core Data")
+
+                // If this was a preserved summary, also remove the now-empty recording anchor
+                if let recordingId = summaryData.recordingId,
+                   let recording = appCoordinator.getRecording(id: recordingId) {
+                    recording.summaryId = nil
+                    recording.summaryStatus = ProcessingStatus.notStarted.rawValue
+                    recording.lastModified = Date()
+
+                    let hadNoURL = (recording.recordingURL == nil)
+                    let hadNoTranscript = (recording.transcript == nil && recording.transcriptId == nil)
+                    if hadNoURL && hadNoTranscript {
+                        // Safe to delete the anchor recording entry
+                        appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+                        print("🗑️ Deleted empty anchor recording entry after summary deletion")
+                    } else {
+                        // Save the updated recording if we keep it
+                        do {
+                            try appCoordinator.coreDataManager.saveContext()
+                            print("✅ Recording updated to remove summary reference")
+                        } catch {
+                            print("❌ Failed to update recording: \(error)")
+                        }
                     }
+                } else {
+                    print("ℹ️ Recording no longer exists (orphaned summary) - skipping recording update")
                 }
-            } else {
-                print("ℹ️ Recording no longer exists (orphaned summary) - skipping recording update")
+
+                // Notify parent views to refresh
+                NotificationCenter.default.post(name: NSNotification.Name("SummaryDeleted"), object: nil)
+                appCoordinator.objectWillChange.send()
+
+                print("✅ Summary deletion completed")
+                dismiss()
+
+            } catch {
+                print("❌ Failed to delete summary: \(error)")
+                regenerationError = "Failed to delete summary: \(error.localizedDescription)"
+                showingRegenerationAlert = true
             }
-            
-            // Notify parent views to refresh
-            NotificationCenter.default.post(name: NSNotification.Name("SummaryDeleted"), object: nil)
-            appCoordinator.objectWillChange.send()
-            
-            print("✅ Summary deletion completed")
-            dismiss()
-            
-        } catch {
-            print("❌ Failed to delete summary: \(error)")
-            regenerationError = "Failed to delete summary: \(error.localizedDescription)"
-            showingRegenerationAlert = true
         }
     }
     
@@ -931,8 +933,8 @@ struct SummaryDetailView: View {
             print("📋 New reminders: \(newEnhancedSummary.reminders.count)")
             print("📋 New titles: \(newEnhancedSummary.titles.count)")
             
-            // Delete the old summary from Core Data
-            try appCoordinator.coreDataManager.deleteSummary(id: summaryData.id)
+            // Delete the old summary from Core Data and iCloud
+            try await appCoordinator.deleteSummary(id: summaryData.id)
             print("🗑️ Deleted old summary with ID: \(summaryData.id)")
             
             // Debug: Check if recording name changed during regeneration
