@@ -127,9 +127,12 @@ class AppDataCoordinator: ObservableObject {
 
     func deleteSummary(id: UUID) async throws {
         try coreDataManager.deleteSummary(id: id)
-        try await SummaryManager.shared.getiCloudManager().deleteSummaryFromiCloud(id)
-    }
+        do {
+            try await SummaryManager.shared.getiCloudManager().deleteSummaryFromiCloud(id)
+        } catch {
             print("⚠️ Failed to delete summary from iCloud: \(error)")
+            // Re-throw the error so caller can handle the partial failure
+            throw error
         }
     }
 
