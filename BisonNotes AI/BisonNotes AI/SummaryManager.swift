@@ -83,8 +83,25 @@ class SummaryManager: ObservableObject {
     
     private init() {
         loadSummaries()
-        loadEnhancedSummaries()
+        // Load any legacy summaries for backward compatibility during transition
+        loadEnhancedSummariesLegacy()
         initializeEngines()
+    }
+    
+    /// Internal legacy loading for init compatibility
+    private func loadEnhancedSummariesLegacy() {
+        guard let data = UserDefaults.standard.data(forKey: enhancedSummariesKey) else { 
+            return 
+        }
+        do {
+            let legacySummaries = try JSONDecoder().decode([EnhancedSummaryData].self, from: data)
+            enhancedSummaries = legacySummaries
+            if !legacySummaries.isEmpty {
+                print("📦 Loaded \(legacySummaries.count) legacy summaries from UserDefaults during init")
+            }
+        } catch {
+            print("Failed to load legacy enhanced summaries during init: \(error)")
+        }
     }
     
     // MARK: - Legacy Summary Methods (for backward compatibility)
@@ -167,17 +184,19 @@ class SummaryManager: ObservableObject {
     
     // MARK: - Enhanced Summary Methods
     
+    /// DEPRECATED: Use AppDataCoordinator.addSummary() for proper Core Data persistence
+    @available(*, deprecated, message: "Use AppDataCoordinator.addSummary() for Core Data persistence. This method only updates UI state.")
     func saveEnhancedSummary(_ summary: EnhancedSummaryData) {
         DispatchQueue.main.async {
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Saving enhanced summary for \(summary.recordingName)", category: "SummaryManager")
+                AppLogger.shared.verbose("⚠️ saveEnhancedSummary() is deprecated - updating UI only for \(summary.recordingName)", category: "SummaryManager")
             }
             
             // Remove any existing enhanced summary for this recording
             self.enhancedSummaries.removeAll { $0.recordingURL == summary.recordingURL }
             self.enhancedSummaries.append(summary)
-            self.saveEnhancedSummariesToDisk()
+            // NOTE: Removed saveEnhancedSummariesToDisk() - Core Data is now the source of truth
             
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
@@ -210,9 +229,13 @@ class SummaryManager: ObservableObject {
         DispatchQueue.main.async {
             if let index = self.enhancedSummaries.firstIndex(where: { $0.recordingURL == summary.recordingURL }) {
                 self.enhancedSummaries[index] = summary
-                self.saveEnhancedSummariesToDisk()
+                // NOTE: Removed saveEnhancedSummariesToDisk() - Core Data is now the source of truth
             } else {
-                self.saveEnhancedSummary(summary)
+                // Only update UI state, not persistence
+                self.enhancedSummaries.append(summary)
+                if PerformanceOptimizer.shouldLogEngineInitialization() {
+                    AppLogger.shared.verbose("⚠️ Added summary to UI state only for \(summary.recordingName)", category: "SummaryManager")
+                }
             }
         }
     }
@@ -309,7 +332,7 @@ class SummaryManager: ObservableObject {
             self.summaries.removeAll { $0.recordingURL == recordingURL }
             self.enhancedSummaries.removeAll { $0.recordingURL == recordingURL }
             self.saveSummariesToDisk()
-            self.saveEnhancedSummariesToDisk()
+            // NOTE: Removed saveEnhancedSummariesToDisk() - Core Data is now the source of truth
             
             // Delete from iCloud if there was an enhanced summary
             if let summary = enhancedSummary {
@@ -352,7 +375,11 @@ class SummaryManager: ObservableObject {
         
         let enhanced = convertLegacyToEnhanced(legacy, contentType: contentType, aiMethod: aiMethod, originalLength: originalLength)
         DispatchQueue.main.async {
-            self.saveEnhancedSummary(enhanced)
+            // Only update UI state - migration should handle Core Data persistence elsewhere
+            self.enhancedSummaries.append(enhanced)
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Migrated legacy summary to UI state for \(enhanced.recordingName)", category: "SummaryManager")
+            }
         }
     }
     
@@ -399,7 +426,7 @@ class SummaryManager: ObservableObject {
             self.enhancedSummaries.removeAll()
             self.summaries.removeAll()
             
-            self.saveEnhancedSummariesToDisk()
+            // NOTE: Removed saveEnhancedSummariesToDisk() - Core Data is now the source of truth
             self.saveSummariesToDisk()
             
             AppLogger.shared.info("Cleared \(enhancedCount) enhanced summaries and \(legacyCount) legacy summaries", category: "SummaryManager")
@@ -1139,9 +1166,17 @@ class SummaryManager: ObservableObject {
                 processingTime: Date().timeIntervalSince(startTime)
             )
             
-            // Save the short transcript summary on the main thread
+            // Update UI state on the main thread
             await MainActor.run {
-                saveEnhancedSummary(shortTranscriptSummary)
+                // Only update UI state - Core Data persistence should be handled by caller
+                if let index = self.enhancedSummaries.firstIndex(where: { $0.recordingURL == shortTranscriptSummary.recordingURL }) {
+                    self.enhancedSummaries[index] = shortTranscriptSummary
+                } else {
+                    self.enhancedSummaries.append(shortTranscriptSummary)
+                }
+                if PerformanceOptimizer.shouldLogEngineInitialization() {
+                    AppLogger.shared.verbose("Updated UI state for short transcript summary: \(shortTranscriptSummary.recordingName)", category: "SummaryManager")
+                }
             }
             
             AppLogger.shared.info("Short transcript summary created and saved", category: "SummaryManager")
@@ -1254,9 +1289,17 @@ class SummaryManager: ObservableObject {
         // Track performance metrics
         performanceMonitor.trackEnhancedSummaryPerformance(enhancedSummary, engineName: engine.name, processingTime: processingTime)
 
-        // Save the enhanced summary on the main thread
+        // Update UI state on the main thread
         await MainActor.run {
-            saveEnhancedSummary(enhancedSummary)
+            // Only update UI state - Core Data persistence should be handled by caller
+            if let index = self.enhancedSummaries.firstIndex(where: { $0.recordingURL == enhancedSummary.recordingURL }) {
+                self.enhancedSummaries[index] = enhancedSummary
+            } else {
+                self.enhancedSummaries.append(enhancedSummary)
+            }
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Updated UI state for enhanced summary: \(enhancedSummary.recordingName)", category: "SummaryManager")
+            }
         }
 
         // Update the recording name if we generated a better one
@@ -1313,9 +1356,17 @@ class SummaryManager: ObservableObject {
                 processingTime: Date().timeIntervalSince(startTime)
             )
             
-            // Save the short transcript summary on the main thread
+            // Update UI state on the main thread
             await MainActor.run {
-                saveEnhancedSummary(shortTranscriptSummary)
+                // Only update UI state - Core Data persistence should be handled by caller
+                if let index = self.enhancedSummaries.firstIndex(where: { $0.recordingURL == shortTranscriptSummary.recordingURL }) {
+                    self.enhancedSummaries[index] = shortTranscriptSummary
+                } else {
+                    self.enhancedSummaries.append(shortTranscriptSummary)
+                }
+                if PerformanceOptimizer.shouldLogEngineInitialization() {
+                    AppLogger.shared.verbose("Updated UI state for short transcript summary: \(shortTranscriptSummary.recordingName)", category: "SummaryManager")
+                }
             }
             
             AppLogger.shared.info("Short transcript summary created and saved", category: "SummaryManager")
@@ -1371,9 +1422,17 @@ class SummaryManager: ObservableObject {
             handleError(SummarizationError.processingFailed(reason: "Basic summary quality below threshold"), context: "Basic Summary Quality", recordingName: recordingName)
         }
         
-        // Save the enhanced summary on the main thread
+        // Update UI state on the main thread
         await MainActor.run {
-            saveEnhancedSummary(enhancedSummary)
+            // Only update UI state - Core Data persistence should be handled by caller
+            if let index = self.enhancedSummaries.firstIndex(where: { $0.recordingURL == enhancedSummary.recordingURL }) {
+                self.enhancedSummaries[index] = enhancedSummary
+            } else {
+                self.enhancedSummaries.append(enhancedSummary)
+            }
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                AppLogger.shared.verbose("Updated UI state for basic enhanced summary: \(enhancedSummary.recordingName)", category: "SummaryManager")
+            }
         }
         
         // Update the recording name if we generated a better one
@@ -1822,13 +1881,13 @@ class SummaryManager: ObservableObject {
         // Get the transcript and retry summary generation
         if let transcript = transcriptManager.getTranscript(for: recordingURL) {
             do {
-                let summary = try await generateEnhancedSummary(
+                _ = try await generateEnhancedSummary(
                     from: transcript.fullText,
                     for: recordingURL,
                     recordingName: recordingName,
                     recordingDate: Date()
                 )
-                saveEnhancedSummary(summary)
+                // UI state updated within generateEnhancedSummary
                 clearCurrentError()
             } catch {
                 handleError(error, context: "Retry Operation", recordingName: recordingName)
@@ -1902,7 +1961,12 @@ class SummaryManager: ObservableObject {
                 processingTime: Date().timeIntervalSince(Date())
             )
             
-            saveEnhancedSummary(combinedEnhancedSummary)
+            // Only update UI state - Core Data persistence should be handled by caller
+            if let index = enhancedSummaries.firstIndex(where: { $0.recordingURL == combinedEnhancedSummary.recordingURL }) {
+                enhancedSummaries[index] = combinedEnhancedSummary
+            } else {
+                enhancedSummaries.append(combinedEnhancedSummary)
+            }
             clearCurrentError()
         }
     }
@@ -1969,7 +2033,12 @@ class SummaryManager: ObservableObject {
             processingTime: 0
         )
         
-        saveEnhancedSummary(manualSummary)
+        // Only update UI state - Core Data persistence should be handled by caller
+        if let index = enhancedSummaries.firstIndex(where: { $0.recordingURL == manualSummary.recordingURL }) {
+            enhancedSummaries[index] = manualSummary
+        } else {
+            enhancedSummaries.append(manualSummary)
+        }
         clearCurrentError()
     }
     
@@ -2038,8 +2107,13 @@ class SummaryManager: ObservableObject {
                     originalLength: existingSummary.originalLength,
                     processingTime: existingSummary.processingTime
                 )
-                saveEnhancedSummary(updatedSummary)
-                print("✅ SummaryManager: Updated enhanced summary with new name")
+                // Only update UI state - Core Data persistence should be handled by caller
+                if let index = enhancedSummaries.firstIndex(where: { $0.recordingURL == updatedSummary.recordingURL }) {
+                    enhancedSummaries[index] = updatedSummary
+                } else {
+                    enhancedSummaries.append(updatedSummary)
+                }
+                print("✅ SummaryManager: Updated enhanced summary UI state with new name")
             }
         } else {
             print("ℹ️ SummaryManager: Keeping original name '\(oldName)' (no meaningful improvement found)")
@@ -2081,8 +2155,13 @@ class SummaryManager: ObservableObject {
                 originalLength: existingSummary.originalLength,
                 processingTime: existingSummary.processingTime
             )
-            saveEnhancedSummary(updatedSummary)
-            print("✅ SummaryManager: Updated enhanced summary with new name")
+            // Only update UI state - Core Data persistence should be handled by caller
+            if let index = enhancedSummaries.firstIndex(where: { $0.recordingURL == updatedSummary.recordingURL }) {
+                enhancedSummaries[index] = updatedSummary
+            } else {
+                enhancedSummaries.append(updatedSummary)
+            }
+            print("✅ SummaryManager: Updated enhanced summary UI state with new name")
         }
         
         // Notify UI to refresh recordings list
@@ -2211,23 +2290,27 @@ class SummaryManager: ObservableObject {
         }
     }
     
+    /// DEPRECATED: UserDefaults storage is legacy - Core Data is now the source of truth
+    @available(*, deprecated, message: "Core Data is now the source of truth for summary persistence")
     private func saveEnhancedSummariesToDisk() {
-        do {
-            let data = try JSONEncoder().encode(enhancedSummaries)
-            UserDefaults.standard.set(data, forKey: enhancedSummariesKey)
-        } catch {
-            print("Failed to save enhanced summaries: \(error)")
-        }
+        // This method is deprecated and should not be used
+        // Core Data handles all persistence now
+        print("⚠️ saveEnhancedSummariesToDisk() called - this is deprecated, use Core Data instead")
     }
     
+    /// DEPRECATED: UserDefaults loading is legacy - Core Data loads summaries now
+    @available(*, deprecated, message: "Core Data is now the source of truth for summary loading")
     private func loadEnhancedSummaries() {
+        // This method is deprecated - summaries should be loaded from Core Data
+        // Keep for potential one-time migration only
         guard let data = UserDefaults.standard.data(forKey: enhancedSummariesKey) else { 
             return 
         }
         do {
-            enhancedSummaries = try JSONDecoder().decode([EnhancedSummaryData].self, from: data)
+            let legacySummaries = try JSONDecoder().decode([EnhancedSummaryData].self, from: data)
+            print("⚠️ Found \(legacySummaries.count) legacy summaries in UserDefaults - consider migrating to Core Data")
         } catch {
-            print("Failed to load enhanced summaries: \(error)")
+            print("Failed to load legacy enhanced summaries: \(error)")
         }
     }
 }

@@ -31,12 +31,17 @@ struct SummariesView: View {
             mainContentView
                 .navigationTitle("Summaries")
                 .onAppear {
-                    loadRecordings()
+                    // First refresh file relationships
+                    enhancedFileManager.refreshAllRelationships()
+                    
+                    // Then load recordings after a brief delay to ensure relationships are established
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        loadRecordings()
+                    }
+                    
                     // Configure the transcription manager with the selected engine
                     let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
                     enhancedTranscriptionManager.updateTranscriptionEngine(selectedEngine)
-                    // Refresh file relationships
-                    enhancedFileManager.refreshAllRelationships()
                     
                     // Show first-time iCloud prompt if not seen before and there are summaries
                     checkForFirstTimeiCloudPrompt()
@@ -119,19 +124,28 @@ struct SummariesView: View {
         } message: {
             Text(errorMessage)
         }
-        .alert("Enable iCloud Sync?", isPresented: $showingFirstTimeiCloudPrompt) {
+        .alert("Download Summaries from iCloud?", isPresented: $showingFirstTimeiCloudPrompt) {
             Button("Not Now") {
                 hasSeeniCloudPrompt = true
             }
-            Button("Enable iCloud Sync") {
+            Button("Download") {
                 hasSeeniCloudPrompt = true
-                iCloudManager.isEnabled = true
                 Task {
-                    await syncAllSummaries()
+                    do {
+                        let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator)
+                        print("✅ Downloaded \(count) summaries from iCloud")
+                        loadRecordings() // Refresh the view
+                    } catch {
+                        print("❌ Failed to download summaries: \(error)")
+                        await MainActor.run {
+                            errorMessage = "Failed to download summaries: \(error.localizedDescription)"
+                            showErrorAlert = true
+                        }
+                    }
                 }
             }
         } message: {
-            Text("Sync your summaries to iCloud to access them across all your devices. You can change this setting later in Advanced Settings.")
+            Text("We found summaries in your iCloud that aren't on this device. Would you like to download them? This won't affect your existing summaries.")
         }
 
     }
@@ -489,13 +503,34 @@ struct SummariesView: View {
     private func checkForFirstTimeiCloudPrompt() {
         // Only show prompt if:
         // 1. User hasn't seen it before
-        // 2. iCloud sync is not already enabled
-        // 3. There are recordings with summaries to sync
-        if !hasSeeniCloudPrompt && !iCloudManager.isEnabled {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                let recordingsWithSummaries = recordings.filter { $0.summary != nil }
-                if !recordingsWithSummaries.isEmpty {
-                    showingFirstTimeiCloudPrompt = true
+        // 2. There are summaries in iCloud that aren't local
+        if !hasSeeniCloudPrompt {
+            Task {
+                // Check if there are summaries in iCloud
+                do {
+                    // Try the new method first, fallback to old method if needed
+                    var cloudSummaries: [EnhancedSummaryData] = []
+                    do {
+                        cloudSummaries = try await iCloudManager.fetchAllSummariesUsingRecordOperation()
+                    } catch {
+                        print("⚠️ Schema-safe fetch failed, trying standard fetch: \(error)")
+                        cloudSummaries = try await iCloudManager.fetchAllSummariesFromCloud()
+                    }
+                    
+                    // Get local summary IDs from Core Data
+                    let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+                    let localSummaryIds = Set(localSummaries.compactMap { $0.id })
+                    
+                    let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
+                    
+                    if !cloudOnlySummaries.isEmpty {
+                        await MainActor.run {
+                            showingFirstTimeiCloudPrompt = true
+                        }
+                    }
+                } catch {
+                    // If we can't check iCloud (offline, no access, etc.), don't show prompt
+                    print("ℹ️ Could not check iCloud for summaries: \(error)")
                 }
             }
         }

@@ -116,6 +116,7 @@ struct RecordingsListView: View {
             }
         }
         .onAppear {
+            refreshFileRelationships()
             loadRecordings()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SummaryCreated"))) { _ in

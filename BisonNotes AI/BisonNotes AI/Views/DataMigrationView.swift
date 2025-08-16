@@ -32,7 +32,10 @@ struct DataMigrationView: View {
     @State private var confirmRepairDuplicates = false
     @State private var confirmFixNamesListings = false
     @State private var confirmImportOrphans = false
-    @State private var confirmSyncURLs = false
+    @State private var confirmDownloadCloud = false
+    @State private var confirmFullSyncToCloud = false
+    @State private var confirmCloudKitReset = false
+    @State private var confirmRemoveImportedFiles = false
     
     var body: some View {
         NavigationView {
@@ -92,6 +95,61 @@ struct DataMigrationView: View {
                 }
             } message: {
                 Text("This will remove summaries and transcripts for recordings that no longer exist. This action cannot be undone.")
+            }
+            .alert("Download from iCloud", isPresented: $confirmDownloadCloud) {
+                Button("Cancel", role: .cancel) { }
+                Button("Download") {
+                    Task {
+                        do {
+                            let count = try await legacyiCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator)
+                            print("✅ Downloaded \(count) summaries from iCloud")
+                        } catch {
+                            print("❌ Failed to download summaries: \(error)")
+                        }
+                    }
+                }
+            } message: {
+                Text("This will download any summaries from iCloud that don't exist locally. This is useful if you reinstalled the app or want to sync missing data. Existing local summaries will not be affected.")
+            }
+            .alert("Upload All Summaries to iCloud", isPresented: $confirmFullSyncToCloud) {
+                Button("Cancel", role: .cancel) { }
+                Button("Upload All") {
+                    Task {
+                        do {
+                            try await legacyiCloudManager.performOneTimeFullSync()
+                            print("✅ Successfully uploaded all summaries to iCloud")
+                        } catch {
+                            print("❌ Failed to upload summaries: \(error)")
+                        }
+                    }
+                }
+            } message: {
+                Text("This will upload ALL local summaries to iCloud. This is useful for:\n\n• Initial setup on a new device\n• After restoring from backup\n• Manual full synchronization\n\nThis may take several minutes depending on the number of summaries.")
+            }
+            .alert("⚠️ RESET CLOUDKIT & FRESH SYNC", isPresented: $confirmCloudKitReset) {
+                Button("Cancel", role: .cancel) { }
+                Button("Reset & Sync", role: .destructive) {
+                    Task {
+                        do {
+                            let result = try await legacyiCloudManager.performFullCloudKitResetAndSync(appCoordinator: appCoordinator)
+                            print("✅ CloudKit reset complete: deleted \(result.deleted), uploaded \(result.uploaded)")
+                        } catch {
+                            print("❌ Failed to reset CloudKit: \(error)")
+                        }
+                    }
+                }
+            } message: {
+                Text("🚨 DESTRUCTIVE ACTION 🚨\n\nThis will:\n\n1️⃣ DELETE ALL summaries from iCloud\n2️⃣ Upload fresh copies of all your current summaries\n\nThis is the nuclear option for fixing CloudKit sync issues. Use this when:\n\n• CloudKit has orphaned or duplicate data\n• Sync is completely broken\n• You want a clean slate\n\n⚠️ This cannot be undone and may take several minutes.")
+            }
+            .alert("Remove Orphaned Import Files", isPresented: $confirmRemoveImportedFiles) {
+                Button("Cancel", role: .cancel) { }
+                Button("Remove", role: .destructive) {
+                    Task {
+                        await removeOrphanedImportFiles()
+                    }
+                }
+            } message: {
+                Text("This will remove Core Data recordings that:\n\n• Have names starting with 'importedfile-'\n• Have no transcript data\n• Have no summary data\n\nThis fixes duplicate recordings created during import processes. Your real recordings with transcripts and summaries will be preserved.")
             }
         }
     }
@@ -185,6 +243,91 @@ struct DataMigrationView: View {
             }
             .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
             
+            // Download summaries from iCloud
+            Button(action: {
+                confirmDownloadCloud = true
+            }) {
+                HStack {
+                    Image(systemName: "icloud.and.arrow.down.fill")
+                    Text("Download from iCloud")
+                }
+                .font(.headline)
+                .foregroundColor(.blue)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.blue.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.blue, lineWidth: 1)
+                )
+                .cornerRadius(12)
+            }
+            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            
+            
+            // Full sync to cloud (manual upload all)
+            Button(action: {
+                confirmFullSyncToCloud = true
+            }) {
+                HStack {
+                    Image(systemName: "icloud.and.arrow.up")
+                    Text("Upload All Summaries to iCloud")
+                }
+                .font(.headline)
+                .foregroundColor(.blue)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.blue.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.blue, lineWidth: 1)
+                )
+                .cornerRadius(12)
+            }
+            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            
+            // Full CloudKit reset and fresh sync
+            Button(action: {
+                confirmCloudKitReset = true
+            }) {
+                HStack {
+                    Image(systemName: "arrow.clockwise.icloud")
+                    Text("Reset CloudKit & Fresh Sync")
+                }
+                .font(.headline)
+                .foregroundColor(.orange)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.orange.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.orange, lineWidth: 1)
+                )
+                .cornerRadius(12)
+            }
+            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            
+            // Remove orphaned importedfile entries
+            Button(action: {
+                confirmRemoveImportedFiles = true
+            }) {
+                HStack {
+                    Image(systemName: "trash.fill")
+                    Text("Remove Orphaned Import Files")
+                }
+                .font(.headline)
+                .foregroundColor(.red)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.red.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.red, lineWidth: 1)
+                )
+                .cornerRadius(12)
+            }
+            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            
             // Fix filename/title duplicates (the new advanced repair)
             Button(action: {
                 confirmRepairDuplicates = true
@@ -254,96 +397,72 @@ struct DataMigrationView: View {
                 .cornerRadius(12)
             }
 
-            // Debug tools section
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Database Debug Tools")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-                    .padding(.horizontal, 4)
-                
-                VStack(spacing: 8) {
-                    HStack(spacing: 12) {
-                        Button("Debug Database") {
-                            appCoordinator.debugDatabaseContents()
-                        }
-                        .buttonStyle(CompactDebugButtonStyle())
-                        
-                        Button("Debug Summary Data") {
-                            debugSummaryData()
-                        }
-                        .buttonStyle(CompactDebugButtonStyle())
-                        
-                        Button("Sync URLs") {
-                            confirmSyncURLs = true
-                        }
-                        .buttonStyle(CompactDebugButtonStyle())
+            // Cleanup Orphaned Data section
+            VStack(spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Cleanup Orphaned Data")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+                        Text("Remove summaries and transcripts for deleted recordings")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                    
-                    // Cleanup Orphaned Data section
-                    VStack(spacing: 8) {
+                    Spacer()
+                    Button(action: {
+                        showingCleanupAlert = true
+                    }) {
                         HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Cleanup Orphaned Data")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.primary)
-                                Text("Remove summaries and transcripts for deleted recordings")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                            if isPerformingCleanup {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .padding(.trailing, 4)
                             }
-                            Spacer()
-                            Button(action: {
-                                showingCleanupAlert = true
-                            }) {
-                                HStack {
-                                    if isPerformingCleanup {
-                                        ProgressView()
-                                            .scaleEffect(0.8)
-                                            .padding(.trailing, 4)
-                                    }
-                                    Text(isPerformingCleanup ? "Cleaning..." : "Clean Up")
-                                }
-                                .font(.caption)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(isPerformingCleanup ? Color.gray : Color.orange)
-                                )
-                            }
-                            .disabled(isPerformingCleanup)
+                            Text(isPerformingCleanup ? "Cleaning..." : "Clean Up")
                         }
-                        
-                        if let results = cleanupResults {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Last Cleanup Results:")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.secondary)
-                                
-                                Text("• Removed \(results.orphanedSummaries) orphaned summaries")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                
-                                Text("• Removed \(results.orphanedTranscripts) orphaned transcripts")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                
-                                Text("• Freed \(results.freedSpaceMB, specifier: "%.1f") MB of space")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(.top, 4)
-                        }
+                        .font(.caption)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(isPerformingCleanup ? Color.gray : Color.orange)
+                        )
                     }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
-                    .background(Color(.systemGray6).opacity(0.5))
-                    .cornerRadius(8)
+                    .disabled(isPerformingCleanup)
+                }
+                
+                if let results = cleanupResults {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Last Cleanup Results:")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+                        
+                        Text("• Removed \(results.orphanedSummaries) orphaned summaries")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text("• Removed \(results.orphanedTranscripts) orphaned transcripts")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text("• Removed \(results.orphanedRecordings) orphaned recordings")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text("• Freed \(results.freedSpaceMB, specifier: "%.1f") MB of space")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.top, 4)
                 }
             }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(Color(.systemGray6).opacity(0.5))
+            .cornerRadius(8)
             
             // Debug info
             Button(action: {
@@ -439,14 +558,6 @@ struct DataMigrationView: View {
             }
         } message: {
             Text("Adds database entries for audio files that exist on disk but not in the database. No deletions will occur.")
-        }
-        .alert("Sync Recording URLs", isPresented: $confirmSyncURLs) {
-            Button("Cancel", role: .cancel) { }
-            Button("Sync", role: .destructive) {
-                appCoordinator.syncRecordingURLs()
-            }
-        } message: {
-            Text("Converts stored absolute paths to resilient relative paths and fixes broken path references. No files are deleted.")
         }
     }
     
@@ -699,32 +810,40 @@ struct DataMigrationView: View {
         }
     }
     
-    // MARK: - Debug Helper Functions
-    
-    private func debugSummaryData() {
-        print("🔍 Debugging summaries...")
-        
-        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
-        print("📊 Total recordings: \(recordingsWithData.count)")
-        
-        for (index, recordingData) in recordingsWithData.enumerated() {
-            let recording = recordingData.recording
-            let summary = recordingData.summary
-            
-            print("   \(index): \(recording.recordingName ?? "Unknown")")
-            print("      - Recording ID: \(recording.id?.uuidString ?? "nil")")
-            print("      - Has summary: \(summary != nil)")
-            
-            if let summary = summary {
-                print("      - Summary AI Method: \(summary.aiMethod)")
-                print("      - Summary Generated At: \(summary.generatedAt)")
-                print("      - Summary Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
-                print("      - Summary ID: \(summary.id)")
-            }
-        }
-    }
     
     // MARK: - Cleanup Functions
+    
+    private func removeOrphanedImportFiles() async {
+        print("🧹 Starting removal of orphaned import files...")
+        
+        let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
+        var removedCount = 0
+        
+        for recording in allRecordings {
+            // Check if this is an orphaned import file
+            if let recordingName = recording.recordingName,
+               recordingName.hasPrefix("importedfile-") {
+                
+                // Check if it has no transcript and no summary
+                let hasTranscript = recording.transcript != nil
+                let hasSummary = recording.summary != nil
+                
+                if !hasTranscript && !hasSummary {
+                    print("🗑️ Removing orphaned import file: \(recordingName)")
+                    
+                    // Delete from Core Data
+                    if let recordingId = recording.id {
+                        appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+                        removedCount += 1
+                    }
+                } else {
+                    print("ℹ️ Keeping import file with data: \(recordingName) (has transcript: \(hasTranscript), has summary: \(hasSummary))")
+                }
+            }
+        }
+        
+        print("✅ Removed \(removedCount) orphaned import files")
+    }
     
     private func performCleanup() async {
         isPerformingCleanup = true
@@ -758,6 +877,7 @@ struct DataMigrationView: View {
         
         var orphanedSummaries = 0
         var orphanedTranscripts = 0
+        var orphanedRecordings = 0
         var freedSpaceBytes: Int64 = 0
         
         // Create a set of valid recording IDs for quick lookup
@@ -777,11 +897,15 @@ struct DataMigrationView: View {
                 print("   ID exists: \(hasValidID)")
                 
                 // Delete the orphaned summary
-                do {
-                    try await appCoordinator.deleteSummary(id: summary.id)
-                    orphanedSummaries += 1
-                } catch {
-                    print("❌ Failed to delete orphaned summary: \(error)")
+                if let summaryId = summary.id {
+                    do {
+                        try await appCoordinator.deleteSummary(id: summaryId)
+                        orphanedSummaries += 1
+                    } catch {
+                        print("❌ Failed to delete orphaned summary: \(error)")
+                    }
+                } else {
+                    print("❌ Cannot delete summary with nil ID")
                 }
                 
                 // Calculate freed space (rough estimate)
@@ -847,16 +971,53 @@ struct DataMigrationView: View {
             }
         }
         
+        // Check for orphaned recordings (recordings without files on disk and no data)
+        print("🔍 Checking for orphaned recordings (missing audio files)...")
+        for recording in allRecordings {
+            guard let _ = recording.recordingURL,
+                  let recordingURL = appCoordinator.coreDataManager.getAbsoluteURL(for: recording) else {
+                print("⚠️ Recording has invalid URL: \(recording.recordingName ?? "Unknown")")
+                continue
+            }
+            
+            // Check if the audio file exists on disk
+            let fileExists = FileManager.default.fileExists(atPath: recordingURL.path)
+            
+            if !fileExists {
+                // Check if this recording has any associated transcripts or summaries
+                let hasTranscript = recording.transcript != nil
+                let hasSummary = recording.summary != nil
+                
+                if !hasTranscript && !hasSummary {
+                    // Safe to delete - no transcript, no summary, and no file
+                    print("🗑️ Found orphaned recording (no file, no transcript, no summary): \(recording.recordingName ?? "Unknown")")
+                    print("   File path: \(recordingURL.path)")
+                    
+                    // Delete the orphaned recording
+                    if let recordingId = recording.id {
+                        appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+                        orphanedRecordings += 1
+                        print("✅ Deleted orphaned recording: \(recording.recordingName ?? "Unknown")")
+                    }
+                } else {
+                    // Keep the recording even if file is missing, because it has data
+                    print("⚠️ Keeping recording with missing file (has transcript: \(hasTranscript), has summary: \(hasSummary)): \(recording.recordingName ?? "Unknown")")
+                }
+            }
+        }
+        
         let freedSpaceMB = Double(freedSpaceBytes) / (1024 * 1024)
         
         print("✅ Cleanup complete:")
         print("   • Removed \(orphanedSummaries) orphaned summaries")
         print("   • Removed \(orphanedTranscripts) orphaned transcripts")
+        print("   • Removed \(orphanedRecordings) orphaned recordings")
         print("   • Freed \(String(format: "%.1f", freedSpaceMB)) MB of space")
         
         return CleanupResults(
             orphanedSummaries: orphanedSummaries,
             orphanedTranscripts: orphanedTranscripts,
+            orphanedRecordings: orphanedRecordings,
             freedSpaceMB: freedSpaceMB
         )
     }
@@ -867,6 +1028,7 @@ struct DataMigrationView: View {
 struct CleanupResults {
     let orphanedSummaries: Int
     let orphanedTranscripts: Int
+    let orphanedRecordings: Int
     let freedSpaceMB: Double
 }
 

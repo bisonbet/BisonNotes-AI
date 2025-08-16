@@ -38,6 +38,8 @@ struct CloudKitSummaryRecord {
     static let recordType = "CD_EnhancedSummary"
     
     // CloudKit record fields
+    static let recordingIdField = "recordingId"
+    static let transcriptIdField = "transcriptId"
     static let recordingURLField = "recordingURL"
     static let recordingNameField = "recordingName"
     static let recordingDateField = "recordingDate"
@@ -112,6 +114,9 @@ class iCloudStorageManager: ObservableObject {
         manager.networkStatus = .available
         return manager
     }()
+    
+    // MARK: - Properties
+    
     @Published var isEnabled: Bool = false {
         didSet {
             UserDefaults.standard.set(isEnabled, forKey: "iCloudSyncEnabled")
@@ -127,11 +132,70 @@ class iCloudStorageManager: ObservableObject {
         }
     }
     
+    // MARK: - Sync Control Properties
+    
+    /// Controls whether to perform full sync on app startup (should only be true for new installs or user request)
+    @Published var shouldPerformFullSyncOnStartup: Bool = false {
+        didSet {
+            UserDefaults.standard.set(shouldPerformFullSyncOnStartup, forKey: "shouldPerformFullSyncOnStartup")
+        }
+    }
+    
+    /// Tracks if this is a first install that might need iCloud data download
+    private var isFirstInstall: Bool {
+        return !UserDefaults.standard.bool(forKey: "hasCompletedInitialSetup")
+    }
+    
+    /// Controls automatic sync behavior
+    enum AutoSyncMode: String, CaseIterable {
+        case disabled = "disabled"
+        case changesOnly = "changesOnly"  // Only sync when summaries are modified (default)
+        case periodic = "periodic"        // Sync all summaries periodically (legacy behavior)
+        
+        var description: String {
+            switch self {
+            case .disabled: return "Disabled"
+            case .changesOnly: return "Changes Only"
+            case .periodic: return "Full Periodic Sync"
+            }
+        }
+    }
+    
+    /// Current auto-sync mode
+    @Published var autoSyncMode: AutoSyncMode = .changesOnly {
+        didSet {
+            UserDefaults.standard.set(autoSyncMode.rawValue, forKey: "autoSyncMode")
+        }
+    }
+    
     @Published var syncStatus: SyncStatus = .idle
-    @Published var lastSyncDate: Date?
-    @Published var pendingSyncCount: Int = 0
     @Published var networkStatus: NetworkStatus = .available
+    @Published var pendingSyncCount: Int = 0
+    @Published var lastSyncDate: Date?
     @Published var pendingConflicts: [SyncConflict] = []
+    
+    // MARK: - Sync State Management
+    
+    /// Tracks which summaries are currently being synced to prevent duplicate syncs
+    private var syncingSummaries: Set<UUID> = []
+    
+    /// Tracks recently synced summaries to prevent rapid re-syncing
+    private var recentlySyncedSummaries: [UUID: Date] = [:]
+    
+    /// Minimum time between syncing the same summary (5 minutes)
+    private let syncCooldownInterval: TimeInterval = 300
+    
+    /// Debounce timer for batch syncing
+    private var syncDebounceTimer: Timer?
+    
+    /// Queue of summaries waiting to be synced
+    private var pendingSyncQueue: [EnhancedSummaryData] = []
+    
+    /// Maximum number of summaries to sync in a single batch
+    private let maxBatchSize = 10
+    
+    /// Minimum delay between batch syncs (30 seconds)
+    private let batchSyncDelay: TimeInterval = 30
     
     // MARK: - Private Properties
     
@@ -156,6 +220,15 @@ class iCloudStorageManager: ObservableObject {
         
         // Load saved settings
         self.isEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+        self.shouldPerformFullSyncOnStartup = UserDefaults.standard.bool(forKey: "shouldPerformFullSyncOnStartup")
+        
+        // Load auto-sync mode (default to changesOnly for existing users)
+        if let autoSyncModeString = UserDefaults.standard.string(forKey: "autoSyncMode"),
+           let loadedAutoSyncMode = AutoSyncMode(rawValue: autoSyncModeString) {
+            self.autoSyncMode = loadedAutoSyncMode
+        } else {
+            self.autoSyncMode = .changesOnly
+        }
         
         // Load last sync date
         if let lastSyncTimestamp = UserDefaults.standard.object(forKey: "lastSyncDate") as? Date {
@@ -258,6 +331,19 @@ class iCloudStorageManager: ObservableObject {
             // Start periodic sync
             setupPeriodicSync()
             
+            // Only perform full sync if explicitly requested or first install
+            if shouldPerformFullSyncOnStartup || isFirstInstall {
+                print("🔄 Performing initial full sync (first install: \(isFirstInstall), requested: \(shouldPerformFullSyncOnStartup))")
+                do {
+                    try await performOneTimeFullSync()
+                } catch {
+                    print("⚠️ Initial full sync failed: \(error)")
+                    // Don't fail the entire enablement process
+                }
+            } else {
+                print("⏭️ Skipping initial full sync - will sync changes as they occur")
+            }
+            
             await updateSyncStatus(.completed)
             EnhancedLogger.shared.logiCloudSyncComplete("Enable iCloud Sync", itemCount: 0)
             
@@ -288,18 +374,115 @@ class iCloudStorageManager: ObservableObject {
             return
         }
         
+        // Check if this summary is already being synced
+        if syncingSummaries.contains(summary.id) {
+            print("🔄 Summary already being synced: \(summary.recordingName)")
+            return
+        }
+        
+        // Check if this summary was recently synced
+        if let lastSync = recentlySyncedSummaries[summary.id],
+           Date().timeIntervalSince(lastSync) < syncCooldownInterval {
+            let timeSince = Int(Date().timeIntervalSince(lastSync))
+            print("⏳ Summary recently synced (\(timeSince)s ago), skipping: \(summary.recordingName)")
+            return
+        }
+        
+        // Add to pending queue and schedule batch sync
+        pendingSyncQueue.append(summary)
+        scheduleBatchSync()
+        
+        print("📋 Queued summary for batch sync: \(summary.recordingName) (Queue size: \(pendingSyncQueue.count))")
+    }
+    
+    /// Schedules a batch sync operation with debouncing
+    private func scheduleBatchSync() {
+        // Cancel existing timer
+        syncDebounceTimer?.invalidate()
+        
+        // Schedule new timer
+        syncDebounceTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
+            Task {
+                await self?.performBatchSync()
+            }
+        }
+    }
+    
+    /// Performs batch sync of queued summaries
+    private func performBatchSync() async {
+        guard !pendingSyncQueue.isEmpty else { return }
+        
+        // Take up to maxBatchSize summaries from the queue
+        let batch = Array(pendingSyncQueue.prefix(maxBatchSize))
+        pendingSyncQueue.removeFirst(min(maxBatchSize, pendingSyncQueue.count))
+        
+        print("🔄 Starting batch sync of \(batch.count) summaries...")
+        
+        await updateSyncStatus(.syncing)
+        await MainActor.run {
+            self.pendingSyncCount = batch.count
+        }
+        
+        var syncedCount = 0
+        var failedCount = 0
+        
+        for summary in batch {
+            do {
+                // Mark as syncing
+                syncingSummaries.insert(summary.id)
+                
+                try await performIndividualSync(summary)
+                syncedCount += 1
+                
+                // Mark as recently synced
+                recentlySyncedSummaries[summary.id] = Date()
+                
+            } catch {
+                print("❌ Failed to sync summary \(summary.recordingName): \(error)")
+                failedCount += 1
+            }
+            
+            // Remove from syncing set (always execute)
+            syncingSummaries.remove(summary.id)
+            
+            await MainActor.run {
+                self.pendingSyncCount = batch.count - syncedCount - failedCount
+            }
+            
+            // Small delay between individual syncs to avoid overwhelming CloudKit
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+        }
+        
+        if failedCount == 0 {
+            await updateSyncStatus(.completed)
+            print("✅ Successfully synced batch: \(syncedCount) summaries")
+        } else {
+            await updateSyncStatus(.failed("Batch: \(syncedCount) synced, \(failedCount) failed"))
+            print("⚠️ Batch sync completed with errors: \(syncedCount) synced, \(failedCount) failed")
+        }
+        
+        // Schedule next batch if there are more items
+        if !pendingSyncQueue.isEmpty {
+            DispatchQueue.main.asyncAfter(deadline: .now() + batchSyncDelay) {
+                Task {
+                    await self.performBatchSync()
+                }
+            }
+        }
+    }
+    
+    /// Performs the actual individual sync operation (renamed from syncSummary)
+    private func performIndividualSync(_ summary: EnhancedSummaryData) async throws {
         // Ensure CloudKit is initialized
         if !isInitialized {
             await initializeCloudKit()
         }
         
-        guard let database = database else {
+        guard database != nil else {
             throw NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "CloudKit not initialized"])
         }
         
         guard networkStatus.canSync else {
-            print("⚠️ Network unavailable, queuing summary for later sync")
-            // In a full implementation, we'd queue this for later
             throw NSError(domain: "iCloudStorageManager", code: 2, userInfo: [NSLocalizedDescriptionKey: "Network unavailable"])
         }
         
@@ -309,42 +492,8 @@ class iCloudStorageManager: ObservableObject {
         
         while retryCount < maxRetryAttempts {
             do {
-                // Check for existing record to handle conflicts
                 let recordID = CKRecord.ID(recordName: summary.id.uuidString)
-                
-                var existingRecord: CKRecord?
-                do {
-                    existingRecord = try await database.record(for: recordID)
-                } catch {
-                    if let ckError = error as? CKError {
-                        // Treat missing record or record type as a new record and ensure schema exists
-                        if ckError.code == .unknownItem || ckError.localizedDescription.contains("record type") {
-                            await setupCloudKitSchema()
-                        } else {
-                            throw error
-                        }
-                    } else {
-                        throw error
-                    }
-                }
-                
-                // Handle conflict if existing record found
-                if let existing = existingRecord {
-                    let conflict = try await handleSyncConflict(localSummary: summary, cloudRecord: existing)
-                    if let resolvedSummary = conflict {
-                        let record = try createCloudKitRecord(from: resolvedSummary)
-                        let savedRecord = try await database.save(record)
-                        print("✅ Successfully synced resolved summary to iCloud: \(savedRecord.recordID)")
-                    } else {
-                        print("⚠️ Conflict resolution pending for summary: \(summary.recordingName)")
-                        return
-                    }
-                } else {
-                    // No conflict, save new record
-                    let record = try createCloudKitRecord(from: summary)
-                    let savedRecord = try await database.save(record)
-                    print("✅ Successfully synced summary to iCloud: \(savedRecord.recordID)")
-                }
+                let result = try await handleConflictResolution(for: recordID, with: summary)
                 
                 // Update last sync date
                 await MainActor.run {
@@ -352,20 +501,92 @@ class iCloudStorageManager: ObservableObject {
                     UserDefaults.standard.set(self.lastSyncDate, forKey: "lastSyncDate")
                 }
                 
+                print("✅ Successfully synced summary: \(result.recordID)")
                 return // Success, exit retry loop
                 
             } catch {
                 retryCount += 1
                 
-                if let ckError = error as? CKError, ckError.isRetryable && retryCount < maxRetryAttempts {
-                    print("⚠️ Retryable error, attempt \(retryCount)/\(maxRetryAttempts): \(ckError.localizedDescription)")
-                    try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
-                    continue
-                } else {
-                    print("❌ Failed to sync summary after \(retryCount) attempts: \(error)")
+                // Handle specific CloudKit errors
+                if let ckError = error as? CKError {
+                    switch ckError.code {
+                    case .serverRecordChanged:
+                        print("🔄 Server record changed, refetching and retrying (attempt \(retryCount)/\(maxRetryAttempts))")
+                        // Don't wait for server changed errors, retry immediately with fresh data
+                        continue
+                    case .networkFailure, .networkUnavailable, .serviceUnavailable:
+                        if retryCount < maxRetryAttempts {
+                            print("⚠️ Network error, retrying in \(retryDelay)s (attempt \(retryCount)/\(maxRetryAttempts))")
+                            try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
+                            continue
+                        }
+                    case .unknownItem:
+                        // Schema issue, ensure it exists and retry once
+                        if retryCount == 1 {
+                            print("⚠️ Unknown record type, setting up schema and retrying")
+                            await setupCloudKitSchema()
+                            continue
+                        }
+                    default:
+                        if ckError.isRetryable && retryCount < maxRetryAttempts {
+                            print("⚠️ Retryable CloudKit error, attempt \(retryCount)/\(maxRetryAttempts): \(ckError.localizedDescription)")
+                            try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
+                            continue
+                        }
+                    }
+                }
+                
+                print("❌ Failed to sync summary after \(retryCount) attempts: \(error)")
+                throw error
+            }
+        }
+    }
+    
+    /// Handles CloudKit conflict resolution by always fetching the latest server record
+    private func handleConflictResolution(for recordID: CKRecord.ID, with summary: EnhancedSummaryData) async throws -> CKRecord {
+        guard let database = database else {
+            throw NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
+        }
+        
+        // Always fetch the latest record from server to avoid conflicts
+        var existingRecord: CKRecord?
+        do {
+            existingRecord = try await database.record(for: recordID)
+            print("📥 Fetched existing record from server for conflict resolution")
+        } catch {
+            if let ckError = error as? CKError {
+                switch ckError.code {
+                case .unknownItem:
+                    // Record doesn't exist, create new one
+                    print("📝 Record doesn't exist, creating new record")
+                    let newRecord = try createCloudKitRecord(from: summary)
+                    return try await database.save(newRecord)
+                case .invalidArguments:
+                    // Schema issue, ensure schema exists and try creating new record
+                    print("🔧 Schema issue detected, ensuring schema and creating record")
+                    await setupCloudKitSchema()
+                    let newRecord = try createCloudKitRecord(from: summary)
+                    return try await database.save(newRecord)
+                default:
                     throw error
                 }
+            } else {
+                throw error
             }
+        }
+        
+        if let existing = existingRecord {
+            // Record exists, update it with our local data
+            print("🔄 Updating existing record with local changes")
+            updateCloudKitRecord(existing, from: summary)
+            
+            // Save the updated record
+            return try await database.save(existing)
+        } else {
+            // Shouldn't reach here, but create new record as fallback
+            print("⚠️ Unexpected state, creating new record")
+            let newRecord = try createCloudKitRecord(from: summary)
+            return try await database.save(newRecord)
         }
     }
     
@@ -413,10 +634,29 @@ class iCloudStorageManager: ObservableObject {
     }
 
     /// Convenience wrapper that loads all locally stored summaries and syncs them
+    /// This should only be called manually or during initial setup
     func syncAllSummaries() async throws {
+        print("🔄 Manual full sync requested")
         // Load summaries from the local store
         let allSummaries = SummaryManager.shared.enhancedSummaries
         try await syncAllSummaries(allSummaries)
+    }
+    
+    /// Performs a one-time full sync for new installations or user request
+    func performOneTimeFullSync() async throws {
+        print("🔄 Performing one-time full sync...")
+        try await syncAllSummaries()
+        
+        // Mark that initial setup is complete
+        await MainActor.run {
+            UserDefaults.standard.set(true, forKey: "hasCompletedInitialSetup")
+            self.shouldPerformFullSyncOnStartup = false
+        }
+    }
+    
+    /// Checks if the user needs to be prompted for iCloud data download on first install
+    func shouldPromptForInitialCloudDownload() -> Bool {
+        return isFirstInstall && isEnabled
     }
     
     func deleteSummaryFromiCloud(_ summaryId: UUID) async throws {
@@ -586,6 +826,632 @@ class iCloudStorageManager: ObservableObject {
         return syncStatus
     }
     
+    // MARK: - Cloud Management Functions
+    
+    
+    /// Downloads all summaries from iCloud and imports them locally
+    func downloadSummariesFromCloud(appCoordinator: AppDataCoordinator) async throws -> Int {
+        guard isEnabled, let _ = database else {
+            throw NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "iCloud sync not enabled or CloudKit not initialized"])
+        }
+        
+        await updateSyncStatus(.syncing)
+        
+        do {
+            // Use the alternative fetch method that doesn't require queryable fields
+            let cloudSummaries = try await fetchAllSummariesUsingRecordOperation(appCoordinator: appCoordinator)
+            
+            // Get local summary IDs from Core Data for comparison
+            let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+            let localSummaryIds = Set(localSummaries.compactMap { $0.id })
+            
+            // Find cloud-only summaries
+            let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
+            
+            print("📥 Found \(cloudOnlySummaries.count) cloud summaries to download")
+            
+            var downloadedCount = 0
+            for cloudSummary in cloudOnlySummaries {
+                do {
+                    // Try to create Core Data summary entry
+                    try await createCoreDataSummary(from: cloudSummary, appCoordinator: appCoordinator)
+                    downloadedCount += 1
+                    print("📥 Downloaded cloud summary: \(cloudSummary.recordingName)")
+                } catch {
+                    print("❌ Failed to create Core Data entry for cloud summary \(cloudSummary.recordingName): \(error)")
+                }
+            }
+            
+            await updateSyncStatus(.completed)
+            print("✅ Downloaded \(downloadedCount) summaries from iCloud")
+            return downloadedCount
+            
+        } catch {
+            await updateSyncStatus(.failed(error.localizedDescription))
+            throw error
+        }
+    }
+    
+    func fetchAllSummariesFromCloud() async throws -> [EnhancedSummaryData] {
+        guard let database = database else { return [] }
+        
+        let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: NSPredicate(value: true))
+        let (matchResults, _) = try await database.records(matching: query)
+        
+        var summaries: [EnhancedSummaryData] = []
+        
+        for (_, result) in matchResults {
+            switch result {
+            case .success(let record):
+                do {
+                    let summary = try createEnhancedSummaryData(from: record)
+                    summaries.append(summary)
+                } catch {
+                    print("❌ Failed to decode cloud summary: \(error)")
+                }
+            case .failure(let error):
+                print("❌ Failed to fetch cloud summary record: \(error)")
+            }
+        }
+        
+        return summaries
+    }
+    
+    
+    /// Uses record discovery approach to avoid schema requirements entirely
+    /// 
+    /// CURRENT STATUS: CloudKit schema has 'recordName' field not marked as queryable,
+    /// which prevents all query-based approaches from working. This method uses
+    /// alternative approaches to find records:
+    /// 
+    /// 1. UUID Scanning + Change Tracking: Fetches records by known UUIDs + discovers cloud-only records
+    /// 2. Zone Change Operations: Uses CKFetchRecordZoneChangesOperation to find all records
+    /// 3. Brute Force Discovery: Attempts various discovery methods
+    /// 
+    /// The UUID + change tracking approach should find both local records and cloud-only records.
+    func fetchAllSummariesUsingRecordOperation(appCoordinator: AppDataCoordinator? = nil) async throws -> [EnhancedSummaryData] {
+        guard let database = database else { return [] }
+        
+        print("🔍 Fetching all summaries using record discovery (schema-safe)")
+        print("🔍 Database: \(database.databaseScope == .public ? "Public" : "Private")")
+        print("🔍 Record type: \(CloudKitSummaryRecord.recordType)")
+        
+        var allSummaries: [EnhancedSummaryData] = []
+        
+        // Approach 1: UUID scanning + change tracking (most comprehensive)
+        if let appCoordinator = appCoordinator {
+            do {
+                print("🔍 Attempting UUID scanning + change tracking approach...")
+                let summaries = try await fetchSummariesByUUIDScanning(appCoordinator: appCoordinator)
+                allSummaries.append(contentsOf: summaries)
+                print("✅ UUID scanning + change tracking found \(summaries.count) summaries")
+            } catch {
+                print("⚠️ UUID scanning + change tracking failed: \(error)")
+            }
+        } else {
+            print("⚠️ No appCoordinator provided, trying direct zone changes approach...")
+        }
+        
+        // Approach 2: Brute force record scanning (works when change tracking fails)
+        if allSummaries.isEmpty {
+            do {
+                print("🔍 Attempting brute force record scanning...")
+                let scannedSummaries = try await bruteForceRecordDiscovery()
+                allSummaries.append(contentsOf: scannedSummaries)
+                print("✅ Brute force scanning found \(scannedSummaries.count) summaries")
+            } catch {
+                print("⚠️ Brute force scanning failed: \(error)")
+            }
+        }
+        
+        // Approach 2b: Direct zone changes (works without appCoordinator)
+        if allSummaries.isEmpty {
+            do {
+                print("🔍 Attempting direct zone changes approach...")
+                let zoneSummaries = try await fetchRecordsUsingZoneChanges()
+                allSummaries.append(contentsOf: zoneSummaries)
+                print("✅ Direct zone changes found \(zoneSummaries.count) summaries")
+            } catch {
+                print("⚠️ Direct zone changes failed: \(error)")
+            }
+        }
+        
+        // Approach 3: Database changes + zone scanning (fallback)
+        if allSummaries.isEmpty {
+            do {
+                print("🔍 Attempting database changes + zone scanning...")
+                let changesOperation = CKFetchDatabaseChangesOperation(previousServerChangeToken: nil)
+                changesOperation.database = database
+                
+                var recordZoneIDs: [CKRecordZone.ID] = []
+                changesOperation.recordZoneWithIDChangedBlock = { zoneID in
+                    recordZoneIDs.append(zoneID)
+                }
+                
+                _ = try await withCheckedThrowingContinuation { continuation in
+                    changesOperation.fetchDatabaseChangesResultBlock = { result in
+                        continuation.resume(with: result)
+                    }
+                    database.add(changesOperation)
+                }
+                
+                // If no zones found, add the default zone
+                if recordZoneIDs.isEmpty {
+                    recordZoneIDs.append(CKRecordZone.default().zoneID)
+                }
+                
+                // Use zone changes operation instead of queries
+                for zoneID in recordZoneIDs {
+                    do {
+                        let zoneRecords = try await fetchRecordsFromZoneUsingChanges(zoneID)
+                        allSummaries.append(contentsOf: zoneRecords)
+                    } catch {
+                        print("⚠️ Failed to fetch from zone \(zoneID) using changes: \(error)")
+                    }
+                }
+                
+                print("✅ Database changes + zone scanning found \(allSummaries.count) summaries")
+                
+            } catch {
+                print("⚠️ Database changes + zone scanning failed: \(error)")
+            }
+        }
+        
+        // Remove duplicates based on ID
+        let uniqueSummaries = Dictionary(grouping: allSummaries, by: { $0.id })
+            .compactMapValues { $0.first }
+            .values
+            .map { $0 }
+        
+        print("🔍 Total unique summaries found: \(uniqueSummaries.count) (removed \(allSummaries.count - uniqueSummaries.count) duplicates)")
+        
+        return Array(uniqueSummaries)
+    }
+    
+    /// Fetches summaries by scanning for common UUID patterns in record names
+    /// This bypasses the need for queryable fields
+    private func fetchSummariesByUUIDScanning(appCoordinator: AppDataCoordinator) async throws -> [EnhancedSummaryData] {
+        guard let database = database else { return [] }
+        
+        print("🔍 Scanning for summaries using UUID pattern matching...")
+        
+        // Get all summaries from Core Data to get their IDs
+        let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+        print("📱 Found \(localSummaries.count) local summaries to check")
+        
+        var foundSummaries: [EnhancedSummaryData] = []
+        var checkedUUIDs: Set<String> = Set()
+        
+        // Phase 1: Try to fetch each local summary's CloudKit record
+        for (index, localSummary) in localSummaries.enumerated() {
+            guard let summaryId = localSummary.id else {
+                print("⚠️ Local summary \(index + 1) has no ID, skipping")
+                continue
+            }
+            
+            let uuidString = summaryId.uuidString
+            print("🔍 Checking local summary \(index + 1)/\(localSummaries.count): \(uuidString)")
+            checkedUUIDs.insert(uuidString)
+            
+            do {
+                let recordID = CKRecord.ID(recordName: uuidString)
+                print("🔍 Attempting to fetch CloudKit record: \(recordID.recordName)")
+                
+                let record = try await database.record(for: recordID)
+                print("✅ Successfully fetched CloudKit record: \(record.recordID)")
+                
+                // Verify this is actually a summary record before processing
+                guard record.recordType == CloudKitSummaryRecord.recordType else {
+                    print("⚠️ Found non-summary record for local summary: \(summaryId) (type: \(record.recordType))")
+                    continue
+                }
+                
+                // Convert to EnhancedSummaryData
+                let summary = try createEnhancedSummaryData(from: record)
+                foundSummaries.append(summary)
+                print("✅ Successfully converted CloudKit record for local summary: \(summary.recordingName)")
+                
+            } catch {
+                // This summary doesn't exist in CloudKit, which is fine
+                print("ℹ️ No CloudKit record found for local summary: \(uuidString) - \(error.localizedDescription)")
+            }
+        }
+        
+        // Phase 2: Try to find cloud-only summaries using change tracking
+        // This will help us discover CloudKit records that don't have local counterparts
+        print("🔍 Phase 2: Looking for cloud-only summaries using change tracking...")
+        
+        do {
+            let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
+                recordZoneIDs: [CKRecordZone.default().zoneID], 
+                configurationsByRecordZoneID: nil
+            )
+            
+            var cloudOnlyRecords: [CKRecord] = []
+            
+            zoneChangesOperation.recordWasChangedBlock = { recordID, result in
+                switch result {
+                case .success(let record):
+                    // Only process our summary records that we haven't already checked
+                    if record.recordType == CloudKitSummaryRecord.recordType && 
+                       !checkedUUIDs.contains(record.recordID.recordName) {
+                        cloudOnlyRecords.append(record)
+                        print("🆕 Found potential cloud-only record: \(record.recordID.recordName)")
+                    }
+                case .failure(let error):
+                    print("⚠️ Failed to fetch cloud-only record \(recordID): \(error)")
+                }
+            }
+            
+            _ = try await withCheckedThrowingContinuation { continuation in
+                zoneChangesOperation.fetchRecordZoneChangesResultBlock = { result in
+                    continuation.resume(with: result)
+                }
+                database.add(zoneChangesOperation)
+            }
+            
+            // Convert the cloud-only records
+            for record in cloudOnlyRecords {
+                do {
+                    let summary = try createEnhancedSummaryData(from: record)
+                    foundSummaries.append(summary)
+                    print("✅ Successfully converted cloud-only record: \(summary.recordingName)")
+                } catch {
+                    print("❌ Failed to convert cloud-only record \(record.recordID): \(error)")
+                }
+            }
+            
+            print("🔍 Change tracking found \(cloudOnlyRecords.count) cloud-only records")
+            
+        } catch {
+            print("⚠️ Change tracking failed: \(error)")
+        }
+        
+        print("🔍 UUID scanning + change tracking found \(foundSummaries.count) total summaries")
+        return foundSummaries
+    }
+    
+    // Note: UUID pattern generation was removed to prevent integer overflow crashes
+    // The current approach focuses on finding CloudKit records that correspond to local summaries
+    
+    /// Brute force record discovery - tries various approaches to find CloudKit records
+    /// This method attempts to discover records when normal change tracking fails
+    private func bruteForceRecordDiscovery() async throws -> [EnhancedSummaryData] {
+        guard database != nil else { return [] }
+        
+        print("🔍 Starting brute force record discovery...")
+        var foundSummaries: [EnhancedSummaryData] = []
+        
+        // Removed approach with hardcoded record IDs - not scalable or maintainable
+        
+        // Approach 2: Try with CKFetchRecordZoneChangesOperation but with specific configuration
+        do {
+            print("🔍 Trying configured zone changes...")
+            let summaries = try await fetchRecordsWithSpecificConfiguration()
+            foundSummaries.append(contentsOf: summaries)
+        } catch {
+            print("⚠️ Configured zone changes failed: \(error)")
+        }
+        
+        print("🔍 Brute force discovery found \(foundSummaries.count) summaries")
+        return foundSummaries
+    }
+    
+    /// Fetches records using known IDs that were observed in sync operations
+    
+    /// Fetches records with specific zone configuration
+    private func fetchRecordsWithSpecificConfiguration() async throws -> [EnhancedSummaryData] {
+        guard let database = database else { return [] }
+        
+        print("🔍 Using specific configuration for zone changes...")
+        
+        // Try with a specific configuration that might work better
+        let configuration = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
+        configuration.previousServerChangeToken = nil  // Get all records
+        configuration.resultsLimit = 1000  // Set a reasonable limit
+        configuration.desiredKeys = nil  // Get all keys
+        
+        let configsByZoneID = [CKRecordZone.default().zoneID: configuration]
+        
+        let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
+            recordZoneIDs: [CKRecordZone.default().zoneID], 
+            configurationsByRecordZoneID: configsByZoneID
+        )
+        
+        var foundRecords: [CKRecord] = []
+        
+        zoneChangesOperation.recordWasChangedBlock = { recordID, result in
+            switch result {
+            case .success(let record):
+                if record.recordType == CloudKitSummaryRecord.recordType {
+                    foundRecords.append(record)
+                    print("📝 Configured fetch found record: \(record.recordID.recordName)")
+                }
+            case .failure(let error):
+                print("⚠️ Failed to fetch record \(recordID) with configuration: \(error)")
+            }
+        }
+        
+        _ = try await withCheckedThrowingContinuation { continuation in
+            zoneChangesOperation.fetchRecordZoneChangesResultBlock = { result in
+                continuation.resume(with: result)
+            }
+            database.add(zoneChangesOperation)
+        }
+        
+        // Convert records to summaries
+        var summaries: [EnhancedSummaryData] = []
+        for record in foundRecords {
+            do {
+                let summary = try createEnhancedSummaryData(from: record)
+                summaries.append(summary)
+            } catch {
+                print("❌ Failed to convert configured record \(record.recordID): \(error)")
+            }
+        }
+        
+        return summaries
+    }
+    
+    /// Fetches records using direct zone changes operation (works without appCoordinator)
+    private func fetchRecordsUsingZoneChanges() async throws -> [EnhancedSummaryData] {
+        guard let database = database else { return [] }
+        
+        print("🔍 Using direct zone changes to find all records...")
+        
+        let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
+            recordZoneIDs: [CKRecordZone.default().zoneID], 
+            configurationsByRecordZoneID: nil
+        )
+        
+        var foundRecords: [CKRecord] = []
+        
+        zoneChangesOperation.recordWasChangedBlock = { recordID, result in
+            switch result {
+            case .success(let record):
+                if record.recordType == CloudKitSummaryRecord.recordType {
+                    foundRecords.append(record)
+                    print("📝 Found record: \(record.recordID.recordName)")
+                }
+            case .failure(let error):
+                print("⚠️ Failed to fetch record \(recordID): \(error)")
+            }
+        }
+        
+        _ = try await withCheckedThrowingContinuation { continuation in
+            zoneChangesOperation.fetchRecordZoneChangesResultBlock = { result in
+                continuation.resume(with: result)
+            }
+            database.add(zoneChangesOperation)
+        }
+        
+        // Convert records to summaries
+        var summaries: [EnhancedSummaryData] = []
+        for record in foundRecords {
+            do {
+                let summary = try createEnhancedSummaryData(from: record)
+                summaries.append(summary)
+            } catch {
+                print("❌ Failed to convert record \(record.recordID): \(error)")
+            }
+        }
+        
+        print("✅ Direct zone changes found \(summaries.count) summaries")
+        return summaries
+    }
+    
+    /// Fetches records from a specific zone using zone changes operation
+    private func fetchRecordsFromZoneUsingChanges(_ zoneID: CKRecordZone.ID) async throws -> [EnhancedSummaryData] {
+        guard let database = database else { return [] }
+        
+        print("🔍 Fetching records from zone \(zoneID) using changes operation...")
+        
+        let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
+            recordZoneIDs: [zoneID], 
+            configurationsByRecordZoneID: nil
+        )
+        
+        var foundRecords: [CKRecord] = []
+        
+        zoneChangesOperation.recordWasChangedBlock = { recordID, result in
+            switch result {
+            case .success(let record):
+                if record.recordType == CloudKitSummaryRecord.recordType {
+                    foundRecords.append(record)
+                    print("📝 Found record in zone \(zoneID): \(record.recordID.recordName)")
+                }
+            case .failure(let error):
+                print("⚠️ Failed to fetch record \(recordID) in zone \(zoneID): \(error)")
+            }
+        }
+        
+        _ = try await withCheckedThrowingContinuation { continuation in
+            zoneChangesOperation.fetchRecordZoneChangesResultBlock = { result in
+                continuation.resume(with: result)
+            }
+            database.add(zoneChangesOperation)
+        }
+        
+        // Convert records to summaries
+        var summaries: [EnhancedSummaryData] = []
+        for record in foundRecords {
+            do {
+                let summary = try createEnhancedSummaryData(from: record)
+                summaries.append(summary)
+            } catch {
+                print("❌ Failed to convert record \(record.recordID): \(error)")
+            }
+        }
+        
+        print("✅ Zone changes found \(summaries.count) summaries in zone \(zoneID)")
+        return summaries
+    }
+    
+    /// Fetches records from a zone by scanning for existing records
+    /// This bypasses the need for queryable fields
+    private func fetchRecordsFromZoneByScanning(_ zoneID: CKRecordZone.ID) async throws -> [EnhancedSummaryData] {
+        guard let database = database else { return [] }
+        
+        print("🔍 Scanning zone \(zoneID) for existing records...")
+        
+        var foundRecords: [CKRecord] = []
+        
+        // Try to fetch records by attempting to access them with known patterns
+        // This is a brute-force approach but should work when CloudKit queries fail
+        
+        // First, try to fetch any records that might exist in this zone
+        // We'll use a very simple predicate that should work
+        do {
+            let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: NSPredicate(value: true))
+            
+            // Try with a very small limit first
+            let (matchResults, _) = try await database.records(matching: query, inZoneWith: zoneID, desiredKeys: nil, resultsLimit: 1)
+            
+            for (_, result) in matchResults {
+                switch result {
+                case .success(let record):
+                    foundRecords.append(record)
+                case .failure(let error):
+                    print("⚠️ Record fetch error: \(error)")
+                }
+            }
+            
+        } catch {
+            print("⚠️ Zone query failed: \(error)")
+        }
+        
+        // If we found some records, try to fetch more with a larger limit
+        if !foundRecords.isEmpty {
+            do {
+                let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: NSPredicate(value: true))
+                let (matchResults, _) = try await database.records(matching: query, inZoneWith: zoneID, desiredKeys: nil, resultsLimit: 1000)
+                
+                foundRecords.removeAll()
+                for (_, result) in matchResults {
+                    switch result {
+                    case .success(let record):
+                        foundRecords.append(record)
+                    case .failure(let error):
+                        print("⚠️ Record fetch error: \(error)")
+                    }
+                }
+                
+            } catch {
+                print("⚠️ Extended zone query failed: \(error)")
+            }
+        }
+        
+        print("📥 Found \(foundRecords.count) records in zone \(zoneID)")
+        
+        // Convert records to summaries
+        var summaries: [EnhancedSummaryData] = []
+        for record in foundRecords {
+            do {
+                let summary = try createEnhancedSummaryData(from: record)
+                summaries.append(summary)
+            } catch {
+                print("❌ Failed to decode record \(record.recordID): \(error)")
+            }
+        }
+        
+        return summaries
+    }
+    
+    /// Creates a Core Data summary entry from cloud summary data
+    private func createCoreDataSummary(from cloudSummary: EnhancedSummaryData, appCoordinator: AppDataCoordinator) async throws {
+        // First, try to link to existing local recording/transcript if they exist
+        if let recordingId = cloudSummary.recordingId,
+           let transcriptId = cloudSummary.transcriptId,
+           appCoordinator.coreDataManager.getRecording(id: recordingId) != nil,
+           appCoordinator.coreDataManager.getTranscript(for: recordingId) != nil {
+            
+            // Full linking possible - use the workflow manager
+            let summaryId = appCoordinator.addSummary(
+                for: recordingId,
+                transcriptId: transcriptId,
+                summary: cloudSummary.summary,
+                tasks: cloudSummary.tasks,
+                reminders: cloudSummary.reminders,
+                titles: cloudSummary.titles,
+                contentType: cloudSummary.contentType,
+                aiMethod: cloudSummary.aiMethod,
+                originalLength: cloudSummary.originalLength,
+                processingTime: cloudSummary.processingTime
+            )
+            
+            if summaryId != nil {
+                print("✅ Created linked Core Data entry for cloud summary: \(cloudSummary.recordingName)")
+            }
+        } else {
+            // Create orphaned summary entry (similar to "summary-only recordings")
+            print("📥 Creating orphaned Core Data summary entry (no local recording/transcript): \(cloudSummary.recordingName)")
+            try await createOrphanedSummaryEntry(cloudSummary, appCoordinator: appCoordinator)
+        }
+        
+        // Also add to SummaryManager for UI compatibility (Core Data is source of truth for persistence)
+        await MainActor.run {
+            SummaryManager.shared.enhancedSummaries.append(cloudSummary)
+        }
+    }
+    
+    /// Creates an orphaned summary entry in Core Data (without recording/transcript links)
+    private func createOrphanedSummaryEntry(_ cloudSummary: EnhancedSummaryData, appCoordinator: AppDataCoordinator) async throws {
+        let context = PersistenceController.shared.container.viewContext
+        
+        // Create the Core Data SummaryEntry
+        let summaryEntry = SummaryEntry(context: context)
+        summaryEntry.id = cloudSummary.id
+        summaryEntry.recordingId = cloudSummary.recordingId
+        summaryEntry.transcriptId = cloudSummary.transcriptId
+        summaryEntry.generatedAt = cloudSummary.generatedAt
+        summaryEntry.aiMethod = cloudSummary.aiMethod
+        summaryEntry.processingTime = cloudSummary.processingTime
+        summaryEntry.confidence = cloudSummary.confidence
+        summaryEntry.summary = cloudSummary.summary
+        summaryEntry.contentType = cloudSummary.contentType.rawValue
+        summaryEntry.wordCount = Int32(cloudSummary.wordCount)
+        summaryEntry.originalLength = Int32(cloudSummary.originalLength)
+        summaryEntry.compressionRatio = cloudSummary.compressionRatio
+        summaryEntry.version = Int32(cloudSummary.version)
+        
+        // Store structured data as JSON
+        if let titlesData = try? JSONEncoder().encode(cloudSummary.titles),
+           let titlesString = String(data: titlesData, encoding: .utf8) {
+            summaryEntry.titles = titlesString
+        }
+        if let tasksData = try? JSONEncoder().encode(cloudSummary.tasks),
+           let tasksString = String(data: tasksData, encoding: .utf8) {
+            summaryEntry.tasks = tasksString
+        }
+        if let remindersData = try? JSONEncoder().encode(cloudSummary.reminders),
+           let remindersString = String(data: remindersData, encoding: .utf8) {
+            summaryEntry.reminders = remindersString
+        }
+        
+        // Create a "summary-only" recording entry to maintain the pattern
+        let recordingEntry = RecordingEntry(context: context)
+        recordingEntry.id = cloudSummary.recordingId ?? UUID()
+        recordingEntry.recordingName = cloudSummary.recordingName
+        recordingEntry.recordingDate = cloudSummary.recordingDate
+        recordingEntry.recordingURL = nil // No URL since there's no local audio file
+        recordingEntry.duration = 0 // Unknown duration
+        recordingEntry.fileSize = 0
+        recordingEntry.summaryId = cloudSummary.id
+        recordingEntry.summaryStatus = ProcessingStatus.completed.rawValue
+        recordingEntry.lastModified = Date()
+        
+        // Link them together
+        summaryEntry.recording = recordingEntry
+        recordingEntry.summary = summaryEntry
+        
+        // Note: transcript remains nil since we don't have local transcript
+        
+        // Save to Core Data
+        try context.save()
+        
+        print("✅ Created orphaned Core Data summary entry: \(cloudSummary.recordingName)")
+    }
+    
     // MARK: - Conflict Resolution Methods
     
     func resolveConflict(_ conflict: SyncConflict, useLocal: Bool) async throws {
@@ -738,10 +1604,26 @@ class iCloudStorageManager: ObservableObject {
             return
         }
         
-        print("🔄 Performing periodic sync check...")
+        // Check auto-sync mode
+        switch autoSyncMode {
+        case .disabled:
+            print("⏭️ Skipping periodic sync - auto-sync disabled")
+            return
+        case .changesOnly:
+            print("⏭️ Skipping full periodic sync - only syncing changes as they occur")
+            // Only sync summaries that have been queued for sync
+            if !pendingSyncQueue.isEmpty {
+                print("🔄 Syncing queued changes (\(pendingSyncQueue.count) items)...")
+                await performBatchSync()
+            }
+            return
+        case .periodic:
+            print("🔄 Performing full periodic sync (legacy mode)...")
+            // Fall through to existing behavior
+        }
         
         do {
-            // Perform battery-aware sync
+            // Perform battery-aware sync (only in periodic mode)
             try await performBatteryAwareSync()
         } catch {
             print("❌ Periodic sync failed: \(error)")
@@ -802,6 +1684,8 @@ class iCloudStorageManager: ObservableObject {
         let tempRecord = CKRecord(recordType: CloudKitSummaryRecord.recordType, recordID: tempID)
     
         // Populate all known fields so the schema matches production usage
+        tempRecord[CloudKitSummaryRecord.recordingIdField] = UUID().uuidString
+        tempRecord[CloudKitSummaryRecord.transcriptIdField] = UUID().uuidString
         tempRecord[CloudKitSummaryRecord.recordingURLField] = ""
         tempRecord[CloudKitSummaryRecord.recordingNameField] = "SchemaInit"
         tempRecord[CloudKitSummaryRecord.recordingDateField] = Date()
@@ -833,6 +1717,10 @@ class iCloudStorageManager: ObservableObject {
     private func createCloudKitRecord(from summary: EnhancedSummaryData) throws -> CKRecord {
         let recordID = CKRecord.ID(recordName: summary.id.uuidString)
         let record = CKRecord(recordType: CloudKitSummaryRecord.recordType, recordID: recordID)
+        
+        // ID fields for linking
+        record[CloudKitSummaryRecord.recordingIdField] = summary.recordingId?.uuidString
+        record[CloudKitSummaryRecord.transcriptIdField] = summary.transcriptId?.uuidString
         
         // Basic fields
         record[CloudKitSummaryRecord.recordingURLField] = summary.recordingURL.absoluteString
@@ -869,6 +1757,39 @@ class iCloudStorageManager: ObservableObject {
         return record
     }
     
+    private func updateCloudKitRecord(_ record: CKRecord, from summary: EnhancedSummaryData) {
+        // Update basic fields
+        record[CloudKitSummaryRecord.recordingURLField] = summary.recordingURL.absoluteString
+        record[CloudKitSummaryRecord.recordingNameField] = summary.recordingName
+        record[CloudKitSummaryRecord.recordingDateField] = summary.recordingDate
+        record[CloudKitSummaryRecord.summaryField] = summary.summary
+        record[CloudKitSummaryRecord.contentTypeField] = summary.contentType.rawValue
+        record[CloudKitSummaryRecord.aiMethodField] = summary.aiMethod
+        record[CloudKitSummaryRecord.generatedAtField] = summary.generatedAt
+        record[CloudKitSummaryRecord.versionField] = summary.version
+        record[CloudKitSummaryRecord.wordCountField] = summary.wordCount
+        record[CloudKitSummaryRecord.originalLengthField] = summary.originalLength
+        record[CloudKitSummaryRecord.compressionRatioField] = summary.compressionRatio
+        record[CloudKitSummaryRecord.confidenceField] = summary.confidence
+        record[CloudKitSummaryRecord.processingTimeField] = summary.processingTime
+        record[CloudKitSummaryRecord.deviceIdentifierField] = deviceIdentifier
+        record[CloudKitSummaryRecord.lastModifiedField] = Date()
+        
+        // Encode complex objects as Data
+        do {
+            let tasksData = try JSONEncoder().encode(summary.tasks)
+            record[CloudKitSummaryRecord.tasksField] = tasksData
+            
+            let remindersData = try JSONEncoder().encode(summary.reminders)
+            record[CloudKitSummaryRecord.remindersField] = remindersData
+            
+            let titlesData = try JSONEncoder().encode(summary.titles)
+            record[CloudKitSummaryRecord.titlesField] = titlesData
+        } catch {
+            print("❌ Failed to encode complex objects during update: \(error)")
+        }
+    }
+    
     private func createEnhancedSummaryData(from record: CKRecord) throws -> EnhancedSummaryData {
         // Extract basic fields
         guard let recordingURLString = record[CloudKitSummaryRecord.recordingURLField] as? String,
@@ -882,6 +1803,23 @@ class iCloudStorageManager: ObservableObject {
               let originalLength = record[CloudKitSummaryRecord.originalLengthField] as? Int else {
             throw NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required fields in CloudKit record"])
         }
+        
+        // Extract IDs with proper UUID conversion
+        let recordingId = UUID(uuidString: record.recordID.recordName)
+        let transcriptId: UUID? = {
+            if let transcriptIdString = record[CloudKitSummaryRecord.transcriptIdField] as? String {
+                return UUID(uuidString: transcriptIdString)
+            }
+            return nil
+        }()
+        
+        // Extract additional metadata fields
+        let generatedAt = record[CloudKitSummaryRecord.generatedAtField] as? Date ?? Date()
+        let version = record[CloudKitSummaryRecord.versionField] as? Int ?? 1
+        let wordCount = record[CloudKitSummaryRecord.wordCountField] as? Int ?? 0
+        let compressionRatio = record[CloudKitSummaryRecord.compressionRatioField] as? Double ?? 0.0
+        let confidence = record[CloudKitSummaryRecord.confidenceField] as? Double ?? 0.0
+        let processingTime = record[CloudKitSummaryRecord.processingTimeField] as? TimeInterval ?? 0
         
         // Decode complex objects
         var tasks: [TaskItem] = []
@@ -900,10 +1838,13 @@ class iCloudStorageManager: ObservableObject {
             titles = (try? JSONDecoder().decode([TitleItem].self, from: titlesData)) ?? []
         }
         
-        // Get processing time (default to 0 if not available)
-        let processingTime = record[CloudKitSummaryRecord.processingTimeField] as? TimeInterval ?? 0
+        // Use the summary ID from the CloudKit record ID, or the recordingId if available
+        let summaryId = UUID(uuidString: record.recordID.recordName) ?? UUID()
         
         return EnhancedSummaryData(
+            id: summaryId,
+            recordingId: recordingId ?? summaryId, // Use recordingId if available, otherwise use summary ID
+            transcriptId: transcriptId,
             recordingURL: recordingURL,
             recordingName: recordingName,
             recordingDate: recordingDate,
@@ -914,9 +1855,370 @@ class iCloudStorageManager: ObservableObject {
             contentType: contentType,
             aiMethod: aiMethod,
             originalLength: originalLength,
-            processingTime: processingTime
+            processingTime: processingTime,
+            generatedAt: generatedAt,
+            version: version,
+            wordCount: wordCount,
+            compressionRatio: compressionRatio,
+            confidence: confidence
         )
     }
+    
+    // MARK: - Cleanup
+    
+    deinit {
+        syncDebounceTimer?.invalidate()
+        syncDebounceTimer = nil
+    }
+    
+    /// Clears all sync state (useful for testing or resetting)
+    func clearSyncState() {
+        syncingSummaries.removeAll()
+        recentlySyncedSummaries.removeAll()
+        pendingSyncQueue.removeAll()
+        syncDebounceTimer?.invalidate()
+        syncDebounceTimer = nil
+    }
+    
+    /// Manually triggers a sync of all pending summaries (useful for testing)
+    func triggerManualSync() async {
+        print("🔧 Manual sync triggered")
+        await performBatchSync()
+    }
+    
+    /// Tests CloudKit fetch functionality (useful for debugging)
+    func testCloudKitFetch() async -> String {
+        print("🧪 Testing CloudKit fetch functionality...")
+        
+        do {
+            let summaries = try await fetchAllSummariesUsingRecordOperation(appCoordinator: nil)
+            return "✅ CloudKit fetch test successful: Found \(summaries.count) summaries"
+        } catch {
+            return "❌ CloudKit fetch test failed: \(error.localizedDescription)"
+        }
+    }
+    
+    /// Tests CloudKit connectivity and shows available record types
+    func testCloudKitConnectivity() async -> String {
+        guard let database = database else {
+            return "❌ CloudKit database not available"
+        }
+        
+        var result = "🧪 CloudKit Connectivity Test:\n"
+        result += "Database Scope: \(database.databaseScope == .public ? "Public" : "Private")\n"
+        result += "Record Type: \(CloudKitSummaryRecord.recordType)\n\n"
+        
+        // Test 1: Try to fetch a single record with a simple query
+        result += "Test 1: Simple Query\n"
+        do {
+            let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: NSPredicate(value: true))
+            let (matchResults, _) = try await database.records(matching: query, resultsLimit: 1)
+            result += "✅ Simple query successful: \(matchResults.count) results\n"
+        } catch {
+            result += "❌ Simple query failed: \(error.localizedDescription)\n"
+            if let ckError = error as? CKError {
+                result += "   Error Code: \(ckError.code.rawValue)\n"
+                result += "   Error Description: \(ckError.localizedDescription)\n"
+            }
+        }
+        
+        // Test 2: Try to fetch with different predicates
+        result += "\nTest 2: Different Predicates\n"
+        let predicates = [
+            NSPredicate(format: "TRUEPREDICATE"),
+            NSPredicate(format: "FALSEPREDICATE"),
+            NSPredicate(format: "recordType == %@", CloudKitSummaryRecord.recordType)
+        ]
+        
+        for (index, predicate) in predicates.enumerated() {
+            do {
+                let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: predicate)
+                let (matchResults, _) = try await database.records(matching: query, resultsLimit: 1)
+                result += "✅ Predicate \(index + 1) successful: \(matchResults.count) results\n"
+            } catch {
+                result += "❌ Predicate \(index + 1) failed: \(error.localizedDescription)\n"
+            }
+        }
+        
+        // Test 3: Try to fetch from specific zone
+        result += "\nTest 3: Zone-Specific Query\n"
+        do {
+            let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: NSPredicate(value: true))
+            let (matchResults, _) = try await database.records(matching: query, inZoneWith: CKRecordZone.default().zoneID, desiredKeys: nil, resultsLimit: 1)
+            result += "✅ Zone query successful: \(matchResults.count) results\n"
+        } catch {
+            result += "❌ Zone query failed: \(error.localizedDescription)\n"
+        }
+        
+        // Test 4: Try to fetch with different record types
+        result += "\nTest 4: Different Record Types\n"
+        let recordTypes = ["CD_EnhancedSummary", "Summary", "EnhancedSummary", "CloudKitSummaryRecord"]
+        
+        for recordType in recordTypes {
+            do {
+                let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
+                let (matchResults, _) = try await database.records(matching: query, resultsLimit: 1)
+                result += "✅ Record type '\(recordType)': \(matchResults.count) results\n"
+            } catch {
+                result += "❌ Record type '\(recordType)': \(error.localizedDescription)\n"
+            }
+        }
+        
+        // Test 5: Try to fetch a record by ID (this should work regardless of schema)
+        result += "\nTest 5: Record Fetch by ID\n"
+        do {
+            // Try to fetch a test record by ID
+            let testUUID = UUID()
+            let recordID = CKRecord.ID(recordName: testUUID.uuidString)
+            let _ = try await database.record(for: recordID)
+            result += "✅ Record fetch by ID successful (unexpected - record shouldn't exist)\n"
+        } catch {
+            if let ckError = error as? CKError {
+                switch ckError.code {
+                case .unknownItem:
+                    result += "✅ Record fetch by ID working correctly (record doesn't exist, as expected)\n"
+                default:
+                    result += "❌ Record fetch by ID failed: \(ckError.localizedDescription)\n"
+                }
+            } else {
+                result += "❌ Record fetch by ID failed: \(error.localizedDescription)\n"
+            }
+        }
+        
+        return result
+    }
+    
+    /// Returns current sync statistics for debugging
+    func getSyncStats() -> String {
+        return """
+        Sync Status: \(syncStatus)
+        Currently Syncing: \(syncingSummaries.count)
+        Recently Synced: \(recentlySyncedSummaries.count)
+        Pending in Queue: \(pendingSyncQueue.count)
+        Last Sync: \(lastSyncDate?.description ?? "Never")
+        """
+    }
+    
+    /// Diagnoses CloudKit schema and connectivity issues
+    func diagnoseCloudKitIssues() async -> String {
+        guard let database = database else {
+            return "❌ CloudKit database not available"
+        }
+        
+        var diagnosis = "🔍 CloudKit Diagnosis:\n"
+        diagnosis += "Database Scope: \(database.databaseScope == .public ? "Public" : "Private")\n"
+        diagnosis += "Record Type: \(CloudKitSummaryRecord.recordType)\n\n"
+        
+        // Run the comprehensive connectivity test
+        diagnosis += await testCloudKitConnectivity()
+        
+        // Test zone discovery
+        diagnosis += "\n🔍 Zone Discovery Test:\n"
+        do {
+            let changesOperation = CKFetchDatabaseChangesOperation(previousServerChangeToken: nil)
+            changesOperation.database = database
+            
+            var zoneCount = 0
+            changesOperation.recordZoneWithIDChangedBlock = { _ in
+                zoneCount += 1
+            }
+            
+            _ = try await withCheckedThrowingContinuation { continuation in
+                changesOperation.fetchDatabaseChangesResultBlock = { result in
+                    continuation.resume(with: result)
+                }
+                database.add(changesOperation)
+            }
+            
+            diagnosis += "✅ Zone discovery successful: \(zoneCount) zones found\n"
+        } catch {
+            diagnosis += "❌ Zone discovery failed: \(error.localizedDescription)\n"
+        }
+        
+        // Test UUID scanning approach
+        diagnosis += "\n🔍 UUID Scanning Test:\n"
+        diagnosis += "⚠️ UUID scanning requires appCoordinator parameter, skipping test\n"
+        // Note: This test would require an appCoordinator instance to work properly
+        
+        return diagnosis
+    }
+    
+    
+    /// Performs a complete CloudKit reset and fresh sync
+    /// 1. Deletes ALL summary records from CloudKit
+    /// 2. Uploads all current Core Data summaries fresh
+    func performFullCloudKitResetAndSync(appCoordinator: AppDataCoordinator) async throws -> (deleted: Int, uploaded: Int) {
+        guard isEnabled, database != nil else {
+            throw NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "iCloud sync not enabled or CloudKit not initialized"])
+        }
+        
+        await updateSyncStatus(.syncing)
+        
+        print("🧹 Starting FULL CloudKit reset and fresh sync...")
+        print("⚠️ This will DELETE ALL summaries from CloudKit and upload fresh copies")
+        
+        var deletedCount = 0
+        var uploadedCount = 0
+        
+        do {
+            // Step 1: Find and delete ALL CloudKit summary records
+            print("📤 Step 1: Deleting ALL CloudKit summary records...")
+            deletedCount = try await deleteAllCloudKitSummaries()
+            
+            // Step 2: Upload all current Core Data summaries
+            print("📥 Step 2: Uploading all Core Data summaries...")
+            let localSummaries = appCoordinator.getAllSummaries()
+            
+            for localSummary in localSummaries {
+                // Convert Core Data summary to EnhancedSummaryData for upload
+                if let enhancedSummary = try? convertCoreDataToEnhancedSummary(localSummary, appCoordinator: appCoordinator) {
+                    do {
+                        try await performIndividualSync(enhancedSummary)
+                        uploadedCount += 1
+                        print("✅ Uploaded summary: \(enhancedSummary.recordingName)")
+                    } catch {
+                        print("❌ Failed to upload summary \(enhancedSummary.recordingName): \(error)")
+                    }
+                }
+            }
+            
+            await updateSyncStatus(.completed)
+            print("✅ CloudKit reset and sync complete: deleted \(deletedCount), uploaded \(uploadedCount)")
+            return (deleted: deletedCount, uploaded: uploadedCount)
+            
+        } catch {
+            await updateSyncStatus(.failed(error.localizedDescription))
+            print("❌ CloudKit reset and sync failed: \(error)")
+            throw error
+        }
+    }
+    
+    /// Deletes ALL summary records from CloudKit using zone changes
+    private func deleteAllCloudKitSummaries() async throws -> Int {
+        guard let database = database else { return 0 }
+        
+        print("🗑️ Finding all CloudKit summary records for deletion...")
+        
+        var deletedCount = 0
+        
+        // Use zone changes to find ALL records
+        let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
+            recordZoneIDs: [CKRecordZone.default().zoneID], 
+            configurationsByRecordZoneID: nil
+        )
+        
+        var recordsToDelete: [CKRecord.ID] = []
+        
+        zoneChangesOperation.recordWasChangedBlock = { recordID, result in
+            switch result {
+            case .success(let record):
+                if record.recordType == CloudKitSummaryRecord.recordType {
+                    recordsToDelete.append(record.recordID)
+                    print("📝 Found CloudKit summary record to delete: \(record.recordID.recordName)")
+                }
+            case .failure(let error):
+                print("⚠️ Failed to fetch record \(recordID): \(error)")
+            }
+        }
+        
+        _ = try await withCheckedThrowingContinuation { continuation in
+            zoneChangesOperation.fetchRecordZoneChangesResultBlock = { result in
+                continuation.resume(with: result)
+            }
+            database.add(zoneChangesOperation)
+        }
+        
+        // Delete all found records
+        print("🗑️ Deleting \(recordsToDelete.count) CloudKit summary records...")
+        
+        for recordID in recordsToDelete {
+            do {
+                try await database.deleteRecord(withID: recordID)
+                deletedCount += 1
+                print("✅ Deleted CloudKit record: \(recordID.recordName)")
+            } catch {
+                if let ckError = error as? CKError, ckError.code == .unknownItem {
+                    print("ℹ️ Record already deleted: \(recordID.recordName)")
+                    deletedCount += 1 // Count as deleted since it's gone
+                } else {
+                    print("❌ Failed to delete record \(recordID.recordName): \(error)")
+                }
+            }
+        }
+        
+        print("✅ Deleted \(deletedCount) CloudKit summary records")
+        return deletedCount
+    }
+    
+    /// Converts Core Data SummaryEntry to EnhancedSummaryData for upload
+    private func convertCoreDataToEnhancedSummary(_ summaryEntry: SummaryEntry, appCoordinator: AppDataCoordinator) throws -> EnhancedSummaryData {
+        guard let summaryId = summaryEntry.id,
+              let summary = summaryEntry.summary,
+              let aiMethod = summaryEntry.aiMethod else {
+            throw NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required summary fields"])
+        }
+        
+        // Get associated recording info
+        let recording = summaryEntry.recording
+        let recordingId = summaryEntry.recordingId
+        let transcriptId = summaryEntry.transcriptId
+        
+        // Parse structured data
+        let tasks: [TaskItem] = {
+            if let tasksString = summaryEntry.tasks,
+               let tasksData = tasksString.data(using: .utf8) {
+                return (try? JSONDecoder().decode([TaskItem].self, from: tasksData)) ?? []
+            }
+            return []
+        }()
+        
+        let reminders: [ReminderItem] = {
+            if let remindersString = summaryEntry.reminders,
+               let remindersData = remindersString.data(using: .utf8) {
+                return (try? JSONDecoder().decode([ReminderItem].self, from: remindersData)) ?? []
+            }
+            return []
+        }()
+        
+        let titles: [TitleItem] = {
+            if let titlesString = summaryEntry.titles,
+               let titlesData = titlesString.data(using: .utf8) {
+                return (try? JSONDecoder().decode([TitleItem].self, from: titlesData)) ?? []
+            }
+            return []
+        }()
+        
+        // Build recording info
+        let recordingName = recording?.recordingName ?? "Unknown Recording"
+        let recordingDate = recording?.recordingDate ?? Date()
+        let recordingURL = recording?.recordingURL.flatMap { URL(string: $0) } ?? URL(string: "file:///unknown")!
+        
+        let contentType = ContentType(rawValue: summaryEntry.contentType ?? "general") ?? .general
+        
+        return EnhancedSummaryData(
+            id: summaryId,
+            recordingId: recordingId ?? summaryId, // Use recordingId if available, otherwise use summary ID
+            transcriptId: transcriptId,
+            recordingURL: recordingURL,
+            recordingName: recordingName,
+            recordingDate: recordingDate,
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType,
+            aiMethod: aiMethod,
+            originalLength: Int(summaryEntry.originalLength),
+            processingTime: summaryEntry.processingTime,
+            generatedAt: summaryEntry.generatedAt ?? Date(),
+            version: Int(summaryEntry.version),
+            wordCount: Int(summaryEntry.wordCount),
+            compressionRatio: summaryEntry.compressionRatio,
+            confidence: summaryEntry.confidence
+        )
+    }
+    
+    // MARK: - Private Methods
 }
 
 // MARK: - CloudKit Error Extensions
