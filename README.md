@@ -10,7 +10,6 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 
 ### **Enhanced Location Search & Performance (Latest)**
 - **Smart Location Search**: Intelligent 3-tier fallback system for failed location searches
-- **University Database**: Built-in mapping for major universities (University of Oklahoma → Norman, Oklahoma)
 - **Search Retry Logic**: Automatic retry with different search strategies for better results
 - **Performance Improvements**: Fixed SF Symbol issues causing UI hangs and optimized background processing
 - **Better Error Handling**: User-friendly error messages with actionable suggestions
@@ -19,7 +18,6 @@ Audio Journal is your personal AI assistant for capturing, transcribing, and ana
 ## ✨ Key Features
 
 ### 🎙️ **Advanced Audio Recording**
-- **High-Quality Recording**: Multiple audio quality settings (64kbps to 256kbps)
 - **Mixed Audio Support**: Record without interrupting system audio playback
 - **Background Recording**: Continues recording even when app is minimized
 - **Flexible Input Support**: Built-in microphone, Bluetooth headsets, USB audio devices
@@ -263,10 +261,8 @@ Audio Journal supports advanced AI processing using AWS Bedrock foundation model
 4. **Test Connection**: Use the test button to verify your configuration
 
 #### **Supported Models**
-- **Claude 3.5 Sonnet**: Advanced reasoning and analysis
+- **Claude 4 Sonnet**: Advanced reasoning and analysis
 - **Claude 3.5 Haiku**: Fast and efficient processing
-- **Llama 2**: Open-source language model
-- **And many more**: Check AWS Bedrock console for available models
 
 #### **Features**
 - **Cloud-Based Processing**: Leverage AWS infrastructure for powerful AI processing
@@ -287,13 +283,12 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
 
 2. **Download AI Models**
    ```bash
-   # Download a model (e.g., Llama 2)
-   ollama pull llama2
+   # Download a model (e.g., Qwen 3)
+   ollama pull qwen3:8b
    
    # Or try other models
-   ollama pull mistral
-   ollama pull codellama
-   ollama pull llama2:13b
+   ollama pull magistral
+   ollama pull gpt-oss:20b
    ```
 
 3. **Start Ollama Service**
@@ -311,10 +306,9 @@ Audio Journal supports local AI processing using Ollama, allowing you to run var
    - Test the connection
 
 #### **Available Models**
-- **Llama 2**: General-purpose language model
-- **Mistral**: Fast and efficient model
-- **Code Llama**: Specialized for code generation
-- **Vicuna**: Conversational AI model
+- **Qwen 3**: General-purpose language model
+- **Magistral**: Specialized for language and discussion
+- **GPT-OSS**: OpenSource ChatGPT model from OpenAI
 - **And many more**: Check [Ollama Library](https://ollama.com/library) for the full list
 
 #### **Features**

@@ -17,5 +17,9 @@
 	<array>
 		<string>iCloud.$(CFBundleIdentifier)</string>
 	</array>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.bisonnotesai.shared</string>
+	</array>
 </dict>
 </plist>

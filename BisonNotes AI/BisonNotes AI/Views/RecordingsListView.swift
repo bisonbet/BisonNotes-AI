@@ -199,6 +199,9 @@ struct RecordingsListView: View {
                             .foregroundColor(.secondary)
                     }
                     
+                    // Recording source indicator
+                    recordingSourceIndicator(for: recording)
+                    
                     // File availability indicator
                     if let relationships = enhancedFileManager.getFileRelationships(for: recording.url) {
                         FileAvailabilityIndicator(
@@ -432,5 +435,68 @@ struct RecordingsListView: View {
                 enhancedFileManager.objectWillChange.send()
             }
         }
+    }
+    
+    // MARK: - Recording Source Indicator
+    
+    @ViewBuilder
+    private func recordingSourceIndicator(for recording: AudioRecordingFile) -> some View {
+        // Check if this is a watch recording by looking at the name or using the workflow manager
+        let isWatchRecording = recording.name.contains("[Watch]") || recording.name.hasPrefix("⌚") || recording.name.contains("⌚")
+        
+        if isWatchRecording {
+            HStack(spacing: 4) {
+                Image(systemName: "applewatch")
+                    .font(.caption2)
+                    .foregroundColor(.blue)
+                Text("Apple Watch")
+                    .font(.caption2)
+                    .foregroundColor(.blue)
+                
+                // Battery indicator if available (placeholder for now)
+                if shouldShowBatteryForWatchRecording(recording) {
+                    HStack(spacing: 2) {
+                        Image(systemName: "battery.50")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                        Text("50%")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    }
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.blue.opacity(0.1))
+                    .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+            )
+        } else {
+            // Phone recording indicator (subtle)
+            HStack(spacing: 4) {
+                Image(systemName: "iphone")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                Text("iPhone")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.gray.opacity(0.1))
+                    .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+            )
+        }
+    }
+    
+    private func shouldShowBatteryForWatchRecording(_ recording: AudioRecordingFile) -> Bool {
+        // TODO: Check if we have battery data for this recording
+        // For now, show battery for newer watch recordings
+        let calendar = Calendar.current
+        let daysSinceRecording = calendar.dateComponents([.day], from: recording.date, to: Date()).day ?? 0
+        return daysSinceRecording < 7 // Show battery info for recordings from the last week
     }
 }

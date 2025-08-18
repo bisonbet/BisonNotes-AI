@@ -58,22 +58,9 @@ class TokenManager {
         return max(tokenCount, 1) // Ensure at least 1 token
     }
     
-    /// More accurate token estimation using NLP
-    static func estimateTokenCountNLP(for text: String) -> Int {
-        let tagger = NLTagger(tagSchemes: [.tokenType])
-        tagger.string = text
-        
-        var tokenCount = 0
-        tagger.enumerateTags(in: text.startIndex..<text.endIndex, unit: .word, scheme: .tokenType) { _, range in
-            tokenCount += 1
-            return true
-        }
-        
-        // Add tokens for punctuation and special characters
-        let punctuationCount = text.filter { ".,!?;:'\"()[]{}".contains($0) }.count
-        tokenCount += punctuationCount
-        
-        return max(tokenCount, 1)
+    /// Get token count for text
+    static func getTokenCount(_ text: String) -> Int {
+        return estimateTokenCount(for: text)
     }
     
     // MARK: - Chunking
@@ -120,11 +107,6 @@ class TokenManager {
     static func needsChunking(_ text: String, maxTokens: Int = maxTokensPerChunk) -> Bool {
         let tokenCount = estimateTokenCount(for: text)
         return tokenCount > maxTokens
-    }
-    
-    /// Get token count for text
-    static func getTokenCount(_ text: String) -> Int {
-        return estimateTokenCount(for: text)
     }
     
     // MARK: - Chunk Processing

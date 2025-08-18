@@ -7,6 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1485FEC52E526FB30044121F /* BisonNotes AI Watch App Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED42E5271970044121F /* WatchConnectivity.framework */; };
+		1485FED72E5271AF0044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED62E5271AF0044121F /* WatchConnectivity.framework */; };
+		1485FEDC2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */; };
+		1485FEDD2E5272FA0044121F /* WatchAudioChunk.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED82E5272FA0044121F /* WatchAudioChunk.swift */; };
+		1485FEDE2E5272FA0044121F /* WatchRecordingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */; };
+		1485FEDF2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */; };
+		1485FEE02E5272FA0044121F /* WatchAudioChunk.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED82E5272FA0044121F /* WatchAudioChunk.swift */; };
+		1485FEE12E5272FA0044121F /* WatchRecordingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */; };
 		14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9072E3F8D5600BBD2FA /* AWSBedrock */; };
 		14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */; };
 		14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90B2E3F8D5600BBD2FA /* AWSS3 */; };
@@ -16,6 +25,27 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		1485FEB22E526FB30044121F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1485FEA42E526FB10044121F;
+			remoteInfo = "BisonNotes AI Watch App Watch App";
+		};
+		1485FEBC2E526FB30044121F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1485FEA42E526FB10044121F;
+			remoteInfo = "BisonNotes AI Watch App Watch App";
+		};
+		1485FEC32E526FB30044121F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1485FEA42E526FB10044121F;
+			remoteInfo = "BisonNotes AI Watch App Watch App";
+		};
 		14DBC8502E34F7B600DAD442 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
@@ -32,7 +62,29 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		1485FEC62E526FB30044121F /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				1485FEC52E526FB30044121F /* BisonNotes AI Watch App Watch App.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		1485FEA52E526FB10044121F /* BisonNotes AI Watch App Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BisonNotes AI Watch App Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1485FEB12E526FB30044121F /* BisonNotes AI Watch App Watch AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AI Watch App Watch AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1485FEBB2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AI Watch App Watch AppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1485FED42E5271970044121F /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = System/Library/Frameworks/WatchConnectivity.framework; sourceTree = SDKROOT; };
+		1485FED62E5271AF0044121F /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS11.5.sdk/System/Library/Frameworks/WatchConnectivity.framework; sourceTree = DEVELOPER_DIR; };
+		1485FED82E5272FA0044121F /* WatchAudioChunk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAudioChunk.swift; sourceTree = "<group>"; };
+		1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecordingMessage.swift; sourceTree = "<group>"; };
+		1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecordingState.swift; sourceTree = "<group>"; };
 		14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BisonNotes AI.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		14DBC84F2E34F7B600DAD442 /* BisonNotes AITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		14DBC8592E34F7B600DAD442 /* BisonNotes AIUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AIUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -49,6 +101,21 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		1485FEA62E526FB20044121F /* BisonNotes AI Watch App Watch App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "BisonNotes AI Watch App Watch App";
+			sourceTree = "<group>";
+		};
+		1485FEB42E526FB30044121F /* BisonNotes AI Watch App Watch AppTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "BisonNotes AI Watch App Watch AppTests";
+			sourceTree = "<group>";
+		};
+		1485FEBE2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "BisonNotes AI Watch App Watch AppUITests";
+			sourceTree = "<group>";
+		};
 		14DBC83F2E34F7B500DAD442 /* BisonNotes AI */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -70,6 +137,28 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		1485FEA22E526FB10044121F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1485FED72E5271AF0044121F /* WatchConnectivity.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1485FEAE2E526FB30044121F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1485FEB82E526FB30044121F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		14DBC83A2E34F7B500DAD442 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -78,6 +167,7 @@
 				14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */,
 				14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */,
 				14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */,
+				1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */,
 				14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */,
 				14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */,
 			);
@@ -100,12 +190,36 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1485FED32E5271970044121F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				1485FED62E5271AF0044121F /* WatchConnectivity.framework */,
+				1485FED42E5271970044121F /* WatchConnectivity.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		1485FEDB2E5272FA0044121F /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				1485FED82E5272FA0044121F /* WatchAudioChunk.swift */,
+				1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */,
+				1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		14DBC8342E34F7B500DAD442 = {
 			isa = PBXGroup;
 			children = (
+				1485FEDB2E5272FA0044121F /* Shared */,
 				14DBC83F2E34F7B500DAD442 /* BisonNotes AI */,
 				14DBC8522E34F7B600DAD442 /* BisonNotes AITests */,
 				14DBC85C2E34F7B600DAD442 /* BisonNotes AIUITests */,
+				1485FEA62E526FB20044121F /* BisonNotes AI Watch App Watch App */,
+				1485FEB42E526FB30044121F /* BisonNotes AI Watch App Watch AppTests */,
+				1485FEBE2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests */,
+				1485FED32E5271970044121F /* Frameworks */,
 				14DBC83E2E34F7B500DAD442 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -116,6 +230,9 @@
 				14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */,
 				14DBC84F2E34F7B600DAD442 /* BisonNotes AITests.xctest */,
 				14DBC8592E34F7B600DAD442 /* BisonNotes AIUITests.xctest */,
+				1485FEA52E526FB10044121F /* BisonNotes AI Watch App Watch App.app */,
+				1485FEB12E526FB30044121F /* BisonNotes AI Watch App Watch AppTests.xctest */,
+				1485FEBB2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -123,6 +240,74 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		1485FEA42E526FB10044121F /* BisonNotes AI Watch App Watch App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1485FECD2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch App" */;
+			buildPhases = (
+				1485FEA12E526FB10044121F /* Sources */,
+				1485FEA22E526FB10044121F /* Frameworks */,
+				1485FEA32E526FB10044121F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1485FEA62E526FB20044121F /* BisonNotes AI Watch App Watch App */,
+			);
+			name = "BisonNotes AI Watch App Watch App";
+			packageProductDependencies = (
+			);
+			productName = "BisonNotes AI Watch App Watch App";
+			productReference = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App Watch App.app */;
+			productType = "com.apple.product-type.application";
+		};
+		1485FEB02E526FB30044121F /* BisonNotes AI Watch App Watch AppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1485FECE2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch AppTests" */;
+			buildPhases = (
+				1485FEAD2E526FB30044121F /* Sources */,
+				1485FEAE2E526FB30044121F /* Frameworks */,
+				1485FEAF2E526FB30044121F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1485FEB32E526FB30044121F /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				1485FEB42E526FB30044121F /* BisonNotes AI Watch App Watch AppTests */,
+			);
+			name = "BisonNotes AI Watch App Watch AppTests";
+			packageProductDependencies = (
+			);
+			productName = "BisonNotes AI Watch App Watch AppTests";
+			productReference = 1485FEB12E526FB30044121F /* BisonNotes AI Watch App Watch AppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		1485FEBA2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1485FECF2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch AppUITests" */;
+			buildPhases = (
+				1485FEB72E526FB30044121F /* Sources */,
+				1485FEB82E526FB30044121F /* Frameworks */,
+				1485FEB92E526FB30044121F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1485FEBD2E526FB30044121F /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				1485FEBE2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests */,
+			);
+			name = "BisonNotes AI Watch App Watch AppUITests";
+			packageProductDependencies = (
+			);
+			productName = "BisonNotes AI Watch App Watch AppUITests";
+			productReference = 1485FEBB2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		14DBC83C2E34F7B500DAD442 /* BisonNotes AI */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 14DBC8632E34F7B600DAD442 /* Build configuration list for PBXNativeTarget "BisonNotes AI" */;
@@ -130,10 +315,12 @@
 				14DBC8392E34F7B500DAD442 /* Sources */,
 				14DBC83A2E34F7B500DAD442 /* Frameworks */,
 				14DBC83B2E34F7B500DAD442 /* Resources */,
+				1485FEC62E526FB30044121F /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				1485FEC42E526FB30044121F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				14DBC83F2E34F7B500DAD442 /* BisonNotes AI */,
@@ -207,6 +394,17 @@
 				LastSwiftUpdateCheck = 1640;
 				LastUpgradeCheck = 1640;
 				TargetAttributes = {
+					1485FEA42E526FB10044121F = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					1485FEB02E526FB30044121F = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = 1485FEA42E526FB10044121F;
+					};
+					1485FEBA2E526FB30044121F = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = 1485FEA42E526FB10044121F;
+					};
 					14DBC83C2E34F7B500DAD442 = {
 						CreatedOnToolsVersion = 16.4;
 					};
@@ -240,11 +438,35 @@
 				14DBC83C2E34F7B500DAD442 /* BisonNotes AI */,
 				14DBC84E2E34F7B600DAD442 /* BisonNotes AITests */,
 				14DBC8582E34F7B600DAD442 /* BisonNotes AIUITests */,
+				1485FEA42E526FB10044121F /* BisonNotes AI Watch App Watch App */,
+				1485FEB02E526FB30044121F /* BisonNotes AI Watch App Watch AppTests */,
+				1485FEBA2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		1485FEA32E526FB10044121F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1485FEAF2E526FB30044121F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1485FEB92E526FB30044121F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		14DBC83B2E34F7B500DAD442 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -269,10 +491,37 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		1485FEA12E526FB10044121F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1485FEDC2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */,
+				1485FEDD2E5272FA0044121F /* WatchAudioChunk.swift in Sources */,
+				1485FEDE2E5272FA0044121F /* WatchRecordingState.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1485FEAD2E526FB30044121F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1485FEB72E526FB30044121F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		14DBC8392E34F7B500DAD442 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1485FEDF2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */,
+				1485FEE02E5272FA0044121F /* WatchAudioChunk.swift in Sources */,
+				1485FEE12E5272FA0044121F /* WatchRecordingState.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -293,6 +542,21 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		1485FEB32E526FB30044121F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1485FEA42E526FB10044121F /* BisonNotes AI Watch App Watch App */;
+			targetProxy = 1485FEB22E526FB30044121F /* PBXContainerItemProxy */;
+		};
+		1485FEBD2E526FB30044121F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1485FEA42E526FB10044121F /* BisonNotes AI Watch App Watch App */;
+			targetProxy = 1485FEBC2E526FB30044121F /* PBXContainerItemProxy */;
+		};
+		1485FEC42E526FB30044121F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1485FEA42E526FB10044121F /* BisonNotes AI Watch App Watch App */;
+			targetProxy = 1485FEC32E526FB30044121F /* PBXContainerItemProxy */;
+		};
 		14DBC8512E34F7B600DAD442 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 14DBC83C2E34F7B500DAD442 /* BisonNotes AI */;
@@ -306,6 +570,146 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		1485FEC72E526FB30044121F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI Watch App Watch App/BisonNotes AI Watch App Watch App.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BisonNotes-AI-Watch-App-Watch-App-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI Watch App";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "Bison-Networking.BisonNotes-AI";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.watchkitapp";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 11.5;
+			};
+			name = Debug;
+		};
+		1485FEC82E526FB30044121F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI Watch App Watch App/BisonNotes AI Watch App Watch App.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BisonNotes-AI-Watch-App-Watch-App-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI Watch App";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "Bison-Networking.BisonNotes-AI";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.watchkitapp";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 11.5;
+			};
+			name = Release;
+		};
+		1485FEC92E526FB30044121F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-App-Watch-AppTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BisonNotes AI Watch App Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BisonNotes AI Watch App Watch App";
+				WATCHOS_DEPLOYMENT_TARGET = 11.5;
+			};
+			name = Debug;
+		};
+		1485FECA2E526FB30044121F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-App-Watch-AppTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BisonNotes AI Watch App Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BisonNotes AI Watch App Watch App";
+				WATCHOS_DEPLOYMENT_TARGET = 11.5;
+			};
+			name = Release;
+		};
+		1485FECB2E526FB30044121F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-App-Watch-AppUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_TARGET_NAME = "BisonNotes AI Watch App Watch App";
+				WATCHOS_DEPLOYMENT_TARGET = 11.5;
+			};
+			name = Debug;
+		};
+		1485FECC2E526FB30044121F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-App-Watch-AppUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_TARGET_NAME = "BisonNotes AI Watch App Watch App";
+				WATCHOS_DEPLOYMENT_TARGET = 11.5;
+			};
+			name = Release;
+		};
 		14DBC8612E34F7B600DAD442 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -576,6 +980,33 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		1485FECD2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1485FEC72E526FB30044121F /* Debug */,
+				1485FEC82E526FB30044121F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1485FECE2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch AppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1485FEC92E526FB30044121F /* Debug */,
+				1485FECA2E526FB30044121F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1485FECF2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch AppUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1485FECB2E526FB30044121F /* Debug */,
+				1485FECC2E526FB30044121F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		14DBC8382E34F7B500DAD442 /* Build configuration list for PBXProject "BisonNotes AI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
