@@ -21,7 +21,6 @@ class WatchAudioManager: NSObject, ObservableObject {
     @Published var isRecording: Bool = false
     @Published var isPaused: Bool = false
     @Published var recordingTime: TimeInterval = 0
-    @Published var audioLevel: Float = 0.0
     @Published var batteryLevel: Float = 1.0
     // Audio quality matches iOS app whisperOptimized settings
     @Published var errorMessage: String?
@@ -30,7 +29,6 @@ class WatchAudioManager: NSObject, ObservableObject {
     private var audioRecorder: AVAudioRecorder?
     private var audioSession: AVAudioSession?
     private var recordingTimer: Timer?
-    private var levelTimer: Timer?
     private var chunkTimer: Timer? // New timer for real-time chunking
     private var recordingURL: URL?
     private var recordingStartTime: Date?
@@ -46,6 +44,11 @@ class WatchAudioManager: NSObject, ObservableObject {
     private var audioBuffer: Data = Data()
     private let targetChunkSize: Int = 32000  // 1 second at 16kHz, 16-bit, mono
     private var lastChunkTime: TimeInterval = 0
+    
+    // FileHandle optimization for efficient reading
+    private var recordingFileHandle: FileHandle?
+    private var lastReadPosition: UInt64 = 44 // Start after WAV header
+    private var cachedBytesPerSecond: Int?
     
     // Chunk buffering for connectivity issues
     private var pendingChunks: [WatchAudioChunk] = []
@@ -75,10 +78,10 @@ class WatchAudioManager: NSObject, ObservableObject {
     }
     
     deinit {
-        // Can't call async methods in deinit, just clean up timers
+        // Can't call async methods in deinit, just clean up timers and file handles
         recordingTimer?.invalidate()
-        levelTimer?.invalidate()
         retryTimer?.invalidate()
+        recordingFileHandle?.closeFile()
         audioRecorder?.stop()
     }
     
@@ -403,6 +406,12 @@ class WatchAudioManager: NSObject, ObservableObject {
         pendingChunks.removeAll()
         retryAttempts.removeAll()
         
+        // Reset FileHandle state
+        recordingFileHandle?.closeFile()
+        recordingFileHandle = nil
+        lastReadPosition = 44 // WAV header size
+        cachedBytesPerSecond = nil
+        
         recordingURL = createRecordingURL()
         guard let url = recordingURL else {
             let error = WatchAudioError.fileSystemError("Failed to create recording file")
@@ -417,7 +426,6 @@ class WatchAudioManager: NSObject, ObservableObject {
         do {
             audioRecorder = try AVAudioRecorder(url: url, settings: settings)
             audioRecorder?.delegate = self
-            audioRecorder?.isMeteringEnabled = true
             
             // Start recording
             guard audioRecorder?.record() == true else {
@@ -432,7 +440,6 @@ class WatchAudioManager: NSObject, ObservableObject {
             
             // Start timers
             startRecordingTimer()
-            startLevelTimer()
             startRetryTimer()
             startChunkTimer() // Start real-time chunking
             
@@ -545,24 +552,6 @@ class WatchAudioManager: NSObject, ObservableObject {
         }
     }
     
-    private func startLevelTimer() {
-        levelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            
-            Task { @MainActor in
-                guard let recorder = self.audioRecorder, !self.isPaused else { return }
-                
-                recorder.updateMeters()
-                let level = recorder.averagePower(forChannel: 0)
-                
-                // Convert to 0-1 range (dB range is typically -60 to 0)
-                let normalizedLevel = max(0.0, (level + 60.0) / 60.0)
-                self.audioLevel = normalizedLevel
-            }
-        }
-    }
-    
-    
     private func startRetryTimer() {
         // Retry pending chunks every 3 seconds
         retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
@@ -591,19 +580,17 @@ class WatchAudioManager: NSObject, ObservableObject {
     
     private func stopAllTimers() {
         recordingTimer?.invalidate()
-        levelTimer?.invalidate()
         retryTimer?.invalidate()
         chunkTimer?.invalidate()
         
         recordingTimer = nil
-        levelTimer = nil
         retryTimer = nil
         chunkTimer = nil
     }
     
     // MARK: - Audio Chunk Management
     
-    /// Create and transfer a real-time audio chunk during recording
+    /// Create and transfer a real-time audio chunk during recording using efficient FileHandle
     private func createAndTransferRealtimeChunk() {
         guard let url = recordingURL,
               let sessionId = currentSessionId,
@@ -612,7 +599,89 @@ class WatchAudioManager: NSObject, ObservableObject {
         }
         
         do {
-            // Read current recording file
+            // Initialize FileHandle on first use
+            if recordingFileHandle == nil {
+                recordingFileHandle = try FileHandle(forReadingFrom: url)
+                lastReadPosition = 44 // Skip WAV header
+                print("⌚ FileHandle opened for efficient chunk reading")
+            }
+            
+            guard let fileHandle = recordingFileHandle else {
+                print("⌚ FileHandle not available, falling back to full file read")
+                return createAndTransferRealtimeChunkFallback()
+            }
+            
+            // Get current file size efficiently
+            let currentFileSize = fileHandle.seekToEndOfFile()
+            
+            // Check if we have new data since last read
+            guard currentFileSize > lastReadPosition else {
+                return // No new data available
+            }
+            
+            // Calculate bytes per second (cached for performance)
+            let bytesPerSecond = getBytesPerSecond()
+            
+            // Calculate how much new data is available
+            let availableNewBytes = Int(currentFileSize - lastReadPosition)
+            let minChunkSizeBytes = bytesPerSecond / 2 // 0.5 seconds minimum
+            
+            guard availableNewBytes >= minChunkSizeBytes else {
+                return // Not enough new data yet
+            }
+            
+            // Calculate optimal chunk size (aim for 1 second, but don't exceed available data)
+            let idealChunkSize = min(bytesPerSecond, availableNewBytes)
+            let bytesToRead = min(idealChunkSize, availableNewBytes)
+            
+            // Seek to last read position and read new data efficiently
+            fileHandle.seek(toFileOffset: lastReadPosition)
+            let chunkData = fileHandle.readData(ofLength: bytesToRead)
+            
+            // Update position for next read
+            lastReadPosition += UInt64(chunkData.count)
+            
+            // Calculate chunk duration
+            let chunkDuration = Double(chunkData.count) / Double(bytesPerSecond)
+            
+            // Create the chunk
+            let chunk = WatchAudioChunk(
+                recordingSessionId: sessionId,
+                sequenceNumber: chunkSequenceNumber,
+                audioData: chunkData,
+                duration: chunkDuration,
+                sampleRate: WatchAudioFormat.sampleRate,
+                channels: WatchAudioFormat.channels,
+                bitDepth: WatchAudioFormat.bitDepth,
+                isLastChunk: false // Never last chunk during real-time recording
+            )
+            
+            // Update tracking variables - calculate position based on file handle position
+            lastChunkTime = Double(lastReadPosition - 44) / Double(bytesPerSecond) // Subtract WAV header offset
+            chunkSequenceNumber += 1
+            audioChunks.append(chunk)
+            
+            // Transfer chunk immediately via callback
+            onAudioChunkReady?(chunk)
+            
+            print("⌚ Created real-time chunk \(chunk.sequenceNumber): \(chunkData.count) bytes, \(String(format: "%.1f", chunkDuration))s")
+            
+        } catch {
+            print("⌚ Error creating real-time chunk with FileHandle: \(error)")
+            // Fallback to original method if FileHandle fails
+            createAndTransferRealtimeChunkFallback()
+        }
+    }
+    
+    /// Fallback method using original file reading approach
+    private func createAndTransferRealtimeChunkFallback() {
+        guard let url = recordingURL,
+              let sessionId = currentSessionId else {
+            return
+        }
+        
+        do {
+            // Read current recording file (original method)
             let fileData = try Data(contentsOf: url)
             
             // Skip WAV header (44 bytes)
@@ -623,7 +692,7 @@ class WatchAudioManager: NSObject, ObservableObject {
             let currentFileSize = audioData.count
             
             // Calculate how much new audio data we have since last chunk
-            let bytesPerSecond = Int(WatchAudioFormat.sampleRate * Double(WatchAudioFormat.channels) * (Double(WatchAudioFormat.bitDepth) / 8.0))
+            let bytesPerSecond = getBytesPerSecond()
             let lastChunkEndByte = Int(lastChunkTime * Double(bytesPerSecond))
             
             // Only create chunk if we have enough new data (at least 0.5 seconds)
@@ -650,7 +719,7 @@ class WatchAudioManager: NSObject, ObservableObject {
                 sampleRate: WatchAudioFormat.sampleRate,
                 channels: WatchAudioFormat.channels,
                 bitDepth: WatchAudioFormat.bitDepth,
-                isLastChunk: false // Never last chunk during real-time recording
+                isLastChunk: false
             )
             
             // Update tracking variables
@@ -661,14 +730,29 @@ class WatchAudioManager: NSObject, ObservableObject {
             // Transfer chunk immediately via callback
             onAudioChunkReady?(chunk)
             
-            print("⌚ Created real-time chunk \(chunk.sequenceNumber): \(chunkData.count) bytes, \(String(format: "%.1f", chunkDuration))s")
+            print("⌚ Created fallback chunk \(chunk.sequenceNumber): \(chunkData.count) bytes, \(String(format: "%.1f", chunkDuration))s")
             
         } catch {
-            print("⌚ Error creating real-time chunk: \(error)")
+            print("⌚ Error in fallback chunk creation: \(error)")
         }
     }
     
+    /// Get bytes per second with caching for performance
+    private func getBytesPerSecond() -> Int {
+        if let cached = cachedBytesPerSecond {
+            return cached
+        }
+        
+        let calculated = Int(WatchAudioFormat.sampleRate * Double(WatchAudioFormat.channels) * (Double(WatchAudioFormat.bitDepth) / 8.0))
+        cachedBytesPerSecond = calculated
+        return calculated
+    }
+    
     private func finalizeRecording() {
+        // Close FileHandle when recording finishes
+        recordingFileHandle?.closeFile()
+        recordingFileHandle = nil
+        
         guard let url = recordingURL,
               let sessionId = currentSessionId,
               FileManager.default.fileExists(atPath: url.path) else {
@@ -689,7 +773,7 @@ class WatchAudioManager: NSObject, ObservableObject {
             print("⌚ Finalizing recording: \(completeAudioData.count) total bytes, \(pureAudioData.count) audio bytes")
             
             // Create final chunk for any remaining audio data that wasn't sent during real-time transfer
-            let bytesPerSecond = Int(WatchAudioFormat.sampleRate * Double(WatchAudioFormat.channels) * (Double(WatchAudioFormat.bitDepth) / 8.0))
+            let bytesPerSecond = getBytesPerSecond()
             let lastChunkEndByte = Int(lastChunkTime * Double(bytesPerSecond))
             
             if lastChunkEndByte < pureAudioData.count {

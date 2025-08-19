@@ -450,36 +450,6 @@ struct WatchRecordingView: View {
         .transition(.scale.combined(with: .opacity))
     }
     
-    private var audioLevelView: some View {
-        VStack(spacing: 4) {
-            HStack {
-                Image(systemName: "mic")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                
-                Text("Audio Level")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-            }
-            
-            ProgressView(value: viewModel.audioLevel)
-                .progressViewStyle(LinearProgressViewStyle(tint: audioLevelColor))
-                .scaleEffect(y: 0.6)
-        }
-    }
-    
-    private var audioLevelColor: Color {
-        let level = viewModel.audioLevel
-        if level > 0.7 {
-            return .red
-        } else if level > 0.4 {
-            return .orange
-        } else {
-            return .green
-        }
-    }
     
     // MARK: - Error State Overlay
     

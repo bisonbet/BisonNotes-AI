@@ -20,7 +20,6 @@ class WatchRecordingViewModel: ObservableObject {
     // MARK: - Published Properties
     @Published var recordingState: WatchRecordingState = .idle
     @Published var recordingTime: TimeInterval = 0
-    @Published var audioLevel: Float = 0.0
     @Published var batteryLevel: Float = 1.0
     @Published var connectionState: WatchConnectionState = .disconnected
     @Published var isPhoneAppActive: Bool = false
@@ -152,9 +151,6 @@ class WatchRecordingViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$recordingTime)
         
-        audioManager.$audioLevel
-            .receive(on: DispatchQueue.main)
-            .assign(to: &$audioLevel)
         
         audioManager.$batteryLevel
             .receive(on: DispatchQueue.main)
