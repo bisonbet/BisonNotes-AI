@@ -73,9 +73,6 @@ struct RecordingsView: View {
                         .scaleEffect(recorderVM.isRecording ? 1.05 : 1.0)
                         .animation(.easeInOut(duration: 0.2), value: recorderVM.isRecording)
                         
-                        // Watch connection status indicator
-                        watchConnectionStatusView
-                        
                         Button(action: {
                             showingRecordingsList = true
                         }) {
@@ -171,123 +168,7 @@ struct RecordingsView: View {
         }
     }
     
-    // MARK: - Watch Connection Status View
     
-    @ViewBuilder
-    private var watchConnectionStatusView: some View {
-        if recorderVM.watchConnectionState != .disconnected {
-            let connectionState = recorderVM.watchConnectionState
-            HStack {
-                // Watch connection icon
-                Image(systemName: connectionState.sfSymbolName)
-                    .font(.subheadline)
-                    .foregroundColor(connectionColor(for: connectionState))
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text("Apple Watch")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                        
-                        // Recording source indicator
-                        if recorderVM.isWatchInitiatedRecording {
-                            Image(systemName: "applewatch")
-                                .font(.caption2)
-                                .foregroundColor(.blue)
-                        }
-                    }
-                    
-                    HStack(spacing: 8) {
-                        Text(connectionState.description)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        // Battery level if available
-                        if let batteryLevel = recorderVM.watchBatteryLevel {
-                            HStack(spacing: 2) {
-                                Image(systemName: batteryIcon(for: batteryLevel))
-                                    .font(.caption2)
-                                    .foregroundColor(batteryColor(for: batteryLevel))
-                                Text("\(Int(batteryLevel * 100))%")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        
-                        // Audio transfer indicator
-                        if recorderVM.isReceivingWatchAudio == true {
-                            HStack(spacing: 2) {
-                                Image(systemName: "waveform.circle.fill")
-                                    .font(.caption2)
-                                    .foregroundColor(.green)
-                                Text("Receiving")
-                                    .font(.caption2)
-                                    .foregroundColor(.green)
-                            }
-                        }
-                    }
-                }
-                
-                Spacer()
-                
-                // Connection status dot
-                Circle()
-                    .fill(connectionColor(for: connectionState))
-                    .frame(width: 8, height: 8)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(connectionColor(for: connectionState).opacity(0.1))
-                    .stroke(connectionColor(for: connectionState).opacity(0.3), lineWidth: 1)
-            )
-            .padding(.horizontal, 40)
-        }
-    }
-    
-    // MARK: - Helper Methods for Watch Status
-    
-    private func connectionColor(for state: WatchConnectionState) -> Color {
-        switch state {
-        case .connected:
-            return .green
-        case .connecting:
-            return .orange
-        case .disconnected:
-            return .gray
-        case .error:
-            return .red
-        case .phoneAppInactive, .watchAppInactive:
-            return .yellow
-        }
-    }
-    
-    private func batteryIcon(for level: Float) -> String {
-        switch level {
-        case 0.0..<0.1:
-            return "battery.0"
-        case 0.1..<0.25:
-            return "battery.25"
-        case 0.25..<0.75:
-            return "battery.50"
-        case 0.75..<1.0:
-            return "battery.75"
-        default:
-            return "battery.100"
-        }
-    }
-    
-    private func batteryColor(for level: Float) -> Color {
-        if level < 0.2 {
-            return .red
-        } else if level < 0.5 {
-            return .orange
-        } else {
-            return .green
-        }
-    }
     
     private var backgroundProcessingIndicator: some View {
         Button(action: {

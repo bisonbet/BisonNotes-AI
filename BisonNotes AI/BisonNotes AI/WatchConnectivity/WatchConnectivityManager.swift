@@ -38,6 +38,10 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private var audioChunkManager = WatchAudioChunkManager()
     private var cancellables = Set<AnyCancellable>()
     
+    // Sync operation tracking
+    private var pendingSyncOperations: [UUID: WatchSyncRequest] = [:]
+    private var syncTimeouts: [UUID: Timer] = [:]
+    
     // State synchronization
     private var stateSyncTimer: Timer?
     private var lastWatchStateChange: Date = Date()
@@ -45,13 +49,13 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private var syncInterval: TimeInterval = 2.0 // Sync every 2 seconds
     private var conflictResolutionStrategy: StateConflictResolution = .phoneWins
     
-    // MARK: - Callbacks for AudioRecorderViewModel integration
-    var onWatchRecordingStartRequested: (() -> Void)?
-    var onWatchRecordingStopRequested: (() -> Void)?
-    var onWatchRecordingPauseRequested: (() -> Void)?
-    var onWatchRecordingResumeRequested: (() -> Void)?
-    var onWatchAudioReceived: ((Data, UUID) -> Void)?
-    var onWatchErrorReceived: ((WatchErrorMessage) -> Void)?
+    // MARK: - File sync callbacks (current)
+    var onWatchSyncRecordingReceived: ((Data, WatchSyncRequest) -> Void)?
+    var onWatchRecordingSyncCompleted: ((UUID, Bool) -> Void)?
+    
+    // Legacy callbacks removed - watch operates independently
+    // var onWatchRecordingStartRequested, onWatchRecordingStopRequested, etc.
+    // var onWatchAudioReceived - replaced by file transfer
     
     // State synchronization callbacks
     var onStateConflictDetected: ((WatchRecordingState, WatchRecordingState) -> Void)? // phone state, watch state
@@ -65,7 +69,8 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         super.init()
         setupWatchConnectivity()
         setupNotificationObservers()
-        startStateSynchronization()
+        // Removed automatic state synchronization - only sync on-demand for recordings
+        // startStateSynchronization()
     }
     
     deinit {
@@ -75,13 +80,20 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         }
         self.session = nil
         stateSyncTimer?.invalidate()
+        
+        // Clean up sync operations
+        for (_, timeout) in syncTimeouts {
+            timeout.invalidate()
+        }
+        syncTimeouts.removeAll()
+        pendingSyncOperations.removeAll()
     }
     
     // MARK: - Setup Methods
     
     private func setupWatchConnectivity() {
         guard WCSession.isSupported() else {
-            print("⌚ WatchConnectivity not supported on this device")
+            print("📱 WatchConnectivity not supported on this device")
             connectionState = .error
             return
         }
@@ -91,7 +103,177 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         self.session = wcSession
         wcSession.activate()
         
-        print("⌚ WatchConnectivity session setup initiated")
+        print("📱 iPhone WatchConnectivity session setup initiated - activating...")
+    }
+    
+    // MARK: - New Sync Protocol Methods
+    
+    /// Check if iPhone app is ready to receive recordings
+    private func checkAppReadiness(request: [String: Any]) -> WatchAppReadinessResponse {
+        // Check if app is in foreground
+        let appState = UIApplication.shared.applicationState
+        let isInForeground = appState == .active
+        
+        // Check available storage (simplified)
+        let availableStorage: Int64 = 100 * 1024 * 1024 // Assume 100MB available
+        
+        // Check Core Data availability
+        let coreDataReady = true // Assume Core Data is ready
+        
+        var ready = true
+        var reason = "ready"
+        
+        if !isInForeground {
+            reason = "backgrounded"
+            // Still ready, but backgrounded
+        }
+        
+        // Check if we have enough storage for the file
+        if let requestedSize = request["fileSize"] as? Int64,
+           requestedSize > availableStorage {
+            ready = false
+            reason = "insufficient_storage"
+        }
+        
+        return WatchAppReadinessResponse(
+            ready: ready,
+            reason: reason,
+            storageAvailable: availableStorage,
+            coreDataReady: coreDataReady
+        )
+    }
+    
+    /// Handle sync request from watch
+    private func handleSyncRequest(_ syncRequest: WatchSyncRequest) -> Bool {
+        print("📱 Received sync request for: \(syncRequest.filename)")
+        
+        // Check if we can accept the sync
+        let appState = UIApplication.shared.applicationState
+        let canAccept = appState == .active || appState == .background
+        
+        if canAccept {
+            // Store pending sync operation
+            pendingSyncOperations[syncRequest.recordingId] = syncRequest
+            
+            // Set timeout for sync completion (increased for backgrounded app)
+            let timeout = Timer.scheduledTimer(withTimeInterval: 120.0, repeats: false) { [weak self] _ in
+                Task { @MainActor in
+                    self?.handleSyncTimeout(syncRequest.recordingId)
+                }
+            }
+            syncTimeouts[syncRequest.recordingId] = timeout
+            
+            print("📱 Sync request accepted for: \(syncRequest.filename)")
+            return true
+        } else {
+            print("📱 Sync request rejected - app not ready")
+            return false
+        }
+    }
+    
+    /// Handle completed file transfer from watch
+    private func handleWatchRecordingReceived(fileURL: URL, metadata: [String: Any]) {
+        guard let recordingIdString = metadata["recordingId"] as? String,
+              let recordingId = UUID(uuidString: recordingIdString) else {
+            print("❌ Received file but no recording ID in metadata")
+            return
+        }
+        
+        // Try to get pending sync request, or reconstruct from metadata if missing
+        let syncRequest: WatchSyncRequest
+        if let pendingRequest = pendingSyncOperations[recordingId] {
+            syncRequest = pendingRequest
+        } else {
+            print("⚠️ No pending sync request found, reconstructing from metadata")
+            
+            // Reconstruct sync request from metadata
+            guard let filename = metadata["filename"] as? String,
+                  let duration = metadata["duration"] as? TimeInterval,
+                  let fileSize = metadata["fileSize"] as? Int64,
+                  let createdAtTimestamp = metadata["createdAt"] as? TimeInterval else {
+                print("❌ Insufficient metadata to reconstruct sync request")
+                return
+            }
+            
+            syncRequest = WatchSyncRequest(
+                recordingId: recordingId,
+                filename: filename,
+                duration: duration,
+                fileSize: fileSize,
+                createdAt: Date(timeIntervalSince1970: createdAtTimestamp),
+                checksumMD5: ""
+            )
+        }
+        
+        print("📱 Received recording file: \(fileURL.lastPathComponent)")
+        
+        do {
+            // Read the audio data
+            let audioData = try Data(contentsOf: fileURL)
+            
+            // Verify checksum if provided
+            if !syncRequest.checksumMD5.isEmpty {
+                let actualChecksum = audioData.md5
+                if actualChecksum != syncRequest.checksumMD5 {
+                    print("⚠️ Checksum mismatch for \(syncRequest.filename)")
+                    handleSyncFailure(recordingId, reason: "checksum_mismatch")
+                    return
+                }
+            }
+            
+            // Create Core Data entry via callback
+            onWatchSyncRecordingReceived?(audioData, syncRequest)
+            
+            // Cleanup will happen in handleSyncComplete
+            
+        } catch {
+            print("❌ Failed to read received file: \(error)")
+            handleSyncFailure(recordingId, reason: "file_read_error")
+        }
+    }
+    
+    /// Confirm sync completion to watch
+    func confirmSyncComplete(recordingId: UUID, success: Bool) {
+        if success {
+            print("✅ Sync completed successfully for: \(recordingId)")
+            
+            // Send confirmation to watch
+            sendRecordingCommand(.syncComplete, additionalInfo: [
+                "recordingId": recordingId.uuidString,
+                "timestamp": Date().timeIntervalSince1970
+            ])
+            
+            // Cleanup
+            cleanupSyncOperation(recordingId)
+            
+        } else {
+            handleSyncFailure(recordingId, reason: "core_data_error")
+        }
+    }
+    
+    private func handleSyncTimeout(_ recordingId: UUID) {
+        print("⏰ Sync timeout for: \(recordingId)")
+        handleSyncFailure(recordingId, reason: "timeout")
+    }
+    
+    private func handleSyncFailure(_ recordingId: UUID, reason: String) {
+        print("❌ Sync failed for: \(recordingId), reason: \(reason)")
+        
+        // Send failure message to watch
+        sendRecordingCommand(.syncFailed, additionalInfo: [
+            "recordingId": recordingId.uuidString,
+            "reason": reason,
+            "timestamp": Date().timeIntervalSince1970
+        ])
+        
+        // Cleanup
+        cleanupSyncOperation(recordingId)
+    }
+    
+    private func cleanupSyncOperation(_ recordingId: UUID) {
+        pendingSyncOperations.removeValue(forKey: recordingId)
+        syncTimeouts[recordingId]?.invalidate()
+        syncTimeouts.removeValue(forKey: recordingId)
     }
     
     private func setupNotificationObservers() {
@@ -153,8 +335,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         // Send confirmation that phone app is now active
         sendRecordingCommand(.phoneAppActivated)
         
-        // Trigger recording start if watch requested it
-        onWatchRecordingStartRequested?()
+        // Legacy recording coordination removed - watch operates independently
         
         print("⌚ Phone app activated for watch recording")
     }
@@ -425,15 +606,16 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     /// Handle connection restoration - trigger state recovery
     private func handleConnectionRestored() {
-        print("📱 Connection restored, performing state recovery")
+        print("📱 Connection restored")
         
         onConnectionRestored?()
         
-        // Request immediate state sync
-        requestWatchStateUpdate()
-        
-        // Send current phone state
-        sendPhoneStateToWatch(phoneRecordingState)
+        // Only sync state if phone is actually recording
+        if phoneRecordingState != .idle {
+            print("📱 Phone is recording, syncing state with watch")
+            requestWatchStateUpdate()
+            sendPhoneStateToWatch(phoneRecordingState)
+        }
     }
     
     // MARK: - Audio Chunk Processing
@@ -513,8 +695,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         print("✅ Successfully combined \(audioChunkManager.chunksReceived) audio chunks (\(combinedAudio.count) bytes)")
         
-        // Send combined audio to AudioRecorderViewModel with metadata
-        onWatchAudioReceived?(combinedAudio, sessionId)
+        // Legacy audio streaming removed - now using file transfer on completion
         
         // Reset for next recording
         audioChunkManager.reset()
@@ -538,7 +719,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         // Try to combine what we have (now includes gap filling)
         if let audioWithGaps = audioChunkManager.combineAudioChunks() {
             print("✅ Processing audio with \(missingCount) gaps filled: \(audioChunkManager.chunksReceived) chunks (\(audioWithGaps.count) bytes)")
-            onWatchAudioReceived?(audioWithGaps, sessionId)
+            // Legacy audio streaming removed - now using file transfer on completion
         } else {
             print("❌ Failed to process audio even with gap filling")
         }
@@ -659,8 +840,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             connectionState = .disconnected
         }
         
-        // Forward to AudioRecorderViewModel
-        onWatchErrorReceived?(error)
+        // Legacy error forwarding removed - errors handled in sync protocol
     }
     
     // MARK: - Message Processing
@@ -692,21 +872,8 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         lastWatchMessage = messageType.rawValue
         
         switch messageType {
-        case .startRecording:
-            print("⌚ Watch requested recording start")
-            onWatchRecordingStartRequested?()
-            
-        case .stopRecording:
-            print("⌚ Watch requested recording stop")
-            onWatchRecordingStopRequested?()
-            
-        case .pauseRecording:
-            print("⌚ Watch requested recording pause")
-            onWatchRecordingPauseRequested?()
-            
-        case .resumeRecording:
-            print("⌚ Watch requested recording resume")
-            onWatchRecordingResumeRequested?()
+        case .startRecording, .stopRecording, .pauseRecording, .resumeRecording:
+            print("⚠️ Ignoring legacy recording control message: \(messageType.rawValue) - watch operates independently")
             
         case .recordingStatusUpdate:
             if let statusUpdate = WatchRecordingStatusUpdate.fromDictionary(message) {
@@ -753,6 +920,34 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             // Watch is requesting phone app activation
             print("📱 Watch requested iPhone app activation")
             handleWatchActivationRequest(message)
+        
+        // MARK: - New Sync Protocol Messages
+        case .checkAppReadiness:
+            print("📱 Watch checking iPhone app readiness")
+            let readinessResponse = checkAppReadiness(request: message)
+            session?.sendAppReadinessResponse(readinessResponse)
+            
+        case .syncRequest:
+            if let syncRequestData = WatchSyncRequest.fromDictionary(message) {
+                let accepted = handleSyncRequest(syncRequestData)
+                let response = WatchSyncResponse(
+                    recordingId: syncRequestData.recordingId,
+                    accepted: accepted,
+                    reason: accepted ? nil : "app_not_ready"
+                )
+                session?.sendSyncResponse(response)
+            }
+            
+        case .syncComplete:
+            if let recordingIdString = message["recordingId"] as? String,
+               let recordingId = UUID(uuidString: recordingIdString) {
+                print("📱 Watch confirmed sync complete for: \(recordingId)")
+                cleanupSyncOperation(recordingId)
+            }
+            
+        // These messages are sent by iPhone to watch, not received
+        case .appReadinessResponse, .syncAccepted, .syncRejected, .fileTransferStart, .fileReceived, .metadataTransfer, .coreDataCreated, .syncFailed:
+            break
         }
     }
     
@@ -853,9 +1048,8 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         print("🚨 Handling watch recording emergency - last state: \(lastKnownState.rawValue)")
         
         if phoneRecordingState == .idle {
-            // Phone wasn't recording - try to start phone recording as backup
-            print("📱 Phone wasn't recording, attempting to start backup recording")
-            onWatchRecordingStartRequested?()
+            // Legacy coordination removed - watch and phone operate independently
+            print("📱 Watch recording detected but no coordinated recording needed")
         }
         
         // Notify that we're in recovery mode
@@ -926,7 +1120,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
             
             switch activationState {
             case .activated:
-                print("⌚ WCSession activated successfully")
+                print("📱 iPhone WCSession activated successfully")
                 self.updateConnectionState()
             case .inactive:
                 print("⌚ WCSession inactive")
@@ -967,12 +1161,14 @@ extension WatchConnectivityManager: WCSessionDelegate {
     
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
         DispatchQueue.main.async {
+            print("📱 iPhone received message from watch: \(message)")
             self.processWatchMessage(message)
         }
     }
     
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
         DispatchQueue.main.async {
+            print("📱 iPhone received message with reply handler from watch: \(message)")
             self.processWatchMessage(message)
             
             // Send reply with current phone status
@@ -981,6 +1177,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 "phoneAppActive": true,
                 "timestamp": Date().timeIntervalSince1970
             ]
+            print("📱 iPhone sending reply: \(reply)")
             replyHandler(reply)
         }
     }
@@ -1010,16 +1207,16 @@ extension WatchConnectivityManager: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
         print("⌚ Received file from watch: \(file.fileURL.lastPathComponent)")
         
-        // Handle audio file received from watch
-        do {
-            let audioData = try Data(contentsOf: file.fileURL)
-            let sessionId = UUID() // In real implementation, extract from metadata
-            
-            DispatchQueue.main.async {
-                self.onWatchAudioReceived?(audioData, sessionId)
+        DispatchQueue.main.async {
+            // Check if this is a sync protocol file transfer
+            if let transferType = file.metadata?["transferType"] as? String,
+               transferType == "complete_recording" {
+                // New sync protocol file transfer
+                self.handleWatchRecordingReceived(fileURL: file.fileURL, metadata: file.metadata ?? [:])
+            } else {
+                // Legacy file transfer no longer supported - only sync protocol
+                print("⚠️ Received legacy file transfer - ignoring. Use sync protocol instead.")
             }
-        } catch {
-            print("❌ Failed to read audio file from watch: \(error.localizedDescription)")
         }
     }
 }
@@ -1031,4 +1228,15 @@ enum StateConflictResolution {
     case watchWins
     case mostRecentWins
     case smartResolution
+}
+
+// MARK: - Extensions
+
+import CryptoKit
+
+extension Data {
+    var md5: String {
+        let digest = Insecure.MD5.hash(data: self)
+        return digest.map { String(format: "%02hhx", $0) }.joined()
+    }
 }

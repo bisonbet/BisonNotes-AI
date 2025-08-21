@@ -113,28 +113,9 @@ struct WatchRecordingView: View {
             
             Spacer()
             
-            // Phone connection status with connection animation
-            Image(systemName: phoneConnectionIcon)
-                .foregroundColor(phoneConnectionColor)
-                .font(.system(size: 16, weight: .medium))
-                .scaleEffect(viewModel.connectionState == .connecting ? 1.1 : 1.0)
-                .opacity(viewModel.connectionState == .connecting ? 0.7 : 1.0)
-                .animation(
-                    viewModel.connectionState == .connecting ? 
-                    .easeInOut(duration: 1.0).repeatForever(autoreverses: true) : 
-                    .easeInOut(duration: 0.3),
-                    value: viewModel.connectionState
-                )
         }
     }
     
-    private var phoneConnectionIcon: String {
-        return viewModel.isPhoneAppActive && viewModel.connectionState.isConnected ? "iphone" : "iphone.slash"
-    }
-    
-    private var phoneConnectionColor: Color {
-        return viewModel.isPhoneAppActive && viewModel.connectionState.isConnected ? .green : .red
-    }
     
     private var batteryIcon: String {
         let level = viewModel.batteryLevel

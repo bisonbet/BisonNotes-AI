@@ -47,7 +47,6 @@ struct SettingsView: View {
                     headerSection
                     preferencesSection
                     microphoneSection
-                    watchIntegrationSection
                     aiEngineSection
                     transcriptionSection
                     advancedSection
@@ -103,6 +102,7 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showingDataMigration) {
             DataMigrationView()
+                .environmentObject(appCoordinator)
         }
         .sheet(isPresented: $showingPerformanceView) {
             EnginePerformanceView()
@@ -250,148 +250,6 @@ struct SettingsView: View {
         }
     }
     
-    private var watchIntegrationSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Apple Watch Integration")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                Spacer()
-                
-                // Watch connection status indicator
-                if recorderVM.watchConnectionState != .disconnected {
-                    let connectionState = recorderVM.watchConnectionState
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(connectionColor(for: connectionState))
-                            .frame(width: 8, height: 8)
-                        Text(connectionState.description)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-            
-            VStack(spacing: 8) {
-                // Enable Watch Integration Toggle
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Enable Watch Integration")
-                            .font(.body)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                        Text("Allow recording from Apple Watch")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Spacer()
-                    
-                    Toggle("Enable Watch Integration", isOn: $watchIntegrationEnabled)
-                        .labelsHidden()
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 8)
-                
-                if watchIntegrationEnabled {
-                    // Auto-sync Toggle
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Auto-sync Recordings")
-                                .font(.body)
-                                .fontWeight(.medium)
-                                .foregroundColor(.primary)
-                            Text("Automatically sync watch recordings to iPhone")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        Toggle("Auto-sync", isOn: $watchAutoSync)
-                            .labelsHidden()
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 8)
-                    
-                    // Battery Aware Recording
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Battery Aware Recording")
-                                .font(.body)
-                                .fontWeight(.medium)
-                                .foregroundColor(.primary)
-                            Text("Limit recording duration when watch battery is low")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        Toggle("Battery Aware", isOn: $watchBatteryAware)
-                            .labelsHidden()
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 8)
-                    
-                    // Watch Status Info
-                    if let batteryLevel = recorderVM.watchBatteryLevel {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Watch Battery")
-                                    .font(.body)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.primary)
-                                Text("Current battery level: \(Int(batteryLevel * 100))%")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            HStack {
-                                Image(systemName: batteryIcon(for: batteryLevel))
-                                    .foregroundColor(batteryColor(for: batteryLevel))
-                                Text("\(Int(batteryLevel * 100))%")
-                                    .foregroundColor(batteryColor(for: batteryLevel))
-                            }
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 8)
-                    }
-                }
-            }
-        }
-    }
-    
-    // MARK: - Watch Helper Methods
-    
-    private func connectionColor(for state: WatchConnectionState) -> Color {
-        switch state {
-        case .connected: return .green
-        case .connecting: return .orange
-        case .disconnected: return .gray
-        case .error: return .red
-        case .phoneAppInactive, .watchAppInactive: return .yellow
-        }
-    }
-    
-    private func batteryIcon(for level: Float) -> String {
-        switch level {
-        case 0.0..<0.1: return "battery.0"
-        case 0.1..<0.25: return "battery.25"
-        case 0.25..<0.75: return "battery.50"
-        case 0.75..<1.0: return "battery.75"
-        default: return "battery.100"
-        }
-    }
-    
-    private func batteryColor(for level: Float) -> Color {
-        if level < 0.2 { return .red }
-        else if level < 0.5 { return .orange }
-        else { return .green }
-    }
 
     private var aiEngineSection: some View {
         VStack(alignment: .leading, spacing: 16) {

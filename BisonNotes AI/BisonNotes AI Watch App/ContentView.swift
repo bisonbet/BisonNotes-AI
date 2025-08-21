@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  BisonNotes AI Watch App Watch App
+//  BisonNotes AI Watch App
 //
 //  Created by Tim Champ on 8/17/25.
 //

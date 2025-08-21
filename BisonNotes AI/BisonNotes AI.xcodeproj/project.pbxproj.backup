@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		1485FEC52E526FB30044121F /* BisonNotes AI Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		1485FEC52E526FB30044121F /* BisonNotes AI Watch App Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED42E5271970044121F /* WatchConnectivity.framework */; };
 		1485FED72E5271AF0044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED62E5271AF0044121F /* WatchConnectivity.framework */; };
 		1485FEDC2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */; };
@@ -30,21 +30,21 @@
 			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 1485FEA42E526FB10044121F;
-			remoteInfo = "BisonNotes AI Watch App";
+			remoteInfo = "BisonNotes AI Watch App Watch App";
 		};
 		1485FEBC2E526FB30044121F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 1485FEA42E526FB10044121F;
-			remoteInfo = "BisonNotes AI Watch App";
+			remoteInfo = "BisonNotes AI Watch App Watch App";
 		};
 		1485FEC32E526FB30044121F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 1485FEA42E526FB10044121F;
-			remoteInfo = "BisonNotes AI Watch App";
+			remoteInfo = "BisonNotes AI Watch App Watch App";
 		};
 		14DBC8502E34F7B600DAD442 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -69,7 +69,7 @@
 			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
 			dstSubfolderSpec = 16;
 			files = (
-				1485FEC52E526FB30044121F /* BisonNotes AI Watch App.app in Embed Watch Content */,
+				1485FEC52E526FB30044121F /* BisonNotes AI Watch App Watch App.app in Embed Watch Content */,
 			);
 			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -77,9 +77,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BisonNotes AI Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		1485FEB12E526FB30044121F /* BisonNotes AI Watch AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AI Watch AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		1485FEBB2E526FB30044121F /* BisonNotes AI Watch AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AI Watch AppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1485FEA52E526FB10044121F /* BisonNotes AI Watch App Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BisonNotes AI Watch App Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1485FEB12E526FB30044121F /* BisonNotes AI Watch App Watch AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AI Watch App Watch AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1485FEBB2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AI Watch App Watch AppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1485FED42E5271970044121F /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = System/Library/Frameworks/WatchConnectivity.framework; sourceTree = SDKROOT; };
 		1485FED62E5271AF0044121F /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS11.5.sdk/System/Library/Frameworks/WatchConnectivity.framework; sourceTree = DEVELOPER_DIR; };
 		1485FED82E5272FA0044121F /* WatchAudioChunk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAudioChunk.swift; sourceTree = "<group>"; };
@@ -101,19 +101,19 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		1485FEA62E526FB20044121F /* BisonNotes AI Watch App */ = {
+		1485FEA62E526FB20044121F /* BisonNotes AI Watch App Watch App */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "BisonNotes AI Watch App";
+			path = "BisonNotes AI Watch App Watch App";
 			sourceTree = "<group>";
 		};
-		1485FEB42E526FB30044121F /* BisonNotes AI Watch AppTests */ = {
+		1485FEB42E526FB30044121F /* BisonNotes AI Watch App Watch AppTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "BisonNotes AI Watch AppTests";
+			path = "BisonNotes AI Watch App Watch AppTests";
 			sourceTree = "<group>";
 		};
-		1485FEBE2E526FB30044121F /* BisonNotes AI Watch AppUITests */ = {
+		1485FEBE2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "BisonNotes AI Watch AppUITests";
+			path = "BisonNotes AI Watch App Watch AppUITests";
 			sourceTree = "<group>";
 		};
 		14DBC83F2E34F7B500DAD442 /* BisonNotes AI */ = {
@@ -216,9 +216,9 @@
 				14DBC83F2E34F7B500DAD442 /* BisonNotes AI */,
 				14DBC8522E34F7B600DAD442 /* BisonNotes AITests */,
 				14DBC85C2E34F7B600DAD442 /* BisonNotes AIUITests */,
-				1485FEA62E526FB20044121F /* BisonNotes AI Watch App */,
-				1485FEB42E526FB30044121F /* BisonNotes AI Watch AppTests */,
-				1485FEBE2E526FB30044121F /* BisonNotes AI Watch AppUITests */,
+				1485FEA62E526FB20044121F /* BisonNotes AI Watch App Watch App */,
+				1485FEB42E526FB30044121F /* BisonNotes AI Watch App Watch AppTests */,
+				1485FEBE2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests */,
 				1485FED32E5271970044121F /* Frameworks */,
 				14DBC83E2E34F7B500DAD442 /* Products */,
 			);
@@ -230,9 +230,9 @@
 				14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */,
 				14DBC84F2E34F7B600DAD442 /* BisonNotes AITests.xctest */,
 				14DBC8592E34F7B600DAD442 /* BisonNotes AIUITests.xctest */,
-				1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */,
-				1485FEB12E526FB30044121F /* BisonNotes AI Watch AppTests.xctest */,
-				1485FEBB2E526FB30044121F /* BisonNotes AI Watch AppUITests.xctest */,
+				1485FEA52E526FB10044121F /* BisonNotes AI Watch App Watch App.app */,
+				1485FEB12E526FB30044121F /* BisonNotes AI Watch App Watch AppTests.xctest */,
+				1485FEBB2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -240,9 +240,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		1485FEA42E526FB10044121F /* BisonNotes AI Watch App */ = {
+		1485FEA42E526FB10044121F /* BisonNotes AI Watch App Watch App */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 1485FECD2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App" */;
+			buildConfigurationList = 1485FECD2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch App" */;
 			buildPhases = (
 				1485FEA12E526FB10044121F /* Sources */,
 				1485FEA22E526FB10044121F /* Frameworks */,
@@ -253,18 +253,18 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				1485FEA62E526FB20044121F /* BisonNotes AI Watch App */,
+				1485FEA62E526FB20044121F /* BisonNotes AI Watch App Watch App */,
 			);
-			name = "BisonNotes AI Watch App";
+			name = "BisonNotes AI Watch App Watch App";
 			packageProductDependencies = (
 			);
-			productName = "BisonNotes AI Watch App";
-			productReference = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */;
+			productName = "BisonNotes AI Watch App Watch App";
+			productReference = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App Watch App.app */;
 			productType = "com.apple.product-type.application";
 		};
-		1485FEB02E526FB30044121F /* BisonNotes AI Watch AppTests */ = {
+		1485FEB02E526FB30044121F /* BisonNotes AI Watch App Watch AppTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 1485FECE2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch AppTests" */;
+			buildConfigurationList = 1485FECE2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch AppTests" */;
 			buildPhases = (
 				1485FEAD2E526FB30044121F /* Sources */,
 				1485FEAE2E526FB30044121F /* Frameworks */,
@@ -276,18 +276,18 @@
 				1485FEB32E526FB30044121F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				1485FEB42E526FB30044121F /* BisonNotes AI Watch AppTests */,
+				1485FEB42E526FB30044121F /* BisonNotes AI Watch App Watch AppTests */,
 			);
-			name = "BisonNotes AI Watch AppTests";
+			name = "BisonNotes AI Watch App Watch AppTests";
 			packageProductDependencies = (
 			);
-			productName = "BisonNotes AI Watch AppTests";
-			productReference = 1485FEB12E526FB30044121F /* BisonNotes AI Watch AppTests.xctest */;
+			productName = "BisonNotes AI Watch App Watch AppTests";
+			productReference = 1485FEB12E526FB30044121F /* BisonNotes AI Watch App Watch AppTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		1485FEBA2E526FB30044121F /* BisonNotes AI Watch AppUITests */ = {
+		1485FEBA2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 1485FECF2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch AppUITests" */;
+			buildConfigurationList = 1485FECF2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch AppUITests" */;
 			buildPhases = (
 				1485FEB72E526FB30044121F /* Sources */,
 				1485FEB82E526FB30044121F /* Frameworks */,
@@ -299,13 +299,13 @@
 				1485FEBD2E526FB30044121F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				1485FEBE2E526FB30044121F /* BisonNotes AI Watch AppUITests */,
+				1485FEBE2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests */,
 			);
-			name = "BisonNotes AI Watch AppUITests";
+			name = "BisonNotes AI Watch App Watch AppUITests";
 			packageProductDependencies = (
 			);
-			productName = "BisonNotes AI Watch AppUITests";
-			productReference = 1485FEBB2E526FB30044121F /* BisonNotes AI Watch AppUITests.xctest */;
+			productName = "BisonNotes AI Watch App Watch AppUITests";
+			productReference = 1485FEBB2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 		14DBC83C2E34F7B500DAD442 /* BisonNotes AI */ = {
@@ -438,9 +438,9 @@
 				14DBC83C2E34F7B500DAD442 /* BisonNotes AI */,
 				14DBC84E2E34F7B600DAD442 /* BisonNotes AITests */,
 				14DBC8582E34F7B600DAD442 /* BisonNotes AIUITests */,
-				1485FEA42E526FB10044121F /* BisonNotes AI Watch App */,
-				1485FEB02E526FB30044121F /* BisonNotes AI Watch AppTests */,
-				1485FEBA2E526FB30044121F /* BisonNotes AI Watch AppUITests */,
+				1485FEA42E526FB10044121F /* BisonNotes AI Watch App Watch App */,
+				1485FEB02E526FB30044121F /* BisonNotes AI Watch App Watch AppTests */,
+				1485FEBA2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -544,17 +544,17 @@
 /* Begin PBXTargetDependency section */
 		1485FEB32E526FB30044121F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 1485FEA42E526FB10044121F /* BisonNotes AI Watch App */;
+			target = 1485FEA42E526FB10044121F /* BisonNotes AI Watch App Watch App */;
 			targetProxy = 1485FEB22E526FB30044121F /* PBXContainerItemProxy */;
 		};
 		1485FEBD2E526FB30044121F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 1485FEA42E526FB10044121F /* BisonNotes AI Watch App */;
+			target = 1485FEA42E526FB10044121F /* BisonNotes AI Watch App Watch App */;
 			targetProxy = 1485FEBC2E526FB30044121F /* PBXContainerItemProxy */;
 		};
 		1485FEC42E526FB30044121F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 1485FEA42E526FB10044121F /* BisonNotes AI Watch App */;
+			target = 1485FEA42E526FB10044121F /* BisonNotes AI Watch App Watch App */;
 			targetProxy = 1485FEC32E526FB30044121F /* PBXContainerItemProxy */;
 		};
 		14DBC8512E34F7B600DAD442 /* PBXTargetDependency */ = {
@@ -575,14 +575,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI Watch App/BisonNotes AI Watch App.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI Watch App Watch App/BisonNotes AI Watch App Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "BisonNotes-AI-Watch-App-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
+				INFOPLIST_FILE = "BisonNotes-AI-Watch-App-Watch-App-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI Watch App";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "Bison-Networking.BisonNotes-AI";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -606,14 +606,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI Watch App/BisonNotes AI Watch App.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes AI Watch App Watch App/BisonNotes AI Watch App Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "BisonNotes-AI-Watch-App-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
+				INFOPLIST_FILE = "BisonNotes-AI-Watch-App-Watch-App-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI Watch App";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "Bison-Networking.BisonNotes-AI";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -641,13 +641,13 @@
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-AppTests";
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-App-Watch-AppTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BisonNotes AI Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BisonNotes AI Watch App";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BisonNotes AI Watch App Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BisonNotes AI Watch App Watch App";
 				WATCHOS_DEPLOYMENT_TARGET = 11.5;
 			};
 			name = Debug;
@@ -661,13 +661,13 @@
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-AppTests";
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-App-Watch-AppTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BisonNotes AI Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BisonNotes AI Watch App";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BisonNotes AI Watch App Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BisonNotes AI Watch App Watch App";
 				WATCHOS_DEPLOYMENT_TARGET = 11.5;
 			};
 			name = Release;
@@ -680,13 +680,13 @@
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-AppUITests";
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-App-Watch-AppUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
-				TEST_TARGET_NAME = "BisonNotes AI Watch App";
+				TEST_TARGET_NAME = "BisonNotes AI Watch App Watch App";
 				WATCHOS_DEPLOYMENT_TARGET = 11.5;
 			};
 			name = Debug;
@@ -699,13 +699,13 @@
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-AppUITests";
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-App-Watch-AppUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
-				TEST_TARGET_NAME = "BisonNotes AI Watch App";
+				TEST_TARGET_NAME = "BisonNotes AI Watch App Watch App";
 				WATCHOS_DEPLOYMENT_TARGET = 11.5;
 			};
 			name = Release;
@@ -980,7 +980,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		1485FECD2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App" */ = {
+		1485FECD2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch App" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				1485FEC72E526FB30044121F /* Debug */,
@@ -989,7 +989,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		1485FECE2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch AppTests" */ = {
+		1485FECE2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch AppTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				1485FEC92E526FB30044121F /* Debug */,
@@ -998,7 +998,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		1485FECF2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch AppUITests" */ = {
+		1485FECF2E526FB30044121F /* Build configuration list for PBXNativeTarget "BisonNotes AI Watch App Watch AppUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				1485FECB2E526FB30044121F /* Debug */,

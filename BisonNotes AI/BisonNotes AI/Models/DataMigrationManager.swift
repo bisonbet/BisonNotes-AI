@@ -1972,6 +1972,189 @@ class DataMigrationManager: ObservableObject {
         return validatedCount
     }
     
+    /// Fix recordings with invalid URLs by matching them to existing audio files
+    func fixInvalidURLs() async -> Int {
+        print("🔗 Starting invalid URL repair...")
+        
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("❌ Could not access documents directory")
+            return 0
+        }
+        
+        // Get all audio files in documents directory
+        var audioFiles: [URL] = []
+        do {
+            let allFiles = try FileManager.default.contentsOfDirectory(at: documentsURL, includingPropertiesForKeys: [.nameKey])
+            audioFiles = allFiles.filter { url in
+                let ext = url.pathExtension.lowercased()
+                return ext == "m4a" || ext == "wav" || ext == "mp3" || ext == "aac"
+            }
+            print("🔍 Found \(audioFiles.count) audio files in documents directory")
+        } catch {
+            print("❌ Error scanning documents directory: \(error)")
+            return 0
+        }
+        
+        // Get all recordings
+        let recordingFetch: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        var fixedCount = 0
+        
+        do {
+            let recordings = try context.fetch(recordingFetch)
+            
+            for recording in recordings {
+                guard let urlString = recording.recordingURL else { continue }
+                
+                // Check if URL is invalid (can't be resolved to an existing file)
+                let currentURL: URL?
+                if let url = URL(string: urlString), url.scheme != nil {
+                    currentURL = url
+                } else {
+                    currentURL = relativePathToURL(urlString)
+                }
+                
+                // If URL is invalid or file doesn't exist, try to fix it
+                if currentURL == nil || !FileManager.default.fileExists(atPath: currentURL!.path) {
+                    print("⚠️ Recording has invalid URL: \(recording.recordingName ?? "unknown")")
+                    
+                    // Try to match by recording name
+                    if let recordingName = recording.recordingName {
+                        let matchingFiles = audioFiles.filter { file in
+                            let fileName = file.deletingPathExtension().lastPathComponent
+                            // Try exact match first
+                            if fileName == recordingName {
+                                return true
+                            }
+                            // Try partial match (for files that might have been renamed)
+                            if fileName.contains(recordingName) || recordingName.contains(fileName) {
+                                return true
+                            }
+                            return false
+                        }
+                        
+                        if let matchedFile = matchingFiles.first {
+                            // Convert to relative path for storage
+                            if let relativePath = urlToRelativePath(matchedFile) {
+                                print("✅ Fixed URL for '\(recordingName)': \(relativePath)")
+                                recording.recordingURL = relativePath
+                                recording.lastModified = Date()
+                                fixedCount += 1
+                            }
+                        } else {
+                            print("❌ Could not find matching file for: \(recordingName)")
+                        }
+                    }
+                }
+            }
+            
+            // Save changes
+            if fixedCount > 0 {
+                try context.save()
+                print("✅ Fixed \(fixedCount) invalid URLs")
+            }
+            
+        } catch {
+            print("❌ Error fixing invalid URLs: \(error)")
+        }
+        
+        return fixedCount
+    }
+    
+    /// Clean up recordings with missing audio files by setting their URLs to nil
+    /// This is for recordings where we want to keep summaries/transcripts but acknowledge the audio is gone
+    func cleanupMissingAudioReferences() async -> Int {
+        print("🧹 Starting cleanup of missing audio file references...")
+        
+        let recordingFetch: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        var cleanedCount = 0
+        
+        do {
+            let recordings = try context.fetch(recordingFetch)
+            print("🔍 Found \(recordings.count) recordings to check")
+            
+            for recording in recordings {
+                guard let urlString = recording.recordingURL else { 
+                    print("⚠️ Recording has no URL: \(recording.recordingName ?? "unknown")")
+                    
+                    // Clean up any remaining transcripts for recordings with no URL
+                    if let transcript = recording.transcript {
+                        print("🗑️ Cleaning up orphaned transcript for URL-less recording: \(recording.recordingName ?? "unknown")")
+                        recording.transcript = nil
+                        recording.transcriptId = nil
+                        context.delete(transcript)
+                        cleanedCount += 1
+                    }
+                    continue 
+                }
+                
+                print("🔍 Checking recording: '\(recording.recordingName ?? "unknown")' with URL: '\(urlString)'")
+                
+                // Check if URL is invalid or file doesn't exist
+                var shouldCleanup = false
+                var reason = ""
+                
+                // Try to resolve the URL using different methods
+                // First try as absolute URL
+                if let url = URL(string: urlString), url.scheme != nil {
+                    let fileExists = FileManager.default.fileExists(atPath: url.path)
+                    shouldCleanup = !fileExists
+                    reason = fileExists ? "absolute URL file exists" : "absolute URL file missing"
+                    print("   📁 Absolute URL check: \(url.path) - exists: \(fileExists)")
+                } else {
+                    // Try as relative path
+                    if let relativeURL = relativePathToURL(urlString) {
+                        let fileExists = FileManager.default.fileExists(atPath: relativeURL.path)
+                        shouldCleanup = !fileExists
+                        reason = fileExists ? "relative URL file exists" : "relative URL file missing"
+                        print("   📁 Relative URL check: \(relativeURL.path) - exists: \(fileExists)")
+                    } else {
+                        // URL is completely invalid
+                        shouldCleanup = true
+                        reason = "invalid URL format"
+                        print("   ⚠️ Invalid URL format: \(urlString)")
+                    }
+                }
+                
+                print("   🎯 Decision: shouldCleanup = \(shouldCleanup) (\(reason))")
+                
+                // If URL is invalid or file doesn't exist, clean it up
+                if shouldCleanup {
+                    print("🧹 Cleaning missing audio reference for: \(recording.recordingName ?? "unknown")")
+                    
+                    // Clear the invalid URL
+                    recording.recordingURL = nil
+                    recording.lastModified = Date()
+                    
+                    // Delete transcript since it's useless without audio
+                    if let transcript = recording.transcript {
+                        print("🗑️ Deleting transcript (no audio file): \(recording.recordingName ?? "unknown")")
+                        recording.transcript = nil
+                        recording.transcriptId = nil
+                        context.delete(transcript)
+                    }
+                    
+                    // Keep summary - it's valuable without audio/transcript
+                    if recording.summary != nil {
+                        print("✅ Preserving summary (valuable without audio): \(recording.recordingName ?? "unknown")")
+                    }
+                    
+                    cleanedCount += 1
+                }
+            }
+            
+            // Save changes
+            if cleanedCount > 0 {
+                try context.save()
+                print("✅ Cleaned up \(cleanedCount) missing audio file references")
+            }
+            
+        } catch {
+            print("❌ Error cleaning up missing audio references: \(error)")
+        }
+        
+        return cleanedCount
+    }
+    
     /// Comprehensive fix for current issues
     func fixCurrentIssues() async -> (renames: Int, validations: Int) {
         print("🎯 Starting comprehensive fix for current issues...")
@@ -1987,12 +2170,16 @@ class DataMigrationManager: ObservableObject {
         // Step 3: Validate transcript listings
         let validations = await validateTranscriptListings()
         
-        // Step 4: Fix the specific issue where recordings have generic names
+        // Step 4: Fix recordings with invalid URLs by trying to match them to existing files
+        let urlFixes = await fixInvalidURLs()
+        
+        // Step 5: Fix the specific issue where recordings have generic names
         let specificFixes = await fixGenericNamedRecordingsIssue()
         
         print("✅ Comprehensive fix completed:")
         print("   - Orphaned records cleaned: \(cleanedOrphans)")
         print("   - Incomplete deletions fixed: \(fixedIncomplete)")
+        print("   - Invalid URLs fixed: \(urlFixes)")
         print("   - Recordings renamed: \(renames)")
         print("   - Validations: \(validations)")
         print("   - Specific fixes: \(specificFixes)")

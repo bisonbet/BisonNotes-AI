@@ -1610,7 +1610,10 @@ class iCloudStorageManager: ObservableObject {
             print("⏭️ Skipping periodic sync - auto-sync disabled")
             return
         case .changesOnly:
-            print("⏭️ Skipping full periodic sync - only syncing changes as they occur")
+            // Use verbose logging instead of regular print to reduce console noise
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                print("⏭️ Skipping full periodic sync - only syncing changes as they occur")
+            }
             // Only sync summaries that have been queued for sync
             if !pendingSyncQueue.isEmpty {
                 print("🔄 Syncing queued changes (\(pendingSyncQueue.count) items)...")

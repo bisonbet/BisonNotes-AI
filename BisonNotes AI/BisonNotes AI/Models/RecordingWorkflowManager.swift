@@ -30,7 +30,7 @@ class RecordingWorkflowManager: ObservableObject {
     // MARK: - Recording Creation
     
     /// Creates a new recording with proper Core Data entry and UUID
-    func createRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil, recordingSource: RecordingSource = .phone, watchData: WatchRecordingData? = nil) -> UUID {
+    func createRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
         // Create Core Data entry
         let recordingEntry = RecordingEntry(context: context)
         let recordingId = UUID()
@@ -47,26 +47,9 @@ class RecordingWorkflowManager: ObservableObject {
         recordingEntry.transcriptionStatus = ProcessingStatus.notStarted.rawValue
         recordingEntry.summaryStatus = ProcessingStatus.notStarted.rawValue
         
-        // Store recording source information and set appropriate name
-        // Note: If Core Data model doesn't have these fields, we'll store in existing fields for now
-        // recordingEntry.recordingSource = recordingSource.rawValue // TODO: Add to Core Data model
-        // recordingEntry.isWatchRecording = recordingSource == .watch // TODO: Add to Core Data model
+        // Set recording name
+        recordingEntry.recordingName = name
         
-        // Set recording name based on source
-        if recordingSource == .watch {
-            recordingEntry.recordingName = "\(name) [Watch]" // Mark as watch recording
-        } else {
-            recordingEntry.recordingName = name // Use original name for phone recordings
-        }
-        
-        // Store watch recording data if available
-        if let watchData = watchData {
-            // For now, store watch metadata as JSON in a description field or similar
-            // TODO: Add proper watch metadata fields to Core Data model
-            let watchMetadata = createWatchMetadataString(from: watchData)
-            // recordingEntry.metadata = watchMetadata // TODO: Add to Core Data model
-            print("⌚ Watch recording metadata: \(watchMetadata)")
-        }
         
         // Store location data if available
         if let locationData = locationData {
@@ -87,84 +70,7 @@ class RecordingWorkflowManager: ObservableObject {
         return recordingId
     }
     
-    /// Creates a recording specifically for watch-originated recordings
-    func createWatchRecording(
-        url: URL, 
-        name: String, 
-        date: Date, 
-        fileSize: Int64, 
-        duration: TimeInterval, 
-        quality: AudioQuality = .whisperOptimized,
-        watchSessionId: UUID,
-        batteryLevel: Float,
-        chunkCount: Int,
-        transferMethod: WatchTransferMethod = .realTime,
-        locationData: LocationData? = nil
-    ) -> UUID {
-        
-        let watchData = WatchRecordingData(
-            sessionId: watchSessionId,
-            batteryLevel: batteryLevel,
-            chunkCount: chunkCount,
-            transferMethod: transferMethod,
-            recordingTimestamp: date
-        )
-        
-        return createRecording(
-            url: url,
-            name: name,
-            date: date,
-            fileSize: fileSize,
-            duration: duration,
-            quality: quality,
-            locationData: locationData,
-            recordingSource: .watch,
-            watchData: watchData
-        )
-    }
     
-    /// Helper method to create watch metadata string for storage
-    private func createWatchMetadataString(from watchData: WatchRecordingData) -> String {
-        let metadata: [String: Any] = [
-            "sessionId": watchData.sessionId.uuidString,
-            "batteryLevel": watchData.batteryLevel,
-            "chunkCount": watchData.chunkCount,
-            "transferMethod": watchData.transferMethod.rawValue,
-            "recordingTimestamp": watchData.recordingTimestamp.timeIntervalSince1970,
-            "source": "appleWatch"
-        ]
-        
-        do {
-            let jsonData = try JSONSerialization.data(withJSONObject: metadata)
-            return String(data: jsonData, encoding: .utf8) ?? ""
-        } catch {
-            print("❌ Failed to create watch metadata JSON: \(error)")
-            return "watchRecording: \(watchData.sessionId.uuidString)"
-        }
-    }
-    
-    /// Check if a recording was originated from watch
-    func isWatchRecording(_ recordingId: UUID) -> Bool {
-        guard let recordingEntry = getRecordingEntry(id: recordingId) else { return false }
-        return recordingEntry.recordingName?.contains("[Watch]") == true
-    }
-    
-    /// Get watch recording data if available
-    func getWatchRecordingData(_ recordingId: UUID) -> WatchRecordingData? {
-        guard isWatchRecording(recordingId) else { return nil }
-        
-        // TODO: Extract from proper metadata field when Core Data model is updated
-        // For now, return basic data based on the recording entry
-        guard let recordingEntry = getRecordingEntry(id: recordingId) else { return nil }
-        
-        return WatchRecordingData(
-            sessionId: recordingId, // Use recording ID as session ID for now
-            batteryLevel: 0.5, // Default value
-            chunkCount: 0, // Default value
-            transferMethod: .realTime,
-            recordingTimestamp: recordingEntry.recordingDate ?? Date()
-        )
-    }
     
     // MARK: - Transcription Workflow
     
@@ -177,9 +83,8 @@ class RecordingWorkflowManager: ObservableObject {
             return nil
         }
         
-        // Log recording source for debugging/analytics
-        let recordingSource = isWatchRecording(recordingId) ? "watch" : "phone"
-        print("📝 Creating transcript for \(recordingSource) recording: \(recordingEntry.recordingName ?? "unknown")")
+        // Log recording for debugging/analytics
+        print("📝 Creating transcript for recording: \(recordingEntry.recordingName ?? "unknown")")
         
         // Check if a transcript already exists for this recording
         if let existingTranscript = recordingEntry.transcript {
@@ -288,9 +193,8 @@ class RecordingWorkflowManager: ObservableObject {
             return nil
         }
         
-        // Log recording source for debugging/analytics
-        let recordingSource = isWatchRecording(recordingId) ? "watch" : "phone"
-        print("📝 Creating summary for \(recordingSource) recording: \(recordingEntry.recordingName ?? "unknown")")
+        // Log recording for debugging/analytics
+        print("📝 Creating summary for recording: \(recordingEntry.recordingName ?? "unknown")")
         print("🆔 Recording UUID: \(recordingId)")
         print("🆔 Transcript UUID: \(transcriptId)")
         
@@ -386,14 +290,17 @@ class RecordingWorkflowManager: ObservableObject {
         let oldName = recordingEntry.recordingName ?? "unknown"
         print("📝 Updating recording name from '\(oldName)' to '\(newName)'")
         
+        // Clean any [Watch] tags from the new name and use it directly
+        let finalName = newName.replacingOccurrences(of: " [Watch]", with: "")
+        
         // Update Core Data
-        recordingEntry.recordingName = newName
+        recordingEntry.recordingName = finalName
         recordingEntry.lastModified = Date()
         
         // Note: Transcript and summary data is stored in Core Data, no file renaming needed
         
         // Update audio file name on disk
-        updateAudioFileName(recordingEntry: recordingEntry, oldName: oldName, newName: newName)
+        updateAudioFileName(recordingEntry: recordingEntry, oldName: oldName, newName: finalName)
         
         // Save changes
         do {
@@ -515,8 +422,8 @@ class RecordingWorkflowManager: ObservableObject {
         return url.lastPathComponent
     }
     
-    /// Validate that watch recordings are compatible with all AI processing engines
-    func validateWatchRecordingCompatibility(_ recordingId: UUID) async -> Bool {
+    /// Validate that recordings are compatible with all AI processing engines
+    func validateRecordingCompatibility(_ recordingId: UUID) async -> Bool {
         guard let recordingEntry = getRecordingEntry(id: recordingId) else {
             print("❌ Recording not found for compatibility check")
             return false
@@ -526,7 +433,7 @@ class RecordingWorkflowManager: ObservableObject {
         guard let urlString = recordingEntry.recordingURL,
               let url = URL(string: urlString),
               FileManager.default.fileExists(atPath: url.path) else {
-            print("❌ Watch recording file not accessible for AI processing")
+            print("❌ Recording file not accessible for AI processing")
             return false
         }
         
@@ -564,42 +471,13 @@ class RecordingWorkflowManager: ObservableObject {
             return false
         }
         
-        let recordingSource = isWatchRecording(recordingId) ? "watch" : "phone"
-        print("✅ \(recordingSource) recording is compatible with AI processing (duration: \(duration)s)")
+        print("✅ Recording is compatible with AI processing (duration: \(duration)s)")
         return true
     }
 }
 
 // MARK: - Supporting Types for Watch Integration
 
-/// Recording source to track where the recording originated
-enum RecordingSource: String, CaseIterable {
-    case phone = "phone"
-    case watch = "watch"
-    case imported = "imported"
-    
-    var description: String {
-        switch self {
-        case .phone:
-            return "Phone"
-        case .watch:
-            return "Apple Watch"
-        case .imported:
-            return "Imported"
-        }
-    }
-    
-    var icon: String {
-        switch self {
-        case .phone:
-            return "iphone"
-        case .watch:
-            return "applewatch"
-        case .imported:
-            return "square.and.arrow.down"
-        }
-    }
-}
 
 /// Data structure for watch recording metadata
 struct WatchRecordingData {

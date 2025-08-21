@@ -10,7 +10,6 @@ import Foundation
 import SwiftUI
 import Combine
 import CoreLocation
-import WatchConnectivity
 
 class AudioRecorderViewModel: NSObject, ObservableObject {
     @Published var isRecording = false
@@ -26,21 +25,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     @Published var currentLocationData: LocationData?
     @Published var isLocationTrackingEnabled: Bool = false
     
-    // MARK: - Watch Connectivity Properties
-    @Published var watchConnectionState: WatchConnectionState = .disconnected
-    @Published var isWatchRecordingActive: Bool = false
-    @Published var watchBatteryLevel: Float?
-    @Published var isReceivingWatchAudio: Bool = false
-    @Published var isWatchInitiatedRecording: Bool = false
-    
     // Reference to the app coordinator for adding recordings to registry
     private var appCoordinator: AppDataCoordinator?
     private var workflowManager: RecordingWorkflowManager?
-    
-    // Watch connectivity manager
-    private var watchConnectivityManager: WatchConnectivityManager?
-    private var watchAudioData: Data?
-    private var watchRecordingSessionId: UUID?
     private var cancellables = Set<AnyCancellable>()
     
     private var audioRecorder: AVAudioRecorder?
@@ -66,9 +53,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         
         // Setup notification observers after super.init()
         setupNotificationObservers()
-        
-        // Setup watch connectivity
-        setupWatchConnectivity()
     }
     
     /// Set the app coordinator reference
@@ -78,7 +62,22 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             let workflowManager = RecordingWorkflowManager()
             workflowManager.setAppCoordinator(coordinator)
             self.workflowManager = workflowManager
+            
+            // Set up watch sync handler now that we have app coordinator
+            setupWatchSyncHandler()
         }
+    }
+    
+    /// Set up watch sync recording handler
+    @MainActor
+    private func setupWatchSyncHandler() {
+        let watchManager = WatchConnectivityManager.shared
+        watchManager.onWatchSyncRecordingReceived = { [weak self] audioData, syncRequest in
+            Task { @MainActor in
+                self?.handleWatchSyncRecordingReceived(audioData, syncRequest: syncRequest)
+            }
+        }
+        print("🔄 AudioRecorderViewModel connected to WatchConnectivityManager sync handler")
     }
     
     /// Initialize the view model asynchronously to ensure proper setup
@@ -100,67 +99,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         // AudioRecorderViewModel initialized
     }
     
-    /// Setup watch connectivity integration
-    private func setupWatchConnectivity() {
-        guard WCSession.isSupported() else {
-            print("⌚ WatchConnectivity not supported on this device")
-            return
-        }
-        
-        Task { @MainActor in
-            watchConnectivityManager = WatchConnectivityManager.shared
-            
-            // Set up callbacks from watch connectivity manager
-            watchConnectivityManager?.onWatchRecordingStartRequested = { [weak self] in
-                Task { @MainActor in
-                    self?.handleWatchRecordingStartRequest()
-                }
-            }
-            
-            watchConnectivityManager?.onWatchRecordingStopRequested = { [weak self] in
-                Task { @MainActor in
-                    self?.handleWatchRecordingStopRequest()
-                }
-            }
-            
-            watchConnectivityManager?.onWatchAudioReceived = { [weak self] audioData, sessionId in
-                Task { @MainActor in
-                    self?.handleWatchAudioReceived(audioData, sessionId: sessionId)
-                }
-            }
-            
-            // Sync published properties with watch connectivity manager state
-            syncWatchConnectivityState()
-        }
-    }
-    
-    /// Sync published properties with watch connectivity manager
-    @MainActor
-    private func syncWatchConnectivityState() {
-        guard let manager = watchConnectivityManager else { return }
-        
-        // Observe watch connectivity manager state changes
-        manager.$connectionState
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] newState in
-                self?.watchConnectionState = newState
-            }
-            .store(in: &cancellables)
-            
-        manager.$watchBatteryLevel
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] batteryLevel in
-                self?.watchBatteryLevel = batteryLevel
-            }
-            .store(in: &cancellables)
-            
-        manager.$isReceivingAudioChunks
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] isReceiving in
-                self?.isReceivingWatchAudio = isReceiving
-            }
-            .store(in: &cancellables)
-    }
     
     deinit {
         // Remove observers synchronously since deinit cannot be async
@@ -173,9 +111,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         if let observer = willEnterForegroundObserver {
             NotificationCenter.default.removeObserver(observer)
         }
-        
-        // Clean up watch connectivity
-        watchConnectivityManager = nil
     }
     
     private func setupNotificationObservers() {
@@ -245,86 +180,61 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     
     // MARK: - Watch Event Handlers
     
-    private func handleWatchRecordingStartRequest() {
-        print("⌚ Processing watch recording start request")
-        isWatchInitiatedRecording = true
-        watchRecordingSessionId = UUID()
-        
-        // Start recording through existing method but mark as watch-initiated
-        if !isRecording {
-            startRecording()
-        }
-    }
+    // Legacy coordinated recording handlers removed - watch operates independently
     
-    private func handleWatchRecordingStopRequest() {
-        print("⌚ Processing watch recording stop request")
-        
-        if isRecording {
-            stopRecording()
-        }
-        
-        // Reset watch recording state
-        isWatchInitiatedRecording = false
-        watchRecordingSessionId = nil
-        isWatchRecordingActive = false
-    }
+    // Legacy audio streaming handler removed - now using file transfer on completion
     
-    private func handleWatchRecordingPauseRequest() {
-        print("⌚ Processing watch recording pause request")
+    /// Handle synchronized recording received from watch
+    private func handleWatchSyncRecordingReceived(_ audioData: Data, syncRequest: WatchSyncRequest) {
+        print("⌚ Received synchronized recording from watch: \(syncRequest.filename)")
         
-        if isRecording {
-            // AVAudioRecorder doesn't have pause, so we'll stop and prepare to resume
-            audioRecorder?.stop()
-            isRecording = false
-            stopRecordingTimer()
-            
-            // Note: This is a simplified pause - true pause/resume would require
-            // more complex audio session management to continue in the same file
-            
-            // Send status update to watch
-            sendRecordingStatusToWatch(.paused)
-        }
-    }
-    
-    private func handleWatchRecordingResumeRequest() {
-        print("⌚ Processing watch recording resume request")
-        
-        // Note: Since AVAudioRecorder doesn't support true pause/resume,
-        // this would start a new recording. For now, we'll just restart.
-        if !isRecording {
-            startRecording()
-            
-            // Send status update to watch
-            sendRecordingStatusToWatch(.recording)
-        }
-    }
-    
-    private func handleWatchAudioReceived(_ audioData: Data, sessionId: UUID) {
-        print("⌚ Received \(audioData.count) bytes of audio from watch for session \(sessionId)")
-        
-        // Store watch audio data and session info for integration with phone recording
-        watchAudioData = audioData
-        watchRecordingSessionId = sessionId
-        
-        // Create a playable audio file from the watch PCM data
         Task {
             do {
-                let audioFileURL = try await createPlayableAudioFile(from: audioData, sessionId: sessionId)
-                print("✅ Created playable audio file at: \(audioFileURL)")
+                // Create a permanent file in Documents directory with iPhone app naming pattern
+                guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                    throw NSError(domain: "AudioRecorderViewModel", code: -2, userInfo: [NSLocalizedDescriptionKey: "Could not access Documents directory"])
+                }
                 
-                // Update the current recording URL to point to the watch audio file
-                await MainActor.run {
-                    self.recordingURL = audioFileURL
+                // Generate iPhone-style filename but keep original filename for display name
+                let timestamp = syncRequest.createdAt.timeIntervalSince1970
+                let iPhoneStyleFilename = "apprecording-\(Int(timestamp)).m4a"
+                let permanentURL = documentsURL.appendingPathComponent(iPhoneStyleFilename)
+                
+                try audioData.write(to: permanentURL)
+                
+                // Create Core Data entry
+                guard let appCoordinator = appCoordinator else {
+                    throw NSError(domain: "AudioRecorderViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "App coordinator not available"])
                 }
+                
+                // Create display name by removing the technical filename prefix
+                let displayName = syncRequest.filename
+                    .replacingOccurrences(of: "recording-", with: "")
+                    .replacingOccurrences(of: ".m4a", with: "")
+                let cleanDisplayName = "Audio Recording \(displayName)"
+                
+                let recordingId = await appCoordinator.addWatchRecording(
+                    url: permanentURL,
+                    name: cleanDisplayName,
+                    date: syncRequest.createdAt,
+                    fileSize: syncRequest.fileSize,
+                    duration: syncRequest.duration,
+                    quality: .whisperOptimized
+                )
+                
+                print("✅ Created Core Data entry for watch recording: \(recordingId)")
+                
+                // Notify UI to refresh recordings list
+                NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+                
+                // Recording sync completed successfully
+                
             } catch {
-                print("❌ Failed to create playable audio file from watch data: \(error)")
-                await MainActor.run {
-                    self.errorMessage = "Failed to process watch audio: \(error.localizedDescription)"
-                }
+                print("❌ Failed to create Core Data entry for watch recording: \(error)")
+                
+                // Recording sync failed
             }
         }
-        
-        print("✅ Watch audio data processing initiated")
     }
     
     private func createPlayableAudioFile(from pcmData: Data, sessionId: UUID) async throws -> URL {
@@ -385,14 +295,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         // Handle specific error types
         switch error.errorType {
         case .connectionLost:
-            watchConnectionState = .disconnected
+            // Watch disconnected
+            break
         case .batteryTooLow:
             errorMessage = "Watch battery too low for recording"
         case .audioRecordingFailed:
-            if isWatchInitiatedRecording {
-                // Fallback to phone-only recording
-                errorMessage = "Watch recording failed, continuing with phone only"
-            }
+            errorMessage = "Watch recording failed, continuing with phone only"
         default:
             break
         }
@@ -400,20 +308,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     
     // MARK: - Watch Communication Helpers
     
-    private func sendRecordingStatusToWatch(_ state: WatchRecordingState) {
-        Task { @MainActor in
-            watchConnectivityManager?.sendRecordingStatusToWatch(
-                state,
-                recordingTime: recordingTime,
-                error: errorMessage
-            )
-        }
-    }
-    
     private func notifyWatchOfRecordingStateChange() {
-        let watchState: WatchRecordingState = isRecording ? .recording : .idle
-        sendRecordingStatusToWatch(watchState)
-        isWatchRecordingActive = isRecording && isWatchInitiatedRecording
+        // Watch communication removed - this is now a no-op
     }
     
 	private func handleAudioInterruption(_ notification: Notification) {
@@ -639,11 +535,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         // Notify watch of recording state change
         notifyWatchOfRecordingStateChange()
         
-        // Reset watch recording state
-        if isWatchInitiatedRecording {
-            isWatchInitiatedRecording = false
-            watchRecordingSessionId = nil
-        }
+        // Watch recording state reset removed
     }
     
     func playRecording(url: URL) {
@@ -674,28 +566,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     
     // MARK: - Public Watch Interface
     
-    /// Request sync with connected watch
-    func syncWithWatch() {
-        Task { @MainActor in
-            watchConnectivityManager?.requestSyncWithWatch()
-        }
-    }
-    
-    /// Get current watch connection status
-    var isWatchConnected: Bool {
-        return watchConnectionState == .connected
-    }
-    
-    /// Get formatted watch battery level string
-    var watchBatteryLevelString: String {
-        guard let batteryLevel = watchBatteryLevel else { return "Unknown" }
-        return "\(Int(batteryLevel * 100))%"
-    }
-    
-    /// Check if current recording was initiated by watch
-    var isCurrentRecordingFromWatch: Bool {
-        return isWatchInitiatedRecording && isRecording
-    }
     
     /// Seek to a specific time in the current audio playback
     func seekToTime(_ time: TimeInterval) {
@@ -860,66 +730,23 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                             let duration = getRecordingDuration(url: recordingURL)
                             let quality = AudioRecorderViewModel.getCurrentAudioQuality()
                             
-                            // Create display name with watch indication if applicable
-                            let displayName = isWatchInitiatedRecording ? 
-                                "⌚ \(generateAppRecordingDisplayName())" : 
-                                generateAppRecordingDisplayName()
+                            // Create display name for phone recording
+                            let displayName = generateAppRecordingDisplayName()
                             
-                            let recordingId = if isWatchInitiatedRecording {
-                                // Create watch recording with additional metadata
-                                workflowManager.createWatchRecording(
-                                    url: recordingURL,
-                                    name: displayName.replacingOccurrences(of: "⌚ ", with: ""), // Remove watch emoji prefix
-                                    date: Date(),
-                                    fileSize: fileSize,
-                                    duration: duration,
-                                    quality: quality,
-                                    watchSessionId: watchRecordingSessionId ?? UUID(),
-                                    batteryLevel: watchBatteryLevel ?? 0.5,
-                                    chunkCount: 0, // TODO: Track actual chunk count
-                                    transferMethod: .realTime,
-                                    locationData: currentLocationData
-                                )
-                            } else {
-                                // Create regular phone recording
-                                workflowManager.createRecording(
-                                    url: recordingURL,
-                                    name: displayName,
-                                    date: Date(),
-                                    fileSize: fileSize,
-                                    duration: duration,
-                                    quality: quality,
-                                    locationData: currentLocationData,
-                                    recordingSource: .phone
-                                )
-                            }
+                            // Create recording
+                            let recordingId = workflowManager.createRecording(
+                                url: recordingURL,
+                                name: displayName,
+                                date: Date(),
+                                fileSize: fileSize,
+                                duration: duration,
+                                quality: quality,
+                                locationData: currentLocationData
+                            )
                             
                             print("✅ Recording created with workflow manager, ID: \(recordingId)")
                             
-                            // If this was a watch recording, handle watch audio integration
-                            if isWatchInitiatedRecording, let watchAudio = watchAudioData {
-                                print("🎵 Integrating watch audio data (\(watchAudio.count) bytes)")
-                                
-                                Task {
-                                    do {
-                                        // Try to enhance the recording with watch audio
-                                        let enhancedAudioURL = try await integrateWatchAudioWithRecording(
-                                            phoneAudioURL: recordingURL,
-                                            watchAudioData: watchAudio,
-                                            recordingId: recordingId
-                                        )
-                                        
-                                        await MainActor.run {
-                                            self.recordingURL = enhancedAudioURL
-                                            print("✅ Watch audio integrated successfully")
-                                        }
-                                    } catch {
-                                        print("❌ Failed to integrate watch audio: \(error)")
-                                        // Keep using phone audio as primary, watch audio as metadata
-                                        await self.storeWatchAudioAsBackup(watchAudio, for: recordingId)
-                                    }
-                                }
-                            }
+                            // Watch audio integration removed
                         } else {
                             print("❌ WorkflowManager not set - recording not saved to database!")
                         }

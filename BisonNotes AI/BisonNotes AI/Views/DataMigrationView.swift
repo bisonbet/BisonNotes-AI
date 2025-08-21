@@ -36,6 +36,15 @@ struct DataMigrationView: View {
     @State private var confirmFullSyncToCloud = false
     @State private var confirmCloudKitReset = false
     @State private var confirmRemoveImportedFiles = false
+    @State private var confirmFixInvalidURLs = false
+    @State private var confirmCleanupMissingAudio = false
+    
+    // Orphaned audio file cleanup
+    @State private var orphanedAudioFiles: [URL] = []
+    @State private var showingOrphanedFilesCleanup = false
+    @State private var showingOrphanedFilesResults = false
+    @State private var orphanedFilesResults: (deleted: Int, totalSize: Int64, errors: [String])? = nil
+    @State private var totalOrphanedSize: Int64 = 0
     
     var body: some View {
         NavigationView {
@@ -328,6 +337,116 @@ struct DataMigrationView: View {
             }
             .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
             
+            // Orphaned audio files cleanup
+            Button(action: {
+                Task {
+                    await scanForOrphanedAudioFiles()
+                }
+            }) {
+                HStack {
+                    Image(systemName: "waveform.badge.xmark")
+                    Text("Find Orphaned Audio Files")
+                }
+                .font(.headline)
+                .foregroundColor(.orange)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.orange.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.orange, lineWidth: 1)
+                )
+                .cornerRadius(12)
+            }
+            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            
+            // Show orphaned files if found
+            if !orphanedAudioFiles.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(orphanedAudioFiles.count) orphaned audio files found")
+                                .font(.body)
+                                .fontWeight(.medium)
+                                .foregroundColor(.orange)
+                            
+                            Text("Total size: \(formatFileSize(totalOrphanedSize))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                    }
+                    
+                    Button("Delete Orphaned Audio Files") {
+                        showingOrphanedFilesCleanup = true
+                    }
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.red)
+                    )
+                }
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.orange.opacity(0.1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                        )
+                )
+            }
+            
+            // Fix invalid URLs
+            Button(action: {
+                confirmFixInvalidURLs = true
+            }) {
+                HStack {
+                    Image(systemName: "link.badge.plus")
+                    Text("Fix Broken File Links")
+                }
+                .font(.headline)
+                .foregroundColor(.blue)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.blue.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.blue, lineWidth: 1)
+                )
+                .cornerRadius(12)
+            }
+            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            
+            // Clean up missing audio references
+            Button(action: {
+                confirmCleanupMissingAudio = true
+            }) {
+                HStack {
+                    Image(systemName: "trash.slash")
+                    Text("Clean Up Missing Audio")
+                }
+                .font(.headline)
+                .foregroundColor(.orange)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.orange.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.orange, lineWidth: 1)
+                )
+                .cornerRadius(12)
+            }
+            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            
             // Fix filename/title duplicates (the new advanced repair)
             Button(action: {
                 confirmRepairDuplicates = true
@@ -558,6 +677,51 @@ struct DataMigrationView: View {
             }
         } message: {
             Text("Adds database entries for audio files that exist on disk but not in the database. No deletions will occur.")
+        }
+        .alert("Fix Broken File Links", isPresented: $confirmFixInvalidURLs) {
+            Button("Cancel", role: .cancel) { }
+            Button("Fix Links", role: .destructive) {
+                Task {
+                    let _ = await migrationManager.fixInvalidURLs()
+                }
+            }
+        } message: {
+            Text("This will attempt to reconnect recordings with broken file paths to existing audio files by matching names. This fixes the 'Could not get absolute URL' errors you're seeing.")
+        }
+        .alert("Clean Up Missing Audio", isPresented: $confirmCleanupMissingAudio) {
+            Button("Cancel", role: .cancel) { }
+            Button("Clean Up", role: .destructive) {
+                Task {
+                    let _ = await migrationManager.cleanupMissingAudioReferences()
+                }
+            }
+        } message: {
+            Text("This will clean up recordings with missing audio files:\n\n• Clear broken audio file references\n• DELETE transcripts (useless without audio)\n• PRESERVE summaries (valuable processed data)\n\nRecordings will show as 'Summary Only'.")
+        }
+        .alert("Confirm Cleanup", isPresented: $showingOrphanedFilesCleanup) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete Files", role: .destructive) {
+                Task {
+                    await performOrphanedFilesCleanup()
+                }
+            }
+        } message: {
+            Text("This will permanently delete \(orphanedAudioFiles.count) orphaned audio files (\(formatFileSize(totalOrphanedSize))). This action cannot be undone.\n\nThese files exist on disk but are not referenced in your Core Data database.")
+        }
+        .alert("Cleanup Complete", isPresented: $showingOrphanedFilesResults) {
+            Button("OK") {
+                Task {
+                    await scanForOrphanedAudioFiles() // Refresh after cleanup
+                }
+            }
+        } message: {
+            if let results = orphanedFilesResults {
+                if results.errors.isEmpty {
+                    Text("Successfully deleted \(results.deleted) files, freeing \(formatFileSize(results.totalSize)) of storage.")
+                } else {
+                    Text("Deleted \(results.deleted) files, freeing \(formatFileSize(results.totalSize)) of storage.\n\nErrors: \(results.errors.joined(separator: ", "))")
+                }
+            }
         }
     }
     
@@ -812,6 +976,47 @@ struct DataMigrationView: View {
     
     
     // MARK: - Cleanup Functions
+    
+    // MARK: - Orphaned Audio Files Functions
+    
+    private func scanForOrphanedAudioFiles() async {
+        await MainActor.run {
+            let files = EnhancedFileManager.shared.findOrphanedAudioFiles(coordinator: appCoordinator)
+            orphanedAudioFiles = files
+            
+            // Calculate total size
+            totalOrphanedSize = files.reduce(0) { total, file in
+                total + getFileSize(file)
+            }
+        }
+    }
+    
+    private func performOrphanedFilesCleanup() async {
+        await MainActor.run {
+            let results = EnhancedFileManager.shared.cleanupOrphanedAudioFiles(
+                coordinator: appCoordinator,
+                dryRun: false
+            )
+            orphanedFilesResults = results
+            showingOrphanedFilesResults = true
+        }
+    }
+    
+    private func getFileSize(_ url: URL) -> Int64 {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            return attributes[.size] as? Int64 ?? 0
+        } catch {
+            return 0
+        }
+    }
+    
+    private func formatFileSize(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
+    }
     
     private func removeOrphanedImportFiles() async {
         print("🧹 Starting removal of orphaned import files...")

@@ -1,13 +1,13 @@
 //
-//  BisonNotes_AI_Watch_App_Watch_AppUITests.swift
-//  BisonNotes AI Watch App Watch AppUITests
+//  BisonNotes_AI_Watch_AppUITests.swift
+//  BisonNotes AI Watch AppUITests
 //
 //  Created by Tim Champ on 8/17/25.
 //
 
 import XCTest
 
-final class BisonNotes_AI_Watch_App_Watch_AppUITests: XCTestCase {
+final class BisonNotes_AI_Watch_AppUITests: XCTestCase {
 
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.

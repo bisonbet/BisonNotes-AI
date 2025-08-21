@@ -928,12 +928,16 @@ class CoreDataManager: ObservableObject {
         }
         
         let oldName = recording.recordingName ?? "Unknown"
-        recording.recordingName = newName
+        
+        // Clean any legacy [Watch] tags from the name
+        let finalName = newName.replacingOccurrences(of: " [Watch]", with: "")
+        
+        recording.recordingName = finalName
         recording.lastModified = Date()
         
         do {
             try context.save()
-            print("✅ Updated recording name: '\(oldName)' → '\(newName)'")
+            print("✅ Updated recording name: '\(oldName)' → '\(finalName)'")
         } catch {
             print("❌ Failed to save recording name update: \(error)")
             throw error

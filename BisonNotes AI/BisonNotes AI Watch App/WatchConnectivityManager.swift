@@ -48,6 +48,15 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private var lastWatchStateChange: Date = Date()
     private var lastPhoneStateChange: Date = Date()
     private var syncInterval: TimeInterval = 2.0 // Sync every 2 seconds
+    
+    // Connectivity debouncing and deduplication
+    private var connectivityDebounceTimer: Timer?
+    private let connectivityDebounceDelay: TimeInterval = 2.0
+    private var lastReachabilityChange: Date = Date()
+    private var pendingSyncRequests: Set<String> = []
+    private var lastSyncRequestTime: Date?
+    private let minSyncRequestInterval: TimeInterval = 3.0
+    private var isRecoveringConnection = false
     private var conflictResolutionStrategy: StateConflictResolution = .smartResolution
     
     // MARK: - Callbacks for WatchRecordingViewModel integration
@@ -212,6 +221,9 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     /// Request sync with phone app
     func requestSyncWithPhone() {
+        guard let session = session, session.isReachable else {
+            return
+        }
         sendRecordingCommand(.requestSync)
     }
     
@@ -530,13 +542,31 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private func handleConnectionRestored() {
         print("⌚ Connection restored, performing state recovery")
         
+        // Prevent multiple recovery operations
+        guard !isRecoveringConnection else {
+            print("⌚ Already recovering connection, skipping duplicate recovery")
+            return
+        }
+        
+        isRecoveringConnection = true
+        
+        // Clear any stale sync requests
+        pendingSyncRequests.removeAll()
+        
         onConnectionRestored?()
         
-        // Request immediate state sync
-        requestPhoneStateUpdate()
-        
-        // Send current watch state
-        sendWatchStateToPhone(watchRecordingState)
+        // Request sync with throttling instead of immediate requests
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.requestSyncWithPhoneThrottled()
+            
+            // Request phone state update with throttling
+            self?.requestPhoneStateUpdate()
+            
+            // Send current watch state
+            self?.sendWatchStateToPhone(self?.watchRecordingState ?? .idle)
+            
+            self?.isRecoveringConnection = false
+        }
     }
     
     // MARK: - Audio Transfer Methods
@@ -705,6 +735,34 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         case .requestPhoneAppActivation:
             // This is sent by watch to phone, not received
             break
+            
+        // MARK: - New sync protocol message handling
+        case .appReadinessResponse:
+            if let response = WatchAppReadinessResponse.fromDictionary(message) {
+                handleAppReadinessResponse(response)
+            }
+            
+        case .syncAccepted, .syncRejected:
+            if let response = WatchSyncResponse.fromDictionary(message) {
+                handleSyncResponse(response)
+            }
+            
+        case .syncComplete:
+            if let recordingIdString = message["recordingId"] as? String,
+               let recordingId = UUID(uuidString: recordingIdString) {
+                handleSyncCompleteConfirmation(recordingId)
+            }
+            
+        case .syncFailed:
+            if let recordingIdString = message["recordingId"] as? String,
+               let recordingId = UUID(uuidString: recordingIdString),
+               let reason = message["reason"] as? String {
+                handleSyncFailedMessage(recordingId, reason: reason)
+            }
+            
+        // These are sent by watch, not processed here
+        case .checkAppReadiness, .syncRequest, .fileTransferStart, .fileReceived, .metadataTransfer, .coreDataCreated:
+            break
         }
     }
     
@@ -758,6 +816,86 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             }
         }
     }
+    
+    // MARK: - New Sync Protocol Message Handlers
+    
+    private func handleAppReadinessResponse(_ response: WatchAppReadinessResponse) {
+        print("⌚ Received app readiness response: \(response.ready ? "ready" : "not ready") - \(response.reason)")
+        
+        // Forward to view model via notification (could also use callbacks)
+        NotificationCenter.default.post(
+            name: Notification.Name("WatchAppReadinessResponse"),
+            object: response
+        )
+    }
+    
+    private func handleSyncResponse(_ response: WatchSyncResponse) {
+        print("⌚ Received sync response: \(response.accepted ? "accepted" : "rejected")")
+        
+        // Forward to view model
+        NotificationCenter.default.post(
+            name: Notification.Name("WatchSyncResponse"),
+            object: response
+        )
+    }
+    
+    private func handleSyncCompleteConfirmation(_ recordingId: UUID) {
+        print("✅ iPhone confirmed sync complete for: \(recordingId)")
+        
+        // Forward to view model
+        NotificationCenter.default.post(
+            name: Notification.Name("WatchSyncComplete"),
+            object: recordingId
+        )
+    }
+    
+    private func handleSyncFailedMessage(_ recordingId: UUID, reason: String) {
+        print("❌ iPhone reported sync failed for: \(recordingId), reason: \(reason)")
+        
+        // Forward to view model
+        NotificationCenter.default.post(
+            name: Notification.Name("WatchSyncFailed"),
+            object: ["recordingId": recordingId, "reason": reason]
+        )
+    }
+    
+    // MARK: - File Transfer Methods
+    
+    /// Transfer complete recording file to iPhone
+    func transferCompleteRecording(fileURL: URL, metadata: WatchRecordingMetadata, completion: @escaping (Bool) -> Void) {
+        guard let session = session, session.activationState == .activated else {
+            print("⌚ Cannot transfer file - session not available")
+            completion(false)
+            return
+        }
+        
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            print("⌚ Recording file does not exist: \(fileURL.path)")
+            completion(false)
+            return
+        }
+        
+        print("⌚ Starting file transfer for: \(metadata.filename)")
+        
+        // Prepare metadata for transfer
+        let transferMetadata: [String: Any] = [
+            "transferType": "complete_recording",
+            "recordingId": metadata.id.uuidString,
+            "filename": metadata.filename,
+            "duration": metadata.duration,
+            "fileSize": metadata.fileSize,
+            "createdAt": metadata.createdAt.timeIntervalSince1970
+        ]
+        
+        // Start file transfer
+        session.transferFile(fileURL, metadata: transferMetadata)
+        
+        print("⌚ File transfer initiated for: \(metadata.filename)")
+        
+        // Note: Completion will be handled by the session delegate
+        // For now, assume success (could be enhanced with actual transfer tracking)
+        completion(true)
+    }
 }
 
 // MARK: - WCSessionDelegate
@@ -796,20 +934,17 @@ extension WatchConnectivityManager: WCSessionDelegate {
         DispatchQueue.main.async {
             let wasReachable = self.connectionState == .connected
             print("⌚ Phone reachability changed: \(session.isReachable)")
-            self.updateConnectionState()
             
-            if session.isReachable {
-                // Phone became reachable, request sync
-                self.requestSyncWithPhone()
-                
-                if !wasReachable {
-                    // Connection was restored
-                    self.handleConnectionRestored()
-                }
-            } else {
-                // Connection lost
-                if wasReachable {
-                    self.handleConnectionLost()
+            // Record the reachability change time
+            self.lastReachabilityChange = Date()
+            
+            // Cancel any existing debounce timer
+            self.connectivityDebounceTimer?.invalidate()
+            
+            // Debounce connectivity changes to prevent rapid state changes
+            self.connectivityDebounceTimer = Timer.scheduledTimer(withTimeInterval: self.connectivityDebounceDelay, repeats: false) { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.handleDebouncedReachabilityChange(session: session, wasReachable: wasReachable)
                 }
             }
         }
@@ -819,6 +954,10 @@ extension WatchConnectivityManager: WCSessionDelegate {
     private func handleConnectionLost() {
         print("⌚ Connection to phone lost")
         
+        // Clear recovery flag and pending requests
+        isRecoveringConnection = false
+        pendingSyncRequests.removeAll()
+        
         // Notify state that we're disconnected but continue recording
         if watchRecordingState.isRecordingSession {
             updateWatchRecordingState(watchRecordingState) // Trigger state sync attempt
@@ -826,6 +965,65 @@ extension WatchConnectivityManager: WCSessionDelegate {
         
         // If we have a watch audio manager, notify it
         // This would typically be connected through the WatchRecordingViewModel
+    }
+    
+    /// Handle debounced reachability changes with proper deduplication
+    private func handleDebouncedReachabilityChange(session: WCSession, wasReachable: Bool) {
+        print("⌚ Processing debounced reachability change: \(session.isReachable)")
+        updateConnectionState()
+        
+        if session.isReachable {
+            if !wasReachable {
+                // Connection was restored
+                handleConnectionRestored()
+            }
+            // Request sync with throttling
+            requestSyncWithPhoneThrottled()
+        } else {
+            // Connection lost
+            if wasReachable {
+                handleConnectionLost()
+            }
+        }
+    }
+    
+    
+    /// Request sync with phone using throttling and deduplication
+    private func requestSyncWithPhoneThrottled() {
+        // Don't attempt sync if session isn't reachable
+        guard let session = session, session.isReachable else {
+            return
+        }
+        
+        let currentTime = Date()
+        let requestId = "sync_\(Int(currentTime.timeIntervalSince1970))"
+        
+        // Check if we have a recent sync request
+        if let lastSync = lastSyncRequestTime,
+           currentTime.timeIntervalSince(lastSync) < minSyncRequestInterval {
+            print("⌚ Throttling sync request - too recent")
+            return
+        }
+        
+        // Check for duplicate requests
+        if pendingSyncRequests.contains(requestId) {
+            print("⌚ Duplicate sync request ignored")
+            return
+        }
+        
+        // Add to pending requests
+        pendingSyncRequests.insert(requestId)
+        lastSyncRequestTime = currentTime
+        
+        // Send the sync request
+        session.sendRecordingMessage(.requestSync)
+        
+        // Clean up pending requests after timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
+            self?.pendingSyncRequests.remove(requestId)
+        }
+        
+        print("⌚ Sent throttled sync request: \(requestId)")
     }
     
     /// Handle app termination scenarios
@@ -942,5 +1140,17 @@ enum WatchConnectivityError: LocalizedError {
         case .transferFailed(let message):
             return "Transfer failed: \(message)"
         }
+    }
+    
+    // MARK: - New Sync Protocol Message Handlers
+    
+    private func handleAppReadinessResponse(_ response: WatchAppReadinessResponse) {
+        print("⌚ Received app readiness response: \(response.ready ? "ready" : "not ready") - \(response.reason)")
+        
+        // Forward to view model via notification (could also use callbacks)
+        NotificationCenter.default.post(
+            name: Notification.Name("WatchAppReadinessResponse"),
+            object: response
+        )
     }
 }

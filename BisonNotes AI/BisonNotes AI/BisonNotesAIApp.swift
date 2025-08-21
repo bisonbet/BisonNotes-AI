@@ -26,6 +26,7 @@ struct BisonNotesAIApp: App {
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didFinishLaunchingNotification)) { _ in
                     requestBackgroundAppRefreshPermission()
+                    setupWatchConnectivity()
                     // Note: Notification permission is now requested when first needed (in BackgroundProcessingManager)
                 }
         }
@@ -106,5 +107,20 @@ struct BisonNotesAIApp: App {
             print("✅ Background app refresh completed")
             task.setTaskCompleted(success: true)
         }
+    }
+    
+    private func setupWatchConnectivity() {
+        // Initialize watch connectivity for background sync
+        let watchManager = WatchConnectivityManager.shared
+        
+        // The sync handler will be set up by AudioRecorderViewModel when it's ready
+        // We just need to ensure the WatchConnectivityManager singleton is initialized
+        
+        watchManager.onWatchRecordingSyncCompleted = { recordingId, success in
+            // Confirm sync completion back to watch
+            watchManager.confirmSyncComplete(recordingId: recordingId, success: success)
+        }
+        
+        print("📱 iPhone watch connectivity initialized for background sync")
     }
 }

@@ -1,13 +1,13 @@
 //
-//  BisonNotes_AI_Watch_App_Watch_AppUITestsLaunchTests.swift
-//  BisonNotes AI Watch App Watch AppUITests
+//  BisonNotes_AI_Watch_AppUITestsLaunchTests.swift
+//  BisonNotes AI Watch AppUITests
 //
 //  Created by Tim Champ on 8/17/25.
 //
 
 import XCTest
 
-final class BisonNotes_AI_Watch_App_Watch_AppUITestsLaunchTests: XCTestCase {
+final class BisonNotes_AI_Watch_AppUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true

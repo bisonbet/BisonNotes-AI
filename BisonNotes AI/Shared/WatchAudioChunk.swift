@@ -21,7 +21,7 @@ struct WatchAudioChunk: Codable {
     let bitDepth: Int
     let isLastChunk: Bool
     
-    init(recordingSessionId: UUID, sequenceNumber: Int, audioData: Data, duration: TimeInterval, sampleRate: Double = 16000, channels: Int = 1, bitDepth: Int = 16, isLastChunk: Bool = false) {
+    init(recordingSessionId: UUID, sequenceNumber: Int, audioData: Data, duration: TimeInterval, sampleRate: Double = 22050, channels: Int = 1, bitDepth: Int = 16, isLastChunk: Bool = false) {
         self.chunkId = UUID()
         self.recordingSessionId = recordingSessionId
         self.sequenceNumber = sequenceNumber
@@ -208,7 +208,7 @@ class WatchAudioChunkManager: ObservableObject {
             duration: 1.0,
             sampleRate: WatchAudioFormat.sampleRate,
             channels: WatchAudioFormat.channels,
-            bitDepth: WatchAudioFormat.bitDepth,
+            bitDepth: 16, // AAC doesn't use bitDepth the same way, but keep for compatibility
             isLastChunk: false
         )
     }
@@ -274,28 +274,27 @@ class WatchAudioChunkManager: ObservableObject {
     }
 }
 
-/// Audio format configuration for watch recording
+/// Audio format configuration for watch recording - matches iPhone app exactly
 struct WatchAudioFormat {
-    static let sampleRate: Double = 16000  // 16kHz for voice, matching Whisper optimal
+    static let sampleRate: Double = 22050  // 22.05 kHz to match iPhone app exactly
     static let channels: Int = 1           // Mono
-    static let bitDepth: Int = 16          // 16-bit
+    static let bitRate: Int = 64000        // 64 kbps to match iPhone app exactly
     static let chunkDurationSeconds: TimeInterval = 1.0  // 1-second chunks (for WatchConnectivity size limits)
     
-    /// Calculate expected data size for a chunk
+    /// Calculate expected data size for a chunk (approximate for AAC)
     static func expectedChunkDataSize(durationSeconds: TimeInterval) -> Int {
-        // bytes = sampleRate * channels * (bitDepth/8) * duration
-        return Int(sampleRate * Double(channels) * (Double(bitDepth) / 8.0) * durationSeconds)
+        // For AAC: approximate bytes = (bitRate / 8) * duration
+        return Int(Double(bitRate) / 8.0 * durationSeconds)
     }
     
-    /// Audio recording settings for AVAudioRecorder on watch
+    /// Audio recording settings for AVAudioRecorder on watch - matches iPhone app exactly
     static var audioRecorderSettings: [String: Any] {
         return [
-            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
             AVSampleRateKey: sampleRate,
             AVNumberOfChannelsKey: channels,
-            AVLinearPCMBitDepthKey: bitDepth,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsFloatKey: false
+            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+            AVEncoderBitRateKey: bitRate
         ]
     }
 }

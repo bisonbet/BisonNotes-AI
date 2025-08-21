@@ -515,6 +515,88 @@ class EnhancedFileManager: ObservableObject {
             fileRelationships = [:]
         }
     }
+    
+    // MARK: - Orphaned File Cleanup
+    
+    /// Find orphaned audio files that exist on disk but not in Core Data
+    @MainActor
+    func findOrphanedAudioFiles(coordinator: AppDataCoordinator) -> [URL] {
+        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        var orphanedFiles: [URL] = []
+        
+        do {
+            let allFiles = try FileManager.default.contentsOfDirectory(at: documentsURL, includingPropertiesForKeys: nil)
+            let audioFiles = allFiles.filter { url in
+                let ext = url.pathExtension.lowercased()
+                return ext == "m4a" || ext == "wav" || ext == "mp3" || ext == "aac"
+            }
+            
+            print("🔍 Found \(audioFiles.count) audio files on disk")
+            
+            // Get all valid recording URLs from Core Data using the proper method
+            let allRecordings = coordinator.coreDataManager.getAllRecordings()
+            let coreDataURLs = Set(allRecordings.compactMap { recording -> String? in
+                // Use the proper getAbsoluteURL method that handles all URL conversion logic
+                return coordinator.coreDataManager.getAbsoluteURL(for: recording)?.path
+            })
+            
+            print("🔍 Found \(coreDataURLs.count) valid recording references in Core Data")
+            
+            // Find files that exist on disk but not in Core Data
+            for audioFile in audioFiles {
+                if !coreDataURLs.contains(audioFile.path) {
+                    orphanedFiles.append(audioFile)
+                    print("🧹 Found orphaned file: \(audioFile.lastPathComponent)")
+                }
+            }
+            
+            print("🔍 Found \(orphanedFiles.count) orphaned audio files")
+            return orphanedFiles
+            
+        } catch {
+            print("❌ Error finding orphaned files: \(error)")
+            return []
+        }
+    }
+    
+    /// Clean up orphaned audio files with confirmation
+    @MainActor
+    func cleanupOrphanedAudioFiles(coordinator: AppDataCoordinator, dryRun: Bool = true) -> (deleted: Int, totalSize: Int64, errors: [String]) {
+        let orphanedFiles = findOrphanedAudioFiles(coordinator: coordinator)
+        var deletedCount = 0
+        var totalSize: Int64 = 0
+        var errors: [String] = []
+        
+        for file in orphanedFiles {
+            do {
+                // Get file size
+                let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+                let fileSize = attributes[.size] as? Int64 ?? 0
+                totalSize += fileSize
+                
+                if !dryRun {
+                    try FileManager.default.removeItem(at: file)
+                    print("🗑 Deleted orphaned file: \(file.lastPathComponent) (\(fileSize) bytes)")
+                    deletedCount += 1
+                } else {
+                    print("🔍 Would delete: \(file.lastPathComponent) (\(fileSize) bytes)")
+                }
+                
+            } catch {
+                let errorMsg = "Failed to \(dryRun ? "analyze" : "delete") \(file.lastPathComponent): \(error.localizedDescription)"
+                errors.append(errorMsg)
+                print("❌ \(errorMsg)")
+            }
+        }
+        
+        if dryRun {
+            print("🔍 Dry run complete: Found \(orphanedFiles.count) orphaned files totaling \(totalSize) bytes")
+        } else {
+            print("🧹 Cleanup complete: Deleted \(deletedCount) files, freed \(totalSize) bytes")
+        }
+        
+        return (deleted: deletedCount, totalSize: totalSize, errors: errors)
+    }
 }
 
 // MARK: - Error Types

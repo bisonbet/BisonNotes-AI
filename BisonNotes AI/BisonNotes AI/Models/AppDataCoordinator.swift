@@ -45,6 +45,18 @@ class AppDataCoordinator: ObservableObject {
         )
     }
     
+    func addWatchRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
+        return workflowManager.createRecording(
+            url: url,
+            name: name,
+            date: date,
+            fileSize: fileSize,
+            duration: duration,
+            quality: quality,
+            locationData: locationData
+        )
+    }
+    
     func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {
         return workflowManager.createTranscript(
             for: recordingId,
@@ -175,6 +187,41 @@ class AppDataCoordinator: ObservableObject {
     /// Cleans up recordings that reference missing files
     func cleanupRecordingsWithMissingFiles() -> Int {
         return coreDataManager.cleanupRecordingsWithMissingFiles()
+    }
+    
+    // MARK: - Watch Sync Methods
+    
+    func handleWatchSyncRecording(audioData: Data, syncRequest: WatchSyncRequest) async {
+        do {
+            // Create temporary file from audio data
+            let tempDirectory = FileManager.default.temporaryDirectory
+            let tempURL = tempDirectory.appendingPathComponent(syncRequest.filename)
+            
+            try audioData.write(to: tempURL)
+            
+            // Convert watch location data if available
+            let locationData: LocationData? = syncRequest.locationData?.toLocationData()
+            
+            // Create recording entry
+            let recordingId = addWatchRecording(
+                url: tempURL,
+                name: syncRequest.filename.replacingOccurrences(of: ".m4a", with: ""),
+                date: syncRequest.createdAt,
+                fileSize: syncRequest.fileSize,
+                duration: syncRequest.duration,
+                quality: .whisperOptimized,
+                locationData: locationData
+            )
+            
+            print("✅ Watch recording synced successfully: \(syncRequest.filename)")
+            
+            // Notify completion
+            WatchConnectivityManager.shared.onWatchRecordingSyncCompleted?(recordingId, true)
+            
+        } catch {
+            print("❌ Failed to sync watch recording: \(error)")
+            WatchConnectivityManager.shared.onWatchRecordingSyncCompleted?(syncRequest.recordingId, false)
+        }
     }
     
     // MARK: - Debug Methods
