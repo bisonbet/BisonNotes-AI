@@ -29,9 +29,6 @@ defaults:
   run:
     shell: 'bash'
 
-allowed_bots:
-  - 'claude'
-
 permissions:
   contents: 'read'
   id-token: 'write'
