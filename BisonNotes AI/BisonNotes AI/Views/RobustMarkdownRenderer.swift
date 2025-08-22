@@ -40,54 +40,64 @@ func unifiedRobustMarkdownText(_ text: String) -> some View {
 private func cleanMarkdownText(_ text: String) -> String {
     var cleaned = text
     
-    // Step 1: Clean line endings and escape sequences
-    cleaned = cleaned
-        .replacingOccurrences(of: "\\n", with: "\n")
-        .replacingOccurrences(of: "\r", with: "")
+    // Step 1: Normalize line endings and escape sequences with single combined regex
+    let lineEndingPattern = #"(\\n|\\r|\r\n?)"#
+    cleaned = cleaned.replacingOccurrences(of: lineEndingPattern, with: "\n", options: .regularExpression)
     
-    // Step 2: Remove malformed JSON artifacts (more targeted)
-    let jsonPattern = #""summary"\s*:?\s*"?#
+    // Step 2: Remove malformed JSON artifacts using more specific pattern
+    // Matches various JSON summary patterns including nested quotes
+    let jsonPattern = #""summary"\s*:?\s*"?([^"]*")?#
     cleaned = cleaned.replacingOccurrences(of: jsonPattern, with: "", options: .regularExpression)
     
-    // Step 3: Preserve legitimate code blocks, only remove stray backticks
-    // Remove triple backticks that are not part of proper code blocks
-    let straySingleBackticks = #"(?<!`)`(?!`)"#
-    cleaned = cleaned.replacingOccurrences(of: straySingleBackticks, with: "", options: .regularExpression)
+    // Step 3: Preserve legitimate code blocks - only remove unpaired backticks
+    cleaned = preserveCodeBlocks(cleaned)
     
-    // Only remove triple backticks if they appear to be stray (not matching pairs)
-    let lines = cleaned.components(separatedBy: .newlines)
-    var inCodeBlock = false
-    var filteredLines: [String] = []
+    // Step 4: Standardize bullet points using single pass with regex (performance optimization)
+    // Replace all bullet types with markdown * in a single operation
+    let bulletPattern = #"\n([•\u{2022}-]) "#
+    cleaned = cleaned.replacingOccurrences(of: bulletPattern, with: "\n* ", options: .regularExpression)
     
-    for line in lines {
-        if line.trimmingCharacters(in: .whitespaces) == "```" {
-            inCodeBlock.toggle()
-            // Only include the backticks if they form proper code block pairs
-            continue
-        }
-        filteredLines.append(line)
-    }
-    cleaned = filteredLines.joined(separator: "\n")
-    
-    // Step 4: Standardize bullet points (check both before replacing)
-    let needsDashReplacement = cleaned.hasPrefix("- ")
-    let needsBulletReplacement = cleaned.hasPrefix("• ") || cleaned.hasPrefix("\u{2022} ")
-    
-    if needsDashReplacement {
-        cleaned = "* " + cleaned.dropFirst(2)
-    } else if needsBulletReplacement {
-        if cleaned.hasPrefix("• ") {
-            cleaned = "* " + cleaned.dropFirst(2)
-        } else if cleaned.hasPrefix("\u{2022} ") {
-            cleaned = "* " + cleaned.dropFirst(2)
-        }
+    // Handle leading bullets (start of text)
+    if cleaned.hasPrefix("- ") || cleaned.hasPrefix("• ") || cleaned.hasPrefix("\u{2022} ") {
+        // Find the prefix length (2 for most, could be different for unicode)
+        let prefixLength = cleaned.hasPrefix("- ") ? 2 : 2
+        cleaned = "* " + cleaned.dropFirst(prefixLength)
     }
     
-    // Step 5: Handle bullets in the middle of text
-    cleaned = cleaned
-        .replacingOccurrences(of: "\n- ", with: "\n* ")
-        .replacingOccurrences(of: "\n• ", with: "\n* ")
-        .replacingOccurrences(of: "\n\u{2022} ", with: "\n* ")
+    // Step 5: Remove isolated stray backticks (not part of code blocks)
+    let strayBackticksPattern = #"(?<!\n```)\n?`{1,2}(?!\n|\w|`)"#
+    cleaned = cleaned.replacingOccurrences(of: strayBackticksPattern, with: "", options: .regularExpression)
     
     return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// Handles code block preservation more intelligently
+private func preserveCodeBlocks(_ text: String) -> String {
+    let lines = text.components(separatedBy: .newlines)
+    var processedLines: [String] = []
+    var codeBlockCount = 0
+    var lastCodeBlockIndex: Int?
+    
+    // First pass: count and track code blocks
+    for (index, line) in lines.enumerated() {
+        let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+        if trimmedLine == "```" || trimmedLine.hasPrefix("```") {
+            codeBlockCount += 1
+            lastCodeBlockIndex = index
+        }
+        processedLines.append(line)
+    }
+    
+    // If we have an odd number of code block markers, remove the last unpaired one
+    if codeBlockCount % 2 != 0, let lastIndex = lastCodeBlockIndex {
+        let lastLine = processedLines[lastIndex]
+        let trimmedLastLine = lastLine.trimmingCharacters(in: .whitespaces)
+        
+        // Only remove if it's a standalone ``` (not part of ```language syntax)
+        if trimmedLastLine == "```" {
+            processedLines.remove(at: lastIndex)
+        }
+    }
+    
+    return processedLines.joined(separator: "\n")
 }
