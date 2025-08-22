@@ -31,8 +31,14 @@ struct BisonNotesComplicationEntryView: View {
     }
 }
 
-@main
-struct BisonNotesComplication: Widget {
+    private enum Constants {
+        static let complicationURL = "bisonnotes://complication"
+    }
+
+    var body: some View {
+        Image(systemName: "pencil")
+            .widgetURL(URL(string: Constants.complicationURL))
+    }
     let kind: String = "BisonNotesComplication"
 
     var body: some WidgetConfiguration {
