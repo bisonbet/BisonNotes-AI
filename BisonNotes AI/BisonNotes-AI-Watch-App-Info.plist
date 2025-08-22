@@ -39,5 +39,7 @@
 	<string>Bison-Networking.BisonNotes-AI</string>
 	<key>WKWatchOnly</key>
 	<false/>
+	<key>CLKComplicationPrincipalClass</key>
+	<string>$(PRODUCT_MODULE_NAME).ComplicationController</string>
 </dict>
 </plist>
