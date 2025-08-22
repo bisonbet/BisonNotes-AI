@@ -13,8 +13,9 @@ struct BisonNotes_AI_Watch_App_Watch_AppApp: App {
         WindowGroup {
             ContentView()
                 .onOpenURL { _ in
-                    // Handles launch from complication
+                .onOpenURL { url in
+                    // Handle the URL, e.g., log the event
+                    print("Launched from complication with URL: \(url.absoluteString)")
                 }
-        }
     }
 }
