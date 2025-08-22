@@ -72,9 +72,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     @MainActor
     private func setupWatchSyncHandler() {
         let watchManager = WatchConnectivityManager.shared
-        watchManager.onWatchSyncRecordingReceived = { [weak self] audioData, syncRequest in
+        watchManager.onWatchSyncRecordingReceived = { [weak self] fileURL, syncRequest in
             Task { @MainActor in
-                self?.handleWatchSyncRecordingReceived(audioData, syncRequest: syncRequest)
+                self?.handleWatchSyncRecordingReceived(fileURL, syncRequest: syncRequest)
             }
         }
         print("🔄 AudioRecorderViewModel connected to WatchConnectivityManager sync handler")
@@ -185,34 +185,35 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     // Legacy audio streaming handler removed - now using file transfer on completion
     
     /// Handle synchronized recording received from watch
-    private func handleWatchSyncRecordingReceived(_ audioData: Data, syncRequest: WatchSyncRequest) {
+    private func handleWatchSyncRecordingReceived(_ fileURL: URL, syncRequest: WatchSyncRequest) {
         print("⌚ Received synchronized recording from watch: \(syncRequest.filename)")
-        
+
         Task {
             do {
                 // Create a permanent file in Documents directory with iPhone app naming pattern
                 guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
                     throw NSError(domain: "AudioRecorderViewModel", code: -2, userInfo: [NSLocalizedDescriptionKey: "Could not access Documents directory"])
                 }
-                
+
                 // Generate iPhone-style filename but keep original filename for display name
                 let timestamp = syncRequest.createdAt.timeIntervalSince1970
                 let iPhoneStyleFilename = "apprecording-\(Int(timestamp)).m4a"
                 let permanentURL = documentsURL.appendingPathComponent(iPhoneStyleFilename)
-                
-                try audioData.write(to: permanentURL)
-                
+
+                // Move the file from the temporary location provided by WatchConnectivity to our permanent location
+                try FileManager.default.moveItem(at: fileURL, to: permanentURL)
+
                 // Create Core Data entry
                 guard let appCoordinator = appCoordinator else {
                     throw NSError(domain: "AudioRecorderViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "App coordinator not available"])
                 }
-                
+
                 // Create display name by removing the technical filename prefix
                 let displayName = syncRequest.filename
                     .replacingOccurrences(of: "recording-", with: "")
                     .replacingOccurrences(of: ".m4a", with: "")
                 let cleanDisplayName = "Audio Recording \(displayName)"
-                
+
                 let recordingId = await appCoordinator.addWatchRecording(
                     url: permanentURL,
                     name: cleanDisplayName,
@@ -221,17 +222,17 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
                     duration: syncRequest.duration,
                     quality: .whisperOptimized
                 )
-                
+
                 print("✅ Created Core Data entry for watch recording: \(recordingId)")
-                
+
                 // Notify UI to refresh recordings list
                 NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-                
+
                 // Recording sync completed successfully
-                
+
             } catch {
                 print("❌ Failed to create Core Data entry for watch recording: \(error)")
-                
+
                 // Recording sync failed
             }
         }

@@ -9,6 +9,7 @@ import Foundation
 @preconcurrency import WatchConnectivity
 import Combine
 import UIKit
+import CryptoKit
 
 /// Manages WatchConnectivity session and communication with Apple Watch
 @MainActor
@@ -50,7 +51,10 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private var conflictResolutionStrategy: StateConflictResolution = .phoneWins
     
     // MARK: - File sync callbacks (current)
-    var onWatchSyncRecordingReceived: ((Data, WatchSyncRequest) -> Void)?
+    /// Called when a full recording file arrives from the watch. The URL points to a temporary
+    /// location that will be removed after this call returns, so the receiver should move it to a
+    /// permanent location immediately.
+    var onWatchSyncRecordingReceived: ((URL, WatchSyncRequest) -> Void)?
     var onWatchRecordingSyncCompleted: ((UUID, Bool) -> Void)?
     
     // Legacy callbacks removed - watch operates independently
@@ -206,30 +210,26 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         }
         
         print("📱 Received recording file: \(fileURL.lastPathComponent)")
-        
-        do {
-            // Read the audio data
-            let audioData = try Data(contentsOf: fileURL)
-            
-            // Verify checksum if provided
-            if !syncRequest.checksumMD5.isEmpty {
-                let actualChecksum = audioData.md5
-                if actualChecksum != syncRequest.checksumMD5 {
-                    print("⚠️ Checksum mismatch for \(syncRequest.filename)")
-                    handleSyncFailure(recordingId, reason: "checksum_mismatch")
-                    return
-                }
+
+        // Verify checksum without loading the entire file into memory
+        if !syncRequest.checksumMD5.isEmpty {
+            guard let actualChecksum = md5Checksum(for: fileURL) else {
+                print("❌ Failed to compute checksum for \(syncRequest.filename)")
+                handleSyncFailure(recordingId, reason: "checksum_error")
+                return
             }
-            
-            // Create Core Data entry via callback
-            onWatchSyncRecordingReceived?(audioData, syncRequest)
-            
-            // Cleanup will happen in handleSyncComplete
-            
-        } catch {
-            print("❌ Failed to read received file: \(error)")
-            handleSyncFailure(recordingId, reason: "file_read_error")
+
+            if actualChecksum != syncRequest.checksumMD5 {
+                print("⚠️ Checksum mismatch for \(syncRequest.filename)")
+                handleSyncFailure(recordingId, reason: "checksum_mismatch")
+                return
+            }
         }
+
+        // Pass the file URL to the callback so the receiver can move it to a permanent location
+        onWatchSyncRecordingReceived?(fileURL, syncRequest)
+
+        // Cleanup will happen in handleSyncComplete
     }
     
     /// Confirm sync completion to watch
@@ -274,6 +274,26 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         pendingSyncOperations.removeValue(forKey: recordingId)
         syncTimeouts[recordingId]?.invalidate()
         syncTimeouts.removeValue(forKey: recordingId)
+    }
+
+    /// Compute an MD5 checksum for the file at the given URL without loading the entire
+    /// contents into memory. Returns `nil` if the file cannot be read.
+    private func md5Checksum(for url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+
+        var context = Insecure.MD5()
+        while autoreleasepool(invoking: {
+            let data = handle.readData(ofLength: 64 * 1024)
+            if data.count > 0 {
+                context.update(data: data)
+                return true
+            }
+            return false
+        }) {}
+
+        let digest = context.finalize()
+        return digest.map { String(format: "%02hhx", $0) }.joined()
     }
     
     private func setupNotificationObservers() {
@@ -1233,10 +1253,3 @@ enum StateConflictResolution {
 // MARK: - Extensions
 
 import CryptoKit
-
-extension Data {
-    var md5: String {
-        let digest = Insecure.MD5.hash(data: self)
-        return digest.map { String(format: "%02hhx", $0) }.joined()
-    }
-}
