@@ -12,6 +12,9 @@ struct BisonNotes_AI_Watch_App_Watch_AppApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onOpenURL { _ in
+                    // Handles launch from complication
+                }
         }
     }
 }
