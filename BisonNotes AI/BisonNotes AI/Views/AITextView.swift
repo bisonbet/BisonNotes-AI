@@ -60,7 +60,7 @@ struct AITextView: View {
     var body: some View {
         // Use the unified robust markdown renderer for all AI services
         // Don't apply lineSpacing as it can interfere with AttributedString formatting
-        unifiedRobustMarkdownText(text, aiService: aiService.description)
+        unifiedRobustMarkdownText(text)
     }
     
     // Fallback to original custom rendering if needed
