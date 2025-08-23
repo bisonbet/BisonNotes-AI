@@ -34,7 +34,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         
         static let mixedAudioRecording = AudioSessionConfig(
             category: .playAndRecord,
-            mode: .voiceChat,
+            mode: .default,  // Use .default instead of .voiceChat to preserve music quality
             options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker],
             allowMixedAudio: true,
             backgroundRecording: false
@@ -42,7 +42,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         
         static let backgroundRecording = AudioSessionConfig(
             category: .playAndRecord,
-            mode: .voiceChat,
+            mode: .default,  // Use .default instead of .voiceChat to preserve music quality
             options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker],
             allowMixedAudio: true,
             backgroundRecording: true
@@ -170,18 +170,19 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
     }
     
-    /// Configure audio session for playback
+    /// Configure audio session for playback (with mixWithOthers to avoid interfering with music)
     func configurePlaybackSession() async throws {
         do {
-            try session.setCategory(.playback, mode: .default)
+            // Use .playback category with .mixWithOthers option to not interrupt other audio
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
             
-            isMixedAudioEnabled = false
+            isMixedAudioEnabled = true // We're mixing with others
             isBackgroundRecordingEnabled = false
-            currentConfiguration = AudioSessionConfig.standardRecording
+            currentConfiguration = nil // This is a lightweight playback config
             isConfigured = true
             
-            print("✅ Playback session configured successfully")
+            print("✅ Playback session configured successfully with mixWithOthers")
             
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Playback configuration failed: \(error.localizedDescription)")
@@ -218,7 +219,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         do {
             try session.setActive(false, options: .notifyOthersOnDeactivation)
             isConfigured = false
-            print("✅ Audio session deactivated")
+            isMixedAudioEnabled = false
+            isBackgroundRecordingEnabled = false
+            currentConfiguration = nil
+            print("✅ Audio session deactivated and reset")
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Failed to deactivate session: \(error.localizedDescription)")
             lastError = audioError
@@ -238,7 +242,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             try? session.setPreferredIOBufferDuration(0.02)
         }
 
-        try session.setActive(true)
+        try session.setActive(true, options: [])
         
         // Additional configuration for background recording
         if config.backgroundRecording {

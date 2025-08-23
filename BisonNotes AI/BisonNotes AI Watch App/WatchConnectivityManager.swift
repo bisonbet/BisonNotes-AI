@@ -8,6 +8,7 @@
 import Foundation
 @preconcurrency import WatchConnectivity
 import Combine
+import CryptoKit
 
 #if canImport(WatchKit)
 import WatchKit
@@ -48,6 +49,11 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private var fileTransferCompletions: [String: (Bool) -> Void] = [:]
     private var transferStartTimes: [String: Date] = [:]
     
+    // Reliable transfer system
+    private var reliableTransfers: [UUID: ReliableTransfer] = [:]
+    private var retryTimer: Timer?
+    private let retryCheckInterval: TimeInterval = 30.0
+    
     // State synchronization
     private var stateSyncTimer: Timer?
     private var lastWatchStateChange: Date = Date()
@@ -82,6 +88,8 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         super.init()
         setupWatchConnectivity()
         setupNotificationObservers()
+        loadReliableTransfers()
+        startRetryTimer()
         // Note: State sync happens through manual triggers, not automatic timers
     }
     
@@ -92,6 +100,11 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         }
         self.session = nil
         stateSyncTimer?.invalidate()
+        retryTimer?.invalidate()
+        
+        // Note: Cannot safely save reliable transfers in deinit due to MainActor isolation
+        // The system will load persisted transfers on next app launch
+        print("⌚ WatchConnectivityManager deinit - transfers will be saved on next state change")
     }
     
     // MARK: - Setup Methods
@@ -502,23 +515,42 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     // MARK: - App Lifecycle Handlers
     
     private func handleWatchAppBecameActive() {
-        // Notify phone that watch app is active
-        sendRecordingCommand(.watchAppActivated)
+        let wasRecording = isRecordingInProgress()
         
-        // Request status sync
-        requestSyncWithPhone()
-        
-        // Update connection state
-        updateConnectionState()
-        
-        print("⌚ Watch app became active")
+        if wasRecording {
+            print("⌚ Watch app became active (was recording - minimal sync)")
+            // During recording, minimize connectivity operations to avoid interruption
+            updateConnectionState()
+        } else {
+            print("⌚ Watch app became active (normal sync)")
+            // Notify phone that watch app is active
+            sendRecordingCommand(.watchAppActivated)
+            
+            // Request status sync
+            requestSyncWithPhone()
+            
+            // Update connection state
+            updateConnectionState()
+        }
     }
     
     private func handleWatchAppWillResignActive() {
-        // Update connection state but don't interrupt recording
-        updateConnectionState()
+        let isRecording = isRecordingInProgress()
         
-        print("⌚ Watch app will resign active")
+        if isRecording {
+            print("⌚ Watch app will resign active (recording in progress - preserving session)")
+            // Don't perform heavy sync operations during recording
+            // Audio recording will continue in background
+        } else {
+            print("⌚ Watch app will resign active (normal)")
+            // Update connection state for non-recording scenarios
+            updateConnectionState()
+        }
+    }
+    
+    /// Check if recording is currently in progress
+    private func isRecordingInProgress() -> Bool {
+        return watchRecordingState == .recording || watchRecordingState == .paused
     }
     
     private func updateConnectionState() {
@@ -559,6 +591,9 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         pendingSyncRequests.removeAll()
         
         onConnectionRestored?()
+        
+        // Retry reliable transfers
+        retryReliableTransfers()
         
         // Request sync with throttling instead of immediate requests
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
@@ -847,6 +882,9 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private func handleSyncCompleteConfirmation(_ recordingId: UUID) {
         print("✅ iPhone confirmed sync complete for: \(recordingId)")
         
+        // Confirm reliable transfer - this triggers file deletion
+        confirmReliableTransfer(recordingId)
+        
         // Forward to view model
         NotificationCenter.default.post(
             name: Notification.Name("WatchSyncComplete"),
@@ -857,6 +895,9 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private func handleSyncFailedMessage(_ recordingId: UUID, reason: String) {
         print("❌ iPhone reported sync failed for: \(recordingId), reason: \(reason)")
         
+        // Mark reliable transfer as failed
+        failReliableTransfer(recordingId, reason: reason)
+        
         // Forward to view model
         NotificationCenter.default.post(
             name: Notification.Name("WatchSyncFailed"),
@@ -866,57 +907,73 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     // MARK: - File Transfer Methods
     
-    /// Transfer complete recording file to iPhone
+    /// Transfer complete recording file to iPhone with reliability
     func transferCompleteRecording(fileURL: URL, metadata: WatchRecordingMetadata, completion: @escaping (Bool) -> Void) {
+        // Add to reliable transfer queue
+        let reliableTransfer = ReliableTransfer(from: metadata, fileURL: fileURL)
+        reliableTransfers[reliableTransfer.recordingId] = reliableTransfer
+        saveReliableTransfers()
+        
+        print("⌚ Added reliable transfer: \(metadata.filename)")
+        
+        // Attempt immediate transfer if connected
+        attemptReliableTransfer(reliableTransfer.recordingId)
+        
+        // Always call completion - reliable system will handle the actual transfer
+        completion(true)
+    }
+    
+    /// Attempt to transfer a specific reliable transfer
+    private func attemptReliableTransfer(_ recordingId: UUID) {
+        guard var transfer = reliableTransfers[recordingId] else {
+            print("⚠️ Reliable transfer not found: \(recordingId)")
+            return
+        }
+        
         guard let session = session, session.activationState == .activated else {
-            print("⌚ Cannot transfer file - session not available")
-            completion(false)
+            print("⌚ Cannot attempt transfer - session not available")
             return
         }
         
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            print("⌚ Recording file does not exist: \(fileURL.path)")
-            completion(false)
+        guard FileManager.default.fileExists(atPath: transfer.fileURL.path) else {
+            print("❌ Recording file no longer exists: \(transfer.filename)")
+            transfer.recordFailure("file_not_found")
+            reliableTransfers[recordingId] = transfer
+            saveReliableTransfers()
             return
         }
         
-        print("⌚ Starting file transfer for: \(metadata.filename)")
+        // Record attempt
+        transfer.recordAttempt()
+        reliableTransfers[recordingId] = transfer
+        saveReliableTransfers()
+        
+        print("⌚ Attempting transfer (try #\(transfer.retryCount)): \(transfer.filename)")
         
         // Prepare metadata for transfer
         let transferMetadata: [String: Any] = [
-            "transferType": "complete_recording",
-            "recordingId": metadata.id.uuidString,
-            "filename": metadata.filename,
-            "duration": metadata.duration,
-            "fileSize": metadata.fileSize,
-            "createdAt": metadata.createdAt.timeIntervalSince1970
+            "transferType": "reliable_recording",
+            "recordingId": transfer.recordingId.uuidString,
+            "reliableTransferId": transfer.id.uuidString,
+            "filename": transfer.filename,
+            "duration": transfer.duration,
+            "fileSize": transfer.fileSize,
+            "createdAt": transfer.createdAt.timeIntervalSince1970,
+            "retryCount": transfer.retryCount
         ]
         
-        // Check file size and log performance expectations
-        let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-        let fileSizeMB = Double(fileSize) / (1024 * 1024)
-        let estimatedTransferTime = estimateTransferTime(fileSizeMB: fileSizeMB)
-        
-        print("⌚ Starting file transfer:")
-        print("   - File: \(metadata.filename)")
-        print("   - Size: \(String(format: "%.1f", fileSizeMB)) MB")
-        print("   - Estimated time: \(Int(estimatedTransferTime))s")
-        print("   - iPhone reachable: \(session.isReachable)")
-        
-        // Start file transfer and track it
-        let fileTransfer: WCSessionFileTransfer = session.transferFile(fileURL, metadata: transferMetadata)
-        let transferId = metadata.id.uuidString
+        // Start file transfer
+        let fileTransfer: WCSessionFileTransfer = session.transferFile(transfer.fileURL, metadata: transferMetadata)
+        let transferKey = transfer.recordingId.uuidString
         
         // Store transfer tracking info
-        activeFileTransfers[transferId] = fileTransfer
-        fileTransferCompletions[transferId] = completion
-        transferStartTimes[transferId] = Date()
+        activeFileTransfers[transferKey] = fileTransfer
+        transferStartTimes[transferKey] = Date()
         
-        print("⌚ File transfer initiated for: \(metadata.filename) (ID: \(transferId))")
-        
-        // Call completion immediately to indicate transfer started successfully
-        // Actual completion will be handled by delegate
-        completion(true)
+        // Set transfer status to awaiting confirmation once started
+        transfer.status = .awaitingConfirmation
+        reliableTransfers[recordingId] = transfer
+        saveReliableTransfers()
     }
     
     /// Estimate transfer time based on file size and connection quality
@@ -984,6 +1041,147 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         }
         
         return diagnostics.joined(separator: "\n")
+    }
+    
+    // MARK: - Reliable Transfer Management
+    
+    /// Start retry timer for reliable transfers
+    private func startRetryTimer() {
+        retryTimer = Timer.scheduledTimer(withTimeInterval: retryCheckInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkAndRetryTransfers()
+            }
+        }
+    }
+    
+    /// Check for transfers that need retry
+    private func checkAndRetryTransfers() {
+        let transfersToRetry = reliableTransfers.values.filter { $0.shouldRetry }
+        
+        if !transfersToRetry.isEmpty {
+            print("⌚ Checking \(transfersToRetry.count) transfers for retry...")
+            
+            for transfer in transfersToRetry {
+                attemptReliableTransfer(transfer.recordingId)
+            }
+        }
+    }
+    
+    /// Retry all eligible reliable transfers
+    private func retryReliableTransfers() {
+        let eligibleTransfers = reliableTransfers.values.filter { transfer in
+            transfer.status == .pending || transfer.status == .failed
+        }
+        
+        if !eligibleTransfers.isEmpty {
+            print("⌚ Retrying \(eligibleTransfers.count) reliable transfers after connection restoration")
+            
+            for transfer in eligibleTransfers {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 0.5...2.0)) {
+                    self.attemptReliableTransfer(transfer.recordingId)
+                }
+            }
+        }
+    }
+    
+    /// Confirm successful transfer and allow file deletion
+    func confirmReliableTransfer(_ recordingId: UUID) {
+        guard var transfer = reliableTransfers[recordingId] else {
+            print("⚠️ Cannot confirm - reliable transfer not found: \(recordingId)")
+            return
+        }
+        
+        // Mark as confirmed
+        transfer.recordSuccess()
+        print("✅ Reliable transfer confirmed: \(transfer.filename)")
+        
+        // NOW it's safe to delete the local file
+        do {
+            try FileManager.default.removeItem(at: transfer.fileURL)
+            print("🗁️ Deleted local file after confirmation: \(transfer.filename)")
+        } catch {
+            print("⚠️ Failed to delete local file: \(error)")
+        }
+        
+        // Remove from reliable transfers
+        reliableTransfers.removeValue(forKey: recordingId)
+        saveReliableTransfers()
+        
+        print("✅ Reliable transfer completed and cleaned up: \(transfer.filename)")
+    }
+    
+    /// Mark transfer as failed
+    func failReliableTransfer(_ recordingId: UUID, reason: String) {
+        guard var transfer = reliableTransfers[recordingId] else {
+            return
+        }
+        
+        transfer.recordFailure(reason)
+        reliableTransfers[recordingId] = transfer
+        saveReliableTransfers()
+        
+        print("❌ Reliable transfer failed: \(transfer.filename) - \(reason) (retry \(transfer.retryCount)/5)")
+    }
+    
+    /// Get pending reliable transfers count
+    var pendingReliableTransfersCount: Int {
+        return reliableTransfers.values.filter { $0.status != .confirmed }.count
+    }
+    
+    // MARK: - Persistence
+    
+    private var reliableTransfersURL: URL {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsPath.appendingPathComponent("reliable_transfers.json")
+    }
+    
+    /// Save reliable transfers to disk
+    private func saveReliableTransfers() {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(Array(reliableTransfers.values))
+            try data.write(to: reliableTransfersURL)
+        } catch {
+            print("❌ Failed to save reliable transfers: \(error)")
+        }
+    }
+    
+    /// Load reliable transfers from disk
+    private func loadReliableTransfers() {
+        do {
+            let data = try Data(contentsOf: reliableTransfersURL)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let transfers = try decoder.decode([ReliableTransfer].self, from: data)
+            
+            // Convert to dictionary and filter out old/invalid transfers
+            reliableTransfers = Dictionary(uniqueKeysWithValues: transfers.compactMap { transfer in
+                // Remove transfers older than 7 days or already confirmed
+                let cutoffDate = Date().addingTimeInterval(-7 * 24 * 60 * 60)
+                guard transfer.createdAt > cutoffDate && transfer.status != .confirmed else {
+                    return nil
+                }
+                
+                // Verify file still exists
+                guard FileManager.default.fileExists(atPath: transfer.fileURL.path) else {
+                    print("⚠️ Removing transfer for missing file: \(transfer.filename)")
+                    return nil
+                }
+                
+                return (transfer.recordingId, transfer)
+            })
+            
+            print("📂 Loaded \(reliableTransfers.count) reliable transfers from disk")
+            
+            if !reliableTransfers.isEmpty {
+                saveReliableTransfers() // Clean up the saved file
+            }
+            
+        } catch {
+            print("ℹ️ No existing reliable transfers found (normal on first run)")
+            reliableTransfers = [:]
+        }
     }
 }
 
@@ -1213,6 +1411,103 @@ enum StateConflictResolution {
     case watchWins
     case mostRecentWins
     case smartResolution
+}
+
+// MARK: - Reliable Transfer Types
+
+/// Status of a reliable transfer
+enum ReliableTransferStatus: String, Codable {
+    case pending = "pending"
+    case transferring = "transferring"
+    case awaitingConfirmation = "awaiting_confirmation"
+    case confirmed = "confirmed"
+    case failed = "failed"
+    
+    var canRetry: Bool {
+        switch self {
+        case .pending, .failed: return true
+        case .transferring, .awaitingConfirmation, .confirmed: return false
+        }
+    }
+}
+
+/// Reliable transfer record
+struct ReliableTransfer: Codable, Identifiable {
+    let id: UUID
+    let recordingId: UUID
+    let filename: String
+    let fileURL: URL
+    let duration: TimeInterval
+    let fileSize: Int64
+    let createdAt: Date
+    let checksumMD5: String?
+    
+    var status: ReliableTransferStatus
+    var retryCount: Int
+    var lastAttemptTime: Date
+    var failureReason: String?
+    
+    init(from metadata: WatchRecordingMetadata, fileURL: URL) {
+        self.id = UUID()
+        self.recordingId = metadata.id
+        self.filename = metadata.filename
+        self.fileURL = fileURL
+        self.duration = metadata.duration
+        self.fileSize = metadata.fileSize
+        self.createdAt = metadata.createdAt
+        
+        // Calculate checksum from file data
+        self.checksumMD5 = Self.calculateMD5(for: fileURL)
+        
+        self.status = .pending
+        self.retryCount = 0
+        self.lastAttemptTime = Date()
+        self.failureReason = nil
+    }
+    
+    var shouldRetry: Bool {
+        guard status.canRetry && retryCount < 5 else { return false }
+        
+        let timeSinceLastAttempt = Date().timeIntervalSince(lastAttemptTime)
+        let minDelay: TimeInterval = {
+            switch retryCount {
+            case 0: return 0
+            case 1: return 10  // 10 seconds
+            case 2: return 60  // 1 minute
+            case 3: return 300 // 5 minutes
+            default: return 600 // 10 minutes
+            }
+        }()
+        
+        return timeSinceLastAttempt >= minDelay
+    }
+    
+    mutating func recordAttempt() {
+        retryCount += 1
+        lastAttemptTime = Date()
+        status = .transferring
+    }
+    
+    mutating func recordSuccess() {
+        status = .confirmed
+    }
+    
+    mutating func recordFailure(_ reason: String) {
+        status = .failed
+        failureReason = reason
+    }
+    
+    /// Calculate MD5 checksum for file
+    private static func calculateMD5(for url: URL) -> String? {
+        do {
+            let data = try Data(contentsOf: url)
+            let digest = Insecure.MD5.hash(data: data)
+            return digest.map { String(format: "%02hhx", $0) }.joined()
+        } catch {
+            print("⚠️ Failed to calculate MD5 checksum: \(error)")
+            return nil
+        }
+    }
 }
 
 enum WatchConnectivityError: LocalizedError {

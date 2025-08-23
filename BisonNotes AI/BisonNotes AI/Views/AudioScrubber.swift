@@ -17,7 +17,8 @@ struct AudioScrubber: View {
     
     private var progress: Double {
         guard duration > 0 else { return 0 }
-        return isDragging ? dragValue : currentTime / duration
+        let rawProgress = isDragging ? dragValue : currentTime / duration
+        return min(max(rawProgress, 0), 1) // Clamp between 0 and 1
     }
     
     private var currentTimeString: String {
@@ -66,7 +67,10 @@ struct AudioScrubber: View {
                         .fill(Color.accentColor)
                         .frame(width: isDragging ? 20 : 16, height: isDragging ? 20 : 16)
                         .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
-                        .offset(x: (geometry.size.width * progress) - (isDragging ? 10 : 8))
+                        .position(
+                            x: min(max(isDragging ? 10 : 8, (geometry.size.width * progress)), geometry.size.width - (isDragging ? 10 : 8)),
+                            y: isDragging ? 10 : 8
+                        )
                         .animation(.easeInOut(duration: 0.1), value: isDragging)
                 }
                 .contentShape(Rectangle())

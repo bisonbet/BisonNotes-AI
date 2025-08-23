@@ -110,16 +110,38 @@ struct BisonNotesAIApp: App {
     }
     
     private func setupWatchConnectivity() {
+        print("🚀 setupWatchConnectivity() called in BisonNotesAIApp")
+        
         // Initialize watch connectivity for background sync
         let watchManager = WatchConnectivityManager.shared
+        print("📱 Got WatchConnectivityManager.shared instance")
         
         // The sync handler will be set up by AudioRecorderViewModel when it's ready
         // We just need to ensure the WatchConnectivityManager singleton is initialized
         
+        // Note: onWatchSyncRecordingReceived is set up by AudioRecorderViewModel
+        // Don't override it here - let the proper Core Data integration handle it
+        
+        print("📱 Setting up onWatchRecordingSyncCompleted callback in BisonNotesAIApp")
         watchManager.onWatchRecordingSyncCompleted = { recordingId, success in
-            // Confirm sync completion back to watch
-            watchManager.confirmSyncComplete(recordingId: recordingId, success: success)
+            print("📱 onWatchRecordingSyncCompleted called for: \(recordingId), success: \(success)")
+            
+            // Confirm sync completion back to watch with Core Data ID if successful
+            if success {
+                // In a real implementation, we'd get the actual Core Data object ID
+                // For now, we'll use a placeholder to indicate successful Core Data creation
+                let coreDataId = "core_data_\(recordingId.uuidString)"
+                print("📱 About to call confirmSyncComplete with success=true")
+                watchManager.confirmSyncComplete(recordingId: recordingId, success: true, coreDataId: coreDataId)
+                print("✅ Confirmed reliable watch transfer in Core Data: \(recordingId)")
+            } else {
+                print("📱 About to call confirmSyncComplete with success=false")
+                watchManager.confirmSyncComplete(recordingId: recordingId, success: false)
+                print("❌ Failed to confirm watch transfer: \(recordingId)")
+            }
         }
+        
+        print("📱 onWatchRecordingSyncCompleted callback has been set: \(watchManager.onWatchRecordingSyncCompleted != nil)")
         
         print("📱 iPhone watch connectivity initialized for background sync")
     }

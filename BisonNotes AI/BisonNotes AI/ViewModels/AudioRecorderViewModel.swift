@@ -10,6 +10,7 @@ import Foundation
 import SwiftUI
 import Combine
 import CoreLocation
+import UserNotifications
 
 class AudioRecorderViewModel: NSObject, ObservableObject {
     @Published var isRecording = false
@@ -40,6 +41,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     // Failsafe tracking to detect stalled recordings when input disappears
     private var lastRecordedFileSize: Int64 = -1
     private var stalledTickCount: Int = 0
+    
+    // Flag to prevent duplicate recording creation
+    private var recordingBeingProcessed = false
+    
+    // Flag to track if app is backgrounding (to avoid false positive interruptions)
+    private var appIsBackgrounding = false
+    
+    // Timestamp to track when last recovery was attempted (to prevent rapid duplicates)
+    private var lastRecoveryAttempt: Date = Date.distantPast
     
     override init() {
         // Initialize the managers first
@@ -72,12 +82,46 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     @MainActor
     private func setupWatchSyncHandler() {
         let watchManager = WatchConnectivityManager.shared
+        print("🔄 Setting up watch sync handler in AudioRecorderViewModel")
+        
         watchManager.onWatchSyncRecordingReceived = { [weak self] audioData, syncRequest in
+            print("📱 AudioRecorderViewModel received watch sync callback for: \(syncRequest.recordingId)")
             Task { @MainActor in
                 self?.handleWatchSyncRecordingReceived(audioData, syncRequest: syncRequest)
             }
         }
-        print("🔄 AudioRecorderViewModel connected to WatchConnectivityManager sync handler")
+        
+        // Also set up the completion callback here since BisonNotesAIApp setup might not be working
+        print("🔄 Also setting up onWatchRecordingSyncCompleted callback in AudioRecorderViewModel")
+        watchManager.onWatchRecordingSyncCompleted = { recordingId, success in
+            print("📱 onWatchRecordingSyncCompleted called for: \(recordingId), success: \(success)")
+            
+            if success {
+                let coreDataId = "core_data_\(recordingId.uuidString)"
+                print("📱 About to call confirmSyncComplete with success=true")
+                watchManager.confirmSyncComplete(recordingId: recordingId, success: true, coreDataId: coreDataId)
+                print("✅ Confirmed reliable watch transfer in Core Data: \(recordingId)")
+            } else {
+                print("📱 About to call confirmSyncComplete with success=false")
+                watchManager.confirmSyncComplete(recordingId: recordingId, success: false)
+                print("❌ Failed to confirm watch transfer: \(recordingId)")
+            }
+        }
+        
+        print("✅ AudioRecorderViewModel connected to WatchConnectivityManager sync handler")
+        
+        // Verify the callbacks were set
+        if watchManager.onWatchSyncRecordingReceived != nil {
+            print("✅ Callback verification: onWatchSyncRecordingReceived is set")
+        } else {
+            print("❌ Callback verification: onWatchSyncRecordingReceived is nil!")
+        }
+        
+        if watchManager.onWatchRecordingSyncCompleted != nil {
+            print("✅ Callback verification: onWatchRecordingSyncCompleted is set")
+        } else {
+            print("❌ Callback verification: onWatchRecordingSyncCompleted is nil!")
+        }
     }
     
     /// Initialize the view model asynchronously to ensure proper setup
@@ -96,7 +140,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         }
         
         // Don't configure audio session immediately - wait until user starts recording
-        // AudioRecorderViewModel initialized
+        // This prevents interference with other audio apps on app launch
+        print("✅ AudioRecorderViewModel initialized without configuring audio session")
     }
     
     
@@ -160,7 +205,34 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self else { return }
+                self.appIsBackgrounding = false // App is coming back to foreground
+                
+                print("🔄 AudioRecorderViewModel: App foregrounded, restoring audio session...")
+                
+                // Only handle audio session restoration - let BackgroundProcessingManager handle recording recovery
                 try? await self.enhancedAudioSessionManager.restoreAudioSession()
+            }
+        }
+        
+        // Add observer for app backgrounding
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.appIsBackgrounding = true
+            // Don't send notification here - backgrounding is normal and recording continues
+        }
+        
+        // Listen for BackgroundProcessingManager's request to check for unprocessed recordings
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("CheckForUnprocessedRecordings"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            Task {
+                await self.checkForUnprocessedRecording()
             }
         }
     }
@@ -227,12 +299,23 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
                 // Notify UI to refresh recordings list
                 NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
                 
-                // Recording sync completed successfully
+                // Recording sync completed successfully - notify the completion callback
+                await MainActor.run {
+                    let watchManager = WatchConnectivityManager.shared
+                    print("🔍 About to call onWatchRecordingSyncCompleted - callback is nil: \(watchManager.onWatchRecordingSyncCompleted == nil)")
+                    watchManager.onWatchRecordingSyncCompleted?(syncRequest.recordingId, true)
+                    print("✅ Called completion callback for successful watch recording: \(syncRequest.recordingId)")
+                }
                 
             } catch {
                 print("❌ Failed to create Core Data entry for watch recording: \(error)")
                 
-                // Recording sync failed
+                // Recording sync failed - notify the completion callback
+                await MainActor.run {
+                    let watchManager = WatchConnectivityManager.shared
+                    watchManager.onWatchRecordingSyncCompleted?(syncRequest.recordingId, false)
+                    print("❌ Called completion callback for failed watch recording: \(syncRequest.recordingId)")
+                }
             }
         }
     }
@@ -326,13 +409,22 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		switch type {
 		case .began:
 			if isRecording {
-				audioRecorder?.stop()
-				isRecording = false
-				stopRecordingTimer()
-				errorMessage = "Recording stopped due to audio interruption."
+				print("🎙️ Audio interruption began - stopping recording and attempting recovery")
+				handleInterruptedRecording(reason: "Audio session was interrupted by another app")
 			}
 		case .ended:
-			break
+			// Check if we should resume recording after interruption ends
+			if let options = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+				let interruptionOptions = AVAudioSession.InterruptionOptions(rawValue: options)
+				if interruptionOptions.contains(.shouldResume) {
+					print("🔄 Interruption ended - system suggests resuming")
+					// Note: We don't auto-resume recording as the user should explicitly start again
+					errorMessage = "Microphone is available again. Previous recording was saved."
+				} else {
+					print("⚠️ Interruption ended but resume not recommended")
+					errorMessage = "Interruption ended. Previous recording was saved."
+				}
+			}
 		@unknown default:
 			break
 		}
@@ -349,20 +441,400 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		case .oldDeviceUnavailable, .categoryChange:
 			// Input likely lost (e.g., Bluetooth mic disconnected)
 			if isRecording {
-				audioRecorder?.stop()
-				isRecording = false
-				stopRecordingTimer()
-				errorMessage = "Recording stopped because the microphone became unavailable."
+				print("🎙️ Audio route changed - microphone unavailable, attempting recording recovery")
+				handleInterruptedRecording(reason: "Microphone became unavailable (device disconnected or changed)")
 			}
 		default:
 			break
 		}
 	}
+	
+	private func handleInterruptedRecording(reason: String) {
+		print("🚨 Handling interrupted recording: \(reason)")
+		
+		// Prevent duplicate processing
+		guard !recordingBeingProcessed else {
+			print("⚠️ Recording already being processed, skipping duplicate interruption handling")
+			return
+		}
+		recordingBeingProcessed = true
+		
+		// Stop the recorder and timer immediately
+		audioRecorder?.stop()
+		isRecording = false
+		stopRecordingTimer()
+		
+		// Clear failsafe tracking
+		lastRecordedFileSize = -1
+		stalledTickCount = 0
+		
+		// Send immediate notification about the interruption (this is a real mic takeover)
+		if let recordingURL = recordingURL {
+			Task {
+				await sendInterruptionNotificationImmediately(reason: reason, recordingURL: recordingURL)
+				await recoverInterruptedRecording(url: recordingURL, reason: reason)
+			}
+		}
+		
+		// Update error message to inform user
+		errorMessage = "Recording stopped: \(reason). The recording has been saved."
+		
+		// Deactivate audio session to restore high-quality music playback
+		Task {
+			try? await enhancedAudioSessionManager.deactivateSession()
+		}
+		
+		// Clean up recorder
+		audioRecorder = nil
+	}
+	
+	private func recoverInterruptedRecording(url: URL, reason: String) async {
+		print("💾 Attempting to recover interrupted recording at: \(url.path)")
+		
+		// Check if the file exists and has meaningful content
+		guard FileManager.default.fileExists(atPath: url.path) else {
+			print("❌ No recording file found for recovery")
+			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
+			return
+		}
+		
+		let fileSize = getFileSize(url: url)
+		guard fileSize > 1024 else { // Must be at least 1KB to be meaningful
+			print("❌ Recording file too small to recover (\(fileSize) bytes)")
+			// Clean up the tiny file
+			try? FileManager.default.removeItem(at: url)
+			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
+			return
+		}
+		
+		let duration = getRecordingDuration(url: url)
+		guard duration > 1.0 else { // Must be at least 1 second
+			print("❌ Recording duration too short to recover (\(duration) seconds)")
+			// Clean up the short recording
+			try? FileManager.default.removeItem(at: url)
+			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
+			return
+		}
+		
+		print("✅ Recording has meaningful content: \(fileSize) bytes, \(duration) seconds")
+		
+		// Save location data if available
+		saveLocationData(for: url)
+		
+		// Add the recording using workflow manager for proper UUID consistency
+		if let workflowManager = workflowManager {
+			let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+			
+			// Use original filename for recording name to maintain consistency
+			let originalFilename = url.deletingPathExtension().lastPathComponent
+			let displayName = "\(originalFilename) (interrupted)"
+			
+			// Core Data operations should happen on main thread
+			await MainActor.run {
+				// Create recording entry using original URL to maintain file consistency
+				let recordingId = workflowManager.createRecording(
+					url: url,
+					name: displayName,
+					date: Date(),
+					fileSize: fileSize,
+					duration: duration,
+					quality: quality,
+					locationData: currentLocationData
+				)
+				
+				print("✅ Interrupted recording recovered with workflow manager, ID: \(recordingId)")
+				
+				// Post notification to refresh UI
+				NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+				
+				// Reset processing flag
+				recordingBeingProcessed = false
+			}
+			
+			// Don't send additional notification - already sent immediate notification
+			
+		} else {
+			print("❌ WorkflowManager not set - interrupted recording not saved to database!")
+			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
+			
+			// Reset processing flag even on failure
+			await MainActor.run {
+				recordingBeingProcessed = false
+			}
+		}
+	}
+	
+	private func sendInterruptionNotification(success: Bool, reason: String, filename: String) async {
+		let title = success ? "Recording Saved" : "Recording Lost"
+		let body = success 
+			? "Your recording was interrupted but has been saved: \(filename.prefix(30))..."
+			: "Recording was interrupted and could not be saved: \(reason)"
+		
+		// Send notification using UNUserNotificationCenter
+		let center = UNUserNotificationCenter.current()
+		
+		// Check/request permission
+		let settings = await center.notificationSettings()
+		var hasPermission = settings.authorizationStatus == .authorized
+		
+		if settings.authorizationStatus == .notDetermined {
+			do {
+				hasPermission = try await center.requestAuthorization(options: [.alert, .badge, .sound])
+			} catch {
+				print("❌ Error requesting notification permission: \(error)")
+				return
+			}
+		}
+		
+		guard hasPermission else {
+			print("📱 Notification permission denied - cannot send interruption notification")
+			return
+		}
+		
+		// Create notification content
+		let content = UNMutableNotificationContent()
+		content.title = title
+		content.body = body
+		content.sound = .default
+		content.userInfo = [
+			"type": "recording_interruption",
+			"success": success,
+			"reason": reason,
+			"filename": filename
+		]
+		
+		// Create notification request
+		let request = UNNotificationRequest(
+			identifier: "recording_interruption_\(UUID().uuidString)",
+			content: content,
+			trigger: nil // Immediate delivery
+		)
+		
+		do {
+			try await center.add(request)
+			print("📱 Sent interruption notification: \(title) - \(body)")
+		} catch {
+			print("❌ Failed to send interruption notification: \(error)")
+		}
+	}
+	
+	private func checkForUnprocessedRecording() async {
+		print("🔍 checkForUnprocessedRecording called - recordingBeingProcessed: \(recordingBeingProcessed)")
+		
+		// Prevent duplicate recovery attempts (both flag and time-based)
+		let now = Date()
+		if recordingBeingProcessed || now.timeIntervalSince(lastRecoveryAttempt) < 2.0 {
+			print("🔍 Recovery already in progress or attempted recently, skipping duplicate attempt")
+			return
+		}
+		
+		lastRecoveryAttempt = now
+		
+		// Check if there's a recording file that exists but wasn't processed
+		guard let recordingURL = recordingURL else { 
+			print("🔍 No recording URL to check")
+			return 
+		}
+		
+		print("🔍 Checking recording URL: \(recordingURL.path)")
+		
+		// Check if file exists on filesystem
+		guard FileManager.default.fileExists(atPath: recordingURL.path) else {
+			print("🔍 No unprocessed recording file found")
+			return
+		}
+		
+		let fileSize = getFileSize(url: recordingURL)
+		guard fileSize > 1024 else { // Must be at least 1KB
+			print("🔍 Found recording file but it's too small to process (\(fileSize) bytes)")
+			return
+		}
+		
+		// Check if this recording already exists in the database
+		let existingRecording: RecordingEntry? = if let appCoordinator = appCoordinator {
+			await MainActor.run {
+				appCoordinator.getRecording(url: recordingURL)
+			}
+		} else {
+			nil as RecordingEntry?
+		}
+		
+		// Exit if recording already exists
+		if let existingRecording = existingRecording {
+			print("🔍 Recording already exists in database: \(existingRecording.recordingName ?? "unknown")")
+			print("🔍 Recording already processed, clearing recording URL")
+			await MainActor.run {
+				self.recordingURL = nil // Clear so we don't keep checking
+			}
+			return
+		}
+		
+		// Set flag to prevent duplicate processing
+		recordingBeingProcessed = true
+		
+		print("🔄 Found unprocessed recording from backgrounding, recovering it now")
+		
+		// Process the unprocessed recording
+		await recoverUnprocessedRecording(url: recordingURL)
+	}
+	
+	private func recoverUnprocessedRecording(url: URL) async {
+		print("💾 Recovering unprocessed recording at: \(url.path)")
+		
+		let fileSize = getFileSize(url: url)
+		let duration = getRecordingDuration(url: url)
+		
+		print("✅ Unprocessed recording has content: \(fileSize) bytes, \(duration) seconds")
+		
+		// Save location data if available
+		saveLocationData(for: url)
+		
+		// Add the recording using workflow manager
+		if let workflowManager = workflowManager {
+			let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+			
+			// Use original filename for recording name
+			let originalFilename = url.deletingPathExtension().lastPathComponent
+			let displayName = "\(originalFilename) (recovered from background)"
+			
+			// Core Data operations should happen on main thread
+			await MainActor.run {
+				let recordingId = workflowManager.createRecording(
+					url: url,
+					name: displayName,
+					date: Date(),
+					fileSize: fileSize,
+					duration: duration,
+					quality: quality,
+					locationData: currentLocationData
+				)
+				
+				print("✅ Unprocessed recording recovered with workflow manager, ID: \(recordingId)")
+				
+				// Post notification to refresh UI
+				NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+				
+				// Clear the recording URL since it's now processed
+				self.recordingURL = nil
+				self.recordingBeingProcessed = false
+			}
+			
+			// Send notification to user about recovery (with slight delay to improve visibility)
+			await sendRecoveryNotification(filename: displayName)
+		} else {
+			print("❌ WorkflowManager not set - cannot recover unprocessed recording!")
+		}
+	}
+	
+	private func sendRecoveryNotification(filename: String) async {
+		let title = "Recording Recovered"
+		let body = "Found and saved your recording from when the app was in background: \(filename.prefix(30))..."
+		
+		// Check app state for notification timing
+		let appState = await MainActor.run { UIApplication.shared.applicationState }
+		print("📱 App state when sending notification: \(appState.rawValue) (0=active, 1=inactive, 2=background)")
+		
+		// Use the proven BackgroundProcessingManager notification system
+		_ = await MainActor.run {
+			Task {
+				// Add a small delay to increase chances of notification being visible
+				try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+				
+				let backgroundManager = BackgroundProcessingManager.shared
+				await backgroundManager.sendNotification(
+					title: title,
+					body: body,
+					identifier: "recording_recovery_\(UUID().uuidString)",
+					userInfo: [
+						"type": "recovery",
+						"filename": filename
+					]
+				)
+				
+				print("📱 Sent recovery notification via BackgroundProcessingManager: \(title)")
+			}
+		}
+	}
+	
+	private func sendInterruptionNotificationImmediately(reason: String, recordingURL: URL) async {
+		print("📱 Sending immediate interruption notification for mic takeover")
+		
+		let title = "Recording Interrupted"
+		let body = "Your recording was stopped by another app but has been saved: \(recordingURL.lastPathComponent)"
+		
+		_ = await MainActor.run {
+			Task {
+				let backgroundManager = BackgroundProcessingManager.shared
+				await backgroundManager.sendNotification(
+					title: title,
+					body: body,
+					identifier: "recording_interrupted_\(UUID().uuidString)",
+					userInfo: [
+						"type": "recording_interrupted",
+						"reason": reason,
+						"filename": recordingURL.lastPathComponent
+					]
+				)
+				
+				print("📱 Sent immediate interruption notification: \(title)")
+			}
+		}
+	}
+	
+	private func scheduleRecordingInterruptedNotification(recordingURL: URL) async {
+		print("📱 Scheduling notification for interrupted recording while app is backgrounded")
+		
+		// Send notification while we're still in background
+		let title = "Recording Interrupted"
+		let body = "Your recording was interrupted when the app went to background. Don't worry - it will be saved when you return to the app!"
+		
+		_ = await MainActor.run {
+			Task {
+				// Small delay to ensure we're fully backgrounded
+				try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+				
+				let backgroundManager = BackgroundProcessingManager.shared
+				await backgroundManager.sendNotification(
+					title: title,
+					body: body,
+					identifier: "recording_interrupted_\(UUID().uuidString)",
+					userInfo: [
+						"type": "recording_interrupted",
+						"filename": recordingURL.lastPathComponent
+					]
+				)
+				
+				print("📱 Sent background interruption notification: \(title)")
+			}
+		}
+	}
+	
+	private func generateInterruptedRecordingDisplayName(reason: String) -> String {
+		let formatter = DateFormatter()
+		formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+		let timestamp = formatter.string(from: Date())
+		
+		// Create a descriptive name based on the interruption reason
+		let reasonPrefix = if reason.contains("interrupted by another app") {
+			"interrupted"
+		} else if reason.contains("unavailable") || reason.contains("disconnected") {
+			"device-lost"
+		} else {
+			"stopped"
+		}
+		
+		return "apprecording-\(reasonPrefix)-\(timestamp)"
+	}
     
     func fetchInputs() async {
         do {
+            // Temporarily configure session to get accurate input list
             try await enhancedAudioSessionManager.configureMixedAudioSession()
             let inputs = enhancedAudioSessionManager.getAvailableInputs()
+            
+            // Immediately deactivate to avoid interfering with other audio
+            try await enhancedAudioSessionManager.deactivateSession()
+            
             await MainActor.run {
                 availableInputs = inputs
                 if let firstInput = inputs.first {
@@ -371,7 +843,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             }
         } catch {
             await MainActor.run {
-                errorMessage = "Failed to configure audio session: \(error.localizedDescription)"
+                errorMessage = "Failed to fetch audio inputs: \(error.localizedDescription)"
             }
         }
     }
@@ -381,7 +853,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         
         Task {
             do {
+                // Temporarily configure session to set preferred input
+                try await enhancedAudioSessionManager.configureMixedAudioSession()
                 try await enhancedAudioSessionManager.setPreferredInput(input)
+                // Keep session active for now since user likely will record soon
             } catch {
                 errorMessage = "Failed to set preferred input: \(error.localizedDescription)"
             }
@@ -532,28 +1007,50 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         lastRecordedFileSize = -1
         stalledTickCount = 0
         
+        // Reset processing flag when manually stopping
+        recordingBeingProcessed = false
+        
+        // Deactivate audio session to restore high-quality music playback
+        Task {
+            try? await enhancedAudioSessionManager.deactivateSession()
+        }
+        
         // Notify watch of recording state change
         notifyWatchOfRecordingStateChange()
-        
-        // Watch recording state reset removed
     }
     
     func playRecording(url: URL) {
         Task {
             do {
                 try await enhancedAudioSessionManager.configurePlaybackSession()
-                audioPlayer = try AVAudioPlayer(contentsOf: url)
-                audioPlayer?.delegate = self
-                audioPlayer?.play()
+                
+                // Store the current seek position before creating new player
+                let seekPosition = await MainActor.run { playingTime }
+                
+                // Create player on current thread (where we can use try)
+                let player = try AVAudioPlayer(contentsOf: url)
                 
                 await MainActor.run {
+                    audioPlayer = player
+                    audioPlayer?.delegate = self
+                    
+                    // If we had a seek position, restore it
+                    if seekPosition > 0 {
+                        audioPlayer?.currentTime = seekPosition
+                        playingTime = seekPosition
+                    } else {
+                        playingTime = 0
+                    }
+                    
+                    audioPlayer?.play()
                     isPlaying = true
-                    playingTime = 0
+                    startPlayingTimer()
                 }
-                startPlayingTimer()
                 
             } catch {
-                errorMessage = "Failed to play recording: \(error.localizedDescription)"
+                await MainActor.run {
+                    errorMessage = "Failed to play recording: \(error.localizedDescription)"
+                }
             }
         }
     }
@@ -562,6 +1059,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         audioPlayer?.stop()
         isPlaying = false
         stopPlayingTimer()
+        
+        // Deactivate audio session to restore other audio apps
+        Task {
+            try? await enhancedAudioSessionManager.deactivateSession()
+        }
     }
     
     // MARK: - Public Watch Interface
@@ -598,11 +1100,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                // Failsafe: if the underlying recorder stopped, sync UI state
-                if self.isRecording, let recorder = self.audioRecorder, !recorder.isRecording {
-                    self.isRecording = false
-                    self.stopRecordingTimer()
-                    self.errorMessage = "Recording stopped because the microphone became unavailable."
+                // Failsafe: if the underlying recorder stopped, handle interrupted recording
+                // But DON'T trigger if app is backgrounding - recording should continue in background
+                if self.isRecording, let recorder = self.audioRecorder, !recorder.isRecording && !self.appIsBackgrounding {
+                    print("🚨 Failsafe: Detected recorder stopped unexpectedly (NOT due to backgrounding)")
+                    self.handleInterruptedRecording(reason: "Microphone became unavailable or recording was interrupted")
                     return
                 }
                 // Failsafe: detect stalled writes (no bytes changing for several seconds)
@@ -615,10 +1117,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
                         self.lastRecordedFileSize = currentSize
                     }
                     if self.stalledTickCount >= 3 { // ~3 seconds of no data
-                        self.audioRecorder?.stop()
-                        self.isRecording = false
-                        self.stopRecordingTimer()
-                        self.errorMessage = "Recording stopped due to no audio data being received."
+                        print("🚨 Failsafe: Detected stalled recording (no new data for 3+ seconds)")
+                        self.handleInterruptedRecording(reason: "No audio data being received (microphone may have been taken by another app)")
                         return
                     }
                 }
@@ -633,10 +1133,17 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     }
     
     private func startPlayingTimer() {
+        stopPlayingTimer() // Ensure no duplicate timers
+        
         playingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
-                guard let self = self, let player = self.audioPlayer else { return }
-                self.playingTime = player.currentTime
+                guard let self = self, let player = self.audioPlayer, self.isPlaying else { 
+                    return 
+                }
+                let newTime = player.currentTime
+                if newTime != self.playingTime {
+                    self.playingTime = newTime
+                }
             }
         }
     }
@@ -716,8 +1223,22 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
     nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
         Task {
             await MainActor.run {
+                // Check if recording is already being processed by interruption handler
+                // But allow processing if app is backgrounding (normal completion scenario)
+                if recordingBeingProcessed && !appIsBackgrounding {
+                    print("⚠️ Recording already processed by interruption handler, skipping normal completion")
+                    recordingBeingProcessed = false // Reset flag
+                    return
+                }
+                
                 if flag {
-                    print("Recording finished successfully")
+                    if appIsBackgrounding {
+                        print("Recording finished successfully during backgrounding - processing normally")
+                    } else {
+                        print("Recording finished successfully")
+                    }
+                    recordingBeingProcessed = true // Set flag to prevent duplicate processing
+                    
                     if let recordingURL = recordingURL {
                         saveLocationData(for: recordingURL)
                         
@@ -751,8 +1272,22 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                             print("❌ WorkflowManager not set - recording not saved to database!")
                         }
                     }
+                    
+                    // Reset processing flag after successful completion
+                    recordingBeingProcessed = false
+                    
+                    // Deactivate audio session to restore high-quality music playback
+                    Task {
+                        try? await enhancedAudioSessionManager.deactivateSession()
+                    }
                 } else {
                     errorMessage = "Recording failed"
+                    recordingBeingProcessed = false // Reset flag on failure too
+                    
+                    // Also deactivate session on failure
+                    Task {
+                        try? await enhancedAudioSessionManager.deactivateSession()
+                    }
                 }
             }
         }
@@ -950,6 +1485,11 @@ extension AudioRecorderViewModel: AVAudioPlayerDelegate {
             await MainActor.run {
                 isPlaying = false
                 stopPlayingTimer()
+                
+                // Deactivate audio session when playback finishes to restore other audio apps
+                Task {
+                    try? await enhancedAudioSessionManager.deactivateSession()
+                }
             }
         }
     }

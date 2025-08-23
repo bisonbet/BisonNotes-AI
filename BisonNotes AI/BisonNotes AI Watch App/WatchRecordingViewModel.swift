@@ -167,6 +167,9 @@ class WatchRecordingViewModel: ObservableObject {
         // Set up notification observers for watch connectivity responses
         setupNotificationObservers()
         
+        // Set up app lifecycle observers for recording protection
+        setupAppLifecycleObservers()
+        
         // Bind audio manager properties
         audioManager.$recordingTime
             .receive(on: DispatchQueue.main)
@@ -176,7 +179,10 @@ class WatchRecordingViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] recordings in
                 self?.localRecordings = recordings
-                self?.pendingSyncCount = recordings.filter { $0.syncStatus.needsSync }.count
+                // Include both local pending and reliable transfers in count
+                let localPendingCount = recordings.filter { $0.syncStatus.needsSync }.count
+                let reliablePendingCount = self?.connectivityManager.pendingReliableTransfersCount ?? 0
+                self?.pendingSyncCount = localPendingCount + reliablePendingCount
             }
             .store(in: &cancellables)
         
@@ -217,6 +223,35 @@ class WatchRecordingViewModel: ObservableObject {
         connectivityManager.$audioTransferProgress
             .receive(on: DispatchQueue.main)
             .assign(to: &$transferProgress)
+    }
+    
+    private func setupAppLifecycleObservers() {
+        #if canImport(WatchKit)
+        // Listen for app lifecycle events to protect recording sessions
+        NotificationCenter.default.publisher(for: WKExtension.applicationWillResignActiveNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.handleAppWillResignActive()
+                }
+            }
+            .store(in: &cancellables)
+        
+        NotificationCenter.default.publisher(for: WKExtension.applicationDidBecomeActiveNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.handleAppDidBecomeActive()
+                }
+            }
+            .store(in: &cancellables)
+        
+        NotificationCenter.default.publisher(for: WKExtension.applicationDidEnterBackgroundNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.handleAppDidEnterBackground()
+                }
+            }
+            .store(in: &cancellables)
+        #endif
     }
     
     private func setupNotificationObservers() {
@@ -510,6 +545,24 @@ class WatchRecordingViewModel: ObservableObject {
         }
     }
     
+    /// Add location data to sync request with improved timing logic
+    private func addLocationDataToSync(syncData: inout [String: Any]) {
+        // Check if we have recording start location and if it's still reasonably fresh
+        if let startLocation = recordingStartLocation {
+            let locationAge = Date().timeIntervalSince(startLocation.timestamp)
+            
+            // Use more generous time window for longer recordings (30 minutes instead of 5)
+            if locationAge < 1800 { // 30 minutes
+                syncData["locationData"] = startLocation.toDictionary()
+                print("📍⌚ Including recording start location in sync (age: \(Int(locationAge))s)")
+            } else {
+                print("📍⌚ Recording start location too old (\(Int(locationAge))s), not including")
+            }
+        } else {
+            print("📍⌚ No location data available for sync")
+        }
+    }
+    
     /// Async wrapper for audio recording startup
     private func startRecordingAsync() async -> Bool {
         if !audioManager.startRecording() {
@@ -636,16 +689,25 @@ class WatchRecordingViewModel: ObservableObject {
         recordingState = .processing
         recordingSessionId = nil
         
-        // Check if iPhone is available for immediate sync
+        // The reliable transfer system will handle sync automatically
+        // This includes retry on connection restore and confirmation before deletion
+        print("⌚ Recording will be reliably synced to iPhone")
+        
+        // Start sync (now using reliable transfer system)
         if connectivityManager.connectionState.isConnected && isPhoneAppActive {
-            // Start sync automatically
+            // Start sync automatically - reliable system will handle failures
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.syncRecording(metadata)
             }
         } else {
-            // iPhone not available, proceed with local recording
+            // iPhone not available - reliable system will retry when connected
             recordingState = .idle
-            initiateLocalRecording()
+            print("⌚ Recording queued for reliable sync when iPhone is available")
+            
+            // Still attempt sync to add to reliable queue
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.syncRecording(metadata)
+            }
         }
     }
     
@@ -796,19 +858,8 @@ class WatchRecordingViewModel: ObservableObject {
             "checksumMD5": checksum ?? ""
         ]
         
-        // Add location data if available from recent recording
-        if let locationData = recordingStartLocation {
-            // Check if this location data is recent (within last 5 minutes)
-            let locationAge = Date().timeIntervalSince(locationData.timestamp)
-            if locationAge < 300 { // 5 minutes
-                syncData["locationData"] = locationData.toDictionary()
-                print("📍⌚ Including recent location data in sync request (age: \(Int(locationAge))s)")
-            } else {
-                print("📍⌚ Location data too old (\(Int(locationAge))s), not including")
-            }
-        } else {
-            print("📍⌚ No location data available for sync")
-        }
+        // Add location data with improved timing logic
+        addLocationDataToSync(syncData: &syncData)
         
         connectivityManager.sendRecordingCommand(.syncRequest, additionalInfo: syncData)
         
@@ -880,9 +931,9 @@ class WatchRecordingViewModel: ObservableObject {
                       let currentOp = self.currentSyncOperation,
                       currentOp.recording.id == recording.id else { return }
                 
-                print("⌚ Core Data confirmation timeout after \(coreDataTimeout)s - assuming sync completed successfully")
-                // File transfer completed, assume iPhone will process in background
-                self.handleSyncComplete(for: recording)
+                print("❌ Core Data confirmation timeout after \(coreDataTimeout)s - sync failed")
+                // DO NOT assume success on timeout - this causes data loss!
+                self.handleSyncFailure("iPhone Core Data confirmation timeout - file may not have been processed")
             }
         }
     }
@@ -898,17 +949,19 @@ class WatchRecordingViewModel: ObservableObject {
         print("✅ Sync completed successfully for: \(recording.filename)")
         transferProgress = 1.0
         
-        // Update recording status to synced and delete from local storage
+        // Update recording status to synced but DO NOT delete the file
+        // File deletion is handled by the reliable transfer system only
         let storage = audioManager.getRecordingStorage()
         storage.updateSyncStatus(recording.id, status: .synced)
         
-        // Delete the recording from local storage since it's now safely on the iPhone
-        storage.deleteRecording(recording)
-        print("🗑️ Deleted synced recording from watch: \(recording.filename)")
+        print("✅ Recording marked as synced, awaiting reliable transfer confirmation before deletion")
         
         // Cleanup
         currentSyncOperation = nil
         isTransferringAudio = false
+        
+        // Clear location data since this recording has been successfully synced
+        recordingStartLocation = nil
         
         // Provide success feedback
         feedbackManager.feedbackForTransferProgress(completed: true)
@@ -1112,7 +1165,9 @@ class WatchRecordingViewModel: ObservableObject {
         // Update progress every 2 seconds with realistic curve
         progressSimulationTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            self.updateFileTransferProgress(estimatedDuration: estimatedTransferTime)
+            Task { @MainActor in
+                self.updateFileTransferProgress(estimatedDuration: estimatedTransferTime)
+            }
         }
     }
     
@@ -1214,6 +1269,49 @@ class WatchRecordingViewModel: ObservableObject {
         print("⌚ Battery level updated: \(Int(batteryLevel * 100))%")
         #endif
     }
+    
+    // MARK: - App Lifecycle Handlers
+    
+    /// Handle app will resign active - protect ongoing recordings
+    private func handleAppWillResignActive() {
+        if recordingState == .recording || recordingState == .paused {
+            print("⌚ App will resign active during recording - protecting session")
+            // Ensure audio session remains active for background recording
+            audioManager.maintainBackgroundRecording()
+        } else {
+            print("⌚ App will resign active (no recording)")
+        }
+    }
+    
+    /// Handle app became active - resume normal operations
+    private func handleAppDidBecomeActive() {
+        if recordingState == .recording || recordingState == .paused {
+            print("⌚ App became active during recording - resuming UI and checking session")
+            
+            // Verify recording session is still healthy
+            if !audioManager.performHealthCheck() {
+                print("⚠️ Recording session compromised after system alert")
+                showError("Recording was interrupted by system alert")
+            }
+            
+            // Update UI state
+            updateBatteryLevel()
+        } else {
+            print("⌚ App became active (normal)")
+            updateBatteryLevel()
+        }
+    }
+    
+    /// Handle app entering background - minimize operations during recording
+    private func handleAppDidEnterBackground() {
+        if recordingState == .recording || recordingState == .paused {
+            print("⌚ App entering background during recording - minimal operations")
+            // Save critical state but don't interrupt recording
+            audioManager.prepareForBackgroundRecording()
+        } else {
+            print("⌚ App entering background (normal)")
+        }
+    }
 }
 
 // MARK: - Supporting Types
@@ -1226,6 +1324,7 @@ struct WatchSyncOperation {
         self.recording = recording
         self.startedAt = Date()
     }
+    
 }
 
 // MARK: - Preview Support

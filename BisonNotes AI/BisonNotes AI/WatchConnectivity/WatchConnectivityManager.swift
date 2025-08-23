@@ -236,10 +236,24 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                 }
             }
             
-            // Create Core Data entry via callback
-            onWatchSyncRecordingReceived?(audioData, syncRequest)
+            // Log reliable transfer info if available
+            if let transferType = metadata["transferType"] as? String,
+               transferType == "reliable_recording",
+               let retryCount = metadata["retryCount"] as? Int {
+                print("🔄 Processing reliable transfer (retry #\(retryCount)): \(syncRequest.filename)")
+            }
             
-            // Cleanup will happen in handleSyncComplete
+            // Create Core Data entry via callback
+            print("📱 About to call onWatchSyncRecordingReceived callback for: \(syncRequest.recordingId)")
+            if onWatchSyncRecordingReceived != nil {
+                print("📱 Callback exists, calling it now")
+                onWatchSyncRecordingReceived?(audioData, syncRequest)
+            } else {
+                print("❌ onWatchSyncRecordingReceived callback is nil! File will not be processed.")
+                handleSyncFailure(recordingId, reason: "callback_not_set")
+            }
+            
+            // Cleanup and confirmation will happen in confirmSyncComplete
             
         } catch {
             print("❌ Failed to read received file: \(error)")
@@ -247,22 +261,57 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         }
     }
     
-    /// Confirm sync completion to watch
-    func confirmSyncComplete(recordingId: UUID, success: Bool) {
+    /// Confirm sync completion to watch with enhanced reliability
+    func confirmSyncComplete(recordingId: UUID, success: Bool, coreDataId: String? = nil) {
         if success {
             print("✅ Sync completed successfully for: \(recordingId)")
             
-            // Send confirmation to watch
-            sendRecordingCommand(.syncComplete, additionalInfo: [
+            // Send enhanced confirmation to watch
+            var confirmationInfo: [String: Any] = [
                 "recordingId": recordingId.uuidString,
+                "confirmed": true,
                 "timestamp": Date().timeIntervalSince1970
-            ])
+            ]
+            
+            if let coreDataId = coreDataId {
+                confirmationInfo["coreDataId"] = coreDataId
+                print("📊 Reliable transfer confirmed in Core Data: \(coreDataId)")
+            }
+            
+            // Send confirmation with retry logic for connection issues
+            sendConfirmationWithRetry(confirmationInfo: confirmationInfo, recordingId: recordingId)
             
             // Cleanup
             cleanupSyncOperation(recordingId)
             
         } else {
             handleSyncFailure(recordingId, reason: "core_data_error")
+        }
+    }
+    
+    /// Send confirmation with retry logic for connection issues
+    private func sendConfirmationWithRetry(confirmationInfo: [String: Any], recordingId: UUID, attempt: Int = 1) {
+        let maxAttempts = 3
+        
+        print("📱 Sending confirmation attempt \(attempt)/\(maxAttempts) for: \(recordingId)")
+        
+        // Try to send the confirmation
+        sendRecordingCommand(.syncComplete, additionalInfo: confirmationInfo)
+        
+        // If this isn't the last attempt, schedule a retry
+        if attempt < maxAttempts {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                // Only retry if connection is still unstable
+                if let session = self.session, session.isReachable {
+                    print("📱 Connection restored, skipping retry for: \(recordingId)")
+                    return
+                }
+                
+                print("📱 Connection still unstable, retrying confirmation for: \(recordingId)")
+                self.sendConfirmationWithRetry(confirmationInfo: confirmationInfo, recordingId: recordingId, attempt: attempt + 1)
+            }
+        } else {
+            print("⚠️ Max confirmation attempts reached for: \(recordingId)")
         }
     }
     
@@ -1247,13 +1296,16 @@ extension WatchConnectivityManager: WCSessionDelegate {
         
         DispatchQueue.main.async {
             // Check if this is a sync protocol file transfer
-            if let transferType = file.metadata?["transferType"] as? String,
-               transferType == "complete_recording" {
-                // New sync protocol file transfer
-                self.handleWatchRecordingReceived(fileURL: file.fileURL, metadata: file.metadata ?? [:])
+            if let transferType = file.metadata?["transferType"] as? String {
+                if transferType == "complete_recording" || transferType == "reliable_recording" {
+                    // Sync protocol file transfer (legacy or reliable)
+                    self.handleWatchRecordingReceived(fileURL: file.fileURL, metadata: file.metadata ?? [:])
+                } else {
+                    print("⚠️ Unknown transfer type: \(transferType)")
+                }
             } else {
                 // Legacy file transfer no longer supported - only sync protocol
-                print("⚠️ Received legacy file transfer - ignoring. Use sync protocol instead.")
+                print("⚠️ Received file transfer without transfer type - ignoring")
             }
         }
     }

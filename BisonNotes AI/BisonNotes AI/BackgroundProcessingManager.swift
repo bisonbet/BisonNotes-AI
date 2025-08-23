@@ -1481,6 +1481,9 @@ class BackgroundProcessingManager: ObservableObject {
         // Resume processing of any interrupted jobs
         await resumeInterruptedJobs()
         
+        // Post notification for other components to check for unprocessed recordings
+        NotificationCenter.default.post(name: NSNotification.Name("CheckForUnprocessedRecordings"), object: nil)
+        
         // Resume processing if needed
         if currentJob == nil && !activeJobs.filter({ $0.status == .queued }).isEmpty {
             print("🚀 Resuming queued background processing jobs")
@@ -1795,7 +1798,7 @@ class BackgroundProcessingManager: ObservableObject {
         print("📱 Notification center configured (permission request deferred)")
     }
     
-    private func sendNotification(title: String, body: String, identifier: String? = nil, userInfo: [String: Any] = [:]) async {
+    func sendNotification(title: String, body: String, identifier: String? = nil, userInfo: [String: Any] = [:]) async {
         // Check if we have notification permission first
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()

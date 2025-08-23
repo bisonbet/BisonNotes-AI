@@ -228,6 +228,47 @@ class WatchAudioManager: NSObject, ObservableObject {
         }
     }
     
+    /// Maintain recording session during background/system alerts
+    func maintainBackgroundRecording() {
+        guard isRecording || isPaused else { return }
+        
+        print("⌚ Maintaining background recording session")
+        
+        do {
+            // Ensure audio session remains active with high priority
+            try audioSession?.setActive(true, options: [])
+            
+            // Keep the recording process alive during system alerts
+            if let recorder = audioRecorder, recorder.isRecording {
+                print("⌚ Audio recorder confirmed active during background transition")
+            } else if isPaused {
+                print("⌚ Recording is paused, maintaining session state")
+            }
+        } catch {
+            print("⚠️ Failed to maintain background audio session: \(error)")
+            // Don't emergency stop - let the user decide what to do
+        }
+    }
+    
+    /// Prepare for background recording state
+    func prepareForBackgroundRecording() {
+        guard isRecording || isPaused else { return }
+        
+        print("⌚ Preparing for background recording state")
+        
+        // Ensure audio session is configured for background operation
+        do {
+            // Set category with background capability
+            try audioSession?.setCategory(.record, mode: .default, options: [.allowBluetooth, .mixWithOthers])
+            try audioSession?.setActive(true, options: [])
+            
+            print("⌚ Background recording prepared successfully")
+        } catch {
+            print("⚠️ Failed to prepare background recording: \(error)")
+            // Log but don't stop - recording may continue anyway
+        }
+    }
+    
     /// Check recording health and handle issues
     func performHealthCheck() -> Bool {
         // Check battery level

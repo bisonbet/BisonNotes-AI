@@ -37,10 +37,12 @@ struct AudioPlayerView: View {
                     currentTime: recorderVM.playingTime,
                     duration: duration,
                     onSeek: { time in
+                        print("🎵 AudioPlayerView: Seeking to time: \(time)")
                         recorderVM.seekToTime(time)
                     }
                 )
                 .padding(.horizontal)
+                // Remove debug logging - scrubber working properly now
             } else {
                 // Loading state
                 VStack {
@@ -131,6 +133,7 @@ struct AudioPlayerView: View {
     }
     
     private func togglePlayback() {
+        print("🎵 AudioPlayerView: Toggle playback - currently playing: \(recorderVM.isPlaying)")
         if recorderVM.isPlaying {
             recorderVM.stopPlaying()
         } else {
