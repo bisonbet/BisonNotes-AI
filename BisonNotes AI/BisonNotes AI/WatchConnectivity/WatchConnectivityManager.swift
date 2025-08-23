@@ -155,9 +155,11 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             // Store pending sync operation
             pendingSyncOperations[syncRequest.recordingId] = syncRequest
             
-            // Set timeout for sync completion (increased for backgrounded app)
-            let timeout = Timer.scheduledTimer(withTimeInterval: 120.0, repeats: false) { [weak self] _ in
+            // Set timeout for sync completion (dynamic based on file size and app state)
+            let timeoutDuration = calculateSyncTimeout(for: syncRequest)
+            let timeout = Timer.scheduledTimer(withTimeInterval: timeoutDuration, repeats: false) { [weak self] _ in
                 Task { @MainActor in
+                    print("📱 Sync timeout after \(timeoutDuration)s for: \(syncRequest.filename)")
                     self?.handleSyncTimeout(syncRequest.recordingId)
                 }
             }
@@ -173,6 +175,17 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     /// Handle completed file transfer from watch
     private func handleWatchRecordingReceived(fileURL: URL, metadata: [String: Any]) {
+        // Request background task to ensure processing completes even if app is backgrounded
+        let backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WatchFileProcessing") {
+            print("⚠️ Background task expired during watch file processing")
+        }
+        
+        defer {
+            if backgroundTaskID != .invalid {
+                UIApplication.shared.endBackgroundTask(backgroundTaskID)
+            }
+        }
+        
         guard let recordingIdString = metadata["recordingId"] as? String,
               let recordingId = UUID(uuidString: recordingIdString) else {
             print("❌ Received file but no recording ID in metadata")
@@ -205,7 +218,9 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             )
         }
         
-        print("📱 Received recording file: \(fileURL.lastPathComponent)")
+        let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        let fileSizeMB = Double(fileSize) / (1024 * 1024)
+        print("📱 Received recording file: \(fileURL.lastPathComponent) (\(String(format: "%.1f", fileSizeMB)) MB)")
         
         do {
             // Read the audio data
@@ -274,6 +289,29 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         pendingSyncOperations.removeValue(forKey: recordingId)
         syncTimeouts[recordingId]?.invalidate()
         syncTimeouts.removeValue(forKey: recordingId)
+    }
+    
+    /// Calculate appropriate sync timeout based on file size and app state
+    private func calculateSyncTimeout(for syncRequest: WatchSyncRequest) -> TimeInterval {
+        // Base timeout calculation: 60s base + time based on file size
+        let fileSizeMB = Double(syncRequest.fileSize) / (1024 * 1024)
+        let sizeBasedTimeout = 60.0 + (fileSizeMB * 10.0) // 10s per MB
+        
+        // Check if app is backgrounded
+        let appState = UIApplication.shared.applicationState
+        let isBackgrounded = appState != .active
+        
+        if isBackgrounded {
+            // Much longer timeout when backgrounded - iOS gives limited time
+            let backgroundTimeout = max(180.0, min(600.0, sizeBasedTimeout * 2.0)) // 3-10 minutes
+            print("📱 App backgrounded, using extended sync timeout: \(backgroundTimeout)s")
+            return backgroundTimeout
+        } else {
+            // Normal timeout when active
+            let activeTimeout = max(120.0, min(300.0, sizeBasedTimeout)) // 2-5 minutes
+            print("📱 App active, using normal sync timeout: \(activeTimeout)s")
+            return activeTimeout
+        }
     }
     
     private func setupNotificationObservers() {

@@ -11,7 +11,7 @@ This is an iOS application built with Xcode. Use standard Xcode commands:
 - **Test**: Run unit tests with ⌘+U
 - **Clean**: Clean build folder (⌘+Shift+K)
 
-The project uses Swift Package Manager for dependencies, primarily AWS SDK for iOS.
+The project uses Swift Package Manager for dependencies, primarily AWS SDK for iOS and MarkdownUI for content formatting.
 
 ## Architecture Overview
 
@@ -59,6 +59,7 @@ BisonNotes AI/
 ├── Views/               # SwiftUI views
 │   ├── RecordingsView.swift
 │   ├── AudioPlayerView.swift
+│   ├── AITextView.swift         # MarkdownUI-powered AI content rendering
 │   └── DataMigrationView.swift
 ├── ViewModels/          # View model layer
 ├── OpenAI/             # OpenAI integration
@@ -99,12 +100,20 @@ For long-running operations, use `BackgroundProcessingManager` to queue jobs and
 ### File Management
 All file operations should coordinate with Core Data to maintain data integrity. Use `EnhancedFileManager` for file operations.
 
+### UI and Content Rendering
+For AI-generated content display:
+- Use `AITextView` with MarkdownUI for all AI summaries, transcripts, and formatted content
+- MarkdownUI handles headers, lists, bold text, links, and complex formatting automatically
+- Text preprocessing in `AITextView.cleanTextForMarkdown()` removes JSON artifacts and normalizes content
+- Supports all AI engines: OpenAI, Claude (Bedrock), Gemini, Apple Intelligence, etc.
+
 ## Key Files to Understand
 
 - `BisonNotesAIApp.swift`: App entry point with Core Data setup
 - `ContentView.swift`: Main tab interface
 - `Models/CoreDataManager.swift`: Core Data access layer
 - `Models/AppDataCoordinator.swift`: Unified data coordination
+- `Views/AITextView.swift`: MarkdownUI-powered content rendering
 - `EnhancedTranscriptionManager.swift`: Transcription orchestration
 - `BackgroundProcessingManager.swift`: Background job management
 - `BisonNotes_AI.xcdatamodeld/`: Core Data model definitions

@@ -9,7 +9,7 @@ Quick links: [Usage Quick Start](USAGE.md) • [Full User Guide](HOW_TO_USE.md) 
 - Engines: Pluggable services for Apple on‑device NLP, OpenAI, Google AI Studio, AWS Bedrock/Transcribe, Whisper (REST), Wyoming streaming, and Ollama. Each engine pairs a service with a settings view.
 - Background: `BackgroundProcessingManager` coordinates queued work with retries, timeouts, and recovery. Large files are chunked and processed streaming‑first.
 - Watch Sync: `WatchConnectivityManager` (on iOS and watch targets) manages reachability, queued transfers, and state recovery.
-- UI: SwiftUI views under `Views/` implement recording, summaries, transcripts, and settings. View models isolate state and side effects.
+- UI: SwiftUI views under `Views/` implement recording, summaries, transcripts, and settings. AI-generated content uses MarkdownUI for professional formatting. View models isolate state and side effects.
 
 ## Project Structure
 - `BisonNotes AI/`: iOS app source
@@ -24,6 +24,28 @@ Quick links: [Usage Quick Start](USAGE.md) • [Full User Guide](HOW_TO_USE.md) 
 - Test (iOS): `xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=iOS Simulator,name=iPhone 15'`
 - Use the watch app scheme to run the watch target. SwiftPM resolves automatically in Xcode.
 
+## Dependencies
+
+The project uses Swift Package Manager for dependency management. Major dependencies include:
+
+### **Cloud Services**
+- **AWS SDK for Swift**: Cloud transcription and AI processing
+  - `AWSBedrock` & `AWSBedrockRuntime`: Claude AI models
+  - `AWSTranscribe` & `AWSTranscribeStreaming`: Speech-to-text
+  - `AWSS3`: File storage and retrieval
+  - `AWSClientRuntime`: Core AWS functionality
+
+### **UI & Formatting**
+- **MarkdownUI**: Professional markdown rendering for AI-generated summaries, headers, lists, and formatted text
+
+### **Apple Frameworks**
+- **WatchConnectivity**: Syncing between iPhone and Apple Watch
+- **Core Data**: Local data persistence
+- **AVFoundation**: Audio recording and playback
+- **Speech**: On-device speech recognition
+
+All external dependencies are resolved automatically via Swift Package Manager when building in Xcode.
+
 ## Local Dev Setup
 - Requirements: macOS with Xcode (15+ recommended) and Command Line Tools (`xcode-select --install`).
 - Clone/fork the repo, then open: `open "BisonNotes AI/BisonNotes AI.xcodeproj"`.
@@ -34,7 +56,7 @@ Quick links: [Usage Quick Start](USAGE.md) • [Full User Guide](HOW_TO_USE.md) 
 - Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel`
 - Transcription: `OpenAITranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`
 - Summarization: `OpenAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `EnhancedAppleIntelligenceEngine`
-- UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`
+- UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI)
 - Persistence: `Persistence`, `CoreDataManager`, models under `Models/`
 - Background: `BackgroundProcessingManager`, `EnginePerformanceMonitor`
 - Watch: `WatchConnectivityManager` (both targets)

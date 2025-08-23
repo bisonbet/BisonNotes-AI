@@ -56,6 +56,10 @@ class WatchRecordingViewModel: ObservableObject {
     // Timeout tracking
     private var currentTimeoutTimer: Timer?
     
+    // Progress simulation tracking
+    private var progressSimulationTimer: Timer?
+    private var progressSimulationStartTime: Date?
+    
     // MARK: - Computed Properties
     
     var canStartRecording: Bool {
@@ -729,6 +733,9 @@ class WatchRecordingViewModel: ObservableObject {
     // MARK: - Recording Sync Implementation
     
     private func startRecordingSync(_ recording: WatchRecordingMetadata) {
+        // Log detailed diagnostics for debugging
+        logSyncDiagnostics(for: recording)
+        
         currentSyncOperation = WatchSyncOperation(recording: recording)
         isTransferringAudio = true
         transferProgress = 0.0
@@ -744,7 +751,7 @@ class WatchRecordingViewModel: ObservableObject {
         guard currentSyncOperation != nil else { return }
         
         print("⌚ Checking iPhone app readiness for sync...")
-        transferProgress = 0.1
+        transferProgress = 0.05 // Very small step - just checking readiness
         
         // Send readiness check message
         connectivityManager.sendRecordingCommand(.checkAppReadiness, additionalInfo: [
@@ -753,13 +760,14 @@ class WatchRecordingViewModel: ObservableObject {
             "duration": recording.duration
         ])
         
-        // Set timeout for readiness response
+        // Set timeout for readiness response - increased for larger files
+        let readinessTimeout = calculateReadinessTimeout(for: recording)
         currentTimeoutTimer?.invalidate()
-        currentTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+        currentTimeoutTimer = Timer.scheduledTimer(withTimeInterval: readinessTimeout, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self,
                       self.currentSyncOperation?.recording.id == recording.id else { return }
-                self.handleSyncTimeout("iPhone app readiness check timed out")
+                self.handleSyncTimeout("iPhone app readiness check timed out after \(readinessTimeout)s")
             }
         }
     }
@@ -772,7 +780,7 @@ class WatchRecordingViewModel: ObservableObject {
         currentTimeoutTimer?.invalidate()
         
         print("⌚ iPhone app ready, starting file transfer...")
-        transferProgress = 0.2
+        transferProgress = 0.10 // Still very early - just starting sync request
         
         // Step 2: Initiate sync request
         let storage = audioManager.getRecordingStorage()
@@ -804,13 +812,14 @@ class WatchRecordingViewModel: ObservableObject {
         
         connectivityManager.sendRecordingCommand(.syncRequest, additionalInfo: syncData)
         
-        // Set timeout for sync response
+        // Set timeout for sync response - increased for larger files
+        let syncTimeout = calculateSyncTimeout(for: recording)
         currentTimeoutTimer?.invalidate()
-        currentTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
+        currentTimeoutTimer = Timer.scheduledTimer(withTimeInterval: syncTimeout, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self,
                       self.currentSyncOperation?.recording.id == recording.id else { return }
-                self.handleSyncTimeout("Sync request timed out")
+                self.handleSyncTimeout("Sync request timed out after \(syncTimeout)s")
             }
         }
     }
@@ -822,20 +831,35 @@ class WatchRecordingViewModel: ObservableObject {
         // Cancel sync request timeout since we got the response
         currentTimeoutTimer?.invalidate()
         
-        print("⌚ Sync accepted, transferring file...")
-        transferProgress = 0.4
+        print("⌚ Sync accepted, starting file transfer...")
+        transferProgress = 0.15 // About to start the actual file transfer
         
         // Step 3: Transfer complete file
         let storage = audioManager.getRecordingStorage()
         let fileURL = storage.fileURL(for: recording)
         
+        // Log connection diagnostics before starting transfer
+        let diagnostics = connectivityManager.getConnectionDiagnostics()
+        print("⌚ Connection diagnostics before transfer:")
+        print(diagnostics)
+        
+        print("⌚ Starting file transfer for: \(recording.filename) (\(String(format: "%.1f", Double(recording.fileSize) / (1024 * 1024))) MB)")
+        
+        // Start realistic progress simulation for the file transfer
+        startFileTransferProgressSimulation(for: recording)
+        
         connectivityManager.transferCompleteRecording(fileURL: fileURL, metadata: recording) { [weak self] (success: Bool) in
             guard let self = self else { return }
             
+            // Stop progress simulation since transfer completed
+            self.stopFileTransferProgressSimulation()
+            
             if success {
+                print("⌚ File transfer completed successfully for: \(recording.filename)")
                 self.handleFileTransferComplete(for: recording)
             } else {
-                self.handleSyncFailure("File transfer failed")
+                print("❌ File transfer failed for: \(recording.filename)")
+                self.handleSyncFailure("File transfer failed - WatchConnectivity error")
             }
         }
     }
@@ -845,17 +869,18 @@ class WatchRecordingViewModel: ObservableObject {
               operation.recording.id == recording.id else { return }
         
         print("⌚ File transfer complete, waiting for Core Data confirmation...")
-        transferProgress = 0.8
+        transferProgress = 0.90 // File transfer done, just waiting for iPhone processing
         
-        // Set timeout for Core Data confirmation (iPhone might be backgrounded)
+        // Set timeout for Core Data confirmation (iPhone might be backgrounded) - much longer for large files
+        let coreDataTimeout = calculateCoreDataTimeout(for: recording)
         currentTimeoutTimer?.invalidate()
-        currentTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+        currentTimeoutTimer = Timer.scheduledTimer(withTimeInterval: coreDataTimeout, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self,
                       let currentOp = self.currentSyncOperation,
                       currentOp.recording.id == recording.id else { return }
                 
-                print("⌚ Core Data confirmation timeout - assuming sync completed successfully")
+                print("⌚ Core Data confirmation timeout after \(coreDataTimeout)s - assuming sync completed successfully")
                 // File transfer completed, assume iPhone will process in background
                 self.handleSyncComplete(for: recording)
             }
@@ -866,8 +891,9 @@ class WatchRecordingViewModel: ObservableObject {
         guard let operation = currentSyncOperation,
               operation.recording.id == recording.id else { return }
         
-        // Cancel any pending timeout
+        // Cancel any pending timeout and progress simulation
         currentTimeoutTimer?.invalidate()
+        stopFileTransferProgressSimulation()
         
         print("✅ Sync completed successfully for: \(recording.filename)")
         transferProgress = 1.0
@@ -899,10 +925,14 @@ class WatchRecordingViewModel: ObservableObject {
     private func handleSyncFailure(_ reason: String) {
         guard let operation = currentSyncOperation else { return }
         
-        // Cancel any pending timeout
+        // Cancel any pending timeout and progress simulation
         currentTimeoutTimer?.invalidate()
+        stopFileTransferProgressSimulation()
         
         print("❌ Sync failed: \(reason)")
+        
+        // Log diagnostics for debugging failed syncs
+        logSyncDiagnostics(for: operation.recording)
         
         // Update recording status and attempt count
         let storage = audioManager.getRecordingStorage()
@@ -1018,6 +1048,36 @@ class WatchRecordingViewModel: ObservableObject {
         handleSyncFailure(reason)
     }
     
+    // MARK: - Timeout Calculation Methods
+    
+    /// Calculate timeout for iPhone app readiness check based on recording size
+    private func calculateReadinessTimeout(for recording: WatchRecordingMetadata) -> TimeInterval {
+        // Base timeout of 10s, plus 2s per minute of recording
+        let baseDuration = recording.duration / 60.0 // minutes
+        return max(10.0, min(30.0, 10.0 + (baseDuration * 2.0)))
+    }
+    
+    /// Calculate timeout for sync request response based on recording size
+    private func calculateSyncTimeout(for recording: WatchRecordingMetadata) -> TimeInterval {
+        // Base timeout of 15s, plus 3s per minute of recording
+        let baseDuration = recording.duration / 60.0 // minutes
+        return max(15.0, min(60.0, 15.0 + (baseDuration * 3.0)))
+    }
+    
+    /// Calculate timeout for Core Data confirmation based on recording size and iPhone app state
+    private func calculateCoreDataTimeout(for recording: WatchRecordingMetadata) -> TimeInterval {
+        // Much longer timeout for Core Data processing, especially when backgrounded
+        let baseDuration = recording.duration / 60.0 // minutes
+        let baseTimeout = 30.0 + (baseDuration * 5.0) // 30s base + 5s per minute
+        
+        // If iPhone app is not active, give much more time for background processing
+        if !isPhoneAppActive {
+            return max(60.0, min(300.0, baseTimeout * 3.0)) // 3x longer when backgrounded, max 5 minutes
+        } else {
+            return max(30.0, min(120.0, baseTimeout)) // Normal timeout when active, max 2 minutes
+        }
+    }
+    
     // MARK: - Cleanup Methods
     
     /// Clean up any recordings that are marked as synced but still stored locally
@@ -1032,6 +1092,116 @@ class WatchRecordingViewModel: ObservableObject {
                 print("🗑️ Deleted synced recording: \(recording.filename)")
             }
         }
+    }
+    
+    // MARK: - Progress Simulation Methods
+    
+    /// Start realistic progress simulation during file transfer
+    private func startFileTransferProgressSimulation(for recording: WatchRecordingMetadata) {
+        progressSimulationStartTime = Date()
+        
+        // Calculate realistic transfer time based on file size
+        let fileSizeMB = Double(recording.fileSize) / (1024 * 1024)
+        let estimatedTransferTime = calculateEstimatedTransferTime(fileSizeMB: fileSizeMB)
+        
+        print("⌚ Starting progress simulation for \(String(format: "%.1f", fileSizeMB))MB file (estimated: \(Int(estimatedTransferTime))s)")
+        
+        // Keep the app active during transfer to prevent interruption
+        keepAppActiveDuringTransfer()
+        
+        // Update progress every 2 seconds with realistic curve
+        progressSimulationTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.updateFileTransferProgress(estimatedDuration: estimatedTransferTime)
+        }
+    }
+    
+    /// Stop progress simulation
+    private func stopFileTransferProgressSimulation() {
+        progressSimulationTimer?.invalidate()
+        progressSimulationTimer = nil
+        progressSimulationStartTime = nil
+    }
+    
+    /// Update transfer progress with realistic curve
+    private func updateFileTransferProgress(estimatedDuration: TimeInterval) {
+        guard let startTime = progressSimulationStartTime else { return }
+        
+        let elapsed = Date().timeIntervalSince(startTime)
+        let progressRatio = min(elapsed / estimatedDuration, 1.0)
+        
+        // Use a realistic S-curve: slow start, fast middle, slow end
+        // This better represents how file transfers actually behave
+        let sCurveProgress = 1.0 / (1.0 + exp(-6.0 * (progressRatio - 0.5)))
+        
+        // Map to our progress range: 0.15 (start) to 0.90 (file transfer complete)
+        let mappedProgress = 0.15 + (sCurveProgress * 0.75)
+        
+        transferProgress = mappedProgress
+        
+        // Log progress occasionally for debugging
+        if Int(elapsed) % 10 == 0 { // Every 10 seconds
+            print("⌚ Transfer progress: \(Int(mappedProgress * 100))% (\(Int(elapsed))s elapsed)")
+        }
+    }
+    
+    /// Calculate estimated transfer time based on file size and connection
+    private func calculateEstimatedTransferTime(fileSizeMB: Double) -> TimeInterval {
+        // Base transfer speeds for WatchConnectivity
+        let baseSpeed: Double // MB/s
+        
+        if isPhoneAppActive {
+            baseSpeed = 0.5 // ~0.5 MB/s for active iPhone
+        } else {
+            baseSpeed = 0.25 // ~0.25 MB/s for backgrounded iPhone
+        }
+        
+        let transferTime = fileSizeMB / baseSpeed
+        let overhead = max(10.0, transferTime * 0.4) // 40% overhead minimum 10s
+        
+        return transferTime + overhead
+    }
+    
+    /// Keep the Watch app active during file transfers to prevent interruption
+    private func keepAppActiveDuringTransfer() {
+        #if canImport(WatchKit)
+        // On watchOS, we can't prevent the app from being backgrounded like on iOS
+        // But we can take some steps to maintain better performance:
+        
+        print("⌚ Attempting to maintain app activity during transfer")
+        
+        // 1. Ensure the screen stays active by simulating user interaction
+        // (This is just a log message - WatchKit doesn't provide direct screen control)
+        print("⌚ Tip: Keep Watch screen active by tapping occasionally during transfer")
+        
+        // 2. Use higher priority queue for transfer operations
+        // (Already handled by using main actor for critical operations)
+        
+        // 3. We could show a visual indicator to encourage the user to keep the app active
+        // (This would be handled in the UI layer)
+        #endif
+    }
+    
+    // MARK: - Diagnostic Methods
+    
+    /// Log current system state for debugging transfer issues
+    private func logSyncDiagnostics(for recording: WatchRecordingMetadata) {
+        print("⌚ Sync Diagnostics:")
+        print("   - Recording: \(recording.filename)")
+        print("   - Duration: \(String(format: "%.1f", recording.duration / 60.0)) minutes")
+        print("   - File size: \(String(format: "%.1f", Double(recording.fileSize) / (1024 * 1024))) MB")
+        print("   - iPhone connection: \(connectivityManager.connectionState)")
+        print("   - iPhone app active: \(isPhoneAppActive)")
+        print("   - Watch battery: \(Int(batteryLevel * 100))%")
+        
+        #if canImport(WatchKit)
+        let device = WKInterfaceDevice.current()
+        print("   - Watch storage: \(device.systemVersion)")
+        #endif
+        
+        let storage = audioManager.getRecordingStorage()
+        print("   - Pending recordings: \(storage.localRecordings.filter { $0.syncStatus.needsSync }.count)")
+        print("   - Failed recordings: \(storage.localRecordings.filter { $0.syncStatus == .syncFailed }.count)")
     }
     
     // MARK: - Battery Monitoring

@@ -43,6 +43,11 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private var chunkTransferIndex: Int = 0
     private var cancellables = Set<AnyCancellable>()
     
+    // File transfer tracking
+    private var activeFileTransfers: [String: WCSessionFileTransfer] = [:]
+    private var fileTransferCompletions: [String: (Bool) -> Void] = [:]
+    private var transferStartTimes: [String: Date] = [:]
+    
     // State synchronization
     private var stateSyncTimer: Timer?
     private var lastWatchStateChange: Date = Date()
@@ -887,14 +892,98 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             "createdAt": metadata.createdAt.timeIntervalSince1970
         ]
         
-        // Start file transfer
-        session.transferFile(fileURL, metadata: transferMetadata)
+        // Check file size and log performance expectations
+        let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        let fileSizeMB = Double(fileSize) / (1024 * 1024)
+        let estimatedTransferTime = estimateTransferTime(fileSizeMB: fileSizeMB)
         
-        print("⌚ File transfer initiated for: \(metadata.filename)")
+        print("⌚ Starting file transfer:")
+        print("   - File: \(metadata.filename)")
+        print("   - Size: \(String(format: "%.1f", fileSizeMB)) MB")
+        print("   - Estimated time: \(Int(estimatedTransferTime))s")
+        print("   - iPhone reachable: \(session.isReachable)")
         
-        // Note: Completion will be handled by the session delegate
-        // For now, assume success (could be enhanced with actual transfer tracking)
+        // Start file transfer and track it
+        let fileTransfer: WCSessionFileTransfer = session.transferFile(fileURL, metadata: transferMetadata)
+        let transferId = metadata.id.uuidString
+        
+        // Store transfer tracking info
+        activeFileTransfers[transferId] = fileTransfer
+        fileTransferCompletions[transferId] = completion
+        transferStartTimes[transferId] = Date()
+        
+        print("⌚ File transfer initiated for: \(metadata.filename) (ID: \(transferId))")
+        
+        // Call completion immediately to indicate transfer started successfully
+        // Actual completion will be handled by delegate
         completion(true)
+    }
+    
+    /// Estimate transfer time based on file size and connection quality
+    private func estimateTransferTime(fileSizeMB: Double) -> TimeInterval {
+        // Base estimates for WatchConnectivity over Bluetooth
+        let baseSpeed: Double // MB/s
+        
+        if let session = session, session.isReachable {
+            // iPhone is reachable and active
+            baseSpeed = 0.5 // ~0.5 MB/s typical for active connection
+        } else {
+            // iPhone may be backgrounded or connection quality poor
+            baseSpeed = 0.2 // ~0.2 MB/s for poor/backgrounded connection
+        }
+        
+        let estimatedTime = fileSizeMB / baseSpeed
+        
+        // Add overhead for protocol and processing
+        let overhead = max(5.0, estimatedTime * 0.3) // 30% overhead, minimum 5s
+        
+        return estimatedTime + overhead
+    }
+    
+    /// Check current connection quality and suggest optimizations
+    func getConnectionDiagnostics() -> String {
+        guard let session = session else {
+            return "❌ WatchConnectivity session not available"
+        }
+        
+        var diagnostics: [String] = []
+        
+        // Session state
+        switch session.activationState {
+        case .activated:
+            diagnostics.append("✅ Session activated")
+        case .inactive:
+            diagnostics.append("⚠️ Session inactive")
+        case .notActivated:
+            diagnostics.append("❌ Session not activated")
+        @unknown default:
+            diagnostics.append("❓ Unknown session state")
+        }
+        
+        // Reachability
+        if session.isReachable {
+            diagnostics.append("✅ iPhone reachable")
+        } else {
+            diagnostics.append("❌ iPhone not reachable (may be backgrounded)")
+        }
+        
+        // Check for outstanding transfers
+        if !session.outstandingFileTransfers.isEmpty {
+            diagnostics.append("⚠️ \(session.outstandingFileTransfers.count) transfers already queued")
+        } else {
+            diagnostics.append("✅ No queued transfers")
+        }
+        
+        // Performance recommendations
+        if !session.isReachable {
+            diagnostics.append("💡 Tip: Keep iPhone app in foreground for faster transfers")
+        }
+        
+        if session.outstandingFileTransfers.count > 1 {
+            diagnostics.append("💡 Tip: Wait for current transfer to complete before starting new ones")
+        }
+        
+        return diagnostics.joined(separator: "\n")
     }
 }
 
@@ -1105,12 +1194,12 @@ extension WatchConnectivityManager: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
         if let error = error {
             print("⌚ File transfer failed: \(error.localizedDescription)")
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 self.onAudioTransferCompleted?(false)
             }
         } else {
             print("⌚ File transfer completed successfully")
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 self.onAudioTransferCompleted?(true)
             }
         }

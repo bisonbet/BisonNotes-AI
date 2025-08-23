@@ -1,4 +1,5 @@
 import SwiftUI
+import MarkdownUI
 
 enum AIService {
     case googleAI
@@ -58,174 +59,78 @@ struct AITextView: View {
     }
     
     var body: some View {
-        // Use the unified robust markdown renderer for all AI services
-        // Don't apply lineSpacing as it can interfere with AttributedString formatting
-        unifiedRobustMarkdownText(text, aiService: aiService.description)
-    }
-    
-    // Fallback to original custom rendering if needed
-    private var fallbackView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(processText(), id: \.self) { line in
-                if isBulletPoint(line) {
-                    // Bullet point
-                    HStack(alignment: .top, spacing: 8) {
-                        Text("•")
-                            .font(.body)
-                            .foregroundColor(.primary)
-                        
-                        Text(formatBoldText(extractBulletText(line)))
-                            .font(.body)
-                            .multilineTextAlignment(.leading)
-                    }
-                } else if line.matches("^\\d+\\. ") {
-                    // Numbered list
-                    HStack(alignment: .top, spacing: 8) {
-                        Text("\(line.prefix(while: { $0.isNumber }))")
-                            .font(.body)
-                            .foregroundColor(.primary)
-                        
-                        Text(formatBoldText(String(line.dropFirst(line.firstIndex(of: " ")?.utf16Offset(in: line) ?? 0))))
-                            .font(.body)
-                            .multilineTextAlignment(.leading)
-                    }
-                } else if isHeader(line) {
-                    // Header
-                    Text(formatBoldText(extractHeaderText(line)))
-                        .font(.headline)
-                        .fontWeight(.bold)
-                        .foregroundColor(.primary)
-                        .padding(.top, 8)
-                } else {
-                    // Regular text
-                    Text(formatBoldText(line))
-                        .font(.body)
-                        .multilineTextAlignment(.leading)
-                }
-            }
-        }
-    }
-    
-    private func processText() -> [String] {
-        // Convert \n escape sequences to actual newlines
-        let processedText = text.replacingOccurrences(of: "\\n", with: "\n")
+        // Use MarkdownUI with our text cleaning pipeline
+        let cleanedText = cleanTextForMarkdown(text)
         
-        // Clean up common formatting issues and remove JSON artifacts
-        let cleanedText = processedText
-            .replacingOccurrences(of: "• ", with: "* ")  // Standardize bullet points
-            .replacingOccurrences(of: "  ", with: " ")   // Remove double spaces
-            .replacingOccurrences(of: "\"summary\":", with: "")  // Remove JSON field names
-            .replacingOccurrences(of: "\"summary\" :", with: "")  // Remove JSON field names with spaces
-            .replacingOccurrences(of: "\"summary\"", with: "")    // Remove JSON field names without colon
+        Markdown(cleanedText)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    
+    /// Clean text using simplified robust cleaning for MarkdownUI
+    private func cleanTextForMarkdown(_ text: String) -> String {
+        var cleaned = text
         
-        // Split by newlines and filter out empty lines and JSON artifacts
-        let lines = cleanedText.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && 
-                     !$0.contains("{") && 
-                     !$0.contains("}") && 
-                     !$0.contains("[") && 
-                     !$0.contains("]") &&
-                     !$0.contains("\"tasks\"") &&
-                     !$0.contains("\"reminders\"") &&
-                     !$0.contains("\"titles\"") &&
-                     !$0.contains("\"summary\"") }
+        // Step 1: Normalize line endings and escape sequences
+        cleaned = cleaned.replacingOccurrences(of: "\\n", with: "\n")
+        cleaned = cleaned.replacingOccurrences(of: "\\r", with: "\n")
         
-        return lines
-    }
-    
-    private func isBulletPoint(_ line: String) -> Bool {
-        return line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("• ")
-    }
-    
-    private func extractBulletText(_ line: String) -> String {
-        if line.hasPrefix("- ") {
-            return String(line.dropFirst(2))
-        } else if line.hasPrefix("* ") {
-            return String(line.dropFirst(2))
-        } else if line.hasPrefix("• ") {
-            return String(line.dropFirst(2))
-        }
-        return line
-    }
-    
-    private func isHeader(_ line: String) -> Bool {
-        return line.hasPrefix("## ") || line.hasPrefix("# ") || 
-               (line.hasPrefix("**") && line.hasSuffix("**"))
-    }
-    
-    private func extractHeaderText(_ line: String) -> String {
-        if line.hasPrefix("## ") {
-            return String(line.dropFirst(3))
-        } else if line.hasPrefix("# ") {
-            return String(line.dropFirst(2))
-        } else if line.hasPrefix("**") && line.hasSuffix("**") {
-            return String(line.dropFirst(2).dropLast(2))
-        }
-        return line
-    }
-    
-    private func formatBoldText(_ text: String) -> AttributedString {
-        var attributedString = AttributedString()
-        var currentIndex = text.startIndex
+        // Step 2: Remove JSON wrappers
+        cleaned = cleaned.replacingOccurrences(of: "^\"summary\"\\s*:\\s*\"", with: "", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: "^\"content\"\\s*:\\s*\"", with: "", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: "^\"text\"\\s*:\\s*\"", with: "", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: "\"\\s*$", with: "", options: .regularExpression)
         
-        while currentIndex < text.endIndex {
-            // Look for asterisks for emphasis/italic
-            if let asteriskStart = text[currentIndex...].firstIndex(of: "*") {
-                // Add text before the asterisk
-                if asteriskStart > currentIndex {
-                    let beforeText = String(text[currentIndex..<asteriskStart])
-                    attributedString.append(AttributedString(beforeText))
-                }
-                
-                // Look for the closing asterisk
-                let afterAsterisk = text.index(after: asteriskStart)
-                if let asteriskEnd = text[afterAsterisk...].firstIndex(of: "*") {
-                    // Found matching asterisks - create italic text
-                    let italicText = String(text[afterAsterisk..<asteriskEnd])
-                    var italicString = AttributedString(italicText)
-                    italicString.font = .body.italic()
-                    attributedString.append(italicString)
-                    
-                    // Move past the closing asterisk
-                    currentIndex = text.index(after: asteriskEnd)
-                } else {
-                    // No closing asterisk found - treat as regular text
-                    attributedString.append(AttributedString("*"))
-                    currentIndex = text.index(after: asteriskStart)
-                }
-            } else {
-                // No more asterisks - add remaining text
-                let remainingText = String(text[currentIndex...])
-                attributedString.append(AttributedString(remainingText))
-                break
-            }
-        }
+        // Step 3: Basic spacing normalization
+        cleaned = cleaned.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
         
-        return attributedString
+        #if DEBUG
+        print("🔍 MarkdownUI Input Debug:")
+        print("Original length: \\(text.count)")
+        print("Cleaned length: \\(cleaned.count)")
+        print("First 200 chars: \\(cleaned.prefix(200))")
+        #endif
+        
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+    
 }
 
 #Preview {
-    VStack(spacing: 20) {
-        Text("Original Test Text:")
-            .font(.headline)
-        
-        AITextView(text: "- **President Trump** is in Scotland, meeting with **Ursula von der Leyen** and **Keir Starmer**, leveraging his **Scottish heritage** and **royal admiration** to foster diplomatic ties.  \\n- **Anti-Trump protests** have erupted in multiple UK cities amid his visit.  \\n- **Secretary of State Marco Rubio** condemned **Hong Kong's arrest warrants** targeting **US-based activists**, accusing the government of eroding autonomy and threatening **American citizens**.", aiService: .googleAI)
-        
-        Divider()
-        
-        Text("Enhanced Summary Test (like your screenshot):")
-            .font(.headline)
-        
-        AITextView(text: "**Key Tax Changes and Industry Impact**\n\n• New tax provision reduces gambling loss deductions from 100% to 90%, meaning gamblers who break even could still owe taxes on 10% of their net winnings (e.g., $10,000 on a $100,000 win/loss scenario).\n\n• *Advancing American Freedom*, led by Mike Pence, argues this creates an unfair advantage for gamblers over other industries (e.g., stock market losses capped at $3,000).", aiService: .googleAI)
-        
-        Divider()
-        
-        Text("Bold Text Edge Cases Test:")
-            .font(.headline)
-        
-        AITextView(text: "** Key Tax Changes and Industry Impact **\n\n* * Malformed Bold Text * *\n\n*Key Tax Changes*\n\n**Industry and Policy Concerns**", aiService: .googleAI)
+    ScrollView {
+        VStack(spacing: 20) {
+            Text("Enhanced Markdown Renderer Tests")
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            Divider()
+            
+            Text("Complex Headers Test:")
+                .font(.headline)
+            
+            AITextView(text: "### Product Overview\n\nThe company offers an AI-powered tutoring platform.\n\n#### Key Features\n\n• Personalized tutoring for students\n• Concurrent seating model", aiService: .googleAI)
+            
+            Divider()
+            
+            Text("Mixed List Types Test:")
+                .font(.headline)
+            
+            AITextView(text: "### Primary Action Items\n\n• Tim to provide list of suspended accounts\n• Confirm deletion with Jack\n• Review MOU language for data deletion\n\n1. Create sample account for testing\n2. Review storage quotas\n3. Implement notification processes", aiService: .googleAI)
+            
+            Divider()
+            
+            Text("Complex Nested Content Test:")
+                .font(.headline)
+            
+            AITextView(text: "## Market and Political Dynamics\n\n• Federal Reserve Chair **Jerome Powell** discussed potential interest rate cuts\n• Stock market surged with Dow rising over 800 points\n• Political tensions emerged around Federal Reserve governance\n\n### Key Economic Insights\n\n• Investors looking for positive economic signals\n• Concerns about political interference in independent institutions\n• Discussions about inflation, employment, and market confidence\n\n### Notable Political Developments\n\n• President Trump threatening to fire Federal Reserve Governor **Lisa Cook**\n• Debates about immigrant labor's economic importance", aiService: .googleAI)
+            
+            Divider()
+            
+            Text("Bold Headers & JSON Cleanup Test:")
+                .font(.headline)
+            
+            AITextView(text: "\"summary\": \"**Storage and Account Management Highlights**\n\n• Retirees will retain **5GB storage**\n• Data deletion and account management for alumni\n• Google storage quotas and notification processes\n• Suspended account cleanup strategy\"", aiService: .googleAI)
+        }
+        .padding()
     }
-    .padding()
 } 

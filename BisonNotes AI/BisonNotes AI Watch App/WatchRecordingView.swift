@@ -361,7 +361,7 @@ struct WatchRecordingView: View {
     // MARK: - Audio Transfer View
     
     private var audioTransferView: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             HStack {
                 Image(systemName: "iphone.and.arrow.forward")
                     .font(.system(size: 12))
@@ -369,33 +369,59 @@ struct WatchRecordingView: View {
                     .scaleEffect(1.1)
                     .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: viewModel.isTransferringAudio)
                 
-                Text("Transferring to iPhone...")
-                    .font(.caption2)
-                    .foregroundColor(.blue)
-                    .opacity(0.8)
-                    .animation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true), value: viewModel.isTransferringAudio)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(transferStatusText)
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                        .fontWeight(.medium)
+                    
+                    if viewModel.transferProgress > 0.15 && viewModel.transferProgress < 0.90 {
+                        // Show user guidance during the long file transfer phase
+                        Text("Keep screen active for faster transfer")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                            .opacity(0.9)
+                    }
+                }
                 
                 Spacer()
                 
                 Text("\(Int(viewModel.transferProgress * 100))%")
                     .font(.caption2)
                     .foregroundColor(.blue)
-                    .fontWeight(.medium)
+                    .fontWeight(.bold)
             }
             
             ProgressView(value: viewModel.transferProgress)
                 .progressViewStyle(LinearProgressViewStyle(tint: .blue))
-                .scaleEffect(y: 1.0)
-                .animation(.easeInOut(duration: 0.3), value: viewModel.transferProgress)
+                .scaleEffect(y: 1.2)
+                .animation(.easeInOut(duration: 0.5), value: viewModel.transferProgress)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.blue.opacity(0.1))
                 .stroke(Color.blue.opacity(0.3), lineWidth: 1)
         )
         .transition(.scale.combined(with: .opacity))
+    }
+    
+    /// Dynamic transfer status text based on progress
+    private var transferStatusText: String {
+        let progress = viewModel.transferProgress
+        
+        if progress < 0.10 {
+            return "Checking iPhone app..."
+        } else if progress < 0.15 {
+            return "Starting sync..."
+        } else if progress < 0.90 {
+            return "Transferring file..."
+        } else if progress < 1.0 {
+            return "Processing on iPhone..."
+        } else {
+            return "Transfer complete!"
+        }
     }
     
     private var phoneActivationView: some View {
