@@ -100,7 +100,7 @@ struct ChunkingConfig {
         switch engine {
         case .openAI:
             return ChunkingConfig(strategy: .openAI)
-        case .whisper, .whisperWyoming:
+        case .whisper:
             return ChunkingConfig(strategy: .whisper)
         case .awsTranscribe:
             return ChunkingConfig(strategy: .aws)

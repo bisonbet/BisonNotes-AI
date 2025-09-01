@@ -88,7 +88,6 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
     case appleIntelligence = "Apple Intelligence (Limited)"
     case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
-    case whisperWyoming = "Whisper (Wyoming Protocol)"
     case openAI = "OpenAI"
     case openAIAPICompatible = "OpenAI API Compatible"
     
@@ -99,9 +98,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
         case .awsTranscribe:
             return "Cloud-based transcription service with support for long audio files"
         case .whisper:
-            return "High-quality transcription using OpenAI's Whisper model via REST API on your local server"
-        case .whisperWyoming:
-            return "High-quality transcription using OpenAI's Whisper model via Wyoming protocol streaming"
+            return "High-quality transcription using OpenAI's Whisper model on your local server (REST API or Wyoming protocol)"
         case .openAI:
             return "High-quality transcription using OpenAI's GPT-4o models and Whisper via API"
         case .openAIAPICompatible:
@@ -111,7 +108,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
     
     var isAvailable: Bool {
         switch self {
-        case .appleIntelligence, .awsTranscribe, .whisper, .whisperWyoming, .openAI:
+        case .appleIntelligence, .awsTranscribe, .whisper, .openAI:
             return true
         case .openAIAPICompatible:
             return false
@@ -122,15 +119,18 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
         switch self {
         case .appleIntelligence:
             return false
-        case .awsTranscribe, .whisper, .whisperWyoming, .openAI, .openAIAPICompatible:
+        case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible:
             return true
         }
     }
     
     var usesWyomingProtocol: Bool {
         switch self {
-        case .whisperWyoming:
-            return true
+        case .whisper:
+            // For unified Whisper, check the user's protocol preference
+            let protocolString = UserDefaults.standard.string(forKey: "whisperProtocol") ?? WhisperProtocol.rest.rawValue
+            let selectedProtocol = WhisperProtocol(rawValue: protocolString) ?? .rest
+            return selectedProtocol == .wyoming
         default:
             return false
         }

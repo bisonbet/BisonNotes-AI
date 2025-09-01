@@ -571,66 +571,7 @@ struct SettingsView: View {
                         .opacity(0.3)
                 )
                 
-                // Voice Optimized Audio Quality
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Voice Optimized")
-                                .font(.body)
-                                .fontWeight(.medium)
-                                .foregroundColor(.primary)
-                            
-                            Text("22 kHz, 64 kbps AAC - Optimized for voice transcription")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            Text("File size: ~30 MB per hour")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        Text("OPTIMAL")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.green)
-                            )
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    Rectangle()
-                        .fill(Color(.systemGray6))
-                        .opacity(0.3)
-                )
                 
-                NavigationLink(destination: DebugLogView()) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("View Debug Logs")
-                                .font(.body)
-                                .foregroundColor(.primary)
-                            Text("See detailed logs for transcription issues")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.leading)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .foregroundColor(.secondary)
-                            .font(.caption)
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
-                }
-                .buttonStyle(PlainButtonStyle())
                 
             }
             .background(

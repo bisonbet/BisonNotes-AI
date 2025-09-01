@@ -423,7 +423,7 @@ return try await transcribeWithAWS(url: url, config: config)
             print("✅ Speech recognizer is available, starting transcription")
             return try await transcribeWithAppleIntelligence(url: url, duration: duration)
             
-        case .whisper, .whisperWyoming:
+        case .whisper:
             switchToWhisperTranscription()
             
             // Validate Whisper configuration and availability
@@ -1537,7 +1537,7 @@ func switchToWhisperTranscription() {
         switch engine {
         case .awsTranscribe:
             switchToAWSTranscription()
-        case .whisper, .whisperWyoming:
+        case .whisper:
             switchToWhisperTranscription()
         case .appleIntelligence, .openAI, .openAIAPICompatible:
             switchToAppleTranscription()

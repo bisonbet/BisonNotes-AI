@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct OpenAISummarizationSettingsView: View {
-    @AppStorage("openAISummarizationAPIKey") private var apiKey: String = ""
+    @AppStorage("openAIAPIKey") private var apiKey: String = ""
     @AppStorage("openAISummarizationModel") private var selectedModel: String = OpenAISummarizationModel.gpt41Mini.rawValue
     @AppStorage("openAISummarizationBaseURL") private var baseURL: String = "https://api.openai.com/v1"
     @AppStorage("openAISummarizationTemperature") private var temperature: Double = 0.1

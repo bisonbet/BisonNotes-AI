@@ -386,9 +386,8 @@ struct SimpleSettingsView: View {
                         return
                     }
                     
-                    // Set OpenAI API key for both transcription and summarization
+                    // Set unified OpenAI API key for both transcription and summarization
                     UserDefaults.standard.set(apiKey, forKey: "openAIAPIKey")
-                    UserDefaults.standard.set(apiKey, forKey: "openAISummarizationAPIKey")
                     
                     // Set transcription engine to OpenAI with GPT-4o Mini Transcribe
                     UserDefaults.standard.set("gpt-4o-mini-transcribe", forKey: "openAIModel")

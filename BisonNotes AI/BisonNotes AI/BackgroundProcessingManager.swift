@@ -763,7 +763,6 @@ class BackgroundProcessingManager: ObservableObject {
     private func transcribeChunk(_ chunk: AudioChunk, engine: TranscriptionEngine) async throws -> TranscriptionResult {
         let message = "🎯 Starting transcription of chunk: \(chunk.chunkURL.lastPathComponent) with engine: \(engine.rawValue)"
         print(message)
-        DebugLogger.shared.log(message)
         
         // Enhanced chunk diagnostics
         print("🔍 Chunk details:")
@@ -782,7 +781,6 @@ class BackgroundProcessingManager: ObservableObject {
             let error = BackgroundProcessingError.fileNotFound("Chunk file not found: \(chunk.chunkURL.path)")
             let errorMsg = "❌ Chunk file missing: \(chunk.chunkURL.path)"
             print(errorMsg)
-            DebugLogger.shared.log(errorMsg)
             throw error
         }
         
@@ -791,7 +789,6 @@ class BackgroundProcessingManager: ObservableObject {
             let error = BackgroundProcessingError.invalidAudioFormat("Chunk file is empty: \(chunk.chunkURL.path)")
             let errorMsg = "❌ Chunk file is empty: \(chunk.chunkURL.path)"
             print(errorMsg)
-            DebugLogger.shared.log(errorMsg)
             throw error
         }
         
@@ -828,7 +825,7 @@ class BackgroundProcessingManager: ObservableObject {
                     error: openAIResult.error
                 )
                 
-            case .whisper, .whisperWyoming:
+            case .whisper:
                 let config = getWhisperConfig()
                 let service = WhisperService(config: config, chunkingService: chunkingService)
                 
@@ -856,17 +853,16 @@ class BackgroundProcessingManager: ObservableObject {
             if result.fullText.isEmpty {
                 let warningMsg = "⚠️ WARNING: Transcription result is empty! Success: \(result.success), Segments: \(result.segments.count)"
                 print(warningMsg)
-                DebugLogger.shared.log(warningMsg)
                 if let error = result.error {
-                    DebugLogger.shared.log("   - Error: \(error.localizedDescription)")
+                    print("   - Error: \(error.localizedDescription)")
                 }
                 
                 // Check if this is a silent audio chunk or processing issue
                 if result.success && result.segments.count > 0 {
-                    DebugLogger.shared.log("   - Audio chunk processed successfully but contains no speech content")
-                    DebugLogger.shared.log("   - This may indicate a silent audio segment or background noise only")
+                    print("   - Audio chunk processed successfully but contains no speech content")
+                    print("   - This may indicate a silent audio segment or background noise only")
                 } else {
-                    DebugLogger.shared.log("   - This may indicate a processing error or invalid audio format")
+                    print("   - This may indicate a processing error or invalid audio format")
                 }
                 
                 // Return a result indicating no speech detected instead of empty transcription
@@ -881,8 +877,6 @@ class BackgroundProcessingManager: ObservableObject {
             } else {
                 let successMsg = "✅ Transcription successful: \(result.fullText.count) characters, \(result.segments.count) segments"
                 print(successMsg)
-                DebugLogger.shared.log(successMsg)
-                DebugLogger.shared.log("   - Preview: \(result.fullText.prefix(100))...")
             }
             
             return result

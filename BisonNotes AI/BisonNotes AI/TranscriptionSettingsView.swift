@@ -109,7 +109,7 @@ struct TranscriptionSettingsView: View {
                                 switch selectedEngine {
                                 case .awsTranscribe:
                                     showingAWSSettings = true
-                                case .whisper, .whisperWyoming:
+                                case .whisper:
                                     showingWhisperSettings = true
                                 case .openAI:
                                     showingOpenAISettings = true
@@ -147,7 +147,7 @@ struct TranscriptionSettingsView: View {
         switch engine {
         case .awsTranscribe:
             return .orange
-        case .whisper, .whisperWyoming:
+        case .whisper:
             return .green
         case .openAI:
             return .blue
@@ -210,7 +210,7 @@ struct TranscriptionSettingsView: View {
         switch engine {
         case .awsTranscribe:
             return "Cloud-based"
-        case .whisper, .whisperWyoming:
+        case .whisper:
             return "Local AI"
         case .openAI:
             return "Cloud AI"

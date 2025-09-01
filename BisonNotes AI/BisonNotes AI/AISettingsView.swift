@@ -85,7 +85,7 @@ final class AISettingsViewModel: ObservableObject {
         case .enhancedAppleIntelligence:
             return true // Always available on iOS 15+
         case .openAI:
-            let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
+            let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
             return !apiKey.isEmpty
         case .openAICompatible:
             let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
@@ -185,7 +185,7 @@ struct AISettingsView: View {
         case .enhancedAppleIntelligence:
             return true // Always available on iOS 15+
         case .openAI:
-            let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
+            let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
             return !apiKey.isEmpty
         case .openAICompatible:
             let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
@@ -659,7 +659,7 @@ private extension AISettingsView {
     
     var openAIConfigurationSection: some View {
         // FIX: Logic moved outside the ViewBuilder closure.
-        let apiKey = UserDefaults.standard.string(forKey: "openAISummarizationAPIKey") ?? ""
+        let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
         let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
         let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt41Mini
         
