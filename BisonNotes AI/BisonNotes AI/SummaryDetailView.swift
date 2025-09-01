@@ -78,6 +78,7 @@ struct SummaryDetailView: View {
                     regenerateSection
                 }
                 .padding(.vertical)
+                .padding(.horizontal, 16) // Apple's recommended margin for text readability
             }
         }
         .onAppear {
@@ -326,7 +327,6 @@ struct SummaryDetailView: View {
                 Spacer()
             }
         }
-        .padding(.horizontal)
     }
     
     // MARK: - Metadata Section
@@ -646,7 +646,6 @@ struct SummaryDetailView: View {
                 }
                 .disabled(isUpdatingDate)
             }
-            .padding(.horizontal)
         }
         .sheet(isPresented: $showingDateEditor) {
             DateTimeEditorView(
@@ -699,7 +698,6 @@ struct SummaryDetailView: View {
                 }
                 .disabled(isRegenerating)
             }
-            .padding(.horizontal)
             
             // Location Editor Section
             locationEditorSection
@@ -800,7 +798,6 @@ struct SummaryDetailView: View {
                     }
                 }
             }
-            .padding(.horizontal)
         }
     }
     
@@ -837,7 +834,6 @@ struct SummaryDetailView: View {
                     .cornerRadius(10)
                 }
             }
-            .padding(.horizontal)
         }
     }
     
