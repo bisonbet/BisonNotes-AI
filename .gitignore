@@ -51,3 +51,6 @@ Icon?
 # App-specific
 .idx/dev.nix
 BisonNotes AI/TEST_PLAN.md
+
+.gemini/
+gha-creds-*.json
