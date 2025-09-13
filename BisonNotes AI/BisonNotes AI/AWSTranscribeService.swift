@@ -123,6 +123,10 @@ class AWSTranscribeService: NSObject, ObservableObject {
             let clientConfig = try await TranscribeClient.TranscribeClientConfiguration(
                 region: sharedCredentials.region
             )
+            
+            // AWS SDK for Swift will automatically use environment variables
+            // set by AWSCredentialsManager.initializeEnvironment()
+            
             let client = TranscribeClient(config: clientConfig)
             self.transcribeClient = client
             return client
@@ -146,6 +150,10 @@ class AWSTranscribeService: NSObject, ObservableObject {
             let clientConfig = try await S3Client.S3ClientConfiguration(
                 region: sharedCredentials.region
             )
+            
+            // AWS SDK for Swift will automatically use environment variables
+            // set by AWSCredentialsManager.initializeEnvironment()
+            
             let client = S3Client(config: clientConfig)
             self.s3Client = client
             return client

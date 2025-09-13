@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AWSClientRuntime
 
 // MARK: - Shared AWS Configuration
 
@@ -94,10 +95,12 @@ class AWSCredentialsManager: ObservableObject {
         }
     }
     
+    
     // Call this when app starts to ensure environment variables are set
     func initializeEnvironment() {
         configureEnvironmentVariables()
     }
+    
 }
 
 // MARK: - Global Shared Instance

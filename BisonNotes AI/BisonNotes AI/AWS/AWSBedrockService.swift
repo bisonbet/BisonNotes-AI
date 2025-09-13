@@ -43,6 +43,10 @@ class AWSBedrockService: ObservableObject {
             let clientConfig = try await BedrockRuntimeClient.BedrockRuntimeClientConfiguration(
                 region: sharedCredentials.region
             )
+            
+            // AWS SDK for Swift will automatically use environment variables
+            // set by AWSCredentialsManager.initializeEnvironment()
+            
             let client = BedrockRuntimeClient(config: clientConfig)
             self.bedrockClient = client
             return client

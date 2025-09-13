@@ -10,14 +10,14 @@ import Foundation
 // MARK: - AWS Bedrock Models
 
 enum AWSBedrockModel: String, CaseIterable {
-    case claude35Sonnet = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+    case claude4Sonnet = "global.anthropic.claude-sonnet-4-20250514-v1:0"
     case claude35Haiku = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
     case llama33_70B = "us.meta.llama3-3-70b-instruct-v1:0"
     
     var displayName: String {
         switch self {
-        case .claude35Sonnet:
-            return "Claude 3.5 Sonnet v2"
+        case .claude4Sonnet:
+            return "Claude Sonnet 4"
         case .claude35Haiku:
             return "Claude 3.5 Haiku"
         case .llama33_70B:
@@ -27,8 +27,8 @@ enum AWSBedrockModel: String, CaseIterable {
     
     var description: String {
         switch self {
-        case .claude35Sonnet:
-            return "Latest Claude 3.5 Sonnet with enhanced reasoning and analysis capabilities"
+        case .claude4Sonnet:
+            return "Latest Claude Sonnet 4 with advanced reasoning, coding, and analysis capabilities"
         case .claude35Haiku:
             return "Fast and efficient Claude model optimized for quick responses"
         case .llama33_70B:
@@ -38,7 +38,7 @@ enum AWSBedrockModel: String, CaseIterable {
     
     var maxTokens: Int {
         switch self {
-        case .claude35Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude35Haiku:
             return 8192
         case .llama33_70B:
             return 4096
@@ -47,7 +47,7 @@ enum AWSBedrockModel: String, CaseIterable {
     
     var contextWindow: Int {
         switch self {
-        case .claude35Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude35Haiku:
             return 200000
         case .llama33_70B:
             return 128000
@@ -56,8 +56,8 @@ enum AWSBedrockModel: String, CaseIterable {
     
     var costTier: String {
         switch self {
-        case .claude35Sonnet:
-            return "Premium"
+        case .claude4Sonnet:
+            return "Premium+"
         case .claude35Haiku:
             return "Economy"
         case .llama33_70B:
@@ -67,7 +67,7 @@ enum AWSBedrockModel: String, CaseIterable {
     
     var provider: String {
         switch self {
-        case .claude35Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude35Haiku:
             return "Anthropic"
         case .llama33_70B:
             return "Meta"
@@ -76,7 +76,7 @@ enum AWSBedrockModel: String, CaseIterable {
     
     var supportsStructuredOutput: Bool {
         switch self {
-        case .claude35Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude35Haiku:
             return true
         case .llama33_70B:
             return false
@@ -309,7 +309,7 @@ class AWSBedrockModelFactory {
         temperature: Double
     ) -> any BedrockModelRequest {
         switch model {
-        case .claude35Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude35Haiku:
             var messages = [Claude35Message]()
             messages.append(Claude35Message(role: "user", text: prompt))
             return Claude35Request(
@@ -336,7 +336,7 @@ class AWSBedrockModelFactory {
         let decoder = JSONDecoder()
         
         switch model {
-        case .claude35Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude35Haiku:
             return try decoder.decode(Claude35Response.self, from: data)
             
         case .llama33_70B:
