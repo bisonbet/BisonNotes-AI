@@ -2,6 +2,25 @@ import SwiftUI
 import MapKit
 import CoreLocation
 
+private actor SummaryGeocodeCache {
+    enum Entry: Sendable {
+        case address(String)
+        case empty
+    }
+
+    private var storage: [String: Entry] = [:]
+
+    func entry(for key: String) -> Entry? {
+        storage[key]
+    }
+
+    func store(_ entry: Entry, for key: String) {
+        storage[key] = entry
+    }
+}
+
+private let summaryGeocodeCache = SummaryGeocodeCache()
+
 struct SummaryDetailView: View {
     let recording: RecordingFile
     @State private var summaryData: EnhancedSummaryData
@@ -25,6 +44,11 @@ struct SummaryDetailView: View {
     @State private var showingLocationPicker = false
     @State private var isUpdatingLocation = false
     @State private var showingAIWarning = false
+    @State private var isExportingPDF = false
+    @State private var showingShareSheet = false
+    @State private var pdfDataToShare: Data?
+    @State private var exportError: String?
+    @State private var geocodingTask: Task<Void, Never>?
     
     init(recording: RecordingFile, summaryData: EnhancedSummaryData) {
         self.recording = recording
@@ -36,6 +60,33 @@ struct SummaryDetailView: View {
             content
                 .navigationTitle("Enhanced Summary")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Done") {
+                            dismiss()
+                        }
+                    }
+
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: {
+                            exportToPDF()
+                        }) {
+                            HStack(spacing: 4) {
+                                if isExportingPDF {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                    Text("Exporting...")
+                                        .font(.caption)
+                                } else {
+                                    Image(systemName: "square.and.arrow.up")
+                                    Text("Export")
+                                        .font(.caption)
+                                }
+                            }
+                        }
+                        .disabled(isExportingPDF)
+                    }
+                }
         }
         .configurationWarnings(
             showingTranscriptionWarning: .constant(false),
@@ -45,13 +96,6 @@ struct SummaryDetailView: View {
                 // For now, just dismiss the alert
             }
         )
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Done") {
-                    dismiss()
-                }
-            }
-        }
     }
     
     private var content: some View {
@@ -97,31 +141,21 @@ struct SummaryDetailView: View {
             } else {
                 print("📍 SummaryDetailView: Recording has NO location data")
             }
-            
+
             // Refresh summary data from coordinator to get the latest version
             if let recordingEntry = appCoordinator.getRecording(url: recording.url),
                let recordingId = recordingEntry.id,
-        let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
-               let latestSummary = completeData.summary {
+               let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
+               let latestSummary = completeData.summary,
+               latestSummary.id != summaryData.id {
                 summaryData = latestSummary
             }
-            
-            // Perform reverse geocoding on background queue to avoid blocking UI
-            if let locationData = recording.locationData {
-                Task {
-                    let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
-                    
-                    // Use a temporary LocationManager for reverse geocoding
-                    let tempLocationManager = LocationManager()
-                    tempLocationManager.reverseGeocodeLocation(location) { address in
-                        DispatchQueue.main.async {
-                            if let address = address {
-                                locationAddress = address
-                            }
-                        }
-                    }
-                }
-            }
+
+            scheduleLocationGeocoding()
+        }
+        .onDisappear {
+            geocodingTask?.cancel()
+            geocodingTask = nil
         }
         .alert("Regeneration Error", isPresented: $showingRegenerationAlert) {
             Button("OK") {
@@ -152,8 +186,109 @@ struct SummaryDetailView: View {
                 }
             )
         }
+        .sheet(isPresented: $showingShareSheet) {
+            if let pdfData = pdfDataToShare {
+                ShareSheet(activityItems: [createPDFFileURL(from: pdfData)])
+            }
+        }
+        .alert("Export Error", isPresented: .constant(exportError != nil)) {
+            Button("OK") {
+                exportError = nil
+            }
+        } message: {
+            if let error = exportError {
+                Text(error)
+            }
+        }
     }
     
+    // MARK: - Geocoding Helpers
+
+    @MainActor
+    private func scheduleLocationGeocoding(for locationData: LocationData? = nil) {
+        geocodingTask?.cancel()
+
+        let targetLocation = locationData ?? recording.locationData
+
+        guard let targetLocation else {
+            locationAddress = nil
+            geocodingTask = nil
+            return
+        }
+
+        geocodingTask = Task { [targetLocation] in
+            await resolveLocationAddress(for: targetLocation)
+        }
+    }
+
+    private func resolveLocationAddress(for locationData: LocationData) async {
+        let cacheKey = cacheKey(for: locationData)
+
+        if let cached = await summaryGeocodeCache.entry(for: cacheKey) {
+            await applyGeocodeCacheEntry(cached)
+            return
+        }
+
+        let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
+
+        do {
+            let placemarks = try await CLGeocoder().reverseGeocodeLocation(location)
+            if Task.isCancelled { return }
+
+            let address = formattedAddress(from: placemarks.first)
+            let entry: SummaryGeocodeCache.Entry = address.map { .address($0) } ?? .empty
+            await summaryGeocodeCache.store(entry, for: cacheKey)
+            if Task.isCancelled { return }
+            await MainActor.run {
+                locationAddress = address
+            }
+        } catch {
+            print("❌ SummaryDetailView: Reverse geocoding failed: \(error.localizedDescription)")
+            await summaryGeocodeCache.store(.empty, for: cacheKey)
+            if Task.isCancelled { return }
+            await MainActor.run {
+                locationAddress = nil
+            }
+        }
+    }
+
+    private func cacheKey(for locationData: LocationData) -> String {
+        let safeLatitude = locationData.latitude.isFinite && !locationData.latitude.isNaN ? locationData.latitude : 0.0
+        let safeLongitude = locationData.longitude.isFinite && !locationData.longitude.isNaN ? locationData.longitude : 0.0
+        return String(format: "%.3f,%.3f", safeLatitude, safeLongitude)
+    }
+
+    private func formattedAddress(from placemark: CLPlacemark?) -> String? {
+        guard let placemark else { return nil }
+
+        var components: [String] = []
+        if let locality = placemark.locality {
+            components.append(locality)
+        }
+        if let administrativeArea = placemark.administrativeArea {
+            components.append(administrativeArea)
+        }
+        if let country = placemark.country, country != "United States" {
+            components.append(country)
+        }
+
+        let formatted = components.joined(separator: ", ")
+        return formatted.isEmpty ? nil : formatted
+    }
+
+    private func applyGeocodeCacheEntry(_ entry: SummaryGeocodeCache.Entry) async {
+        switch entry {
+        case .address(let value):
+            await MainActor.run {
+                locationAddress = value
+            }
+        case .empty:
+            await MainActor.run {
+                locationAddress = nil
+            }
+        }
+    }
+
     // MARK: - Location Section
     
     private var locationSection: some View {
@@ -161,18 +296,25 @@ struct SummaryDetailView: View {
             if let locationData = recording.locationData {
                 // Existing location - show map
                 VStack(spacing: 0) {
-                    Map(position: .constant(.region(MKCoordinateRegion(
-                        center: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude),
-                        span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005) // Tighter zoom like Apple
-                    )))) {
-                        Marker("Recording Location", coordinate: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude))
-                            .foregroundStyle(.orange) // More prominent color
+                    GeometryReader { geometry in
+                        if geometry.size.width > 0 && geometry.size.height > 0 {
+                            Map(position: .constant(.region(MKCoordinateRegion(
+                                center: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude),
+                                span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005)
+                            )))) {
+                                Marker("Recording Location", coordinate: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude))
+                                    .foregroundStyle(.orange)
+                            }
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                            .disabled(true)
+                            .allowsHitTesting(false)
+                        } else {
+                            Color.clear
+                        }
                     }
-                    .frame(height: 250) // Taller like Apple's design
-                    .clipShape(RoundedRectangle(cornerRadius: 0)) // No rounded corners for full-width effect
-                    .disabled(true) // Make map static and non-interactive
-                    .allowsHitTesting(false) // Prevent all touch interactions
-                    
+                    .frame(height: 250)
+                    .clipped()
+
                     // Location info bar below map
                     HStack {
                         Image(systemName: "location.fill")
@@ -1204,6 +1346,8 @@ struct SummaryDetailView: View {
                 
                 await MainActor.run {
                     isUpdatingLocation = false
+                    locationAddress = locationData.displayLocation
+                    scheduleLocationGeocoding(for: locationData)
                     
                     // Post notification to refresh other views
                     NotificationCenter.default.post(
@@ -1239,6 +1383,64 @@ struct SummaryDetailView: View {
         recording.lastModified = Date()
         
         try appCoordinator.coreDataManager.saveContext()
+    }
+
+    // MARK: - PDF Export Functions
+
+    private func exportToPDF() {
+        isExportingPDF = true
+
+        Task { @MainActor in
+            do {
+                print("📄 Starting PDF export for: \(summaryData.recordingName)")
+
+                let pdfData = try PDFExportService.shared.generatePDF(
+                    summaryData: summaryData,
+                    locationData: recording.locationData,
+                    locationAddress: locationAddress
+                )
+
+                print("✅ PDF generated successfully, size: \(pdfData.count) bytes")
+
+                pdfDataToShare = pdfData
+                showingShareSheet = true
+                isExportingPDF = false
+
+                print("📤 Opening share sheet")
+            } catch {
+                print("❌ PDF export failed: \(error)")
+                exportError = "Failed to generate PDF: \(error.localizedDescription)"
+                isExportingPDF = false
+            }
+        }
+    }
+
+    private func createPDFFileURL(from data: Data) -> URL {
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let fileName = sanitizeFileName("\(summaryData.recordingName)_Summary.pdf")
+        let fileURL = documentsDirectory.appendingPathComponent(fileName)
+
+        do {
+            // Ensure the file doesn't already exist
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                try FileManager.default.removeItem(at: fileURL)
+            }
+
+            try data.write(to: fileURL)
+            print("✅ PDF written to: \(fileURL.path)")
+            return fileURL
+        } catch {
+            print("❌ Error writing PDF to file: \(error)")
+            // Fallback to temporary directory
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+            try? data.write(to: tempURL)
+            return tempURL
+        }
+    }
+
+    private func sanitizeFileName(_ fileName: String) -> String {
+        let invalidCharacters = CharacterSet(charactersIn: "\\/:*?\"<>|")
+        return fileName.components(separatedBy: invalidCharacters).joined(separator: "_")
     }
 }
 
@@ -2607,6 +2809,33 @@ struct LocationResultRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Share Sheet
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+
+        // Configure for better sharing experience
+        controller.excludedActivityTypes = [
+            .addToReadingList,
+            .assignToContact
+        ]
+
+        // Set subject for email sharing
+        if let fileURL = activityItems.first as? URL {
+            controller.setValue("PDF Summary - \(fileURL.deletingPathExtension().lastPathComponent)", forKey: "subject")
+        }
+
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
+        // No updates needed
     }
 }
 

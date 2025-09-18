@@ -188,7 +188,7 @@ struct SummariesView: View {
     
     private var recordingsListView: some View {
         List {
-            ForEach(recordings, id: \.recording.id) { recordingData in
+            ForEach(recordings, id: \.recording.objectID) { recordingData in
                 recordingRowView(recordingData)
             }
         }
