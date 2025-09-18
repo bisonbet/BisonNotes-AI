@@ -1637,6 +1637,39 @@ class GoogleAIStudioEngine: SummarizationEngine {
     }
 }
 
+// MARK: - Not Configured Engine for unconfigured state
+
+class NotConfiguredEngine: SummarizationEngine {
+    let name: String = "Not Configured"
+    let description: String = "No AI summarization engine has been configured"
+    let version: String = "1.0"
+    let isAvailable: Bool = false
+
+    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
+        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
+    }
+
+    func extractTasks(from text: String) async throws -> [TaskItem] {
+        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
+    }
+
+    func extractReminders(from text: String) async throws -> [ReminderItem] {
+        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
+    }
+
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
+    }
+
+    func classifyContent(_ text: String) async throws -> ContentType {
+        return .general
+    }
+
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
+    }
+}
+
 // MARK: - No-Op Engine for "None" selection
 
 class NoOpEngine: SummarizationEngine {
@@ -1676,6 +1709,8 @@ class NoOpEngine: SummarizationEngine {
 class AIEngineFactory {
     static func createEngine(type: AIEngineType) -> SummarizationEngine {
         switch type {
+        case .notConfigured:
+            return NotConfiguredEngine()
         case .none:
             return NoOpEngine()
         case .enhancedAppleIntelligence:
@@ -1706,6 +1741,7 @@ class AIEngineFactory {
 }
 
 enum AIEngineType: String, CaseIterable {
+    case notConfigured = "Not Configured"
     case none = "None"
     case enhancedAppleIntelligence = "Enhanced Apple Intelligence"
     case openAI = "OpenAI"
@@ -1716,6 +1752,8 @@ enum AIEngineType: String, CaseIterable {
     
     var description: String {
         switch self {
+        case .notConfigured:
+            return "No AI summarization engine has been configured yet"
         case .none:
             return "No AI summarization engine selected"
         case .enhancedAppleIntelligence:
@@ -1735,7 +1773,7 @@ enum AIEngineType: String, CaseIterable {
     
     var isComingSoon: Bool {
         switch self {
-        case .none, .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio:
+        case .notConfigured, .none, .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio:
             return false
         case .awsBedrock:
             return false
@@ -1744,6 +1782,8 @@ enum AIEngineType: String, CaseIterable {
     
     var requirements: [String] {
         switch self {
+        case .notConfigured:
+            return ["Configuration required - please select and configure an AI engine"]
         case .none:
             return ["No requirements - AI features disabled"]
         case .enhancedAppleIntelligence:

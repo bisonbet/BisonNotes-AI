@@ -24,6 +24,7 @@ struct SummaryDetailView: View {
     @State private var isUpdatingDate = false
     @State private var showingLocationPicker = false
     @State private var isUpdatingLocation = false
+    @State private var showingAIWarning = false
     
     init(recording: RecordingFile, summaryData: EnhancedSummaryData) {
         self.recording = recording
@@ -36,6 +37,14 @@ struct SummaryDetailView: View {
                 .navigationTitle("Enhanced Summary")
                 .navigationBarTitleDisplayMode(.inline)
         }
+        .configurationWarnings(
+            showingTranscriptionWarning: .constant(false),
+            showingAIWarning: $showingAIWarning,
+            onSettingsRequested: {
+                // Navigate to settings - you might want to implement navigation to AI settings
+                // For now, just dismiss the alert
+            }
+        )
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") {
@@ -675,6 +684,12 @@ struct SummaryDetailView: View {
                     .multilineTextAlignment(.center)
                 
                 Button(action: {
+                    // Check if AI engine is configured before allowing regeneration
+                    if !ConfigurationWarningHelper.isAIEngineConfigured() {
+                        showingAIWarning = true
+                        return
+                    }
+
                     Task {
                         await regenerateSummary()
                     }

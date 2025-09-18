@@ -107,6 +107,9 @@ struct TranscriptionSettingsView: View {
                             
                             Button(action: {
                                 switch selectedEngine {
+                                case .notConfigured:
+                                    // No settings for unconfigured state
+                                    break
                                 case .awsTranscribe:
                                     showingAWSSettings = true
                                 case .whisper:
@@ -145,6 +148,8 @@ struct TranscriptionSettingsView: View {
     
     private func engineColor(for engine: TranscriptionEngine) -> Color {
         switch engine {
+        case .notConfigured:
+            return .gray
         case .awsTranscribe:
             return .orange
         case .whisper:
@@ -208,6 +213,8 @@ struct TranscriptionSettingsView: View {
     
     private func engineTypeDescription(for engine: TranscriptionEngine) -> String {
         switch engine {
+        case .notConfigured:
+            return "Not Configured"
         case .awsTranscribe:
             return "Cloud-based"
         case .whisper:

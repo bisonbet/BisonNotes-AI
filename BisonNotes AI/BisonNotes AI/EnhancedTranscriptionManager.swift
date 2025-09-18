@@ -378,6 +378,9 @@ return try await transcribeWithAppleIntelligence(url: url, duration: duration)
         
         // Manage background checking based on selected engine
         switch selectedEngine {
+        case .notConfigured:
+            print("❌ Transcription engine not configured")
+            throw TranscriptionError.engineNotConfigured
         case .awsTranscribe:
             switchToAWSTranscription()
             
@@ -1535,6 +1538,9 @@ func switchToWhisperTranscription() {
         }
         
         switch engine {
+        case .notConfigured:
+            // For unconfigured state, default to Apple Transcription which is always available
+            switchToAppleTranscription()
         case .awsTranscribe:
             switchToAWSTranscription()
         case .whisper:
@@ -1682,6 +1688,7 @@ enum TranscriptionError: LocalizedError {
     case whisperConnectionFailed
     case whisperTranscriptionFailed(Error)
     case openAITranscriptionFailed(Error)
+    case engineNotConfigured
     
     var errorDescription: String? {
         switch self {
@@ -1711,6 +1718,8 @@ enum TranscriptionError: LocalizedError {
             return "OpenAI transcription failed: \(error.localizedDescription)"
         case .fileTooLarge(let duration, let maxDuration):
             return "File too large for processing (\(Int(duration/60)) minutes, max \(Int(maxDuration/60)) minutes)"
+        case .engineNotConfigured:
+            return "Transcription engine not configured. Please configure a transcription engine in Settings."
         }
     }
 }

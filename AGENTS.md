@@ -1,34 +1,34 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `BisonNotes AI/`: Main iOS app source (Swift + SwiftUI). Key folders: `Models/`, `Views/`, `OpenAI/`, `AWS/`, `Wyoming/`, `WatchConnectivity/`, `ViewModels/`, plus assets in `Assets.xcassets` and configuration in `Info.plist` and `.entitlements`.
-- `BisonNotes AI Watch App Watch App/`: watchOS companion app sources.
-- Tests: `BisonNotes AITests/` (unit), `BisonNotes AIUITests/` (UI), and watch-specific tests under the watch target folders.
-- Xcode project: `BisonNotes AI/BisonNotes AI.xcodeproj`.
+- Primary app code lives in `BisonNotes AI/` with feature folders such as `Models/`, `Views/`, `OpenAI/`, `AWS/`, `Wyoming/`, and `ViewModels/`.
+- Watch companion sources are under `BisonNotes AI Watch App Watch App/`; keep shared logic in clear, reusable files.
+- Unit and UI tests sit in `BisonNotes AITests/` and `BisonNotes AIUITests/`; watch-specific tests mirror the target folders.
+- Assets live in `BisonNotes AI/Assets.xcassets`; app capabilities and settings are in `Info.plist` and `.entitlements`.
 
 ## Build, Test, and Development Commands
-- Open in Xcode: `open "BisonNotes AI/BisonNotes AI.xcodeproj"`
-- Build (iOS app): `xcodebuild -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -configuration Debug build`
-- Test (iOS): `xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=iOS Simulator,name=iPhone 15'`
-- Tip: Use the Xcode schemes for the iOS app and watch app to run in Simulator. SwiftPM dependencies are resolved via the workspace; no separate install step is required.
+- `open "BisonNotes AI/BisonNotes AI.xcodeproj"` launches the workspace in Xcode.
+- `xcodebuild -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -configuration Debug build` performs a Debug build of the iOS app.
+- `xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=iOS Simulator,name=iPhone 15'` runs the iOS test suite.
+- Use the corresponding watchOS scheme in Xcode to validate watch targets before merging.
 
 ## Coding Style & Naming Conventions
-- Indentation: 4 spaces; keep lines <120 chars.
-- Swift naming: `UpperCamelCase` for types/files, `lowerCamelCase` for vars/functions, enum cases `lowerCamelCase`.
-- Suffixes: `View` for SwiftUI views, `Manager`/`Service` for coordinators and integrations, `ViewModel` for state containers.
-- Organize by feature folder (e.g., `OpenAI/`, `AWS/`) and keep one primary type per file.
+- Follow 4-space indentation with lines under 120 characters; keep one primary type per file.
+- Use `UpperCamelCase` for types and files, `lowerCamelCase` for properties/functions, and enum cases in `lowerCamelCase`.
+- Append `View`, `ViewModel`, `Manager`, or `Service` where applicable; align folder names with features.
+- Prefer succinct comments explaining non-obvious logic; avoid redundant narration.
 
 ## Testing Guidelines
-- Framework: XCTest for unit and UI tests.
-- Naming: Mirror source types (e.g., `SummaryManagerTests.swift`). Group UI flows in `...UITests`.
-- Run: use the `xcodebuild test` example above or run tests per target in Xcode. Aim for meaningful coverage of models, services, and error paths.
+- XCTest powers unit and UI coverage; prioritize models, services, error paths, and integration seams.
+- Mirror source names in test files, e.g., `SummaryManagerTests.swift`; group flows under `...UITests`.
+- Run `xcodebuild test` before PRs and document any simulator or device caveats in the PR template.
 
 ## Commit & Pull Request Guidelines
-- Commits: Prefer Conventional Commits (e.g., `feat:`, `fix:`, `chore:`). Keep messages imperative and scoped.
-- PRs: Include a clear summary, linked issues (e.g., `Closes #123`), test plan/Simulator target, and screenshots for UI changes. Ensure all tests pass and the app builds for both iOS and watchOS targets.
+- Use Conventional Commit prefixes (`feat:`, `fix:`, `chore:`) with imperative, scoped messages.
+- PRs should summarize changes, link issues via `Closes #123`, note simulator targets, and attach UI screenshots when applicable.
+- Confirm the app builds for both iOS and watchOS schemes; include test evidence or rationale if coverage is deferred.
 
 ## Security & Configuration Tips
-- Do not commit secrets. API keys are entered via app settings views (e.g., OpenAI/AWS settings) and stored securely at runtime.
-- Keep entitlements and `Info.plist` minimal and in sync with capabilities used (iCloud, Background Modes, Microphone).
-- When touching background processing, audio, or sync, test on device and watch pairs where possible.
-
+- Never commit API keys; rely on in-app settings for OpenAI and AWS credentials stored securely at runtime.
+- Keep `Info.plist` and entitlements minimal and aligned with required capabilities (iCloud, Background Modes, Microphone).
+- When adjusting background audio or sync, verify behavior on paired iOS and watchOS devices to avoid runtime regressions.

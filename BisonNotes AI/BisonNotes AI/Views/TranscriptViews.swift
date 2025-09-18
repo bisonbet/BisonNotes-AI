@@ -18,6 +18,7 @@ struct TranscriptsView: View {
     @State private var recordings: [(recording: RecordingEntry, transcript: TranscriptData?)] = []
     @State private var selectedRecording: RecordingEntry?
     @State private var isGeneratingTranscript = false
+    @State private var generatingTranscriptRecording: RecordingEntry?
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
     @State private var showingTranscriptionCompletionAlert = false
@@ -170,36 +171,45 @@ struct TranscriptsView: View {
     }
     
     private func transcriptButtonView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
-        Button(action: {
-            if recordingData.transcript != nil {
-                // Show existing transcript for editing
+        let hasTranscript = recordingData.transcript != nil
+        let isCurrentlyGenerating = isGeneratingTranscript && generatingTranscriptRecording?.id == recordingData.recording.id
+
+        return Button(action: {
+            if hasTranscript {
+                // Show existing transcript for editing - always allowed
                 selectedRecording = recordingData.recording
             } else {
-                // Generate new transcript - don't set selectedRecording to avoid showing modal
-                generateTranscript(for: recordingData.recording)
+                // Generate new transcript - only if not currently generating any transcript
+                if !isGeneratingTranscript {
+                    generateTranscript(for: recordingData.recording)
+                }
             }
         }) {
             HStack {
-                if isGeneratingTranscript && selectedRecording?.id == recordingData.recording.id {
+                if isCurrentlyGenerating {
                     ProgressView()
                         .scaleEffect(0.8)
-                    Text("Processing...")
+                    Text("Generating...")
                         .font(.caption2)
                 } else {
-                    Image(systemName: recordingData.transcript != nil ? "text.bubble.fill" : "text.bubble")
-                    Text(recordingData.transcript != nil ? "Edit Transcript" : "Generate Transcript")
+                    Image(systemName: hasTranscript ? "text.bubble.fill" : "text.bubble")
+                    Text(hasTranscript ? "Edit Transcript" : "Generate Transcript")
                 }
             }
             .font(.caption)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(recordingData.transcript != nil ? Color.green : Color.accentColor)
+            .background(
+                hasTranscript ? Color.green :
+                (isGeneratingTranscript && !hasTranscript) ? Color.gray : Color.accentColor
+            )
             .foregroundColor(.white)
             .cornerRadius(8)
         }
-        .disabled(isGeneratingTranscript)
-        .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(recordingData.transcript != nil)-\(refreshTrigger)")
-
+        .disabled(isGeneratingTranscript && !hasTranscript) // Only disable generate buttons when generating
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(hasTranscript)-\(isGeneratingTranscript)-\(refreshTrigger)")
     }
     
     private func loadRecordings() {
@@ -318,8 +328,11 @@ struct TranscriptsView: View {
 
     
     private func generateTranscript(for recording: RecordingEntry) {
+        guard !isGeneratingTranscript else { return }
+
         isGeneratingTranscript = true
-        
+        generatingTranscriptRecording = recording // Track which recording is being generated
+
         // Get the selected transcription engine
         let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
         
@@ -332,10 +345,13 @@ struct TranscriptsView: View {
                         self.performEnhancedTranscription(for: recording)
                     case .denied, .restricted:
                         self.isGeneratingTranscript = false
+                        self.generatingTranscriptRecording = nil
                     case .notDetermined:
                         self.isGeneratingTranscript = false
+                        self.generatingTranscriptRecording = nil
                     @unknown default:
                         self.isGeneratingTranscript = false
+                        self.generatingTranscriptRecording = nil
                     }
                 }
             }
@@ -432,7 +448,11 @@ struct TranscriptsView: View {
             
             await MainActor.run {
                 self.isGeneratingTranscript = false
+                self.generatingTranscriptRecording = nil
                 print("🏁 Transcription process completed")
+
+                // Refresh the recordings list to show the new transcript
+                self.loadRecordings()
             }
         }
     }

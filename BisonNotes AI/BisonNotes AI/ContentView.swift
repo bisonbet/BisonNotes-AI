@@ -22,6 +22,8 @@ struct ContentView: View {
             if isInitialized {
             if isFirstLaunch {
                 SimpleSettingsView()
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
                     .onAppear {
                         // Mark first launch as complete when they finish setup
                         UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")

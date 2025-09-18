@@ -80,6 +80,8 @@ final class AISettingsViewModel: ObservableObject {
     
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
+        case .notConfigured:
+            return false // "Not Configured" is never available
         case .none:
             return true // "None" is always available
         case .enhancedAppleIntelligence:
@@ -180,6 +182,8 @@ struct AISettingsView: View {
     
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
+        case .notConfigured:
+            return false // "Not Configured" is never available
         case .none:
             return true // "None" is always available
         case .enhancedAppleIntelligence:
@@ -214,6 +218,8 @@ struct AISettingsView: View {
     
     private func getEngineVersion(_ engineType: AIEngineType) -> String {
         switch engineType {
+        case .notConfigured:
+            return "Not Configured"
         case .none:
             return "N/A"
         case .enhancedAppleIntelligence:
@@ -428,6 +434,8 @@ private extension AISettingsView {
         return Group {
             if let currentEngine = AIEngineType.allCases.first(where: { $0.rawValue == currentEngineName }) {
                 switch currentEngine {
+                case .notConfigured:
+                    notConfiguredConfigurationSection
                 case .none:
                     noneConfigurationSection
                 case .enhancedAppleIntelligence:
@@ -446,7 +454,50 @@ private extension AISettingsView {
             }
         }
     }
-    
+
+    var notConfiguredConfigurationSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("AI Engine Not Configured")
+                .font(.headline)
+                .padding(.horizontal, 24)
+
+            Text("No AI summarization engine has been configured yet. Please select and configure an AI engine below to enable AI summaries, task extraction, and other advanced features.")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 24)
+
+            VStack(spacing: 12) {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundColor(.orange)
+                    Text("Features requiring AI processing will show configuration warnings until an engine is selected.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 24)
+
+                HStack {
+                    Image(systemName: "gear")
+                        .foregroundColor(.blue)
+                    Text("Select an AI engine from the list above to get started.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 24)
+            }
+        }
+        .padding(.vertical, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.orange.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 16)
+    }
+
     var noneConfigurationSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("No AI Engine Selected")

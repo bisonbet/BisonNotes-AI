@@ -35,7 +35,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         static let mixedAudioRecording = AudioSessionConfig(
             category: .playAndRecord,
             mode: .default,  // Use .default instead of .voiceChat to preserve music quality
-            options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker],
+            options: [.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker],
             allowMixedAudio: true,
             backgroundRecording: false
         )
@@ -43,7 +43,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         static let backgroundRecording = AudioSessionConfig(
             category: .playAndRecord,
             mode: .default,  // Use .default instead of .voiceChat to preserve music quality
-            options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker],
+            options: [.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker],
             allowMixedAudio: true,
             backgroundRecording: true
         )
@@ -51,7 +51,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         static let standardRecording = AudioSessionConfig(
             category: .playAndRecord,
             mode: .voiceChat,
-            options: [.defaultToSpeaker, .allowBluetooth],
+            options: [.defaultToSpeaker, .allowBluetoothHFP],
             allowMixedAudio: false,
             backgroundRecording: false
         )

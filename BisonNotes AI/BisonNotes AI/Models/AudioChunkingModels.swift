@@ -98,6 +98,8 @@ struct ChunkingConfig {
     
     static func config(for engine: TranscriptionEngine) -> ChunkingConfig {
         switch engine {
+        case .notConfigured:
+            return ChunkingConfig(strategy: .appleIntelligence) // Default fallback for unconfigured state
         case .openAI:
             return ChunkingConfig(strategy: .openAI)
         case .whisper:

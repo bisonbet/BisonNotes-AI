@@ -85,6 +85,7 @@ public enum WhisperProtocol: String, CaseIterable, Codable {
 }
 
 public enum TranscriptionEngine: String, CaseIterable, Codable {
+    case notConfigured = "Not Configured"
     case appleIntelligence = "Apple Intelligence (Limited)"
     case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
@@ -93,6 +94,8 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
     
     var description: String {
         switch self {
+        case .notConfigured:
+            return "No transcription engine has been configured yet"
         case .appleIntelligence:
             return "Uses Apple's built-in Speech framework for local transcription with 1-minute limit per request"
         case .awsTranscribe:
@@ -108,6 +111,8 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
     
     var isAvailable: Bool {
         switch self {
+        case .notConfigured:
+            return false
         case .appleIntelligence, .awsTranscribe, .whisper, .openAI:
             return true
         case .openAIAPICompatible:
@@ -117,6 +122,8 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
     
     var requiresConfiguration: Bool {
         switch self {
+        case .notConfigured:
+            return true
         case .appleIntelligence:
             return false
         case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible:
@@ -126,6 +133,8 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
     
     var usesWyomingProtocol: Bool {
         switch self {
+        case .notConfigured:
+            return false
         case .whisper:
             // For unified Whisper, check the user's protocol preference
             let protocolString = UserDefaults.standard.string(forKey: "whisperProtocol") ?? WhisperProtocol.rest.rawValue

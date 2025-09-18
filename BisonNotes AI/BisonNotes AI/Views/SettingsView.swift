@@ -25,6 +25,7 @@ struct SettingsView: View {
     @State private var showingBackgroundProcessing = false
     @State private var showingDataMigration = false
     @State private var showingPreferences = false
+    @State private var showingTroubleshootingWarning = false
 
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "Enhanced Apple Intelligence"
     @AppStorage("WatchIntegrationEnabled") private var watchIntegrationEnabled: Bool = true
@@ -588,38 +589,38 @@ struct SettingsView: View {
     }
     
     private var databaseMaintenanceSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Database Maintenance")
-                .font(.headline)
-                .foregroundColor(.primary)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Button(action: {
-                    showingDataMigration = true
-                }) {
-                    HStack {
-                        Image(systemName: "wrench.and.screwdriver")
-                        Text("Database Tools")
-                    }
-                    .font(.caption)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.orange)
-                    )
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: {
+                showingTroubleshootingWarning = true
+            }) {
+                HStack {
+                    Image(systemName: "wrench.and.screwdriver")
+                    Text("Advanced Troubleshooting")
                 }
-                
+                .font(.caption)
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.orange)
+                )
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
-            .background(
-                Rectangle()
-                    .fill(Color(.systemGray6))
-                    .opacity(0.3)
-            )
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+        .background(
+            Rectangle()
+                .fill(Color(.systemGray6))
+                .opacity(0.3)
+        )
+        .alert("Warning", isPresented: $showingTroubleshootingWarning) {
+            Button("Cancel", role: .cancel) { }
+            Button("OK") {
+                showingDataMigration = true
+            }
+        } message: {
+            Text("These tools can delete data. Use with caution.")
         }
     }
     

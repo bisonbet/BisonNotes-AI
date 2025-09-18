@@ -811,6 +811,8 @@ class BackgroundProcessingManager: ObservableObject {
             let result: TranscriptionResult
             
             switch engine {
+            case .notConfigured:
+                throw BackgroundProcessingError.processingFailed("Transcription engine not configured. Please configure a transcription engine in Settings.")
             case .openAI:
                 print("🤖 Using OpenAI for transcription")
                 let config = getOpenAIConfig()

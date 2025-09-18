@@ -259,7 +259,7 @@ class WatchAudioManager: NSObject, ObservableObject {
         // Ensure audio session is configured for background operation
         do {
             // Set category with background capability
-            try audioSession?.setCategory(.record, mode: .default, options: [.allowBluetooth, .mixWithOthers])
+            try audioSession?.setCategory(.record, mode: .default, options: [.allowBluetoothHFP, .mixWithOthers])
             try audioSession?.setActive(true, options: [])
             
             print("⌚ Background recording prepared successfully")
@@ -312,7 +312,7 @@ class WatchAudioManager: NSObject, ObservableObject {
         audioSession = AVAudioSession.sharedInstance()
         
         do {
-            try audioSession?.setCategory(.record, mode: .default, options: [.allowBluetooth])
+            try audioSession?.setCategory(.record, mode: .default, options: [.allowBluetoothHFP])
             // Use notifyOthersOnDeactivation to be more cooperative with system sessions
             try audioSession?.setActive(true, options: .notifyOthersOnDeactivation)
             print("⌚ Audio session configured successfully")

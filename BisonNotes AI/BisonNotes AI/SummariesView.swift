@@ -13,6 +13,7 @@ struct SummariesView: View {
     @State private var recordings: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = []
     @State private var selectedRecording: RecordingEntry?
     @State private var isGeneratingSummary = false
+    @State private var generatingSummaryRecordingId: UUID?
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
     @State private var showSummary = false
@@ -237,11 +238,11 @@ struct SummariesView: View {
                             .foregroundColor(.white)
                             .cornerRadius(8)
                         }
-                    } else if recording.summaryStatus == ProcessingStatus.processing.rawValue {
+                    } else if recording.summaryStatus == ProcessingStatus.processing.rawValue || (isGeneratingSummary && generatingSummaryRecordingId == recording.id) {
                         HStack {
                             ProgressView()
                                 .scaleEffect(0.8)
-                            Text("Processing...")
+                            Text("Generating...")
                                 .font(.caption2)
                         }
                         .font(.caption)
@@ -252,6 +253,7 @@ struct SummariesView: View {
                         .cornerRadius(8)
                     } else {
                         Button(action: {
+                            guard !isGeneratingSummary else { return }
                             print("🔘 Generate Summary button pressed for: \(recording.recordingName ?? "Unknown")")
                             generateSummary(for: recording)
                         }) {
@@ -262,15 +264,13 @@ struct SummariesView: View {
                             .font(.caption)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
-                            .background(Color.accentColor)
+                            .background(isGeneratingSummary ? Color.gray : Color.accentColor)
                             .foregroundColor(.white)
                             .cornerRadius(8)
                         }
                         .disabled(isGeneratingSummary)
-                        .onAppear {
-                            print("🔍 Button state - isGeneratingSummary: \(isGeneratingSummary)")
-                        }
-                        .allowsHitTesting(true)
+                        .buttonStyle(.plain)
+                        .contentShape(Rectangle())
 
                     }
                 }
@@ -361,6 +361,7 @@ struct SummariesView: View {
         print("📅 Recording date: \(recording.recordingDate ?? Date())")
         
         isGeneratingSummary = true
+        generatingSummaryRecordingId = recording.id
         
         // Engine status checking is no longer needed with the simplified system
         print("🔧 Starting summary generation...")
@@ -447,6 +448,7 @@ struct SummariesView: View {
                         print("✅ Summary created with ID: \(summaryId?.uuidString ?? "nil")")
                         await MainActor.run {
                             isGeneratingSummary = false
+                            generatingSummaryRecordingId = nil
                             loadRecordings()
                         }
                     } else {
@@ -476,6 +478,7 @@ struct SummariesView: View {
                         errorMessage = "No transcript available for this recording"
                         showErrorAlert = true
                         isGeneratingSummary = false
+                        generatingSummaryRecordingId = nil
                     }
                 }
             } catch {
@@ -489,6 +492,7 @@ struct SummariesView: View {
                     errorMessage = "Failed to generate summary: \(error.localizedDescription)"
                     showErrorAlert = true
                     isGeneratingSummary = false
+                    generatingSummaryRecordingId = nil
                 }
             }
         }

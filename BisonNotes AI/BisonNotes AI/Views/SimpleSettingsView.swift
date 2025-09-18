@@ -11,22 +11,27 @@ import UIKit
 enum ProcessingOption: String, CaseIterable {
     case openai = "OpenAI"
     case appleIntelligence = "Apple Intelligence"
-    
+    case chooseLater = "Choose Later"
+
     var displayName: String {
         switch self {
         case .openai:
             return "OpenAI (Cloud)"
         case .appleIntelligence:
             return "Apple Intelligence (On-Device)"
+        case .chooseLater:
+            return "Choose Later"
         }
     }
-    
+
     var description: String {
         switch self {
         case .openai:
             return "Cloud-based transcription and AI summaries"
         case .appleIntelligence:
             return "Private, on-device processing (limited)"
+        case .chooseLater:
+            return "Set up processing options later"
         }
     }
 }
@@ -35,7 +40,7 @@ struct SimpleSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
-    @State private var selectedOption: ProcessingOption = .openai
+    @State private var selectedOption: ProcessingOption = .chooseLater
     @State private var apiKey: String = ""
     @State private var showingAdvancedSettings = false
     @State private var isSaving = false
@@ -53,8 +58,10 @@ struct SimpleSettingsView: View {
                     processingOptionSection
                     if selectedOption == .openai {
                         apiKeySection
-                    } else {
+                    } else if selectedOption == .appleIntelligence {
                         appleIntelligenceInfoSection
+                    } else if selectedOption == .chooseLater {
+                        chooseLaterSection
                     }
                     saveSection
                     
@@ -125,8 +132,8 @@ struct SimpleSettingsView: View {
             
             VStack(spacing: 12) {
                 ForEach(ProcessingOption.allCases.filter { option in
-                    // Only show Apple Intelligence if device is supported
-                    option == .openai || (option == .appleIntelligence && deviceSupported)
+                    // Only show Apple Intelligence if device is supported, always show OpenAI and Choose Later
+                    option == .openai || option == .chooseLater || (option == .appleIntelligence && deviceSupported)
                 }, id: \.self) { option in
                     Button(action: {
                         selectedOption = option
@@ -173,7 +180,7 @@ struct SimpleSettingsView: View {
                             .foregroundColor(.blue)
                     }
                     
-                    Text("Apple Intelligence requires iPhone 15 Pro, iPhone 15 Pro Max, or iPhone 16 series.")
+                    Text("Apple Intelligence requires iPhone 16 series or newer, or newer iPads with M1+ or A17 Pro chips.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -238,7 +245,75 @@ struct SimpleSettingsView: View {
                 )
         )
     }
-    
+
+    private var chooseLaterSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Choose Later")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+
+                Text("Skip initial setup and configure processing options later from the app settings.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Available Options:")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    FeatureBullet(text: "OpenAI - Cloud-based, high accuracy")
+                    FeatureBullet(text: "Google AI Studio - Advanced AI processing")
+                    FeatureBullet(text: "AWS Bedrock - Enterprise-grade AI")
+                    FeatureBullet(text: "Ollama - Local AI models")
+                    FeatureBullet(text: "Apple Intelligence - On-device privacy")
+                    FeatureBullet(text: "Local Whisper - Self-hosted transcription")
+                }
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.05))
+            )
+
+            Button(action: {
+                if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
+                    UIApplication.shared.open(url)
+                }
+            }) {
+                HStack {
+                    Image(systemName: "safari")
+                    Text("Learn More About Processing Options")
+                        .fontWeight(.medium)
+                }
+                .foregroundColor(.blue)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.blue.opacity(0.1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.blue, lineWidth: 1)
+                        )
+                )
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemBackground))
+                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color(.systemGray4), lineWidth: 0.5)
+                )
+        )
+    }
+
     private var apiKeySection: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 12) {
@@ -364,18 +439,29 @@ struct SimpleSettingsView: View {
     private func saveConfiguration() {
         // Only require API key for OpenAI option
         guard selectedOption != .openai || !apiKey.isEmpty else { return }
-        
+
         isSaving = true
         showingSaveResult = false
-        
+
         Task {
             do {
                 // Set default time format to 12-hour
                 UserDefaults.standard.set(TimeFormat.twelveHour.rawValue, forKey: "user_preference_time_format")
                 UserPreferences.shared.timeFormat = .twelveHour
-                
+
                 // Configure based on selected option
-                if selectedOption == .openai {
+                if selectedOption == .chooseLater {
+                    // For "Choose later", set engines to "Not Configured"
+                    UserDefaults.standard.set("Not Configured", forKey: "selectedTranscriptionEngine")
+                    UserDefaults.standard.set("Not Configured", forKey: "SelectedAIEngine")
+
+                    await MainActor.run {
+                        saveMessage = "Setup completed! You can configure processing options in Settings later."
+                        saveSuccessful = true
+                        showingSaveResult = true
+                        isSaving = false
+                    }
+                } else if selectedOption == .openai {
                     guard !apiKey.isEmpty else {
                         await MainActor.run {
                             saveMessage = "Please enter your OpenAI API key"

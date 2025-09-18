@@ -651,17 +651,17 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 		
 		// Check if this recording already exists in the database
-		let existingRecording: RecordingEntry? = if let appCoordinator = appCoordinator {
-			await MainActor.run {
-				appCoordinator.getRecording(url: recordingURL)
-			}
-		} else {
-			nil as RecordingEntry?
+		let existingRecordingName: String? = await MainActor.run { [appCoordinator, recordingURL] in
+			guard
+				let appCoordinator,
+				let recording = appCoordinator.getRecording(url: recordingURL)
+			else { return nil }
+			return recording.recordingName ?? "unknown"
 		}
 		
 		// Exit if recording already exists
-		if let existingRecording = existingRecording {
-			print("🔍 Recording already exists in database: \(existingRecording.recordingName ?? "unknown")")
+		if let existingRecordingName = existingRecordingName {
+			print("🔍 Recording already exists in database: \(existingRecordingName)")
 			print("🔍 Recording already processed, clearing recording URL")
 			await MainActor.run {
 				self.recordingURL = nil // Clear so we don't keep checking

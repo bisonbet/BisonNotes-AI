@@ -12,6 +12,7 @@ enum SummarizationError: Error, LocalizedError {
     case quotaExceeded
     case invalidInput
     case processingFailed(reason: String)
+    case configurationRequired(message: String)
     
     var errorDescription: String? {
         switch self {
@@ -33,6 +34,8 @@ enum SummarizationError: Error, LocalizedError {
             return "Invalid input provided for summarization"
         case .processingFailed(let reason):
             return "Summarization failed: \(reason)"
+        case .configurationRequired(let message):
+            return message
         }
     }
     
@@ -56,6 +59,8 @@ enum SummarizationError: Error, LocalizedError {
             return "Please ensure the recording was transcribed properly."
         case .processingFailed:
             return "Try regenerating the summary or switch to a different AI method."
+        case .configurationRequired:
+            return "Go to Settings to configure an AI engine for summarization."
         }
     }
 }
