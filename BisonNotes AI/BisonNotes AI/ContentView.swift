@@ -10,12 +10,14 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var recorderVM = AudioRecorderViewModel()
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var selectedTab = 0
     @State private var isInitialized = false
     @State private var initializationError: String?
     @State private var isFirstLaunch = false
     @State private var showingLocationPermission = false
+    @State private var pendingActionButtonRecording = false
     
     var body: some View {
         Group {
@@ -108,8 +110,21 @@ struct ContentView: View {
             showingLocationPermission = true
             UserDefaults.standard.set(true, forKey: "hasAskedLocationPermission")
         }
+        .onChange(of: scenePhase) { newPhase in
+            guard newPhase == .active else { return }
+            handleActionButtonLaunchIfNeeded()
+        }
+        .onChange(of: isInitialized) { initialized in
+            if initialized && pendingActionButtonRecording {
+                pendingActionButtonRecording = false
+                triggerActionButtonRecording()
+            }
+        }
+        .task {
+            handleActionButtonLaunchIfNeeded()
+        }
     }
-    
+
     @MainActor
     private func initializeApp() {
         // Check if this is first launch
@@ -189,6 +204,26 @@ struct ContentView: View {
                     initializationError = error.localizedDescription
                     isInitialized = true // Still show the app even if there's an error
                 }
+            }
+        }
+    }
+
+    private func handleActionButtonLaunchIfNeeded() {
+        if ActionButtonLaunchManager.consumeRecordingRequest() {
+            if isInitialized {
+                triggerActionButtonRecording()
+            } else {
+                pendingActionButtonRecording = true
+            }
+        }
+    }
+
+    private func triggerActionButtonRecording() {
+        selectedTab = 0
+
+        DispatchQueue.main.async {
+            if !recorderVM.isRecording {
+                recorderVM.startRecording()
             }
         }
     }

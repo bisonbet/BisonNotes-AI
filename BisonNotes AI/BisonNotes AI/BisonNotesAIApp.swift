@@ -9,6 +9,7 @@ import SwiftUI
 import UIKit
 import BackgroundTasks
 import UserNotifications
+import AppIntents
 
 @main
 struct BisonNotesAIApp: App {
@@ -17,6 +18,7 @@ struct BisonNotesAIApp: App {
     
     init() {
         setupBackgroundTasks()
+        setupAppShortcuts()
     }
     
     var body: some Scene {
@@ -144,5 +146,13 @@ struct BisonNotesAIApp: App {
         print("📱 onWatchRecordingSyncCompleted callback has been set: \(watchManager.onWatchRecordingSyncCompleted != nil)")
         
         print("📱 iPhone watch connectivity initialized for background sync")
+    }
+    
+    private func setupAppShortcuts() {
+        // Update app shortcuts to include our recording intent
+        Task {
+            await AppShortcuts.updateAppShortcutParameters()
+        }
+        print("📱 App shortcuts configured for Action Button support")
     }
 }
