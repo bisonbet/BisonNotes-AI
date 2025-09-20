@@ -67,14 +67,11 @@ struct ContentView: View {
                         .tag(3)
                 }
                 .alert("Enable Location Services", isPresented: $showingLocationPermission) {
-                    Button("Enable") {
+                    Button("Continue") {
                         recorderVM.locationManager.requestLocationPermission()
                     }
-                    Button("Skip") {
-                        // Do nothing, just dismiss
-                    }
                 } message: {
-                    Text("Location services help add context to your recordings by capturing where they were made. This can be useful for organizing and remembering your audio notes.")
+                    Text("We use your location to log where each recording happens, helping you organize and revisit your audio notes with helpful context.")
                 }
             }
         } else {
