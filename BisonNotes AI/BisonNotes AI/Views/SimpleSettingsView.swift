@@ -468,7 +468,7 @@ struct SimpleSettingsView: View {
                     .fill(Color.blue.opacity(0.05))
             )
             
-            Text("✨ Works on iPhone 15 Pro, iPhone 15 Pro Max, iPhone 16 series, and newer models with Action Button")
+            Text("✨ Works on iPhone models that include an Action Button.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .padding(.horizontal)

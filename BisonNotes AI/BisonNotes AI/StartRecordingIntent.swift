@@ -19,12 +19,8 @@ struct StartRecordingIntent: AppIntent {
     static var isDiscoverable: Bool = true
     
     func perform() async throws -> some IntentResult {
-        // Post a notification that will be handled by the app when it opens
-        NotificationCenter.default.post(
-            name: NSNotification.Name("StartRecordingFromIntent"),
-            object: nil
-        )
-        
+        ActionButtonLaunchManager.requestRecordingStart()
         return .result()
     }
 }
+
