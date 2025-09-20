@@ -150,7 +150,9 @@ struct BisonNotesAIApp: App {
     
     private func setupAppShortcuts() {
         // Update app shortcuts to include our recording intent
-        AppShortcutsProvider.updateAppShortcutParameters()
+        Task {
+            await AppShortcuts.updateAppShortcutParameters()
+        }
         print("📱 App shortcuts configured for Action Button support")
     }
 }
