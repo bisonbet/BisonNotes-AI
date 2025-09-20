@@ -108,6 +108,17 @@ struct ContentView: View {
             showingLocationPermission = true
             UserDefaults.standard.set(true, forKey: "hasAskedLocationPermission")
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("StartRecordingFromIntent"))) { _ in
+            // Switch to the recordings tab and start recording
+            selectedTab = 0
+            
+            // Small delay to ensure the view is visible before starting recording
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if !recorderVM.isRecording {
+                    recorderVM.startRecording()
+                }
+            }
+        }
     }
     
     @MainActor
