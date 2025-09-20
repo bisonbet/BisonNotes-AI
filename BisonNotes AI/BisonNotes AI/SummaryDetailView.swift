@@ -1,6 +1,7 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import UIKit
 
 private actor SummaryGeocodeCache {
     enum Entry: Sendable {
@@ -298,16 +299,11 @@ struct SummaryDetailView: View {
                 VStack(spacing: 0) {
                     GeometryReader { geometry in
                         if geometry.size.width > 0 && geometry.size.height > 0 {
-                            Map(position: .constant(.region(MKCoordinateRegion(
-                                center: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude),
-                                span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005)
-                            )))) {
-                                Marker("Recording Location", coordinate: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude))
-                                    .foregroundStyle(.orange)
-                            }
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                            .disabled(true)
-                            .allowsHitTesting(false)
+                            StaticLocationMapView(
+                                summaryId: summaryData.id,
+                                locationData: locationData,
+                                size: geometry.size
+                            )
                         } else {
                             Color.clear
                         }
@@ -2809,6 +2805,433 @@ struct LocationResultRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Static Location Map View
+
+private final class MapSnapshotCache {
+    static let shared = MapSnapshotCache()
+    private let cache = NSCache<NSString, UIImage>()
+
+    private init() {
+        cache.countLimit = 12
+    }
+
+    func image(forKey key: String) -> UIImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    func store(_ image: UIImage, forKey key: String) {
+        cache.setObject(image, forKey: key as NSString)
+    }
+}
+
+private enum MapSnapshotStorage {
+    private static let directoryName = "SummaryLocationSnapshots"
+
+    private static func directoryURL() -> URL? {
+        guard let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+
+        let directory = baseURL.appendingPathComponent(directoryName, isDirectory: true)
+
+        if !FileManager.default.fileExists(atPath: directory.path) {
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            } catch {
+                print("❌ MapSnapshotStorage: Failed to create directory: \(error)")
+                return nil
+            }
+        }
+
+        return directory
+    }
+
+    private static func fileURL(summaryId: UUID, locationSignature: String) -> URL? {
+        directoryURL()?.appendingPathComponent("\(summaryId.uuidString)_\(locationSignature).png")
+    }
+
+    static func loadData(summaryId: UUID, locationSignature: String) -> Data? {
+        guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature),
+              FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+
+        return try? Data(contentsOf: url)
+    }
+
+    static func loadImage(summaryId: UUID, locationSignature: String, scale: CGFloat) -> UIImage? {
+        guard let data = loadData(summaryId: summaryId, locationSignature: locationSignature) else {
+            return nil
+        }
+
+        return UIImage(data: data, scale: scale)
+    }
+
+    static func save(_ image: UIImage, summaryId: UUID, locationSignature: String) {
+        guard let data = image.pngData() else {
+            print("❌ MapSnapshotStorage: Failed to create PNG data for summary \(summaryId)")
+            return
+        }
+        saveData(data, summaryId: summaryId, locationSignature: locationSignature)
+    }
+
+    static func saveData(_ data: Data, summaryId: UUID, locationSignature: String) {
+        guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature) else {
+            return
+        }
+
+        cleanupOldSnapshots(for: summaryId, keeping: url.lastPathComponent)
+
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("❌ MapSnapshotStorage: Failed to write snapshot for summary \(summaryId): \(error)")
+        }
+    }
+
+    private static func cleanupOldSnapshots(for summaryId: UUID, keeping fileName: String) {
+        guard let directory = directoryURL() else { return }
+
+        let prefix = "\(summaryId.uuidString)_"
+        let fileManager = FileManager.default
+
+        guard let contents = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return
+        }
+
+        for fileURL in contents where fileURL.lastPathComponent.hasPrefix(prefix) && fileURL.lastPathComponent != fileName {
+            try? fileManager.removeItem(at: fileURL)
+        }
+    }
+}
+
+private enum MapSnapshotError: Error {
+    case invalidSize
+    case noSnapshot
+}
+
+private enum MapSnapshotGenerator {
+    static func generateSnapshot(
+        coordinate: CLLocationCoordinate2D,
+        size: CGSize,
+        span: MKCoordinateSpan = MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005),
+        scale: CGFloat
+    ) async throws -> UIImage {
+        guard size.width.isFinite,
+              size.height.isFinite,
+              size.width > 4,
+              size.height > 4 else {
+            throw MapSnapshotError.invalidSize
+        }
+
+        let options = MKMapSnapshotter.Options()
+        options.region = MKCoordinateRegion(center: coordinate, span: span)
+        options.size = size
+        options.scale = scale
+        options.pointOfInterestFilter = .excludingAll
+        options.showsBuildings = true
+
+        let snapshotter = MKMapSnapshotter(options: options)
+
+        let snapshot: MKMapSnapshotter.Snapshot = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<MKMapSnapshotter.Snapshot, Error>) in
+            snapshotter.start { snapshot, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let snapshot else {
+                    continuation.resume(throwing: MapSnapshotError.noSnapshot)
+                    return
+                }
+
+                continuation.resume(returning: snapshot)
+            }
+        }
+
+        return render(snapshot: snapshot, coordinate: coordinate, scale: scale)
+    }
+
+    static func fallbackSnapshot(
+        for locationData: LocationData,
+        size: CGSize,
+        scale: CGFloat
+    ) -> UIImage {
+        let rendererFormat = UIGraphicsImageRendererFormat()
+        rendererFormat.scale = scale
+
+        let renderer = UIGraphicsImageRenderer(size: size, format: rendererFormat)
+        let coordinateText = String(
+            format: "Lat: %.4f\nLon: %.4f",
+            locationData.latitude,
+            locationData.longitude
+        )
+
+        return renderer.image { context in
+            let bounds = CGRect(origin: .zero, size: size)
+            UIColor.systemGray5.setFill()
+            context.fill(bounds)
+
+            if let pin = pinImage {
+                let pinSize = CGSize(width: 36, height: 36)
+                let pinOrigin = CGPoint(
+                    x: bounds.midX - pinSize.width / 2,
+                    y: bounds.midY - pinSize.height - 28
+                )
+                pin.draw(in: CGRect(origin: pinOrigin, size: pinSize))
+            }
+
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            paragraph.lineSpacing = 4
+
+            let titleAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 16, weight: .semibold),
+                .foregroundColor: UIColor.label,
+                .paragraphStyle: paragraph
+            ]
+
+            let subtitleAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 13, weight: .medium),
+                .foregroundColor: UIColor.secondaryLabel,
+                .paragraphStyle: paragraph
+            ]
+
+            let titleRect = CGRect(
+                x: 0,
+                y: bounds.midY - 16,
+                width: bounds.width,
+                height: 20
+            )
+            "Recording Location".draw(in: titleRect, withAttributes: titleAttributes)
+
+            let subtitleRect = CGRect(
+                x: 0,
+                y: titleRect.maxY + 2,
+                width: bounds.width,
+                height: 32
+            )
+            coordinateText.draw(in: subtitleRect, withAttributes: subtitleAttributes)
+        }
+    }
+
+    private static func render(
+        snapshot: MKMapSnapshotter.Snapshot,
+        coordinate: CLLocationCoordinate2D,
+        scale: CGFloat
+    ) -> UIImage {
+        let rendererFormat = UIGraphicsImageRendererFormat()
+        rendererFormat.scale = scale
+
+        let renderer = UIGraphicsImageRenderer(size: snapshot.image.size, format: rendererFormat)
+        let pin = pinImage
+
+        return renderer.image { _ in
+            snapshot.image.draw(at: .zero)
+
+            if let pin {
+                let point = snapshot.point(for: coordinate)
+                let pinSize = pin.size
+                let origin = CGPoint(
+                    x: point.x - pinSize.width / 2,
+                    y: point.y - pinSize.height
+                )
+                pin.draw(in: CGRect(origin: origin, size: pinSize))
+            }
+        }
+    }
+
+    private static var pinImage: UIImage? {
+        let configuration = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
+        return UIImage(systemName: "mappin.circle.fill", withConfiguration: configuration)?
+            .withTintColor(.systemRed, renderingMode: .alwaysOriginal)
+    }
+}
+
+private struct StaticLocationMapView: View {
+    let summaryId: UUID
+    let locationData: LocationData
+    let size: CGSize
+
+    @State private var snapshotImage: UIImage?
+    @State private var isLoadingSnapshot = false
+
+    private var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(
+            latitude: locationData.latitude,
+            longitude: locationData.longitude
+        )
+    }
+
+    private var locationSignature: String {
+        let safeLatitude = coordinate.latitude.isFinite ? coordinate.latitude : 0
+        let safeLongitude = coordinate.longitude.isFinite ? coordinate.longitude : 0
+        return String(format: "%.5f_%.5f", safeLatitude, safeLongitude)
+    }
+
+    private var snapshotKey: String? {
+        guard size.width.isFinite,
+              size.height.isFinite,
+              size.width > 4,
+              size.height > 4,
+              coordinate.latitude.isFinite,
+              coordinate.longitude.isFinite else {
+            return nil
+        }
+
+        let widthComponent = Int(size.width.rounded(.toNearestOrEven))
+        let heightComponent = Int(size.height.rounded(.toNearestOrEven))
+
+        return String(
+            format: "%@_%.4f_%.4f_%d_%d",
+            summaryId.uuidString,
+            coordinate.latitude,
+            coordinate.longitude,
+            widthComponent,
+            heightComponent
+        )
+    }
+
+    var body: some View {
+        ZStack {
+            if let snapshotImage {
+                Image(uiImage: snapshotImage)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color(.systemGray5)
+                    .overlay {
+                        if isLoadingSnapshot {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                        } else {
+                            Image(systemName: "map")
+                                .font(.system(size: 34, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .clipped()
+        .task(id: snapshotKey) {
+            guard let snapshotKey else { return }
+            await loadSnapshot(for: snapshotKey)
+        }
+    }
+
+    private func loadSnapshot(for key: String) async {
+        if let cachedImage = MapSnapshotCache.shared.image(forKey: key) {
+            await MainActor.run {
+                snapshotImage = cachedImage
+                isLoadingSnapshot = false
+            }
+            return
+        }
+
+        let scale = await MainActor.run { UIScreen.main.scale }
+        let signature = locationSignature
+
+        if let storedImage = await loadStoredSnapshot(scale: scale, signature: signature) {
+            MapSnapshotCache.shared.store(storedImage, forKey: key)
+
+            await MainActor.run {
+                snapshotImage = storedImage
+                isLoadingSnapshot = false
+            }
+            return
+        }
+
+        guard await beginLoading() else { return }
+
+        do {
+            let image = try await MapSnapshotGenerator.generateSnapshot(
+                coordinate: coordinate,
+                size: size,
+                scale: scale
+            )
+
+            if Task.isCancelled {
+                await MainActor.run {
+                    isLoadingSnapshot = false
+                }
+                return
+            }
+
+            MapSnapshotCache.shared.store(image, forKey: key)
+
+            if let imageData = image.pngData() {
+                Task.detached(priority: .utility) { [summaryId, signature, imageData] in
+                    MapSnapshotStorage.saveData(
+                        imageData,
+                        summaryId: summaryId,
+                        locationSignature: signature
+                    )
+                }
+            }
+
+            await MainActor.run {
+                snapshotImage = image
+                isLoadingSnapshot = false
+            }
+        } catch {
+            if Task.isCancelled {
+                await MainActor.run {
+                    isLoadingSnapshot = false
+                }
+                return
+            }
+
+            let fallback = MapSnapshotGenerator.fallbackSnapshot(
+                for: locationData,
+                size: size,
+                scale: scale
+            )
+            MapSnapshotCache.shared.store(fallback, forKey: key)
+
+            if let fallbackData = fallback.pngData() {
+                Task.detached(priority: .utility) { [summaryId, signature, fallbackData] in
+                    MapSnapshotStorage.saveData(
+                        fallbackData,
+                        summaryId: summaryId,
+                        locationSignature: signature
+                    )
+                }
+            }
+
+            await MainActor.run {
+                snapshotImage = fallback
+                isLoadingSnapshot = false
+            }
+        }
+    }
+
+    private func loadStoredSnapshot(scale: CGFloat, signature: String) async -> UIImage? {
+        let data = await Task.detached(priority: .utility) { [summaryId, signature] in
+            MapSnapshotStorage.loadData(
+                summaryId: summaryId,
+                locationSignature: signature
+            )
+        }.value
+
+        guard let data else {
+            return nil
+        }
+
+        return UIImage(data: data, scale: scale)
+    }
+
+    private func beginLoading() async -> Bool {
+        return await MainActor.run {
+            if snapshotImage != nil || isLoadingSnapshot {
+                return false
+            }
+            isLoadingSnapshot = true
+            return true
+        }
     }
 }
 
