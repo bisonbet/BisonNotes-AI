@@ -2,6 +2,7 @@ import SwiftUI
 import MapKit
 import CoreLocation
 import UIKit
+import LinkPresentation
 
 private actor SummaryGeocodeCache {
     enum Entry: Sendable {
@@ -48,6 +49,7 @@ struct SummaryDetailView: View {
     @State private var isExportingPDF = false
     @State private var showingShareSheet = false
     @State private var pdfDataToShare: Data?
+    @State private var pdfFileName: String?
     @State private var exportError: String?
     @State private var geocodingTask: Task<Void, Never>?
     
@@ -188,8 +190,23 @@ struct SummaryDetailView: View {
             )
         }
         .sheet(isPresented: $showingShareSheet) {
-            if let pdfData = pdfDataToShare {
-                ShareSheet(activityItems: [createPDFFileURL(from: pdfData)])
+            Group {
+                if let pdfData = pdfDataToShare,
+                   let fileName = pdfFileName {
+                    ShareSheet(
+                        activityItems: [PDFActivityItem(data: pdfData, fileName: fileName)],
+                        subject: "PDF Summary - \(summaryData.recordingName)"
+                    )
+                    .onDisappear {
+                        pdfDataToShare = nil
+                        pdfFileName = nil
+                    }
+                } else {
+                    ProgressView()
+                        .onAppear {
+                            showingShareSheet = false
+                        }
+                }
             }
         }
         .alert("Export Error", isPresented: .constant(exportError != nil)) {
@@ -1399,6 +1416,7 @@ struct SummaryDetailView: View {
                 print("✅ PDF generated successfully, size: \(pdfData.count) bytes")
 
                 pdfDataToShare = pdfData
+                pdfFileName = sanitizeFileName("\(summaryData.recordingName)_Summary.pdf")
                 showingShareSheet = true
                 isExportingPDF = false
 
@@ -1411,32 +1429,13 @@ struct SummaryDetailView: View {
         }
     }
 
-    private func createPDFFileURL(from data: Data) -> URL {
-        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let fileName = sanitizeFileName("\(summaryData.recordingName)_Summary.pdf")
-        let fileURL = documentsDirectory.appendingPathComponent(fileName)
-
-        do {
-            // Ensure the file doesn't already exist
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                try FileManager.default.removeItem(at: fileURL)
-            }
-
-            try data.write(to: fileURL)
-            print("✅ PDF written to: \(fileURL.path)")
-            return fileURL
-        } catch {
-            print("❌ Error writing PDF to file: \(error)")
-            // Fallback to temporary directory
-            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-            try? data.write(to: tempURL)
-            return tempURL
-        }
-    }
-
     private func sanitizeFileName(_ fileName: String) -> String {
         let invalidCharacters = CharacterSet(charactersIn: "\\/:*?\"<>|")
-        return fileName.components(separatedBy: invalidCharacters).joined(separator: "_")
+        let sanitized = fileName.components(separatedBy: invalidCharacters).joined(separator: "_")
+        if sanitized.lowercased().hasSuffix(".pdf") {
+            return sanitized
+        }
+        return sanitized + ".pdf"
     }
 }
 
@@ -3239,19 +3238,23 @@ private struct StaticLocationMapView: View {
 
 struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
+    let subject: String?
+
+    init(activityItems: [Any], subject: String? = nil) {
+        self.activityItems = activityItems
+        self.subject = subject
+    }
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
 
-        // Configure for better sharing experience
         controller.excludedActivityTypes = [
             .addToReadingList,
             .assignToContact
         ]
 
-        // Set subject for email sharing
-        if let fileURL = activityItems.first as? URL {
-            controller.setValue("PDF Summary - \(fileURL.deletingPathExtension().lastPathComponent)", forKey: "subject")
+        if let subject {
+            controller.setValue(subject, forKey: "subject")
         }
 
         return controller
@@ -3259,6 +3262,77 @@ struct ShareSheet: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
         // No updates needed
+    }
+}
+
+// MARK: - PDF Activity Item
+
+private final class PDFActivityItem: NSObject, UIActivityItemSource {
+    private let data: Data
+    private let fileName: String
+    private var temporaryURL: URL?
+
+    init(data: Data, fileName: String) {
+        self.data = data
+        self.fileName = fileName
+        super.init()
+    }
+
+    deinit {
+        if let temporaryURL,
+           FileManager.default.fileExists(atPath: temporaryURL.path) {
+            try? FileManager.default.removeItem(at: temporaryURL)
+        }
+    }
+
+    // MARK: UIActivityItemSource
+
+    func activityViewControllerPlaceholderItem(_ controller: UIActivityViewController) -> Any {
+        ensureTemporaryURL() ?? data
+    }
+
+    func activityViewController(_ controller: UIActivityViewController, itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
+        if let url = ensureTemporaryURL() {
+            return url
+        }
+        return data
+    }
+
+    func activityViewController(_ controller: UIActivityViewController, subjectForActivityType activityType: UIActivity.ActivityType?) -> String {
+        fileName
+    }
+
+    func activityViewControllerLinkMetadata(_ controller: UIActivityViewController) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = fileName
+        if let iconImage = UIImage(systemName: "doc.richtext") {
+            metadata.iconProvider = NSItemProvider(object: iconImage)
+        }
+        return metadata
+    }
+
+    // MARK: - Helpers
+
+    private func ensureTemporaryURL() -> URL? {
+        if let temporaryURL,
+           FileManager.default.fileExists(atPath: temporaryURL.path) {
+            return temporaryURL
+        }
+
+        let tempDirectory = FileManager.default.temporaryDirectory
+        let destination = tempDirectory.appendingPathComponent(fileName)
+
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try data.write(to: destination, options: .atomic)
+            temporaryURL = destination
+            return destination
+        } catch {
+            print("❌ Failed to write temporary PDF for sharing: \(error)")
+            return nil
+        }
     }
 }
 

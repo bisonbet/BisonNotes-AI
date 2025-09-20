@@ -196,7 +196,7 @@ class PDFExportService {
         let leftWidth = contentWidth * 0.3
         let middleWidth = contentWidth * 0.4
         let rightWidth = contentWidth * 0.3
-        let headerHeight: CGFloat = 180 // Increased height to accommodate map and text wrapping
+        let headerHeight: CGFloat = 180 // Height accommodates map and location details
 
         // Left third: Date
         let dateFormatter = DateFormatter()
@@ -215,8 +215,6 @@ class PDFExportService {
 
         // Middle section: Map (fits better in rectangular area) or empty if no location
         if let locationData = locationData {
-            // Use a rectangular area for the map (4:3 aspect ratio)
-            let mapHeight = middleWidth * 0.75 // 4:3 aspect ratio
             let mapOrigin = CGPoint(
                 x: margins.left + leftWidth + 5, // Start after left section
                 y: y + 5
@@ -379,9 +377,11 @@ class PDFExportService {
         // Section title
         currentY = drawSectionTitle("📄 Summary", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
 
-        // Summary content with markdown parsing
-        currentY = drawFormattedText(
-            parseMarkdown(summaryData.summary),
+        let cleanedSummary = cleanMarkdownForPDF(summaryData.summary)
+        let flattenedSummary = flattenMarkdownForPDF(cleanedSummary)
+
+        currentY = drawMultilineText(
+            flattenedSummary,
             at: currentY,
             contentWidth: contentWidth,
             margins: margins,
@@ -394,208 +394,127 @@ class PDFExportService {
 
     // MARK: - Markdown Parsing
 
-    private func parseMarkdown(_ text: String) -> [FormattedTextSegment] {
-        var segments: [FormattedTextSegment] = []
+    private func cleanMarkdownForPDF(_ text: String) -> String {
+        var cleaned = text
 
+        // Normalize escaped newlines and carriage returns
+        cleaned = cleaned.replacingOccurrences(of: "\\n", with: "\n")
+        cleaned = cleaned.replacingOccurrences(of: "\\r", with: "\n")
+
+        // Remove JSON-style wrappers if present
+        cleaned = cleaned.replacingOccurrences(of: "^\"summary\"\\s*:\\s*\"", with: "", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: "^\"content\"\\s*:\\s*\"", with: "", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: "^\"text\"\\s*:\\s*\"", with: "", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: "\"\\s*$", with: "", options: .regularExpression)
+
+        // Collapse excessive blank lines
+        cleaned = cleaned.replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func flattenMarkdownForPDF(_ text: String) -> String {
         let lines = text.components(separatedBy: .newlines)
+        var result: [String] = []
+        var pendingBlank = false
 
-        for line in lines {
-            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+        for rawLine in lines {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
 
-            // Check for headers
-            if trimmedLine.hasPrefix("#") {
-                let headerLevel = min(trimmedLine.prefix(while: { $0 == "#" }).count, 6)
-                if headerLevel > 0 {
-                    let headerText = trimmedLine.dropFirst(headerLevel).trimmingCharacters(in: .whitespaces)
-                    if !headerText.isEmpty {
-                        let fontSize: CGFloat = 20 - CGFloat(headerLevel - 1) * 2
-                        let font = UIFont.boldSystemFont(ofSize: fontSize)
-                        segments.append(FormattedTextSegment(
-                            text: headerText + "\n",
-                            attributes: [
-                                .font: font,
-                                .foregroundColor: UIColor.black,
-                                .kern: 0.5
-                            ]
-                        ))
-                        continue
-                    }
-                }
+            if trimmed.isEmpty {
+                pendingBlank = !result.isEmpty
+                continue
             }
 
-            // Handle list items
-            if trimmedLine.hasPrefix("- ") || trimmedLine.hasPrefix("* ") || trimmedLine.hasPrefix("+ ") {
-                let listText = trimmedLine.dropFirst(2).trimmingCharacters(in: .whitespaces)
-                if !listText.isEmpty {
-                    let font = UIFont.systemFont(ofSize: 13)
-                    segments.append(FormattedTextSegment(
-                        text: "• \(listText)\n",
-                        attributes: [
-                            .font: font,
-                            .foregroundColor: UIColor.black,
-                            .kern: 0.2
-                        ]
-                    ))
-                    continue
-                }
+            var line = trimmed
+
+            // Remove image syntax entirely
+            if line.hasPrefix("![") {
+                continue
             }
 
-            // Regular paragraph with inline formatting
-            let paragraphSegments = parseInlineFormatting(line)
-            segments.append(contentsOf: paragraphSegments)
+            // Headers (#, ##, ...)
+            if let headerRange = line.range(of: "^#{1,6}\\s+", options: .regularExpression) {
+                let headerText = line[headerRange.upperBound...].trimmingCharacters(in: .whitespaces)
+                if result.last?.isEmpty == false {
+                    result.append("")
+                }
+                result.append(headerText.uppercased())
+                result.append("")
+                pendingBlank = false
+                continue
+            }
+
+            // Block quotes
+            if line.hasPrefix(">") {
+                line = line.dropFirst().trimmingCharacters(in: .whitespaces)
+                line = "“\(line)”"
+            }
+
+            // Replace unordered list markers with bullet
+            if let bulletRange = line.range(of: "^[-*+]\\s+", options: .regularExpression) {
+                line.replaceSubrange(bulletRange, with: "• ")
+            }
+
+            // Normalize ordered list spacing (e.g., 1. item)
+            if let orderedRange = line.range(of: "^\\d+\\.\\s+", options: .regularExpression) {
+                // Already formatted; ensure single space after number
+                let prefix = String(line[orderedRange])
+                let normalizedPrefix = prefix.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                line.replaceSubrange(orderedRange, with: normalizedPrefix)
+            }
+
+            // Convert markdown links to "text (url)"
+            line = replaceMarkdownLinks(in: line)
+
+            // Remove emphasis markers
+            line = line.replacingOccurrences(of: "**", with: "")
+            line = line.replacingOccurrences(of: "__", with: "")
+            line = line.replacingOccurrences(of: "*", with: "")
+            line = line.replacingOccurrences(of: "_", with: "")
+            line = line.replacingOccurrences(of: "`", with: "")
+
+            if pendingBlank && (result.last?.isEmpty == false) {
+                result.append("")
+            }
+
+            result.append(line)
+            pendingBlank = false
         }
 
-        return segments
+        // Remove trailing blank lines
+        while result.last?.isEmpty == true {
+            result.removeLast()
+        }
+
+        return result.joined(separator: "\n")
     }
 
-    private func parseInlineFormatting(_ line: String) -> [FormattedTextSegment] {
-        var segments: [FormattedTextSegment] = []
-        var currentText = ""
-        let chars = Array(line)
+    private func replaceMarkdownLinks(in line: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"\[([^\]]+)\]\(([^)]+)\)"#, options: []) else {
+            return line
+        }
 
-        var i = 0
-        while i < chars.count {
-            let char = chars[i]
+        let matches = regex.matches(in: line, options: [], range: NSRange(location: 0, length: line.utf16.count))
+        if matches.isEmpty {
+            return line
+        }
 
-            if char == "*" && i + 1 < chars.count {
-                // Bold text (**text**)
-                if chars[i + 1] == "*" {
-                    // Check for closing
-                    var j = i + 2
-                    var boldText = ""
-                    var foundClosing = false
-
-                    while j < chars.count - 1 {
-                        if chars[j] == "*" && chars[j + 1] == "*" {
-                            foundClosing = true
-                            break
-                        }
-                        boldText.append(chars[j])
-                        j += 1
-                    }
-
-                    if foundClosing && !boldText.isEmpty {
-                        // Add previous text if any
-                        if !currentText.isEmpty {
-                            segments.append(FormattedTextSegment(
-                                text: currentText,
-                                attributes: [
-                                    .font: UIFont.systemFont(ofSize: 13),
-                                    .foregroundColor: UIColor.black,
-                                    .kern: 0.2
-                                ]
-                            ))
-                            currentText = ""
-                        }
-
-                        // Add bold text
-                        let boldFont = UIFont.boldSystemFont(ofSize: 13)
-                        segments.append(FormattedTextSegment(
-                            text: boldText,
-                            attributes: [
-                                .font: boldFont,
-                                .foregroundColor: UIColor.black,
-                                .kern: 0.2
-                            ]
-                        ))
-
-                        i = j + 2
-                        continue
-                    }
-                }
-                // Italic text (*text*)
-                else {
-                    var j = i + 1
-                    var italicText = ""
-                    var foundClosing = false
-
-                    while j < chars.count {
-                        if chars[j] == "*" {
-                            foundClosing = true
-                            break
-                        }
-                        italicText.append(chars[j])
-                        j += 1
-                    }
-
-                    if foundClosing && !italicText.isEmpty {
-                        // Add previous text if any
-                        if !currentText.isEmpty {
-                            segments.append(FormattedTextSegment(
-                                text: currentText,
-                                attributes: [
-                                    .font: UIFont.systemFont(ofSize: 13),
-                                    .foregroundColor: UIColor.black,
-                                    .kern: 0.2
-                                ]
-                            ))
-                            currentText = ""
-                        }
-
-                        // Add italic text
-                        let italicFont = UIFont.italicSystemFont(ofSize: 13)
-                        segments.append(FormattedTextSegment(
-                            text: italicText,
-                            attributes: [
-                                .font: italicFont,
-                                .foregroundColor: UIColor.black,
-                                .kern: 0.2
-                            ]
-                        ))
-
-                        i = j + 1
-                        continue
-                    }
-                }
+        let mutable = NSMutableString(string: line)
+        for match in matches.reversed() {
+            guard match.numberOfRanges >= 3,
+                  let textRange = Range(match.range(at: 1), in: line),
+                  let urlRange = Range(match.range(at: 2), in: line) else {
+                continue
             }
 
-            currentText.append(char)
-            i += 1
+            let text = String(line[textRange])
+            let url = String(line[urlRange])
+            let replacement = "\(text) (\(url))"
+            mutable.replaceCharacters(in: match.range, with: replacement)
         }
 
-        // Add remaining text
-        if !currentText.isEmpty {
-            segments.append(FormattedTextSegment(
-                text: currentText + "\n",
-                attributes: [
-                    .font: UIFont.systemFont(ofSize: 13),
-                    .foregroundColor: UIColor.black,
-                    .kern: 0.2
-                ]
-            ))
-        }
-
-        return segments
-    }
-
-    private func drawFormattedText(
-        _ segments: [FormattedTextSegment],
-        at y: CGFloat,
-        contentWidth: CGFloat,
-        margins: UIEdgeInsets,
-        context: UIGraphicsPDFRendererContext,
-        pageSize: CGSize
-    ) -> CGFloat {
-        var currentY = y
-        let lineSpacing: CGFloat = 2.0 // Better line spacing
-
-        for segment in segments {
-            let attributedString = NSAttributedString(string: segment.text, attributes: segment.attributes)
-            let textRect = CGRect(x: margins.left, y: currentY, width: contentWidth, height: CGFloat.greatestFiniteMagnitude)
-            let boundingRect = attributedString.boundingRect(with: textRect.size, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
-
-            // Check if we need a new page
-            if currentY + boundingRect.height + lineSpacing > pageSize.height - margins.bottom {
-                context.beginPage()
-                currentY = margins.top
-            }
-
-            let drawRect = CGRect(x: margins.left, y: currentY, width: contentWidth, height: boundingRect.height)
-            attributedString.draw(in: drawRect)
-            currentY += boundingRect.height + lineSpacing
-        }
-
-        return currentY
+        return String(mutable)
     }
 
     private func drawTasksSection(
@@ -739,11 +658,6 @@ class PDFExportService {
 
     // MARK: - Data Structures
 
-    private struct FormattedTextSegment {
-        let text: String
-        let attributes: [NSAttributedString.Key: Any]
-    }
-
     // MARK: - Helper Functions
 
     private func drawSectionTitle(_ title: String, at y: CGFloat, contentWidth: CGFloat, margins: UIEdgeInsets, context: UIGraphicsPDFRendererContext) -> CGFloat {
@@ -785,6 +699,7 @@ class PDFExportService {
     ) -> CGFloat {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = 4
+        paragraphStyle.paragraphSpacing = 6
 
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
