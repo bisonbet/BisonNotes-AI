@@ -207,7 +207,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
                 guard let self = self else { return }
                 self.appIsBackgrounding = false // App is coming back to foreground
                 
-                print("🔄 AudioRecorderViewModel: App foregrounded, restoring audio session...")
+                EnhancedLogger.shared.logAudioSession("App foregrounded, restoring audio session")
                 
                 // Only handle audio session restoration - let BackgroundProcessingManager handle recording recovery
                 try? await self.enhancedAudioSessionManager.restoreAudioSession()

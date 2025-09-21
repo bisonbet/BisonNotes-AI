@@ -160,16 +160,16 @@ struct BisonNotesAIApp: App {
         Task {
             AppShortcuts.updateAppShortcutParameters()
         }
-        print("📱 App shortcuts configured for Action Button support")
+        EnhancedLogger.shared.logDebug("App shortcuts configured for Action Button support")
 
         if #available(iOS 18.0, *) {
             if let plugInsURL = Bundle.main.builtInPlugInsURL,
                let items = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {
-                print("📦 Built-in PlugIns: \(items.map { $0.lastPathComponent })")
+                EnhancedLogger.shared.logDebug("Built-in PlugIns: \(items.map { $0.lastPathComponent })")
             } else {
                 print("⚠️ Unable to enumerate built-in PlugIns")
             }
-            print("🎛️ Asking WidgetKit to reload control configurations")
+            EnhancedLogger.shared.logDebug("Asking WidgetKit to reload control configurations")
             ControlCenter.shared.reloadAllControls()
             ControlCenter.shared.reloadControls(ofKind: "com.bisonnotesai.controls.recording")
 
@@ -177,7 +177,7 @@ struct BisonNotesAIApp: App {
                 do {
                     let controls = try await ControlCenter.shared.currentControls()
                     let kinds = controls.map { $0.kind }
-                    print("🎛️ ControlCenter reports controls: \(kinds)")
+                    EnhancedLogger.shared.logDebug("ControlCenter reports controls: \(kinds)")
                 } catch {
                     print("❌ Failed to fetch current controls: \(error)")
                 }

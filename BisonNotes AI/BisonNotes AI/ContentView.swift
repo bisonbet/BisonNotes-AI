@@ -209,7 +209,7 @@ struct ContentView: View {
     }
 
     private func handleActionButtonLaunchIfNeeded() {
-        print("📱 ContentView: Checking for action button launch")
+        EnhancedLogger.shared.logDebug("ContentView: Checking for action button launch")
         if ActionButtonLaunchManager.consumeRecordingRequest() {
             print("📱 ContentView: Action button recording requested!")
             if isInitialized {
@@ -220,7 +220,7 @@ struct ContentView: View {
                 pendingActionButtonRecording = true
             }
         } else {
-            print("📱 ContentView: No action button recording request found")
+            EnhancedLogger.shared.logDebug("ContentView: No action button recording request found")
         }
     }
 

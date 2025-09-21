@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 enum ActionButtonLaunchManager {
     static let appGroupIdentifier = "group.bisonnotesai.shared"
@@ -19,13 +20,13 @@ enum ActionButtonLaunchManager {
     }
 
     static func consumeRecordingRequest() -> Bool {
-        print("🔍 ActionButtonLaunchManager: Checking for recording request")
+        print("🔍 ActionButtonLaunchManager: Checking for recording request") // DEBUG: Action button launch debug
         guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
             print("⚠️ ActionButtonLaunchManager: Missing shared defaults")
             return false
         }
         let shouldStartRecording = defaults.bool(forKey: shouldStartRecordingKey)
-        print("🔍 ActionButtonLaunchManager: Flag value is: \(shouldStartRecording)")
+        print("🔍 ActionButtonLaunchManager: Flag value is: \(shouldStartRecording)") // DEBUG: Action button flag check
 
         if shouldStartRecording {
             defaults.set(false, forKey: shouldStartRecordingKey)
