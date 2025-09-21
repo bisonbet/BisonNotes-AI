@@ -209,21 +209,32 @@ struct ContentView: View {
     }
 
     private func handleActionButtonLaunchIfNeeded() {
+        print("📱 ContentView: Checking for action button launch")
         if ActionButtonLaunchManager.consumeRecordingRequest() {
+            print("📱 ContentView: Action button recording requested!")
             if isInitialized {
+                print("📱 ContentView: App is initialized, triggering recording immediately")
                 triggerActionButtonRecording()
             } else {
+                print("📱 ContentView: App not initialized yet, setting pending flag")
                 pendingActionButtonRecording = true
             }
+        } else {
+            print("📱 ContentView: No action button recording request found")
         }
     }
 
     private func triggerActionButtonRecording() {
+        print("🎙️ ContentView: Triggering action button recording")
         selectedTab = 0
 
         DispatchQueue.main.async {
+            print("🎙️ ContentView: On main queue, current recording state: \(recorderVM.isRecording)")
             if !recorderVM.isRecording {
+                print("🎙️ ContentView: Starting recording...")
                 recorderVM.startRecording()
+            } else {
+                print("🎙️ ContentView: Already recording, skipping")
             }
         }
     }

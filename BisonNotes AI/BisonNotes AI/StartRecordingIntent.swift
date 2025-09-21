@@ -24,9 +24,6 @@ struct StartRecordingIntent: AppIntent {
     func perform() async throws -> some IntentResult {
         ActionButtonLaunchManager.requestRecordingStart()
 
-        return .result(
-            dialog: IntentDialog("Starting recording with BisonNotes AI")
-        )
+        return .result()
     }
 }
-

@@ -11,6 +11,9 @@ import BackgroundTasks
 import UserNotifications
 import AppIntents
 import WidgetKit
+#if DEBUG
+import Darwin
+#endif
 
 @main
 struct BisonNotesAIApp: App {
@@ -18,6 +21,9 @@ struct BisonNotesAIApp: App {
     @StateObject private var appCoordinator = AppDataCoordinator()
     
     init() {
+#if DEBUG
+        Self.configureCoverageOutputIfNeeded()
+#endif
         setupBackgroundTasks()
         setupAppShortcuts()
     }
@@ -178,4 +184,15 @@ struct BisonNotesAIApp: App {
             }
         }
     }
+    
+#if DEBUG
+    private static func configureCoverageOutputIfNeeded() {
+        guard ProcessInfo.processInfo.environment["LLVM_PROFILE_FILE"] == nil else { return }
+        let tempDirectory = NSTemporaryDirectory()
+        let uniqueName = "BisonNotesAI-\(ProcessInfo.processInfo.globallyUniqueString).profraw"
+        let destination = (tempDirectory as NSString).appendingPathComponent(uniqueName)
+        setenv("LLVM_PROFILE_FILE", destination, 1)
+        print("🧪 Code coverage output redirected to \(destination)")
+    }
+#endif
 }

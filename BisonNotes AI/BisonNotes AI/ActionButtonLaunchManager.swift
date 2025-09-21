@@ -19,11 +19,18 @@ enum ActionButtonLaunchManager {
     }
 
     static func consumeRecordingRequest() -> Bool {
-        guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else { return false }
+        print("🔍 ActionButtonLaunchManager: Checking for recording request")
+        guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            print("⚠️ ActionButtonLaunchManager: Missing shared defaults")
+            return false
+        }
         let shouldStartRecording = defaults.bool(forKey: shouldStartRecordingKey)
+        print("🔍 ActionButtonLaunchManager: Flag value is: \(shouldStartRecording)")
 
         if shouldStartRecording {
             defaults.set(false, forKey: shouldStartRecordingKey)
+            let success = defaults.synchronize()
+            print("🔍 ActionButtonLaunchManager: Flag consumed, reset to false, synchronize success: \(success)")
         }
 
         return shouldStartRecording
