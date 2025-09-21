@@ -330,6 +330,64 @@ class CoreDataManager: ObservableObject {
         }
     }
     
+    // MARK: - Repair Operations
+
+    /// Repairs orphaned summaries by creating missing recording entries
+    func repairOrphanedSummaries() -> Int {
+        let allSummaries = getAllSummaries()
+        var repairedCount = 0
+
+        print("🔧 Starting repair of \(allSummaries.count) summaries...")
+
+        for (index, summary) in allSummaries.enumerated() {
+            if summary.recording == nil {
+                print("🔧 Repairing orphaned summary \(index): ID \(summary.id?.uuidString ?? "nil")")
+
+                // Create a recording entry for this summary
+                let recordingEntry = RecordingEntry(context: context)
+                let newRecordingId = summary.recordingId ?? UUID()
+
+                recordingEntry.id = newRecordingId
+                recordingEntry.recordingName = "Recovered Summary \(index + 1)"
+                recordingEntry.recordingDate = summary.generatedAt ?? Date()
+                recordingEntry.recordingURL = nil // No audio file
+                recordingEntry.duration = 0
+                recordingEntry.fileSize = 0
+                recordingEntry.summaryId = summary.id
+                recordingEntry.summaryStatus = ProcessingStatus.completed.rawValue
+                recordingEntry.lastModified = Date()
+
+                // Link them together bidirectionally
+                summary.recording = recordingEntry
+                recordingEntry.summary = summary
+
+                print("   ✅ Created recording \(newRecordingId.uuidString) for summary \(summary.id?.uuidString ?? "nil")")
+                repairedCount += 1
+            } else {
+                print("   ✓ Summary \(index) already has recording relationship")
+            }
+        }
+
+        if repairedCount > 0 {
+            do {
+                try context.save()
+                print("✅ Successfully repaired \(repairedCount) orphaned summaries in Core Data")
+
+                // Verify the repair worked
+                let newRecordingCount = getAllRecordings().count
+                let newSummaryCount = getAllSummaries().count
+                print("📊 After repair: \(newRecordingCount) recordings, \(newSummaryCount) summaries")
+            } catch {
+                print("❌ Failed to save repaired summaries: \(error)")
+                return 0
+            }
+        } else {
+            print("ℹ️ No orphaned summaries found to repair")
+        }
+
+        return repairedCount
+    }
+
     // MARK: - Summary Operations
     
     func getSummary(for recordingId: UUID) -> SummaryEntry? {

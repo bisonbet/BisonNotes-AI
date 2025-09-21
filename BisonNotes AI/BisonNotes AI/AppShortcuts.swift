@@ -15,7 +15,7 @@ struct AppShortcuts: AppShortcutsProvider {
                 "Start recording with \(.applicationName)",
                 "Record audio note with \(.applicationName)",
                 "Begin recording in \(.applicationName)",
-                "Start new recording"
+                "Start new recording with \(.applicationName)"
             ],
             shortTitle: "Start Recording",
             systemImageName: "mic.fill"

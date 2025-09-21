@@ -10,6 +10,7 @@ import UIKit
 import BackgroundTasks
 import UserNotifications
 import AppIntents
+import WidgetKit
 
 @main
 struct BisonNotesAIApp: App {
@@ -151,8 +152,30 @@ struct BisonNotesAIApp: App {
     private func setupAppShortcuts() {
         // Update app shortcuts to include our recording intent
         Task {
-            await AppShortcuts.updateAppShortcutParameters()
+            AppShortcuts.updateAppShortcutParameters()
         }
         print("📱 App shortcuts configured for Action Button support")
+
+        if #available(iOS 18.0, *) {
+            if let plugInsURL = Bundle.main.builtInPlugInsURL,
+               let items = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {
+                print("📦 Built-in PlugIns: \(items.map { $0.lastPathComponent })")
+            } else {
+                print("⚠️ Unable to enumerate built-in PlugIns")
+            }
+            print("🎛️ Asking WidgetKit to reload control configurations")
+            ControlCenter.shared.reloadAllControls()
+            ControlCenter.shared.reloadControls(ofKind: "com.bisonnotesai.controls.recording")
+
+            Task {
+                do {
+                    let controls = try await ControlCenter.shared.currentControls()
+                    let kinds = controls.map { $0.kind }
+                    print("🎛️ ControlCenter reports controls: \(kinds)")
+                } catch {
+                    print("❌ Failed to fetch current controls: \(error)")
+                }
+            }
+        }
     }
 }

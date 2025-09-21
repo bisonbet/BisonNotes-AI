@@ -110,11 +110,11 @@ struct ContentView: View {
             showingLocationPermission = true
             UserDefaults.standard.set(true, forKey: "hasAskedLocationPermission")
         }
-        .onChange(of: scenePhase) { newPhase in
+        .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
             handleActionButtonLaunchIfNeeded()
         }
-        .onChange(of: isInitialized) { initialized in
+        .onChange(of: isInitialized) { _, initialized in
             if initialized && pendingActionButtonRecording {
                 pendingActionButtonRecording = false
                 triggerActionButtonRecording()

@@ -684,8 +684,8 @@ class iCloudStorageManager: ObservableObject {
         }
     }
     
-    func fetchSummariesFromiCloud() async throws -> [EnhancedSummaryData] {
-        guard isEnabled else {
+    func fetchSummariesFromiCloud(forRecovery: Bool = false) async throws -> [EnhancedSummaryData] {
+        guard forRecovery || isEnabled else {
             print("⚠️ iCloud sync is disabled, returning empty array")
             return []
         }
@@ -830,24 +830,32 @@ class iCloudStorageManager: ObservableObject {
     
     
     /// Downloads all summaries from iCloud and imports them locally
-    func downloadSummariesFromCloud(appCoordinator: AppDataCoordinator) async throws -> Int {
-        guard isEnabled, let _ = database else {
+    func downloadSummariesFromCloud(appCoordinator: AppDataCoordinator, forRecovery: Bool = false) async throws -> Int {
+        guard forRecovery || isEnabled, let _ = database else {
             throw NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "iCloud sync not enabled or CloudKit not initialized"])
         }
         
         await updateSyncStatus(.syncing)
         
         do {
-            // Use the alternative fetch method that doesn't require queryable fields
-            let cloudSummaries = try await fetchAllSummariesUsingRecordOperation(appCoordinator: appCoordinator)
-            
+            print("🔍 Starting download process (forRecovery: \(forRecovery))")
+
+            // Use the recovery-aware fetch method if this is for recovery, otherwise use the comprehensive method
+            let cloudSummaries = forRecovery ?
+                try await fetchSummariesFromiCloud(forRecovery: true) :
+                try await fetchAllSummariesUsingRecordOperation(appCoordinator: appCoordinator)
+
+            print("📊 Found \(cloudSummaries.count) summaries in iCloud")
+
             // Get local summary IDs from Core Data for comparison
             let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
             let localSummaryIds = Set(localSummaries.compactMap { $0.id })
-            
+
+            print("📊 Found \(localSummaries.count) local summaries")
+
             // Find cloud-only summaries
             let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
-            
+
             print("📥 Found \(cloudOnlySummaries.count) cloud summaries to download")
             
             var downloadedCount = 0
@@ -2254,6 +2262,32 @@ extension CKError {
             return localizedDescription
         }
     }
+
+    // MARK: - Debug Methods
+
+    /// Debug method to check current Core Data state
+    @MainActor
+    func debugCoreDataState(appCoordinator: AppDataCoordinator) {
+        let recordings = appCoordinator.coreDataManager.getAllRecordings()
+        let summaries = appCoordinator.coreDataManager.getAllSummaries()
+
+        print("🔍 DEBUG: Core Data State")
+        print("📊 Total recordings: \(recordings.count)")
+        print("📊 Total summaries: \(summaries.count)")
+
+        for (index, recording) in recordings.enumerated() {
+            print("   Recording \(index): \(recording.recordingName ?? "Unknown") (ID: \(recording.id?.uuidString ?? "nil"))")
+            print("      - Has summary: \(recording.summary != nil)")
+            print("      - Summary ID: \(recording.summaryId?.uuidString ?? "nil")")
+        }
+
+        for (index, summary) in summaries.enumerated() {
+            print("   Summary \(index): \(summary.recording?.recordingName ?? "Unknown") (ID: \(summary.id?.uuidString ?? "nil"))")
+            print("      - Has recording: \(summary.recording != nil)")
+            print("      - Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
+        }
+    }
+
 }
 
 // MARK: - Network Monitor
