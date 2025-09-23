@@ -2,6 +2,8 @@
 
 SwiftUI iOS + watchOS app for recording audio, transcribing it with local or cloud engines, and generating summaries, tasks, and reminders. Core Data powers persistence; background jobs handle long/complex processing; WatchConnectivity syncs state between watch and phone.
 
+AVAILABLE ON THE APP STORE: https://apps.apple.com/us/app/bisonnotes-ai-voice-notes/id6749189425
+
 Quick links: [Usage Quick Start](USAGE.md) • [Full User Guide](HOW_TO_USE.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
 
 ## Architecture
