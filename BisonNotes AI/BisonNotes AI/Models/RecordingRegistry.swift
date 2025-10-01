@@ -129,10 +129,6 @@ public class RecordingRegistryManager: ObservableObject {
     @Published var currentError: AppError?
     @Published var showingErrorAlert = false
     
-    // MARK: - Performance Monitoring Integration
-    
-    private lazy var performanceMonitor = EnginePerformanceMonitor()
-    
     // MARK: - iCloud Integration
     
     private let iCloudManager: iCloudStorageManager = {

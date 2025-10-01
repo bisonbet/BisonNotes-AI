@@ -62,10 +62,6 @@ class SummaryManager: ObservableObject {
     @Published var currentError: AppError?
     @Published var showingErrorAlert = false
     
-    // MARK: - Performance Monitoring Integration
-    
-    private lazy var performanceMonitor = EnginePerformanceMonitor()
-    
     // MARK: - iCloud Integration
     
     private let iCloudManager: iCloudStorageManager = {
@@ -1224,15 +1220,6 @@ class SummaryManager: ObservableObject {
             } catch {
                 AppLogger.shared.error("AI engine retry failed: \(error)", category: "SummaryManager")
 
-                // Track engine failure
-                performanceMonitor.trackEngineFailure(
-                    engineName: engine.name,
-                    processingTime: Date().timeIntervalSince(startTime),
-                    error: error,
-                    textLength: text.count,
-                    wordCount: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
-                )
-
                 // Handle the error and provide recovery options
                 handleError(error, context: "Enhanced Summary Generation", recordingName: recordingName)
 
@@ -1285,9 +1272,6 @@ class SummaryManager: ObservableObject {
             AppLogger.shared.warning("Summary quality is unacceptable, attempting recovery", category: "SummaryManager")
             handleError(SummarizationError.processingFailed(reason: "Summary quality below threshold"), context: "Summary Quality", recordingName: recordingName)
         }
-
-        // Track performance metrics
-        performanceMonitor.trackEnhancedSummaryPerformance(enhancedSummary, engineName: engine.name, processingTime: processingTime)
 
         // Update UI state on the main thread
         await MainActor.run {
@@ -2238,36 +2222,6 @@ class SummaryManager: ObservableObject {
             totalReminders: totalReminders,
             engineUsage: engineUsage
         )
-    }
-    
-    // MARK: - Performance Monitoring Methods
-    
-    func getEnginePerformanceStatistics() -> [String: EnginePerformanceStatistics] {
-        return performanceMonitor.engineStatistics
-    }
-    
-    func getRecentPerformanceData() -> [EnginePerformanceData] {
-        return performanceMonitor.recentPerformance
-    }
-    
-    func getPerformanceTrends() -> [PerformanceTrend] {
-        return performanceMonitor.performanceTrends
-    }
-    
-    func getUsageAnalytics() -> EngineUsageAnalytics? {
-        return performanceMonitor.usageAnalytics
-    }
-    
-    func getEngineComparisonData(timeRange: DateInterval? = nil) -> EngineComparisonData {
-        return performanceMonitor.getEngineComparisonData(timeRange: timeRange)
-    }
-    
-    func clearPerformanceData() {
-        performanceMonitor.clearPerformanceData()
-    }
-    
-    func isPerformanceMonitoringEnabled() -> Bool {
-        return performanceMonitor.isMonitoring
     }
     
     // MARK: - Persistence

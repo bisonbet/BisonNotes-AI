@@ -27,12 +27,9 @@ struct DataMigrationView: View {
     @State private var isPerformingCleanup = false
     @State private var cleanupResults: CleanupResults?
     // Safety confirmations for data-changing operations
-    @State private var confirmImportLegacy = false
     @State private var confirmRecoverCloud = false
     @State private var confirmRepairDuplicates = false
     @State private var confirmFixNamesListings = false
-    @State private var confirmImportOrphans = false
-    @State private var confirmDownloadCloud = false
     @State private var confirmFullSyncToCloud = false
     @State private var confirmCloudKitReset = false
     @State private var confirmRemoveImportedFiles = false
@@ -104,21 +101,6 @@ struct DataMigrationView: View {
                 }
             } message: {
                 Text("This will remove summaries and transcripts for recordings that no longer exist. This action cannot be undone.")
-            }
-            .alert("Download from iCloud", isPresented: $confirmDownloadCloud) {
-                Button("Cancel", role: .cancel) { }
-                Button("Download") {
-                    Task {
-                        do {
-                            let count = try await legacyiCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator)
-                            print("✅ Downloaded \(count) summaries from iCloud")
-                        } catch {
-                            print("❌ Failed to download summaries: \(error)")
-                        }
-                    }
-                }
-            } message: {
-                Text("This will download any summaries from iCloud that don't exist locally. This is useful if you reinstalled the app or want to sync missing data. Existing local summaries will not be affected.")
             }
             .alert("Upload All Summaries to iCloud", isPresented: $confirmFullSyncToCloud) {
                 Button("Cancel", role: .cancel) { }
@@ -210,27 +192,6 @@ struct DataMigrationView: View {
                 .cornerRadius(12)
             }
             
-            // Legacy migration (for old data format)
-            Button(action: {
-                confirmImportLegacy = true
-            }) {
-                HStack {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                    Text("Import Legacy Files")
-                }
-                .font(.headline)
-                .foregroundColor(.orange)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.orange.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.orange, lineWidth: 1)
-                )
-                .cornerRadius(12)
-            }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
             // iCloud Recovery
             Button(action: {
                 confirmRecoverCloud = true
@@ -251,28 +212,6 @@ struct DataMigrationView: View {
                 .cornerRadius(12)
             }
             .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
-            // Download summaries from iCloud
-            Button(action: {
-                confirmDownloadCloud = true
-            }) {
-                HStack {
-                    Image(systemName: "icloud.and.arrow.down.fill")
-                    Text("Download from iCloud")
-                }
-                .font(.headline)
-                .foregroundColor(.blue)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.blue.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.blue, lineWidth: 1)
-                )
-                .cornerRadius(12)
-            }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
             
             // Full sync to cloud (manual upload all)
             Button(action: {
@@ -480,14 +419,19 @@ struct DataMigrationView: View {
                 .cornerRadius(12)
             }
             .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
-            // Import orphaned audio files
+
+            // Repair orphaned summaries
             Button(action: {
-                confirmImportOrphans = true
+                Task {
+                    await MainActor.run {
+                        let repairedCount = appCoordinator.coreDataManager.repairOrphanedSummaries()
+                        print("🔧 Manual repair completed: \(repairedCount) summaries repaired")
+                    }
+                }
             }) {
                 HStack {
-                    Image(systemName: "plus.rectangle.on.folder")
-                    Text("Import Orphaned Audio Files")
+                    Image(systemName: "wrench.and.screwdriver")
+                    Text("Repair Orphaned Summaries")
                 }
                 .font(.headline)
                 .foregroundColor(.white)
@@ -497,24 +441,6 @@ struct DataMigrationView: View {
                 .cornerRadius(12)
             }
             .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-
-            // Diagnostic for UI vs Database disconnect
-            Button(action: {
-                Task {
-                    await migrationManager.diagnoseRecordingDisplayIssue()
-                }
-            }) {
-                HStack {
-                    Image(systemName: "stethoscope")
-                    Text("Diagnose Display Issue")
-                }
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.red)
-                .cornerRadius(12)
-            }
 
             // Cleanup Orphaned Data section
             VStack(spacing: 8) {
@@ -627,16 +553,6 @@ struct DataMigrationView: View {
         }
         .padding(.horizontal)
         // MARK: - Safety Alerts
-        .alert("Import Legacy Files", isPresented: $confirmImportLegacy) {
-            Button("Cancel", role: .cancel) { }
-            Button("Import", role: .destructive) {
-                Task {
-                    await migrationManager.performDataMigration()
-                }
-            }
-        } message: {
-            Text("This will scan Documents and create database entries for legacy audio/transcript/summary files. No existing records will be deleted, but new entries may be added.")
-        }
         .alert("Recover from iCloud", isPresented: $confirmRecoverCloud) {
             Button("Cancel", role: .cancel) { }
             Button("Recover", role: .destructive) {
@@ -667,16 +583,6 @@ struct DataMigrationView: View {
             }
         } message: {
             Text("Renames generic recordings to better titles where available and validates statuses. No files will be deleted.")
-        }
-        .alert("Import Orphaned Audio Files", isPresented: $confirmImportOrphans) {
-            Button("Cancel", role: .cancel) { }
-            Button("Import", role: .destructive) {
-                Task {
-                    let _ = await migrationManager.findAndImportOrphanedAudioFiles()
-                }
-            }
-        } message: {
-            Text("Adds database entries for audio files that exist on disk but not in the database. No deletions will occur.")
         }
         .alert("Fix Broken File Links", isPresented: $confirmFixInvalidURLs) {
             Button("Cancel", role: .cancel) { }

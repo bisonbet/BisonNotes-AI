@@ -20,7 +20,6 @@ struct SettingsView: View {
     @State private var previousEngine = ""
     @State private var showingTranscriptionSettings = false
     @State private var showingAISettings = false
-    @State private var showingPerformanceView = false
     @State private var showingClearSummariesAlert = false
     @State private var showingBackgroundProcessing = false
     @State private var showingDataMigration = false
@@ -103,10 +102,6 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showingDataMigration) {
             DataMigrationView()
-                .environmentObject(appCoordinator)
-        }
-        .sheet(isPresented: $showingPerformanceView) {
-            EnginePerformanceView()
                 .environmentObject(appCoordinator)
         }
         .sheet(isPresented: $showingPreferences) {
@@ -326,23 +321,6 @@ struct SettingsView: View {
             }
             .padding(.horizontal, 24)
             
-            Button(action: {
-                showingPerformanceView = true
-            }) {
-                HStack {
-                    Text("Engine Performance")
-                    Spacer()
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.green.opacity(0.1))
-                )
-                .foregroundColor(.green)
-            }
-            .padding(.horizontal, 24)
         }
     }
     
@@ -533,23 +511,6 @@ struct SettingsView: View {
                             .foregroundColor(.red)
                             .padding(.top, 4)
                     }
-
-                    // Add manual restore button
-                    // Manual repair button for debugging
-                    Button(action: {
-                        Task {
-                            await MainActor.run {
-                                let repairedCount = appCoordinator.coreDataManager.repairOrphanedSummaries()
-                                print("🔧 Manual repair completed: \(repairedCount) summaries repaired")
-                            }
-                        }
-                    }) {
-                        HStack {
-                            Image(systemName: "wrench.and.screwdriver")
-                            Text("Repair Orphaned Summaries")
-                        }
-                    }
-                    .foregroundColor(.orange)
 
                     if !iCloudManager.isEnabled {
                         Button(action: {
@@ -857,4 +818,3 @@ struct DebugButtonStyle: ButtonStyle {
             .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }
-
