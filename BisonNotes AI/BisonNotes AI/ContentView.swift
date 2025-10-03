@@ -10,12 +10,14 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var recorderVM = AudioRecorderViewModel()
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var selectedTab = 0
     @State private var isInitialized = false
     @State private var initializationError: String?
     @State private var isFirstLaunch = false
     @State private var showingLocationPermission = false
+    @State private var pendingActionButtonRecording = false
     
     var body: some View {
         Group {
@@ -108,8 +110,21 @@ struct ContentView: View {
             showingLocationPermission = true
             UserDefaults.standard.set(true, forKey: "hasAskedLocationPermission")
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            handleActionButtonLaunchIfNeeded()
+        }
+        .onChange(of: isInitialized) { _, initialized in
+            if initialized && pendingActionButtonRecording {
+                pendingActionButtonRecording = false
+                triggerActionButtonRecording()
+            }
+        }
+        .task {
+            handleActionButtonLaunchIfNeeded()
+        }
     }
-    
+
     @MainActor
     private func initializeApp() {
         // Check if this is first launch
@@ -189,6 +204,37 @@ struct ContentView: View {
                     initializationError = error.localizedDescription
                     isInitialized = true // Still show the app even if there's an error
                 }
+            }
+        }
+    }
+
+    private func handleActionButtonLaunchIfNeeded() {
+        EnhancedLogger.shared.logDebug("ContentView: Checking for action button launch")
+        if ActionButtonLaunchManager.consumeRecordingRequest() {
+            print("📱 ContentView: Action button recording requested!")
+            if isInitialized {
+                print("📱 ContentView: App is initialized, triggering recording immediately")
+                triggerActionButtonRecording()
+            } else {
+                print("📱 ContentView: App not initialized yet, setting pending flag")
+                pendingActionButtonRecording = true
+            }
+        } else {
+            EnhancedLogger.shared.logDebug("ContentView: No action button recording request found")
+        }
+    }
+
+    private func triggerActionButtonRecording() {
+        print("🎙️ ContentView: Triggering action button recording")
+        selectedTab = 0
+
+        DispatchQueue.main.async {
+            print("🎙️ ContentView: On main queue, current recording state: \(recorderVM.isRecording)")
+            if !recorderVM.isRecording {
+                print("🎙️ ContentView: Starting recording...")
+                recorderVM.startRecording()
+            } else {
+                print("🎙️ ContentView: Already recording, skipping")
             }
         }
     }

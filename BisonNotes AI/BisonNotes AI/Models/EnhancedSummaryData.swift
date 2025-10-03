@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Content Type
 
-enum ContentType: String, CaseIterable, Codable {
+enum ContentType: String, CaseIterable, Codable, Sendable {
     case meeting = "Meeting"
     case personalJournal = "Personal Journal"
     case technical = "Technical"
@@ -24,7 +24,7 @@ enum ContentType: String, CaseIterable, Codable {
 
 // MARK: - Task Item
 
-struct TaskItem: Codable, Identifiable, Equatable, Hashable {
+struct TaskItem: Codable, Identifiable, Equatable, Hashable, Sendable {
     let id: UUID
     let text: String
     let priority: Priority
@@ -41,7 +41,7 @@ struct TaskItem: Codable, Identifiable, Equatable, Hashable {
         self.confidence = confidence
     }
     
-    enum Priority: String, CaseIterable, Codable {
+    enum Priority: String, CaseIterable, Codable, Sendable {
         case high = "High"
         case medium = "Medium"
         case low = "Low"
@@ -63,7 +63,7 @@ struct TaskItem: Codable, Identifiable, Equatable, Hashable {
         }
     }
     
-    enum TaskCategory: String, CaseIterable, Codable {
+    enum TaskCategory: String, CaseIterable, Codable, Sendable {
         case call = "Call"
         case meeting = "Meeting"
         case purchase = "Purchase"
@@ -97,7 +97,7 @@ struct TaskItem: Codable, Identifiable, Equatable, Hashable {
 
 // MARK: - Reminder Item
 
-struct ReminderItem: Codable, Identifiable, Equatable, Hashable {
+struct ReminderItem: Codable, Identifiable, Equatable, Hashable, Sendable {
     let id: UUID
     let text: String
     let timeReference: TimeReference
@@ -112,7 +112,7 @@ struct ReminderItem: Codable, Identifiable, Equatable, Hashable {
         self.confidence = confidence
     }
     
-    struct TimeReference: Codable, Equatable, Hashable {
+    struct TimeReference: Codable, Equatable, Hashable, Sendable {
         let originalText: String
         let parsedDate: Date?
         let relativeTime: String?
@@ -139,7 +139,7 @@ struct ReminderItem: Codable, Identifiable, Equatable, Hashable {
         }
     }
     
-    enum Urgency: String, CaseIterable, Codable {
+    enum Urgency: String, CaseIterable, Codable, Sendable {
         case immediate = "Immediate"
         case today = "Today"
         case thisWeek = "This Week"
@@ -180,7 +180,7 @@ struct ReminderItem: Codable, Identifiable, Equatable, Hashable {
 
 // MARK: - Title Item
 
-struct TitleItem: Codable, Identifiable, Equatable, Hashable {
+struct TitleItem: Codable, Identifiable, Equatable, Hashable, Sendable {
     let id: UUID
     let text: String
     let confidence: Double
@@ -193,7 +193,7 @@ struct TitleItem: Codable, Identifiable, Equatable, Hashable {
         self.category = category
     }
     
-    enum TitleCategory: String, CaseIterable, Codable {
+    enum TitleCategory: String, CaseIterable, Codable, Sendable {
         case meeting = "Meeting"
         case personal = "Personal"
         case technical = "Technical"
@@ -216,7 +216,7 @@ struct TitleItem: Codable, Identifiable, Equatable, Hashable {
 
 // MARK: - Enhanced Summary Data
 
-public struct EnhancedSummaryData: Codable, Identifiable {
+public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     public let id: UUID
     let recordingId: UUID? // For unified architecture
     let transcriptId: UUID? // Optional link to transcript used for generation

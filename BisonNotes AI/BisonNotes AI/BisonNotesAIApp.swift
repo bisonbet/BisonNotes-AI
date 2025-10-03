@@ -9,6 +9,11 @@ import SwiftUI
 import UIKit
 import BackgroundTasks
 import UserNotifications
+import AppIntents
+import WidgetKit
+#if DEBUG
+import Darwin
+#endif
 
 @main
 struct BisonNotesAIApp: App {
@@ -16,7 +21,11 @@ struct BisonNotesAIApp: App {
     @StateObject private var appCoordinator = AppDataCoordinator()
     
     init() {
+#if DEBUG
+        Self.configureCoverageOutputIfNeeded()
+#endif
         setupBackgroundTasks()
+        setupAppShortcuts()
     }
     
     var body: some Scene {
@@ -145,4 +154,45 @@ struct BisonNotesAIApp: App {
         
         print("📱 iPhone watch connectivity initialized for background sync")
     }
+    
+    private func setupAppShortcuts() {
+        // Update app shortcuts to include our recording intent
+        Task {
+            AppShortcuts.updateAppShortcutParameters()
+        }
+        EnhancedLogger.shared.logDebug("App shortcuts configured for Action Button support")
+
+        if #available(iOS 18.0, *) {
+            if let plugInsURL = Bundle.main.builtInPlugInsURL,
+               let items = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {
+                EnhancedLogger.shared.logDebug("Built-in PlugIns: \(items.map { $0.lastPathComponent })")
+            } else {
+                print("⚠️ Unable to enumerate built-in PlugIns")
+            }
+            EnhancedLogger.shared.logDebug("Asking WidgetKit to reload control configurations")
+            ControlCenter.shared.reloadAllControls()
+            ControlCenter.shared.reloadControls(ofKind: "com.bisonnotesai.controls.recording")
+
+            Task {
+                do {
+                    let controls = try await ControlCenter.shared.currentControls()
+                    let kinds = controls.map { $0.kind }
+                    EnhancedLogger.shared.logDebug("ControlCenter reports controls: \(kinds)")
+                } catch {
+                    print("❌ Failed to fetch current controls: \(error)")
+                }
+            }
+        }
+    }
+    
+#if DEBUG
+    private static func configureCoverageOutputIfNeeded() {
+        guard ProcessInfo.processInfo.environment["LLVM_PROFILE_FILE"] == nil else { return }
+        let tempDirectory = NSTemporaryDirectory()
+        let uniqueName = "BisonNotesAI-\(ProcessInfo.processInfo.globallyUniqueString).profraw"
+        let destination = (tempDirectory as NSString).appendingPathComponent(uniqueName)
+        setenv("LLVM_PROFILE_FILE", destination, 1)
+        print("🧪 Code coverage output redirected to \(destination)")
+    }
+#endif
 }

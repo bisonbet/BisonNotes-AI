@@ -21,7 +21,8 @@ struct SummariesView: View {
     @State private var errorMessage = ""
     @State private var refreshTrigger = false
     @State private var showingFirstTimeiCloudPrompt = false
-    
+    @State private var showingiCloudDataFoundPrompt = false
+
     @AppStorage("hasSeeniCloudPrompt") private var hasSeeniCloudPrompt = false
 
 
@@ -148,9 +149,36 @@ struct SummariesView: View {
         } message: {
             Text("We found summaries in your iCloud that aren't on this device. Would you like to download them? This won't affect your existing summaries.")
         }
+        .alert("iCloud Data Detected", isPresented: $showingiCloudDataFoundPrompt) {
+            Button("Keep Disabled") {
+                // User chooses to keep iCloud sync disabled
+            }
+            Button("Enable iCloud Sync") {
+                Task {
+                    // Enable iCloud sync
+                    await MainActor.run {
+                        iCloudManager.isEnabled = true
+                    }
 
-    }
-    
+                    // Now download the summaries
+                    do {
+                        let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator)
+                        print("✅ Downloaded \(count) summaries from iCloud")
+                        loadRecordings() // Refresh the view
+                    } catch {
+                        print("❌ Failed to download summaries: \(error)")
+                        await MainActor.run {
+                            errorMessage = "Failed to download summaries: \(error.localizedDescription)"
+                            showErrorAlert = true
+                        }
+                    }
+                }
+            }
+        } message: {
+            Text("We detected summaries in your iCloud account, but iCloud sync is currently disabled. Would you like to enable iCloud sync to download your cloud summaries? This will allow you to access all your data across devices.")
+        }
+    } // End of body variable
+
     // MARK: - Main Content View
     
     private var mainContentView: some View {
@@ -188,7 +216,7 @@ struct SummariesView: View {
     
     private var recordingsListView: some View {
         List {
-            ForEach(recordings, id: \.recording.id) { recordingData in
+            ForEach(recordings, id: \.recording.objectID) { recordingData in
                 recordingRowView(recordingData)
             }
         }
@@ -313,21 +341,30 @@ struct SummariesView: View {
         let recordingsWithData = appCoordinator.getAllRecordingsWithData()
         print("📊 Total recordings from coordinator: \(recordingsWithData.count)")
         
-        // Debug: Print each recording and its transcript status
+        // Debug: Print each recording and its transcript/summary status
         for (index, recordingData) in recordingsWithData.enumerated() {
             let recording = recordingData.recording
             let transcript = recordingData.transcript
             let summary = recordingData.summary
-            
-            print("   \(index): \(recording.recordingName ?? "Unknown")")
-            print("      - Has transcript: \(transcript != nil)")
-            print("      - Has summary: \(summary != nil)")
+
+            print("   📝 Recording \(index): \(recording.recordingName ?? "Unknown")")
+            print("      - Recording ID: \(recording.id?.uuidString ?? "nil")")
+            print("      - Has transcript data: \(transcript != nil)")
+            print("      - Has summary data: \(summary != nil)")
+            print("      - Recording.transcript relationship: \(recording.transcript != nil)")
+            print("      - Recording.summary relationship: \(recording.summary != nil)")
+            print("      - Recording.summaryId: \(recording.summaryId?.uuidString ?? "nil")")
+
             if let summary = summary {
                 print("      - Summary AI Method: \(summary.aiMethod)")
                 print("      - Summary Generated At: \(summary.generatedAt)")
             }
-            print("      - Recording has transcript flag: \(recording.transcript != nil)")
-            print("      - Recording has summary flag: \(recording.summary != nil)")
+
+            // Show why this recording might be excluded
+            let hasTranscript = transcript != nil
+            let hasSummary = summary != nil || recording.summary != nil
+            let willBeIncluded = hasTranscript || hasSummary
+            print("      - Will be included: \(willBeIncluded) (transcript: \(hasTranscript), summary: \(hasSummary))")
         }
         
         // Show recordings that either have a transcript (can generate) OR already have a summary
@@ -350,7 +387,54 @@ struct SummariesView: View {
         }
         
         print("📊 Final result: \(recordings.count) recordings shown (has transcript or summary) out of \(recordingsWithData.count) total recordings")
-        
+
+        // Debug Core Data state to understand what's happening
+        Task { @MainActor in
+            // Check what's actually in Core Data
+            let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
+            let allSummaries = appCoordinator.coreDataManager.getAllSummaries()
+            print("🔍 DIRECT CORE DATA CHECK:")
+            print("📊 Direct recordings count: \(allRecordings.count)")
+            print("📊 Direct summaries count: \(allSummaries.count)")
+
+            // Debug the actual relationships
+            print("🔍 RELATIONSHIP DEBUG:")
+            for (index, recording) in allRecordings.enumerated() {
+                print("   Recording \(index): \(recording.recordingName ?? "Unknown")")
+                print("      - ID: \(recording.id?.uuidString ?? "nil")")
+                print("      - Summary ID: \(recording.summaryId?.uuidString ?? "nil")")
+                print("      - Has summary relationship: \(recording.summary != nil)")
+                if let summary = recording.summary {
+                    print("      - Summary title: \(summary.recording?.recordingName ?? "No title")")
+                }
+            }
+
+            for (index, summary) in allSummaries.prefix(5).enumerated() {
+                print("   Summary \(index): ID \(summary.id?.uuidString ?? "nil")")
+                print("      - Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
+                print("      - Has recording relationship: \(summary.recording != nil)")
+                if let recording = summary.recording {
+                    print("      - Recording name: \(recording.recordingName ?? "No name")")
+                }
+            }
+
+            if allSummaries.count > 0 && allRecordings.count < allSummaries.count {
+                print("⚠️ ISSUE FOUND: We have \(allSummaries.count) summaries but only \(allRecordings.count) recordings!")
+                print("🔧 Attempting to repair orphaned summaries...")
+
+                // Try to repair the orphaned summaries using CoreDataManager
+                let repairedCount = appCoordinator.coreDataManager.repairOrphanedSummaries()
+
+                if repairedCount > 0 {
+                    print("✅ Repaired \(repairedCount) orphaned summaries")
+                    // Reload the view after repair
+                    DispatchQueue.main.async {
+                        self.loadRecordings()
+                    }
+                }
+            }
+        }
+
         // Check if we should show the first-time iCloud prompt
         checkForFirstTimeiCloudPrompt()
     }
@@ -505,36 +589,69 @@ struct SummariesView: View {
     }
     
     private func checkForFirstTimeiCloudPrompt() {
-        // Only show prompt if:
-        // 1. User hasn't seen it before
-        // 2. There are summaries in iCloud that aren't local
-        if !hasSeeniCloudPrompt {
-            Task {
-                // Check if there are summaries in iCloud
+        // Check if this is a fresh install (first launch after installation)
+        let isFreshInstall = !UserDefaults.standard.bool(forKey: "hasCompletedInitialLaunch")
+
+        // Check for legacy iCloud settings and migrate them
+        migrateLegacyiCloudSettings()
+
+        Task {
+            // Check if there are summaries in iCloud
+            do {
+                // Try the new method first, fallback to old method if needed
+                var cloudSummaries: [EnhancedSummaryData] = []
                 do {
-                    // Try the new method first, fallback to old method if needed
-                    var cloudSummaries: [EnhancedSummaryData] = []
-                    do {
-                        cloudSummaries = try await iCloudManager.fetchAllSummariesUsingRecordOperation()
-                    } catch {
-                        print("⚠️ Schema-safe fetch failed, trying standard fetch: \(error)")
-                        cloudSummaries = try await iCloudManager.fetchAllSummariesFromCloud()
-                    }
-                    
-                    // Get local summary IDs from Core Data
-                    let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
-                    let localSummaryIds = Set(localSummaries.compactMap { $0.id })
-                    
-                    let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
-                    
+                    cloudSummaries = try await iCloudManager.fetchAllSummariesUsingRecordOperation()
+                } catch {
+                    print("⚠️ Schema-safe fetch failed, trying standard fetch: \(error)")
+                    cloudSummaries = try await iCloudManager.fetchAllSummariesFromCloud()
+                }
+
+                // Get local summary IDs from Core Data
+                let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+                let localSummaryIds = Set(localSummaries.compactMap { $0.id })
+
+                let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
+
+                await MainActor.run {
                     if !cloudOnlySummaries.isEmpty {
-                        await MainActor.run {
+                        // We found cloud summaries that aren't local
+                        if !hasSeeniCloudPrompt {
+                            // User hasn't seen the regular prompt, show it
                             showingFirstTimeiCloudPrompt = true
+                        } else if !iCloudManager.isEnabled && isFreshInstall {
+                            // iCloud sync is disabled and this is a fresh install - prompt to enable it
+                            showingiCloudDataFoundPrompt = true
                         }
                     }
-                } catch {
-                    // If we can't check iCloud (offline, no access, etc.), don't show prompt
-                    print("ℹ️ Could not check iCloud for summaries: \(error)")
+
+                    // Mark that we've completed the initial launch check
+                    UserDefaults.standard.set(true, forKey: "hasCompletedInitialLaunch")
+                }
+            } catch {
+                // If we can't check iCloud (offline, no access, etc.), don't show prompt
+                print("ℹ️ Could not check iCloud for summaries: \(error)")
+                // Still mark initial launch as completed
+                UserDefaults.standard.set(true, forKey: "hasCompletedInitialLaunch")
+            }
+        }
+    }
+
+    private func migrateLegacyiCloudSettings() {
+        // Check if the legacy iCloud setting exists and current setting doesn't
+        let legacyEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+        let currentEnabled = UserDefaults.standard.bool(forKey: "unifiedICloudSyncEnabled")
+
+        if legacyEnabled && !currentEnabled {
+            print("🔄 Migrating legacy iCloud sync setting from 'iCloudSyncEnabled' to 'unifiedICloudSyncEnabled'")
+            UserDefaults.standard.set(true, forKey: "unifiedICloudSyncEnabled")
+
+            // Also enable the current iCloud manager if it wasn't enabled
+            if !iCloudManager.isEnabled {
+                Task {
+                    await MainActor.run {
+                        iCloudManager.isEnabled = true
+                    }
                 }
             }
         }
@@ -551,8 +668,8 @@ struct SummariesView: View {
             }
         }
     }
-    
-}
+
+} // End of SummariesView struct
 
 // MARK: - Preview
 

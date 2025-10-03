@@ -60,7 +60,7 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - Summarization: `OpenAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `EnhancedAppleIntelligenceEngine`
 - UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI)
 - Persistence: `Persistence`, `CoreDataManager`, models under `Models/`
-- Background: `BackgroundProcessingManager`, `EnginePerformanceMonitor`
+- Background: `BackgroundProcessingManager`
 - Watch: `WatchConnectivityManager` (both targets)
 
 ## Configuration

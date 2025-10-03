@@ -20,7 +20,6 @@ struct SettingsView: View {
     @State private var previousEngine = ""
     @State private var showingTranscriptionSettings = false
     @State private var showingAISettings = false
-    @State private var showingPerformanceView = false
     @State private var showingClearSummariesAlert = false
     @State private var showingBackgroundProcessing = false
     @State private var showingDataMigration = false
@@ -103,10 +102,6 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showingDataMigration) {
             DataMigrationView()
-                .environmentObject(appCoordinator)
-        }
-        .sheet(isPresented: $showingPerformanceView) {
-            EnginePerformanceView()
                 .environmentObject(appCoordinator)
         }
         .sheet(isPresented: $showingPreferences) {
@@ -326,23 +321,6 @@ struct SettingsView: View {
             }
             .padding(.horizontal, 24)
             
-            Button(action: {
-                showingPerformanceView = true
-            }) {
-                HStack {
-                    Text("Engine Performance")
-                    Spacer()
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.green.opacity(0.1))
-                )
-                .foregroundColor(.green)
-            }
-            .padding(.horizontal, 24)
         }
     }
     
@@ -451,7 +429,24 @@ struct SettingsView: View {
                         Toggle("", isOn: $iCloudManager.isEnabled)
                             .labelsHidden()
                     }
-                    
+
+                    // Show sync status
+                    HStack {
+                        Text("Status:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(iCloudManager.isEnabled ? Color.green : Color.gray)
+                                .frame(width: 8, height: 8)
+                            Text(iCloudManager.isEnabled ? "Enabled" : "Disabled")
+                                .font(.caption)
+                                .foregroundColor(iCloudManager.isEnabled ? .green : .gray)
+                        }
+                    }
+                    .padding(.top, 4)
+
                     // Show conflicts if any exist
                     if !iCloudManager.pendingConflicts.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
@@ -459,7 +454,7 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .fontWeight(.medium)
                                 .foregroundColor(.orange)
-                            
+
                             ForEach(iCloudManager.pendingConflicts, id: \.summaryId) { conflict in
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
@@ -470,9 +465,9 @@ struct SettingsView: View {
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
                                     }
-                                    
+
                                     Spacer()
-                                    
+
                                     HStack(spacing: 8) {
                                         Button("Use Local") {
                                             Task {
@@ -487,7 +482,7 @@ struct SettingsView: View {
                                             RoundedRectangle(cornerRadius: 4)
                                                 .fill(Color.blue.opacity(0.1))
                                         )
-                                        
+
                                         Button("Use Cloud") {
                                             Task {
                                                 try? await iCloudManager.resolveConflict(conflict, useLocal: false)
@@ -508,13 +503,102 @@ struct SettingsView: View {
                         }
                         .padding(.top, 4)
                     }
-                    
+
                     // Show errors if any exist
                     if let error = iCloudManager.lastError {
                         Text("Error: \(error)")
                             .font(.caption)
                             .foregroundColor(.red)
                             .padding(.top, 4)
+                    }
+
+                    if !iCloudManager.isEnabled {
+                        Button(action: {
+                            Task {
+                                do {
+                                    // Check for iCloud data using recovery flag that works even when sync is disabled
+                                    let cloudSummaries = try await iCloudManager.fetchSummariesFromiCloud(forRecovery: true)
+
+                                    let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+                                    let localSummaryIds = Set(localSummaries.compactMap { $0.id })
+                                    let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
+
+                                    if !cloudOnlySummaries.isEmpty {
+                                        // Show alert asking user if they want to download
+                                        await MainActor.run {
+                                            let alert = UIAlertController(
+                                                title: "iCloud Data Found",
+                                                message: "We found \(cloudOnlySummaries.count) summaries in your iCloud that aren't on this device. Would you like to download them?",
+                                                preferredStyle: .alert
+                                            )
+
+                                            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+                                            alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
+                                                Task {
+                                                    do {
+                                                        let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
+                                                        print("✅ Downloaded \(count) summaries from iCloud")
+                                                    } catch {
+                                                        print("❌ Failed to download summaries: \(error)")
+                                                    }
+                                                }
+                                            })
+
+                                            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                                               let rootViewController = windowScene.windows.first?.rootViewController {
+                                                rootViewController.present(alert, animated: true)
+                                            }
+                                        }
+                                    } else {
+                                        // Show message that no cloud data was found
+                                        await MainActor.run {
+                                            let alert = UIAlertController(
+                                                title: "No iCloud Data",
+                                                message: "No summaries were found in your iCloud account.",
+                                                preferredStyle: .alert
+                                            )
+
+                                            alert.addAction(UIAlertAction(title: "OK", style: .default))
+
+                                            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                                               let rootViewController = windowScene.windows.first?.rootViewController {
+                                                rootViewController.present(alert, animated: true)
+                                            }
+                                        }
+                                    }
+                                } catch {
+                                    print("❌ Failed to check for iCloud data: \(error)")
+                                    await MainActor.run {
+                                        let alert = UIAlertController(
+                                            title: "Check Failed",
+                                            message: "Could not check for iCloud data: \(error.localizedDescription)",
+                                            preferredStyle: .alert
+                                        )
+
+                                        alert.addAction(UIAlertAction(title: "OK", style: .default))
+
+                                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                                           let rootViewController = windowScene.windows.first?.rootViewController {
+                                            rootViewController.present(alert, animated: true)
+                                        }
+                                    }
+                                }
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "icloud.and.arrow.down")
+                                Text("Check for iCloud Data")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.blue.opacity(0.1))
+                            )
+                        }
+                        .padding(.top, 8)
                     }
                 }
                 .padding(.horizontal, 24)
@@ -734,4 +818,3 @@ struct DebugButtonStyle: ButtonStyle {
             .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }
-

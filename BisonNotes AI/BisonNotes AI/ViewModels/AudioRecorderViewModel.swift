@@ -24,6 +24,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     @Published var enhancedAudioSessionManager: EnhancedAudioSessionManager
     @Published var locationManager: LocationManager
     @Published var currentLocationData: LocationData?
+    
+    private var recordingStartLocationData: LocationData?
     @Published var isLocationTrackingEnabled: Bool = false
     
     // Reference to the app coordinator for adding recordings to registry
@@ -44,23 +46,25 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     
     // Flag to prevent duplicate recording creation
     private var recordingBeingProcessed = false
-    
+
     // Flag to track if app is backgrounding (to avoid false positive interruptions)
     private var appIsBackgrounding = false
-    
+
     // Timestamp to track when last recovery was attempted (to prevent rapid duplicates)
     private var lastRecoveryAttempt: Date = Date.distantPast
-    
+
     override init() {
         // Initialize the managers first
         self.enhancedAudioSessionManager = EnhancedAudioSessionManager()
         self.locationManager = LocationManager()
-        
+
         super.init()
-        
+
         // Load location tracking setting from UserDefaults
         self.isLocationTrackingEnabled = UserDefaults.standard.bool(forKey: "isLocationTrackingEnabled")
-        
+
+        setupLocationObservers()
+
         // Setup notification observers after super.init()
         setupNotificationObservers()
     }
@@ -207,7 +211,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
                 guard let self = self else { return }
                 self.appIsBackgrounding = false // App is coming back to foreground
                 
-                print("🔄 AudioRecorderViewModel: App foregrounded, restoring audio session...")
+                EnhancedLogger.shared.logAudioSession("App foregrounded, restoring audio session")
                 
                 // Only handle audio session restoration - let BackgroundProcessingManager handle recording recovery
                 try? await self.enhancedAudioSessionManager.restoreAudioSession()
@@ -532,24 +536,25 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			// Core Data operations should happen on main thread
 			await MainActor.run {
 				// Create recording entry using original URL to maintain file consistency
-				let recordingId = workflowManager.createRecording(
-					url: url,
-					name: displayName,
-					date: Date(),
-					fileSize: fileSize,
-					duration: duration,
-					quality: quality,
-					locationData: currentLocationData
-				)
+					let recordingId = workflowManager.createRecording(
+						url: url,
+						name: displayName,
+						date: Date(),
+						fileSize: fileSize,
+						duration: duration,
+						quality: quality,
+						locationData: recordingLocationSnapshot()
+					)
 				
-				print("✅ Interrupted recording recovered with workflow manager, ID: \(recordingId)")
-				
-				// Post notification to refresh UI
-				NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-				
-				// Reset processing flag
-				recordingBeingProcessed = false
-			}
+					print("✅ Interrupted recording recovered with workflow manager, ID: \(recordingId)")
+					
+					// Post notification to refresh UI
+					NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+					
+					// Reset processing flag
+					recordingBeingProcessed = false
+					resetRecordingLocation()
+				}
 			
 			// Don't send additional notification - already sent immediate notification
 			
@@ -706,18 +711,19 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					fileSize: fileSize,
 					duration: duration,
 					quality: quality,
-					locationData: currentLocationData
+					locationData: recordingLocationSnapshot()
 				)
 				
-				print("✅ Unprocessed recording recovered with workflow manager, ID: \(recordingId)")
-				
-				// Post notification to refresh UI
-				NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-				
-				// Clear the recording URL since it's now processed
-				self.recordingURL = nil
-				self.recordingBeingProcessed = false
-			}
+					print("✅ Unprocessed recording recovered with workflow manager, ID: \(recordingId)")
+					
+					// Post notification to refresh UI
+					NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+					
+					// Clear the recording URL since it's now processed
+					self.recordingURL = nil
+					self.recordingBeingProcessed = false
+					self.resetRecordingLocation()
+				}
 			
 			// Send notification to user about recovery (with slight delay to improve visibility)
 			await sendRecoveryNotification(filename: displayName)
@@ -915,7 +921,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let audioFilename = documentsPath.appendingPathComponent(generateAppRecordingFilename())
         recordingURL = audioFilename
-        
+
         // Capture current location before starting recording
         captureCurrentLocation()
         
@@ -951,30 +957,59 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     }
     
     private func captureCurrentLocation() {
-        // Only capture location if tracking is enabled
         guard isLocationTrackingEnabled else {
             currentLocationData = nil
+            recordingStartLocationData = nil
             return
         }
-        
-        // Get current location and save it
+
+        recordingStartLocationData = nil
+
+        // Prefer the freshest location available right away
         if let location = locationManager.currentLocation {
-            currentLocationData = LocationData(location: location)
-            print("📍 Location captured for recording: \(location.coordinate.latitude), \(location.coordinate.longitude)")
-        } else {
-            // Request a one-time location update if we don't have current location
-            locationManager.requestOneTimeLocation()
-            print("📍 Requesting location for recording...")
+            updateCurrentLocationData(with: location)
+            if recordingStartLocationData == nil {
+                recordingStartLocationData = currentLocationData
+            }
+        }
+
+        // Always request a fresh location to capture the most accurate coordinate
+        locationManager.requestCurrentLocation { [weak self] location in
+            guard let self = self else { return }
+
+            DispatchQueue.main.async {
+                guard self.isLocationTrackingEnabled else { return }
+
+                guard let location = location else {
+                    print("⚠️ Failed to capture fresh location for recording start")
+                    return
+                }
+
+                self.updateCurrentLocationData(with: location)
+                if self.recordingStartLocationData == nil {
+                    self.recordingStartLocationData = self.currentLocationData
+                }
+                print("📍 Location captured for recording: \(location.coordinate.latitude), \(location.coordinate.longitude)")
+            }
         }
     }
-    
+
     private func saveLocationData(for recordingURL: URL) {
-        // Only save location data if tracking is enabled and we have location data
-        guard isLocationTrackingEnabled, let locationData = currentLocationData else { 
+        guard isLocationTrackingEnabled else {
             print("📍 Location tracking disabled or no location data available")
-            return 
+            return
         }
-        
+
+        // If we never received a location update yet, fall back to the current manager value
+        if recordingLocationSnapshot() == nil, let latestLocation = locationManager.currentLocation {
+            updateCurrentLocationData(with: latestLocation)
+        }
+
+        guard let locationData = recordingLocationSnapshot() else {
+            print("📍 No location data available to save for \(recordingURL.lastPathComponent)")
+            return
+        }
+
         let locationURL = recordingURL.deletingPathExtension().appendingPathExtension("location")
         do {
             let data = try JSONEncoder().encode(locationData)
@@ -983,6 +1018,56 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         } catch {
             print("❌ Failed to save location data: \(error)")
         }
+    }
+
+    private func setupLocationObservers() {
+        locationManager.$currentLocation
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] location in
+                guard
+                    let self,
+                    self.isLocationTrackingEnabled,
+                    let location
+                else { return }
+
+                self.updateCurrentLocationData(with: location)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func updateCurrentLocationData(with location: CLLocation) {
+        guard location.horizontalAccuracy >= 0 else {
+            print("⚠️ Ignoring location with invalid accuracy: \(location.horizontalAccuracy)")
+            return
+        }
+
+        let newLocationData = LocationData(location: location)
+
+        if let existing = currentLocationData {
+            let existingAccuracy = existing.accuracy ?? .greatestFiniteMagnitude
+            let newAccuracy = newLocationData.accuracy ?? .greatestFiniteMagnitude
+
+            let isNewer = location.timestamp > existing.timestamp
+            let isMoreAccurate = newAccuracy < existingAccuracy
+
+            guard isNewer || isMoreAccurate else {
+                return
+            }
+        }
+
+        currentLocationData = newLocationData
+
+        if isRecording && recordingStartLocationData == nil {
+            recordingStartLocationData = newLocationData
+        }
+    }
+
+    private func recordingLocationSnapshot() -> LocationData? {
+        recordingStartLocationData ?? currentLocationData
+    }
+
+    private func resetRecordingLocation() {
+        recordingStartLocationData = nil
     }
     
     func toggleLocationTracking(_ enabled: Bool) {
@@ -994,8 +1079,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         } else {
             locationManager.stopLocationUpdates()
             currentLocationData = nil
+            resetRecordingLocation()
         }
-        
+
         print("📍 Location tracking \(enabled ? "enabled" : "disabled")")
     }
     
@@ -1262,12 +1348,13 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                                 fileSize: fileSize,
                                 duration: duration,
                                 quality: quality,
-                                locationData: currentLocationData
+                                locationData: recordingLocationSnapshot()
                             )
                             
                             print("✅ Recording created with workflow manager, ID: \(recordingId)")
                             
                             // Watch audio integration removed
+                            self.resetRecordingLocation()
                         } else {
                             print("❌ WorkflowManager not set - recording not saved to database!")
                         }

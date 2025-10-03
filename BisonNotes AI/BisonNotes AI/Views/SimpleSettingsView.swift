@@ -65,6 +65,10 @@ struct SimpleSettingsView: View {
                     }
                     saveSection
                     
+                    if !isFirstLaunch {
+                        actionButtonSection
+                    }
+                    
                     Spacer(minLength: 40)
                 }
                 .padding(.horizontal, 24)
@@ -430,6 +434,55 @@ struct SimpleSettingsView: View {
                     .fill(Color(.systemGray6))
             )
         }
+    }
+    
+    private var actionButtonSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("🎯 Action Button Setup")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                Text("Set up your iPhone's Action Button to quickly start recording with BisonNotes AI.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            
+            VStack(alignment: .leading, spacing: 12) {
+                Text("How to Configure:")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    FeatureBullet(text: "1. Open Settings app on your iPhone")
+                    FeatureBullet(text: "2. Go to Action Button")
+                    FeatureBullet(text: "3. Select \"Shortcut\"")
+                    FeatureBullet(text: "4. Choose \"Start Recording\" from BisonNotes AI")
+                    FeatureBullet(text: "5. Press Action Button to launch app and start recording!")
+                }
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.05))
+            )
+            
+            Text("✨ Works on iPhone models that include an Action Button.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.horizontal)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemBackground))
+                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.blue, lineWidth: 1)
+                )
+        )
     }
     
     private func loadCurrentSettings() {

@@ -10,7 +10,7 @@ import SwiftUI
 struct AWSBedrockSettingsView: View {
     @ObservedObject private var credentialsManager = AWSCredentialsManager.shared
     @AppStorage("awsBedrockSessionToken") private var sessionToken: String = ""
-    @AppStorage("awsBedrockModel") private var selectedModel: String = AWSBedrockModel.claude35Haiku.rawValue
+    @AppStorage("awsBedrockModel") private var selectedModel: String = AWSBedrockModel.llama4Maverick.rawValue
     @AppStorage("awsBedrockTemperature") private var temperature: Double = 0.1
     @AppStorage("awsBedrockMaxTokens") private var maxTokens: Int = 4096
     @AppStorage("awsBedrockUseProfile") private var useProfile: Bool = false
@@ -37,7 +37,7 @@ struct AWSBedrockSettingsView: View {
     ]
     
     private var selectedModelEnum: AWSBedrockModel {
-        return AWSBedrockModel(rawValue: selectedModel) ?? .claude35Haiku
+        return AWSBedrockModel(rawValue: selectedModel) ?? .llama4Maverick
     }
     
     var body: some View {
@@ -73,7 +73,7 @@ struct AWSBedrockSettingsView: View {
             // Validate and fix invalid stored model selection
             if AWSBedrockModel(rawValue: selectedModel) == nil {
                 print("⚠️ Invalid stored model '\(selectedModel)', resetting to default")
-                selectedModel = AWSBedrockModel.claude35Haiku.rawValue
+                selectedModel = AWSBedrockModel.llama4Maverick.rawValue
             }
         }
     }

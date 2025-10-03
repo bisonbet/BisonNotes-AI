@@ -1,6 +1,28 @@
 import SwiftUI
 import MapKit
+import Contacts
 import CoreLocation
+import UIKit
+import LinkPresentation
+
+private actor SummaryGeocodeCache {
+    enum Entry: Sendable {
+        case address(String)
+        case empty
+    }
+
+    private var storage: [String: Entry] = [:]
+
+    func entry(for key: String) -> Entry? {
+        storage[key]
+    }
+
+    func store(_ entry: Entry, for key: String) {
+        storage[key] = entry
+    }
+}
+
+private let summaryGeocodeCache = SummaryGeocodeCache()
 
 struct SummaryDetailView: View {
     let recording: RecordingFile
@@ -25,6 +47,12 @@ struct SummaryDetailView: View {
     @State private var showingLocationPicker = false
     @State private var isUpdatingLocation = false
     @State private var showingAIWarning = false
+    @State private var isExportingPDF = false
+    @State private var showingShareSheet = false
+    @State private var pdfDataToShare: Data?
+    @State private var pdfFileName: String?
+    @State private var exportError: String?
+    @State private var geocodingTask: Task<Void, Never>?
     
     init(recording: RecordingFile, summaryData: EnhancedSummaryData) {
         self.recording = recording
@@ -36,6 +64,33 @@ struct SummaryDetailView: View {
             content
                 .navigationTitle("Enhanced Summary")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Done") {
+                            dismiss()
+                        }
+                    }
+
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: {
+                            exportToPDF()
+                        }) {
+                            HStack(spacing: 4) {
+                                if isExportingPDF {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                    Text("Exporting...")
+                                        .font(.caption)
+                                } else {
+                                    Image(systemName: "square.and.arrow.up")
+                                    Text("Export")
+                                        .font(.caption)
+                                }
+                            }
+                        }
+                        .disabled(isExportingPDF)
+                    }
+                }
         }
         .configurationWarnings(
             showingTranscriptionWarning: .constant(false),
@@ -45,13 +100,6 @@ struct SummaryDetailView: View {
                 // For now, just dismiss the alert
             }
         )
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Done") {
-                    dismiss()
-                }
-            }
-        }
     }
     
     private var content: some View {
@@ -97,31 +145,21 @@ struct SummaryDetailView: View {
             } else {
                 print("📍 SummaryDetailView: Recording has NO location data")
             }
-            
+
             // Refresh summary data from coordinator to get the latest version
             if let recordingEntry = appCoordinator.getRecording(url: recording.url),
                let recordingId = recordingEntry.id,
-        let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
-               let latestSummary = completeData.summary {
+               let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
+               let latestSummary = completeData.summary,
+               latestSummary.id != summaryData.id {
                 summaryData = latestSummary
             }
-            
-            // Perform reverse geocoding on background queue to avoid blocking UI
-            if let locationData = recording.locationData {
-                Task {
-                    let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
-                    
-                    // Use a temporary LocationManager for reverse geocoding
-                    let tempLocationManager = LocationManager()
-                    tempLocationManager.reverseGeocodeLocation(location) { address in
-                        DispatchQueue.main.async {
-                            if let address = address {
-                                locationAddress = address
-                            }
-                        }
-                    }
-                }
-            }
+
+            scheduleLocationGeocoding()
+        }
+        .onDisappear {
+            geocodingTask?.cancel()
+            geocodingTask = nil
         }
         .alert("Regeneration Error", isPresented: $showingRegenerationAlert) {
             Button("OK") {
@@ -152,8 +190,124 @@ struct SummaryDetailView: View {
                 }
             )
         }
+        .sheet(isPresented: $showingShareSheet) {
+            Group {
+                if let pdfData = pdfDataToShare,
+                   let fileName = pdfFileName {
+                    ShareSheet(
+                        activityItems: [PDFActivityItem(data: pdfData, fileName: fileName)],
+                        subject: "PDF Summary - \(summaryData.recordingName)"
+                    )
+                    .onDisappear {
+                        pdfDataToShare = nil
+                        pdfFileName = nil
+                    }
+                } else {
+                    ProgressView()
+                        .onAppear {
+                            showingShareSheet = false
+                        }
+                }
+            }
+        }
+        .alert("Export Error", isPresented: .constant(exportError != nil)) {
+            Button("OK") {
+                exportError = nil
+            }
+        } message: {
+            if let error = exportError {
+                Text(error)
+            }
+        }
     }
     
+    // MARK: - Geocoding Helpers
+
+    @MainActor
+    private func scheduleLocationGeocoding(for locationData: LocationData? = nil) {
+        geocodingTask?.cancel()
+
+        let targetLocation = locationData ?? recording.locationData
+
+        guard let targetLocation else {
+            locationAddress = nil
+            geocodingTask = nil
+            return
+        }
+
+        geocodingTask = Task { [targetLocation] in
+            await resolveLocationAddress(for: targetLocation)
+        }
+    }
+
+    private func resolveLocationAddress(for locationData: LocationData) async {
+        let cacheKey = cacheKey(for: locationData)
+
+        if let cached = await summaryGeocodeCache.entry(for: cacheKey) {
+            await applyGeocodeCacheEntry(cached)
+            return
+        }
+
+        let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
+
+        do {
+            let placemarks = try await CLGeocoder().reverseGeocodeLocation(location)
+            if Task.isCancelled { return }
+
+            let address = formattedAddress(from: placemarks.first)
+            let entry: SummaryGeocodeCache.Entry = address.map { .address($0) } ?? .empty
+            await summaryGeocodeCache.store(entry, for: cacheKey)
+            if Task.isCancelled { return }
+            await MainActor.run {
+                locationAddress = address
+            }
+        } catch {
+            print("❌ SummaryDetailView: Reverse geocoding failed: \(error.localizedDescription)")
+            await summaryGeocodeCache.store(.empty, for: cacheKey)
+            if Task.isCancelled { return }
+            await MainActor.run {
+                locationAddress = nil
+            }
+        }
+    }
+
+    private func cacheKey(for locationData: LocationData) -> String {
+        let safeLatitude = locationData.latitude.isFinite && !locationData.latitude.isNaN ? locationData.latitude : 0.0
+        let safeLongitude = locationData.longitude.isFinite && !locationData.longitude.isNaN ? locationData.longitude : 0.0
+        return String(format: "%.3f,%.3f", safeLatitude, safeLongitude)
+    }
+
+    private func formattedAddress(from placemark: CLPlacemark?) -> String? {
+        guard let placemark else { return nil }
+
+        var components: [String] = []
+        if let locality = placemark.locality {
+            components.append(locality)
+        }
+        if let administrativeArea = placemark.administrativeArea {
+            components.append(administrativeArea)
+        }
+        if let country = placemark.country, country != "United States" {
+            components.append(country)
+        }
+
+        let formatted = components.joined(separator: ", ")
+        return formatted.isEmpty ? nil : formatted
+    }
+
+    private func applyGeocodeCacheEntry(_ entry: SummaryGeocodeCache.Entry) async {
+        switch entry {
+        case .address(let value):
+            await MainActor.run {
+                locationAddress = value
+            }
+        case .empty:
+            await MainActor.run {
+                locationAddress = nil
+            }
+        }
+    }
+
     // MARK: - Location Section
     
     private var locationSection: some View {
@@ -161,18 +315,20 @@ struct SummaryDetailView: View {
             if let locationData = recording.locationData {
                 // Existing location - show map
                 VStack(spacing: 0) {
-                    Map(position: .constant(.region(MKCoordinateRegion(
-                        center: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude),
-                        span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005) // Tighter zoom like Apple
-                    )))) {
-                        Marker("Recording Location", coordinate: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude))
-                            .foregroundStyle(.orange) // More prominent color
+                    GeometryReader { geometry in
+                        if geometry.size.width > 0 && geometry.size.height > 0 {
+                            StaticLocationMapView(
+                                summaryId: summaryData.id,
+                                locationData: locationData,
+                                size: geometry.size
+                            )
+                        } else {
+                            Color.clear
+                        }
                     }
-                    .frame(height: 250) // Taller like Apple's design
-                    .clipShape(RoundedRectangle(cornerRadius: 0)) // No rounded corners for full-width effect
-                    .disabled(true) // Make map static and non-interactive
-                    .allowsHitTesting(false) // Prevent all touch interactions
-                    
+                    .frame(height: 250)
+                    .clipped()
+
                     // Location info bar below map
                     HStack {
                         Image(systemName: "location.fill")
@@ -1204,6 +1360,8 @@ struct SummaryDetailView: View {
                 
                 await MainActor.run {
                     isUpdatingLocation = false
+                    locationAddress = locationData.displayLocation
+                    scheduleLocationGeocoding(for: locationData)
                     
                     // Post notification to refresh other views
                     NotificationCenter.default.post(
@@ -1239,6 +1397,46 @@ struct SummaryDetailView: View {
         recording.lastModified = Date()
         
         try appCoordinator.coreDataManager.saveContext()
+    }
+
+    // MARK: - PDF Export Functions
+
+    private func exportToPDF() {
+        isExportingPDF = true
+
+        Task { @MainActor in
+            do {
+                print("📄 Starting PDF export for: \(summaryData.recordingName)")
+
+                let pdfData = try PDFExportService.shared.generatePDF(
+                    summaryData: summaryData,
+                    locationData: recording.locationData,
+                    locationAddress: locationAddress
+                )
+
+                print("✅ PDF generated successfully, size: \(pdfData.count) bytes")
+
+                pdfDataToShare = pdfData
+                pdfFileName = sanitizeFileName("\(summaryData.recordingName)_Summary.pdf")
+                showingShareSheet = true
+                isExportingPDF = false
+
+                print("📤 Opening share sheet")
+            } catch {
+                print("❌ PDF export failed: \(error)")
+                exportError = "Failed to generate PDF: \(error.localizedDescription)"
+                isExportingPDF = false
+            }
+        }
+    }
+
+    private func sanitizeFileName(_ fileName: String) -> String {
+        let invalidCharacters = CharacterSet(charactersIn: "\\/:*?\"<>|")
+        let sanitized = fileName.components(separatedBy: invalidCharacters).joined(separator: "_")
+        if sanitized.lowercased().hasSuffix(".pdf") {
+            return sanitized
+        }
+        return sanitized + ".pdf"
     }
 }
 
@@ -2033,8 +2231,8 @@ struct LocationPickerView: View {
     @State private var showingManualEntry = false
     @State private var manualLatitude = ""
     @State private var manualLongitude = ""
-    @State private var selectedLocation: LocationData?
     @State private var isGettingCurrentLocation = false
+    @State private var searchTask: Task<Void, Never>?
     
     var body: some View {
         NavigationView {
@@ -2141,7 +2339,7 @@ struct LocationPickerView: View {
                                 .padding(.vertical, 4)
                             }
                             
-                            // Search results (limited to top 3)
+                            // Search results (top matches)
                             if !searchResults.isEmpty {
                                 VStack(spacing: 8) {
                                     ForEach(searchResults, id: \.id) { result in
@@ -2243,6 +2441,10 @@ struct LocationPickerView: View {
             }
         }
         .presentationDetents([.large])
+        .onDisappear {
+            searchTask?.cancel()
+            searchTask = nil
+        }
     }
     
     private var isValidManualEntry: Bool {
@@ -2295,240 +2497,197 @@ struct LocationPickerView: View {
     
     private func searchForLocation() {
         let trimmedText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty else {
-            searchError = "Please enter a location to search for"
+        guard trimmedText.count >= 2 else {
+            searchError = "Please enter at least two characters"
             return
         }
-        
-        isSearching = true
+
+        searchTask?.cancel()
         searchResults = []
         searchError = nil
-        
-        // Try multiple search strategies
-        performSearchWithFallbacks(originalQuery: trimmedText)
-    }
-    
-    private func performSearchWithFallbacks(originalQuery: String, attemptNumber: Int = 1) {
-        let searchQueries = generateSearchQueries(for: originalQuery, attempt: attemptNumber)
-        
-        guard !searchQueries.isEmpty else {
-            // No more fallbacks to try
-            isSearching = false
-            searchError = "Could not find '\(originalQuery)'. Try searching for a city, state, or well-known landmark."
-            return
+        isSearching = true
+
+        let query = trimmedText
+        searchTask = Task {
+            await performLocationSearch(for: query)
         }
-        
-        let currentQuery = searchQueries[0]
-        let geocoder = CLGeocoder()
-        
-        print("🔍 Searching for location (attempt \(attemptNumber)): '\(currentQuery)'")
-        
-        geocoder.geocodeAddressString(currentQuery) { placemarks, error in
-            DispatchQueue.main.async {
-                if let error = error as NSError? {
-                    print("❌ Location search error (attempt \(attemptNumber)): \(error)")
-                    
-                    // Try next fallback if this one failed
-                    if attemptNumber < 3 {
-                        print("🔄 Trying fallback search strategy...")
-                        self.performSearchWithFallbacks(originalQuery: originalQuery, attemptNumber: attemptNumber + 1)
-                        return
-                    } else {
-                        // All attempts failed
-                        self.isSearching = false
-                        self.handleSearchError(error, originalQuery: originalQuery)
-                        return
-                    }
-                }
-                
-                guard let placemarks = placemarks, !placemarks.isEmpty else {
-                    print("⚠️ No placemarks found for search (attempt \(attemptNumber)): \(currentQuery)")
-                    
-                    // Try next fallback
-                    if attemptNumber < 3 {
-                        print("🔄 Trying fallback search strategy...")
-                        self.performSearchWithFallbacks(originalQuery: originalQuery, attemptNumber: attemptNumber + 1)
-                        return
-                    } else {
-                        // All attempts failed
-                        self.isSearching = false
-                        self.searchError = "No locations found for '\(originalQuery)'. Try searching for a city, state, or address."
-                        return
-                    }
-                }
-                
-                // Success! Convert placemarks to search results and limit to top 3
-                let allResults: [LocationSearchResult] = placemarks.compactMap { placemark -> LocationSearchResult? in
-                    guard let coordinate = placemark.location?.coordinate else {
-                        return nil
-                    }
-                    
-                    // Build a formatted address
-                    var addressComponents: [String] = []
-                    
-                    if let name = placemark.name {
-                        addressComponents.append(name)
-                    }
-                    
-                    if let locality = placemark.locality {
-                        addressComponents.append(locality)
-                    }
-                    
-                    if let administrativeArea = placemark.administrativeArea {
-                        addressComponents.append(administrativeArea)
-                    }
-                    
-                    if let country = placemark.country, country != "United States" {
-                        addressComponents.append(country)
-                    }
-                    
-                    let formattedAddress = addressComponents.joined(separator: ", ")
-                    
-                    return LocationSearchResult(
-                        id: UUID(),
-                        name: self.enhanceResultName(originalName: placemark.name, originalQuery: originalQuery, searchedQuery: currentQuery),
-                        address: formattedAddress,
-                        latitude: coordinate.latitude,
-                        longitude: coordinate.longitude
-                    )
-                }
-                
-                // Limit to top 3 results
-                self.searchResults = Array(allResults.prefix(3))
-                self.searchError = nil
+    }
+
+    private func performLocationSearch(for query: String) async {
+        await MainActor.run {
+            self.isSearching = true
+            self.searchResults = []
+            self.searchError = nil
+        }
+
+        defer {
+            Task { @MainActor in
                 self.isSearching = false
-                
-                if attemptNumber > 1 {
-                    print("✅ Found \(allResults.count) results using fallback strategy \(attemptNumber) for: \(originalQuery) -> \(currentQuery)")
+            }
+        }
+
+        do {
+            var results = try await runLocalSearch(query: query)
+            if results.isEmpty {
+                results = await runGeocodeFallback(query: query)
+            }
+
+            if Task.isCancelled { return }
+
+            await MainActor.run {
+                if results.isEmpty {
+                    self.searchError = "No locations found for '\(query)'. Try refining your search."
                 } else {
-                    print("✅ Found \(allResults.count) total results, showing top \(self.searchResults.count) for: \(originalQuery)")
+                    self.searchResults = Array(results.prefix(10))
                 }
             }
-        }
-    }
-    
-    private func generateSearchQueries(for originalQuery: String, attempt: Int) -> [String] {
-        switch attempt {
-        case 1:
-            // First attempt: use original query as-is
-            return [originalQuery]
-            
-        case 2:
-            // Second attempt: try university-specific fallbacks
-            return generateUniversityFallbacks(for: originalQuery)
-            
-        case 3:
-            // Third attempt: try generic city/state fallbacks
-            return generateGenericFallbacks(for: originalQuery)
-            
-        default:
-            return []
-        }
-    }
-    
-    private func generateUniversityFallbacks(for query: String) -> [String] {
-        let lowercaseQuery = query.lowercased()
-        var fallbacks: [String] = []
-        
-        // Common university mappings
-        let universityMappings: [String: String] = [
-            "university of oklahoma": "Norman, Oklahoma",
-            "university of texas": "Austin, Texas",
-            "university of california": "Berkeley, California",
-            "harvard university": "Cambridge, Massachusetts",
-            "stanford university": "Palo Alto, California",
-            "mit": "Cambridge, Massachusetts",
-            "yale university": "New Haven, Connecticut",
-            "princeton university": "Princeton, New Jersey",
-            "columbia university": "New York, New York",
-            "university of michigan": "Ann Arbor, Michigan",
-            "university of florida": "Gainesville, Florida",
-            "ohio state university": "Columbus, Ohio",
-            "penn state": "University Park, Pennsylvania",
-            "texas a&m": "College Station, Texas",
-            "university of georgia": "Athens, Georgia"
-        ]
-        
-        // Check for exact matches first
-        if let cityState = universityMappings[lowercaseQuery] {
-            fallbacks.append(cityState)
-        }
-        
-        // Check for partial matches
-        for (university, location) in universityMappings {
-            if lowercaseQuery.contains(university.lowercased().components(separatedBy: " ")[0]) {
-                fallbacks.append(location)
+        } catch is CancellationError {
+            // Ignore cancellation
+        } catch {
+            if Task.isCancelled { return }
+            await MainActor.run {
+                self.searchError = "Location search failed. Please try again."
             }
         }
-        
-        // Try removing "university" and adding common state abbreviations
-        if lowercaseQuery.contains("university") {
-            let withoutUniversity = query.replacingOccurrences(of: "University of ", with: "")
-                                        .replacingOccurrences(of: "university of ", with: "")
-                                        .replacingOccurrences(of: " University", with: "")
-                                        .replacingOccurrences(of: " university", with: "")
-            if !withoutUniversity.isEmpty && withoutUniversity != query {
-                fallbacks.append(withoutUniversity)
+
+        await MainActor.run {
+            self.searchTask = nil
+        }
+    }
+
+    private func runLocalSearch(query: String) async throws -> [LocationSearchResult] {
+        let currentLocation = await MainActor.run { locationManager.currentLocation }
+
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query
+        request.resultTypes = [.address, .pointOfInterest]
+
+        if let currentLocation = currentLocation {
+            request.region = MKCoordinateRegion(
+                center: currentLocation.coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 1.5, longitudeDelta: 1.5)
+            )
+        }
+
+        let search = MKLocalSearch(request: request)
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                search.start { response, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                        return
+                    }
+
+                    let items = response?.mapItems ?? []
+                    let results = items.compactMap { self.makeSearchResult(from: $0, fallbackName: query) }
+                    continuation.resume(returning: self.deduplicate(results))
+                }
+            }
+        } onCancel: {
+            search.cancel()
+        }
+    }
+
+    private func runGeocodeFallback(query: String) async -> [LocationSearchResult] {
+        let geocoder = CLGeocoder()
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                geocoder.geocodeAddressString(query) { placemarks, error in
+                    if error != nil {
+                        continuation.resume(returning: [])
+                        return
+                    }
+
+                    let results = (placemarks ?? []).compactMap { placemark -> LocationSearchResult? in
+                        guard let coordinate = placemark.location?.coordinate else { return nil }
+
+                        let name = placemark.name ?? query
+                        let address = self.buildAddressComponents(from: MKPlacemark(placemark: placemark))
+
+                        return LocationSearchResult(
+                            id: UUID(),
+                            name: name,
+                            address: address,
+                            latitude: coordinate.latitude,
+                            longitude: coordinate.longitude
+                        )
+                    }
+
+                    continuation.resume(returning: self.deduplicate(results))
+                }
+            }
+        } onCancel: {
+            geocoder.cancelGeocode()
+        }
+    }
+
+    private func makeSearchResult(from mapItem: MKMapItem, fallbackName: String) -> LocationSearchResult? {
+        let coordinate = mapItem.placemark.coordinate
+        guard CLLocationCoordinate2DIsValid(coordinate) else { return nil }
+
+        let name = mapItem.name ?? mapItem.placemark.name ?? fallbackName
+        let address = buildAddressComponents(from: mapItem.placemark)
+
+        return LocationSearchResult(
+            id: UUID(),
+            name: name,
+            address: address,
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude
+        )
+    }
+
+    private func buildAddressComponents(from placemark: MKPlacemark) -> String {
+        if let postalAddress = placemark.postalAddress {
+            let formatter = CNPostalAddressFormatter()
+            let formatted = formatter.string(from: postalAddress).replacingOccurrences(of: "\n", with: ", ")
+            return formatted
+        }
+
+        var components: [String] = []
+
+        if let subThoroughfare = placemark.subThoroughfare, !subThoroughfare.isEmpty {
+            components.append(subThoroughfare)
+        }
+        if let thoroughfare = placemark.thoroughfare, !thoroughfare.isEmpty {
+            components.append(thoroughfare)
+        }
+        if let locality = placemark.locality, !locality.isEmpty {
+            components.append(locality)
+        }
+        if let administrativeArea = placemark.administrativeArea, !administrativeArea.isEmpty {
+            components.append(administrativeArea)
+        }
+        if let postalCode = placemark.postalCode, !postalCode.isEmpty {
+            components.append(postalCode)
+        }
+        if let country = placemark.country, !country.isEmpty {
+            components.append(country)
+        }
+
+        if components.isEmpty, let title = placemark.title {
+            return title
+        }
+
+        return components.joined(separator: ", ")
+    }
+
+    private func deduplicate(_ results: [LocationSearchResult]) -> [LocationSearchResult] {
+        var seen: Set<String> = []
+        var unique: [LocationSearchResult] = []
+
+        for result in results {
+            let key = String(format: "%.6f|%.6f", result.latitude, result.longitude)
+            if seen.insert(key).inserted {
+                unique.append(result)
             }
         }
-        
-        return Array(Set(fallbacks)) // Remove duplicates
+
+        return unique
     }
-    
-    private func generateGenericFallbacks(for query: String) -> [String] {
-        var fallbacks: [String] = []
-        
-        // Try just the state name if query contains state
-        let stateNames = ["Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming"]
-        
-        for state in stateNames {
-            if query.lowercased().contains(state.lowercased()) {
-                fallbacks.append(state)
-                break
-            }
-        }
-        
-        // Try extracting city names (words that are capitalized)
-        let words = query.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-        for word in words {
-            if word.first?.isUppercase == true && word.count > 3 &&
-               !["University", "College", "Institute", "School", "The", "Of", "And"].contains(word) {
-                fallbacks.append(word)
-            }
-        }
-        
-        return Array(Set(fallbacks)) // Remove duplicates
-    }
-    
-    private func enhanceResultName(originalName: String?, originalQuery: String, searchedQuery: String) -> String {
-        // If we used a fallback search and found results, enhance the name to show what the user originally searched for
-        if searchedQuery != originalQuery, let name = originalName {
-            return "\(originalQuery) (\(name))"
-        }
-        return originalName ?? originalQuery
-    }
-    
-    private func handleSearchError(_ error: NSError, originalQuery: String) {
-        switch error.code {
-        case 0: // kCLErrorLocationUnknown
-            searchError = "Unable to find location. Please check your internet connection and try again."
-        case 1: // kCLErrorDenied 
-            searchError = "Location access denied. Please enable location services in Settings."
-        case 8: // kCLErrorGeocodeFoundNoResult or timeout
-            if error.localizedDescription.lowercased().contains("timeout") || 
-               error.localizedDescription.lowercased().contains("time") {
-                searchError = "Search timed out. Please try a simpler search term or check your internet connection."
-            } else {
-                searchError = "No results found for '\(originalQuery)'. Try a different search term like a city or landmark."
-            }
-        case 2: // kCLErrorNetwork
-            searchError = "Network error. Please check your internet connection and try again."
-        default:
-            searchError = "Search failed. Please try again with a different search term."
-        }
-        print("❌ Location search error handled: \(searchError ?? "unknown")")
-    }
-    
+
     private func useManualLocation() {
         guard let lat = Double(manualLatitude),
               let lng = Double(manualLongitude) else {
@@ -2607,6 +2766,535 @@ struct LocationResultRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Static Location Map View
+
+private final class MapSnapshotCache {
+    static let shared = MapSnapshotCache()
+    private let cache = NSCache<NSString, UIImage>()
+
+    private init() {
+        cache.countLimit = 12
+    }
+
+    func image(forKey key: String) -> UIImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    func store(_ image: UIImage, forKey key: String) {
+        cache.setObject(image, forKey: key as NSString)
+    }
+}
+
+private enum MapSnapshotStorage {
+    private static let directoryName = "SummaryLocationSnapshots"
+
+    private static func directoryURL() -> URL? {
+        guard let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+
+        let directory = baseURL.appendingPathComponent(directoryName, isDirectory: true)
+
+        if !FileManager.default.fileExists(atPath: directory.path) {
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            } catch {
+                print("❌ MapSnapshotStorage: Failed to create directory: \(error)")
+                return nil
+            }
+        }
+
+        return directory
+    }
+
+    private static func fileURL(summaryId: UUID, locationSignature: String) -> URL? {
+        directoryURL()?.appendingPathComponent("\(summaryId.uuidString)_\(locationSignature).png")
+    }
+
+    static func loadData(summaryId: UUID, locationSignature: String) -> Data? {
+        guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature),
+              FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+
+        return try? Data(contentsOf: url)
+    }
+
+    static func loadImage(summaryId: UUID, locationSignature: String, scale: CGFloat) -> UIImage? {
+        guard let data = loadData(summaryId: summaryId, locationSignature: locationSignature) else {
+            return nil
+        }
+
+        return UIImage(data: data, scale: scale)
+    }
+
+    static func save(_ image: UIImage, summaryId: UUID, locationSignature: String) {
+        guard let data = image.pngData() else {
+            print("❌ MapSnapshotStorage: Failed to create PNG data for summary \(summaryId)")
+            return
+        }
+        saveData(data, summaryId: summaryId, locationSignature: locationSignature)
+    }
+
+    static func saveData(_ data: Data, summaryId: UUID, locationSignature: String) {
+        guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature) else {
+            return
+        }
+
+        cleanupOldSnapshots(for: summaryId, keeping: url.lastPathComponent)
+
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("❌ MapSnapshotStorage: Failed to write snapshot for summary \(summaryId): \(error)")
+        }
+    }
+
+    private static func cleanupOldSnapshots(for summaryId: UUID, keeping fileName: String) {
+        guard let directory = directoryURL() else { return }
+
+        let prefix = "\(summaryId.uuidString)_"
+        let fileManager = FileManager.default
+
+        guard let contents = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return
+        }
+
+        for fileURL in contents where fileURL.lastPathComponent.hasPrefix(prefix) && fileURL.lastPathComponent != fileName {
+            try? fileManager.removeItem(at: fileURL)
+        }
+    }
+}
+
+private enum MapSnapshotError: Error {
+    case invalidSize
+    case noSnapshot
+}
+
+private enum MapSnapshotGenerator {
+    static func generateSnapshot(
+        coordinate: CLLocationCoordinate2D,
+        size: CGSize,
+        span: MKCoordinateSpan = MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005),
+        scale: CGFloat
+    ) async throws -> UIImage {
+        guard size.width.isFinite,
+              size.height.isFinite,
+              size.width > 4,
+              size.height > 4 else {
+            throw MapSnapshotError.invalidSize
+        }
+
+        let options = MKMapSnapshotter.Options()
+        options.region = MKCoordinateRegion(center: coordinate, span: span)
+        options.size = size
+        options.scale = scale
+        options.pointOfInterestFilter = .excludingAll
+        options.showsBuildings = true
+
+        let snapshotter = MKMapSnapshotter(options: options)
+
+        let snapshot: MKMapSnapshotter.Snapshot = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<MKMapSnapshotter.Snapshot, Error>) in
+            snapshotter.start { snapshot, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let snapshot else {
+                    continuation.resume(throwing: MapSnapshotError.noSnapshot)
+                    return
+                }
+
+                continuation.resume(returning: snapshot)
+            }
+        }
+
+        return render(snapshot: snapshot, coordinate: coordinate, scale: scale)
+    }
+
+    static func fallbackSnapshot(
+        for locationData: LocationData,
+        size: CGSize,
+        scale: CGFloat
+    ) -> UIImage {
+        let rendererFormat = UIGraphicsImageRendererFormat()
+        rendererFormat.scale = scale
+
+        let renderer = UIGraphicsImageRenderer(size: size, format: rendererFormat)
+        let coordinateText = String(
+            format: "Lat: %.4f\nLon: %.4f",
+            locationData.latitude,
+            locationData.longitude
+        )
+
+        return renderer.image { context in
+            let bounds = CGRect(origin: .zero, size: size)
+            UIColor.systemGray5.setFill()
+            context.fill(bounds)
+
+            if let pin = pinImage {
+                let pinSize = CGSize(width: 36, height: 36)
+                let pinOrigin = CGPoint(
+                    x: bounds.midX - pinSize.width / 2,
+                    y: bounds.midY - pinSize.height - 28
+                )
+                pin.draw(in: CGRect(origin: pinOrigin, size: pinSize))
+            }
+
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            paragraph.lineSpacing = 4
+
+            let titleAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 16, weight: .semibold),
+                .foregroundColor: UIColor.label,
+                .paragraphStyle: paragraph
+            ]
+
+            let subtitleAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 13, weight: .medium),
+                .foregroundColor: UIColor.secondaryLabel,
+                .paragraphStyle: paragraph
+            ]
+
+            let titleRect = CGRect(
+                x: 0,
+                y: bounds.midY - 16,
+                width: bounds.width,
+                height: 20
+            )
+            "Recording Location".draw(in: titleRect, withAttributes: titleAttributes)
+
+            let subtitleRect = CGRect(
+                x: 0,
+                y: titleRect.maxY + 2,
+                width: bounds.width,
+                height: 32
+            )
+            coordinateText.draw(in: subtitleRect, withAttributes: subtitleAttributes)
+        }
+    }
+
+    private static func render(
+        snapshot: MKMapSnapshotter.Snapshot,
+        coordinate: CLLocationCoordinate2D,
+        scale: CGFloat
+    ) -> UIImage {
+        let rendererFormat = UIGraphicsImageRendererFormat()
+        rendererFormat.scale = scale
+
+        let renderer = UIGraphicsImageRenderer(size: snapshot.image.size, format: rendererFormat)
+        let pin = pinImage
+
+        return renderer.image { _ in
+            snapshot.image.draw(at: .zero)
+
+            if let pin {
+                let point = snapshot.point(for: coordinate)
+                let pinSize = pin.size
+                let origin = CGPoint(
+                    x: point.x - pinSize.width / 2,
+                    y: point.y - pinSize.height
+                )
+                pin.draw(in: CGRect(origin: origin, size: pinSize))
+            }
+        }
+    }
+
+    private static var pinImage: UIImage? {
+        let configuration = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
+        return UIImage(systemName: "mappin.circle.fill", withConfiguration: configuration)?
+            .withTintColor(.systemRed, renderingMode: .alwaysOriginal)
+    }
+}
+
+private struct StaticLocationMapView: View {
+    let summaryId: UUID
+    let locationData: LocationData
+    let size: CGSize
+
+    @State private var snapshotImage: UIImage?
+    @State private var isLoadingSnapshot = false
+
+    private var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(
+            latitude: locationData.latitude,
+            longitude: locationData.longitude
+        )
+    }
+
+    private var locationSignature: String {
+        let safeLatitude = coordinate.latitude.isFinite ? coordinate.latitude : 0
+        let safeLongitude = coordinate.longitude.isFinite ? coordinate.longitude : 0
+        return String(format: "%.5f_%.5f", safeLatitude, safeLongitude)
+    }
+
+    private var snapshotKey: String? {
+        guard size.width.isFinite,
+              size.height.isFinite,
+              size.width > 4,
+              size.height > 4,
+              coordinate.latitude.isFinite,
+              coordinate.longitude.isFinite else {
+            return nil
+        }
+
+        let widthComponent = Int(size.width.rounded(.toNearestOrEven))
+        let heightComponent = Int(size.height.rounded(.toNearestOrEven))
+
+        return String(
+            format: "%@_%.4f_%.4f_%d_%d",
+            summaryId.uuidString,
+            coordinate.latitude,
+            coordinate.longitude,
+            widthComponent,
+            heightComponent
+        )
+    }
+
+    var body: some View {
+        ZStack {
+            if let snapshotImage {
+                Image(uiImage: snapshotImage)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color(.systemGray5)
+                    .overlay {
+                        if isLoadingSnapshot {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                        } else {
+                            Image(systemName: "map")
+                                .font(.system(size: 34, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .clipped()
+        .task(id: snapshotKey) {
+            guard let snapshotKey else { return }
+            await loadSnapshot(for: snapshotKey)
+        }
+    }
+
+    private func loadSnapshot(for key: String) async {
+        if let cachedImage = MapSnapshotCache.shared.image(forKey: key) {
+            await MainActor.run {
+                snapshotImage = cachedImage
+                isLoadingSnapshot = false
+            }
+            return
+        }
+
+        let scale = await MainActor.run { UIScreen.main.scale }
+        let signature = locationSignature
+
+        if let storedImage = await loadStoredSnapshot(scale: scale, signature: signature) {
+            MapSnapshotCache.shared.store(storedImage, forKey: key)
+
+            await MainActor.run {
+                snapshotImage = storedImage
+                isLoadingSnapshot = false
+            }
+            return
+        }
+
+        guard await beginLoading() else { return }
+
+        do {
+            let image = try await MapSnapshotGenerator.generateSnapshot(
+                coordinate: coordinate,
+                size: size,
+                scale: scale
+            )
+
+            if Task.isCancelled {
+                await MainActor.run {
+                    isLoadingSnapshot = false
+                }
+                return
+            }
+
+            MapSnapshotCache.shared.store(image, forKey: key)
+
+            if let imageData = image.pngData() {
+                Task.detached(priority: .utility) { [summaryId, signature, imageData] in
+                    MapSnapshotStorage.saveData(
+                        imageData,
+                        summaryId: summaryId,
+                        locationSignature: signature
+                    )
+                }
+            }
+
+            await MainActor.run {
+                snapshotImage = image
+                isLoadingSnapshot = false
+            }
+        } catch {
+            if Task.isCancelled {
+                await MainActor.run {
+                    isLoadingSnapshot = false
+                }
+                return
+            }
+
+            let fallback = MapSnapshotGenerator.fallbackSnapshot(
+                for: locationData,
+                size: size,
+                scale: scale
+            )
+            MapSnapshotCache.shared.store(fallback, forKey: key)
+
+            if let fallbackData = fallback.pngData() {
+                Task.detached(priority: .utility) { [summaryId, signature, fallbackData] in
+                    MapSnapshotStorage.saveData(
+                        fallbackData,
+                        summaryId: summaryId,
+                        locationSignature: signature
+                    )
+                }
+            }
+
+            await MainActor.run {
+                snapshotImage = fallback
+                isLoadingSnapshot = false
+            }
+        }
+    }
+
+    private func loadStoredSnapshot(scale: CGFloat, signature: String) async -> UIImage? {
+        let data = await Task.detached(priority: .utility) { [summaryId, signature] in
+            MapSnapshotStorage.loadData(
+                summaryId: summaryId,
+                locationSignature: signature
+            )
+        }.value
+
+        guard let data else {
+            return nil
+        }
+
+        return UIImage(data: data, scale: scale)
+    }
+
+    private func beginLoading() async -> Bool {
+        return await MainActor.run {
+            if snapshotImage != nil || isLoadingSnapshot {
+                return false
+            }
+            isLoadingSnapshot = true
+            return true
+        }
+    }
+}
+
+// MARK: - Share Sheet
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    let subject: String?
+
+    init(activityItems: [Any], subject: String? = nil) {
+        self.activityItems = activityItems
+        self.subject = subject
+    }
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+
+        controller.excludedActivityTypes = [
+            .addToReadingList,
+            .assignToContact
+        ]
+
+        if let subject {
+            controller.setValue(subject, forKey: "subject")
+        }
+
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
+        // No updates needed
+    }
+}
+
+// MARK: - PDF Activity Item
+
+private final class PDFActivityItem: NSObject, UIActivityItemSource {
+    private let data: Data
+    private let fileName: String
+    private var temporaryURL: URL?
+
+    init(data: Data, fileName: String) {
+        self.data = data
+        self.fileName = fileName
+        super.init()
+    }
+
+    deinit {
+        if let temporaryURL,
+           FileManager.default.fileExists(atPath: temporaryURL.path) {
+            try? FileManager.default.removeItem(at: temporaryURL)
+        }
+    }
+
+    // MARK: UIActivityItemSource
+
+    func activityViewControllerPlaceholderItem(_ controller: UIActivityViewController) -> Any {
+        ensureTemporaryURL() ?? data
+    }
+
+    func activityViewController(_ controller: UIActivityViewController, itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
+        if let url = ensureTemporaryURL() {
+            return url
+        }
+        return data
+    }
+
+    func activityViewController(_ controller: UIActivityViewController, subjectForActivityType activityType: UIActivity.ActivityType?) -> String {
+        fileName
+    }
+
+    func activityViewControllerLinkMetadata(_ controller: UIActivityViewController) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = fileName
+        if let iconImage = UIImage(systemName: "doc.richtext") {
+            metadata.iconProvider = NSItemProvider(object: iconImage)
+        }
+        return metadata
+    }
+
+    // MARK: - Helpers
+
+    private func ensureTemporaryURL() -> URL? {
+        if let temporaryURL,
+           FileManager.default.fileExists(atPath: temporaryURL.path) {
+            return temporaryURL
+        }
+
+        let tempDirectory = FileManager.default.temporaryDirectory
+        let destination = tempDirectory.appendingPathComponent(fileName)
+
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try data.write(to: destination, options: .atomic)
+            temporaryURL = destination
+            return destination
+        } catch {
+            print("❌ Failed to write temporary PDF for sharing: \(error)")
+            return nil
+        }
     }
 }
 
