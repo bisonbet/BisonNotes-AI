@@ -120,14 +120,16 @@ struct OllamaJSONSchemas {
         "properties": [
             "summary": [
                 "type": "string",
-                "description": "The main comprehensive summary of the entire transcript (15-20% of original length). Should include complete overview, key points, insights, takeaways, main themes and conclusions. Use markdown formatting with ## headers, **bold**, • bullets. This is the primary content field and should be substantial and detailed."
+                "description": "The main comprehensive summary of the entire transcript (15-20% of original length). CRITICAL: This should be a LONG, detailed summary with complete overview, all key points, insights, takeaways, main themes and conclusions. Use markdown formatting with ## headers, **bold**, • bullets. This is the primary content field and must be substantial (minimum 500 characters for short transcripts, 2000+ for longer ones).",
+                "minLength": 100
             ],
             "tasks": [
                 "type": "array",
+                "description": "Array of unique, specific action items. Each task must be different from the others.",
                 "items": [
                     "type": "object",
                     "properties": [
-                        "text": ["type": "string", "description": "Concise, specific task description (one clear action item, not a long explanation)"],
+                        "text": ["type": "string", "description": "Concise, specific, UNIQUE task description (one clear action item, not a long explanation). Must be different from other tasks."],
                         "priority": ["type": "string", "enum": ["High", "Medium", "Low"]],
                         "category": ["type": "string", "enum": ["Call", "Email", "Meeting", "Purchase", "Research", "Travel", "Health", "General"]],
                         "timeReference": ["type": ["string", "null"], "description": "Time reference mentioned or null"]
@@ -137,10 +139,11 @@ struct OllamaJSONSchemas {
             ],
             "reminders": [
                 "type": "array",
+                "description": "Array of time-sensitive items with specific deadlines or times",
                 "items": [
                     "type": "object",
                     "properties": [
-                        "text": ["type": "string", "description": "Reminder description"],
+                        "text": ["type": "string", "description": "Reminder description with specific time reference"],
                         "urgency": ["type": "string", "enum": ["Immediate", "Today", "This Week", "Later"]],
                         "timeReference": ["type": ["string", "null"], "description": "Specific time/date mentioned or null"]
                     ],
@@ -149,12 +152,15 @@ struct OllamaJSONSchemas {
             ],
             "titles": [
                 "type": "array",
+                "description": "Array of 3-5 diverse, descriptive titles. Each title should capture a different aspect or topic. REQUIRED field - must generate at least 3 titles.",
+                "minItems": 3,
+                "maxItems": 5,
                 "items": [
                     "type": "object",
                     "properties": [
-                        "text": ["type": "string", "description": "Descriptive title (40-60 characters)"],
+                        "text": ["type": "string", "description": "Descriptive, unique title (40-60 characters). Each title must be different and capture a distinct aspect of the content.", "minLength": 10, "maxLength": 80],
                         "category": ["type": "string", "enum": ["Meeting", "Personal", "Technical", "General"]],
-                        "confidence": ["type": "number", "minimum": 0.0, "maximum": 1.0]
+                        "confidence": ["type": "number", "minimum": 0.5, "maximum": 1.0]
                     ],
                     "required": ["text", "category", "confidence"]
                 ]
@@ -650,12 +656,16 @@ class OllamaService: ObservableObject {
     // MARK: - AI Processing
     
     func processComplete(from text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        print("🚀 OllamaService: Starting processComplete with model: \(config.modelName)")
+
         // Try tool calling first for models that support it
         if let result = try await processCompleteWithTools(from: text) {
+            print("✅ OllamaService: Used tool calling successfully")
             return result
         }
-        
+
         // Try structured outputs with JSON schema for better reliability
+        print("🔄 OllamaService: Attempting structured outputs with JSON schema")
         do {
             let structuredPrompt = createStructuredCompleteProcessingPrompt(from: text)
             let response = try await generateStructuredResponse(
@@ -663,10 +673,12 @@ class OllamaService: ObservableObject {
                 model: config.modelName,
                 schema: OllamaJSONSchemas.completeAnalysisSchema
             )
-            
+
             print("✅ OllamaService: Got structured output response, parsing...")
-            return try parseStructuredCompleteResponse(response)
-            
+            let result = try parseStructuredCompleteResponse(response)
+            print("✅ OllamaService: Structured outputs succeeded!")
+            return result
+
         } catch {
             print("⚠️ OllamaService: Structured outputs failed, falling back to traditional prompting: \(error)")
         }
@@ -865,7 +877,7 @@ class OllamaService: ObservableObject {
                     properties: [
                         "summary": OllamaProperty.simple(
                             "string",
-                            "A comprehensive markdown-formatted summary (15-20% of original length) with ## headers, **bold** text, • bullet points, and proper structure"
+                            "A comprehensive markdown-formatted summary (approximately 10% of original transcript length) with ## headers, **bold** text, • bullet points, and proper structure. Aim for substantive, detailed content."
                         )
                     ],
                     required: ["summary"]
@@ -1019,17 +1031,34 @@ class OllamaService: ObservableObject {
     // MARK: - Robust Prompt Generation
     
     private func createRobustSummaryPrompt(from text: String) -> String {
+        // Calculate target summary length
+        let transcriptWordCount = text.split(separator: " ").count
+        let targetWordCount = max(100, Int(Double(transcriptWordCount) * 0.10)) // 10% of transcript, minimum 100 words
+
+        // Also calculate based on max tokens (assuming ~1.3 tokens per word)
+        let maxTokens = config.maxTokens
+        let maxWordsFromTokens = Int(Double(maxTokens) * 0.90 / 1.3) // 90% of max tokens to leave room for formatting
+
+        // Use the smaller of the two targets
+        let finalTargetWords = min(targetWordCount, maxWordsFromTokens)
+        let targetParagraphs = max(3, finalTargetWords / 100) // Rough estimate of paragraphs
+
         return """
         <INSTRUCTIONS>
         You are a professional AI assistant specialized in analyzing and summarizing conversations, meetings, and transcripts. Your goal is to create comprehensive, well-structured summaries that capture the essential information.
 
+        CRITICAL LENGTH REQUIREMENT:
+        - TARGET: Approximately \(finalTargetWords) words (about 10% of the transcript length)
+        - This translates to roughly \(targetParagraphs) paragraphs of substantive content
+        - Provide detailed, comprehensive information within this target length
+        - Do not exceed this length - be concise but thorough
+
         CRITICAL REQUIREMENTS:
-        1. Create a summary that is 15-20% of the original transcript length
-        2. Focus on main points, key decisions, important information, and actionable items
-        3. Use proper Markdown formatting throughout your response
-        4. Structure your response logically with clear sections
-        5. Be comprehensive yet concise
-        6. Maintain professional, clear language
+        1. Focus on main points, key decisions, important information, and actionable items
+        2. Use proper Markdown formatting throughout your response
+        3. Structure your response logically with clear sections
+        4. Be comprehensive yet concise - maximize information density
+        5. Maintain professional, clear language
 
         MARKDOWN FORMATTING RULES:
         - Use ## for main section headers (e.g., ## Key Points, ## Decisions Made)
@@ -1456,7 +1485,13 @@ class OllamaService: ObservableObject {
     // MARK: - Qwen-Specific Tool Calling
     
     private func isQwenModel(_ modelName: String) -> Bool {
-        return modelName.lowercased().contains("qwen")
+        let lowerModel = modelName.lowercased()
+        // Qwen3 uses different tool calling format (OpenAI-compatible), not legacy Qwen format
+        if lowerModel.contains("qwen3") {
+            return false
+        }
+        // Only Qwen 2.x models use the legacy Qwen-specific tool calling format
+        return lowerModel.contains("qwen2")
     }
     
     private func isGPTOSSModel(_ modelName: String) -> Bool {
@@ -2509,10 +2544,10 @@ class OllamaService: ObservableObject {
             stream: false,
             format: .schema(schema),
             options: OllamaOptions(
-                num_predict: config.maxTokens,
-                temperature: 0.0,  // Deterministic output for structured responses
-                top_p: 0.8,        // Lower top_p for more focused responses
-                top_k: 20          // Fewer choices for more consistent output
+                num_predict: max(config.maxTokens, 4096),  // Use at least 4096 tokens for comprehensive responses
+                temperature: 0.1,  // Slightly higher temperature for more natural, detailed responses
+                top_p: 0.9,        // Higher top_p for more diverse, comprehensive content
+                top_k: 40          // More choices for richer responses
             ),
             tools: nil,  // No tools when using structured outputs
             think: false  // Disable thinking for structured outputs to ensure clean JSON
@@ -2576,35 +2611,57 @@ class OllamaService: ObservableObject {
     
     private func createStructuredCompleteProcessingPrompt(from text: String) -> String {
         return """
-        You are an AI assistant that analyzes transcripts and extracts structured information. Analyze the following transcript and provide a comprehensive response.
-        
-        **CRITICAL FIELD INSTRUCTIONS:**
-        
-        **summary**: This should contain the MAIN COMPREHENSIVE SUMMARY of the entire transcript. This is the most important field and should be 15-20% of the original transcript length. Include:
-        - Complete overview of the discussion/content
-        - Key points, insights, and takeaways  
-        - Main themes and conclusions
-        - Use proper Markdown formatting (## headers, **bold**, • bullets)
-        - This should be substantial and detailed, not just a brief overview
-        
-        **tasks**: Extract ONLY specific, actionable tasks that require follow-up. These should be:
-        - Concrete action items mentioned in the transcript
-        - Things someone needs to do or complete
-        - NOT general statements or observations
-        - Keep each task description concise and specific
-        
-        **reminders**: Extract ONLY time-sensitive items like:
-        - Deadlines, appointments, scheduled events
-        - Things that need to be remembered at specific times
-        - NOT general information without time constraints
-        
-        **titles**: Generate 3-4 descriptive titles that capture main topics (40-60 characters each)
-        
-        **contentType**: Classify as Meeting, Personal, Technical, or General
-        
-        **REMEMBER**: The summary field should contain the bulk of the detailed content, not the tasks field.
-        
-        Transcript to analyze:
+        You are analyzing a transcript. Extract and summarize the ACTUAL CONTENT discussed, not a description of what type of document it is.
+
+        Return ONLY a valid JSON object (no other text):
+
+        {
+          "summary": "Comprehensive Markdown summary of the CONTENT and TOPICS discussed",
+          "tasks": [{"text": "Specific action item", "priority": "High|Medium|Low", "category": "Call|Email|Meeting|Purchase|Research|Travel|Health|General", "timeReference": null}],
+          "reminders": [{"text": "Time-sensitive item", "urgency": "Immediate|Today|This Week|Later", "timeReference": null}],
+          "titles": [{"text": "Descriptive title", "category": "Meeting|Personal|Technical|General", "confidence": 0.8}],
+          "contentType": "Meeting|Personal|Technical|General"
+        }
+
+        CRITICAL INSTRUCTIONS FOR SUMMARY:
+        - DO NOT write "This is a transcript of..." or "The text appears to be..."
+        - DO write what was ACTUALLY DISCUSSED in the content
+        - Your summary should be 15-20% of the original length (aim for 2000-4000 characters for long transcripts)
+        - Include ALL major topics, key points, important details, names, dates, decisions, and conclusions
+        - Use Markdown: ## headers for sections, **bold** for key terms, • bullets for lists
+        - Structure the summary logically by topic or chronologically
+        - Be comprehensive - include details, not just high-level observations
+
+        TASKS - Extract ONLY if the speaker mentions THEIR OWN action items:
+        - "I need to call John" → YES, extract this
+        - "The government might shut down" → NO, this is not a personal task
+        - "We should analyze this data" → YES if it's an assignment, NO if it's general commentary
+        - "Remember to buy groceries" → YES, this is a personal task
+        - DO NOT create meta-tasks like "summarize the content" or "analyze the transcript"
+        - DO NOT create questions like "What is the main topic?" - These are NOT tasks
+        - If NO personal action items are mentioned, return an EMPTY tasks array []
+
+        REMINDERS - Extract ONLY personal time-sensitive items:
+        - "Meeting tomorrow at 3pm" → YES
+        - "Election day is coming" → NO (not personal)
+        - "Doctor appointment next Tuesday" → YES
+        - DO NOT include facts or statements like "The main topic is..." - These are NOT reminders
+        - If NO personal time-sensitive items are mentioned, return an EMPTY reminders array []
+
+        TITLES - Create 3-5 titles about what was DISCUSSED, not what the document is:
+        - GOOD: "Government Shutdown Impacts Federal Employees"
+        - BAD: "News Program Transcript"
+        - GOOD: "Q4 Sales Strategy and Marketing Budget"
+        - BAD: "Meeting Recording"
+
+        CONTENT TYPE:
+        - Meeting: Work meetings, discussions, collaborations
+        - Personal: Personal conversations, journals, notes
+        - Technical: Lectures, tutorials, technical content
+        - General: News, media, general information
+
+        Now analyze this transcript and extract the CONTENT (not meta-commentary about what it is):
+
         \(text)
         """
     }
@@ -2613,12 +2670,59 @@ class OllamaService: ObservableObject {
         guard let data = response.data(using: .utf8) else {
             throw OllamaError.parsingError("Failed to convert structured response to data")
         }
-        
+
         do {
             let rawResult = try JSONDecoder().decode(RawCompleteResult.self, from: data)
-            
+
+            // Validate the quality of the structured response
+            let summaryLength = rawResult.summary.count
+            let hasTitles = !rawResult.titles.isEmpty
+
+            print("🔍 OllamaService: Validating structured response quality")
+            print("   Summary length: \(summaryLength) chars")
+            print("   Titles count: \(rawResult.titles.count)")
+            print("   Tasks count: \(rawResult.tasks.count)")
+
+            // Check for quality issues
+            if summaryLength < 200 {
+                print("⚠️ OllamaService: Summary is very short (\(summaryLength) chars), may need enhancement")
+            }
+
+            if !hasTitles {
+                print("⚠️ OllamaService: No titles generated, adding fallback title")
+            }
+
+            // Filter out invalid tasks (questions, statements, meta-tasks) and deduplicate
+            var uniqueTaskTexts = Set<String>()
+            let validTasks = rawResult.tasks.filter { rawTask in
+                let text = rawTask.text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // Filter out questions
+                if text.hasSuffix("?") {
+                    print("⚠️ OllamaService: Skipping invalid task (question): '\(text)'")
+                    return false
+                }
+
+                // Filter out meta-tasks
+                let lowerText = text.lowercased()
+                let metaPhrases = ["summarize", "analyze", "main topic", "what is", "identify"]
+                if metaPhrases.contains(where: { lowerText.contains($0) }) {
+                    print("⚠️ OllamaService: Skipping invalid task (meta-task): '\(text)'")
+                    return false
+                }
+
+                // Check for duplicates
+                let isUnique = uniqueTaskTexts.insert(lowerText).inserted
+                if !isUnique {
+                    print("⚠️ OllamaService: Skipping duplicate task: '\(text)'")
+                    return false
+                }
+
+                return true
+            }
+
             // Convert raw results to proper objects with higher confidence for structured outputs
-            let tasks = rawResult.tasks.map { rawTask in
+            let tasks = validTasks.map { rawTask in
                 TaskItem(
                     text: rawTask.text,
                     priority: TaskItem.Priority(rawValue: rawTask.priority) ?? .medium,
@@ -2627,8 +2731,23 @@ class OllamaService: ObservableObject {
                     confidence: 0.95  // Higher confidence for structured outputs
                 )
             }
-            
-            let reminders = rawResult.reminders.map { rawReminder in
+
+            // Filter out invalid reminders (statements, facts, non-time-sensitive items)
+            let validReminders = rawResult.reminders.filter { rawReminder in
+                let text = rawReminder.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let lowerText = text.lowercased()
+
+                // Filter out statements that aren't reminders
+                let invalidPhrases = ["the main topic", "the segment", "this is", "this appears", "the content"]
+                if invalidPhrases.contains(where: { lowerText.contains($0) }) {
+                    print("⚠️ OllamaService: Skipping invalid reminder (statement): '\(text)'")
+                    return false
+                }
+
+                return true
+            }
+
+            let reminders = validReminders.map { rawReminder in
                 ReminderItem(
                     text: rawReminder.text,
                     timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
@@ -2636,22 +2755,32 @@ class OllamaService: ObservableObject {
                     confidence: 0.95  // Higher confidence for structured outputs
                 )
             }
-            
-            let titles = rawResult.titles.map { rawTitle in
+
+            var titles = rawResult.titles.map { rawTitle in
                 TitleItem(
                     text: rawTitle.text,
                     confidence: rawTitle.confidence,
                     category: TitleItem.TitleCategory(rawValue: rawTitle.category) ?? .general
                 )
             }
-            
+
+            // If no titles were generated, create a default one from the summary
+            if titles.isEmpty {
+                print("🔧 OllamaService: Generating fallback title from summary")
+                let summaryFirstLine = rawResult.summary.components(separatedBy: .newlines).first ?? rawResult.summary
+                let fallbackTitle = String(summaryFirstLine.prefix(60)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !fallbackTitle.isEmpty {
+                    titles.append(TitleItem(text: fallbackTitle, confidence: 0.7, category: .general))
+                }
+            }
+
             let contentType = ContentType(rawValue: rawResult.contentType) ?? .general
-            
+
             print("✅ OllamaService: Successfully parsed structured complete result")
-            print("📊 Summary: \(rawResult.summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)")
-            
+            print("📊 Final: Summary: \(rawResult.summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)")
+
             return (rawResult.summary, tasks, reminders, titles, contentType)
-            
+
         } catch {
             print("❌ OllamaService: Structured JSON parsing failed: \(error)")
             throw OllamaError.parsingError("Failed to parse structured JSON response: \(error.localizedDescription)")

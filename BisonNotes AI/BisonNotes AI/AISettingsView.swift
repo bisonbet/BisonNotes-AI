@@ -64,16 +64,40 @@ final class AISettingsViewModel: ObservableObject {
         guard oldEngine != newEngine else {
             return (shouldPrompt: false, oldEngine: "", error: nil)
         }
-        
+
         // Allow selection of any engine - users need to be able to select engines to configure them
         // Note: Availability checks are used for display status only, not selection restrictions
-        
+
         // Update the selected engine in UserDefaults
         UserDefaults.standard.set(newEngine, forKey: "SelectedAIEngine")
-        
+
+        // Auto-enable engine-specific flags when an engine is selected
+        switch engineType {
+        case .openAICompatible:
+            UserDefaults.standard.set(true, forKey: "enableOpenAICompatible")
+            print("🔧 Auto-enabled OpenAI Compatible engine")
+        case .localLLM:
+            UserDefaults.standard.set(true, forKey: "enableOllama")
+            print("🔧 Auto-enabled Ollama engine")
+        case .googleAIStudio:
+            UserDefaults.standard.set(true, forKey: "enableGoogleAIStudio")
+            print("🔧 Auto-enabled Google AI Studio engine")
+        case .awsBedrock:
+            UserDefaults.standard.set(true, forKey: "enableAWSBedrock")
+            print("🔧 Auto-enabled AWS Bedrock engine")
+        case .openAI:
+            UserDefaults.standard.set(true, forKey: "enableOpenAI")
+            print("🔧 Auto-enabled OpenAI engine")
+        default:
+            break
+        }
+
+        // Sync UserDefaults immediately
+        UserDefaults.standard.synchronize()
+
         // Update the regeneration manager
         self.regenerationManager.setEngine(newEngine)
-        
+
         let shouldPrompt = self.regenerationManager.shouldPromptForRegeneration(oldEngine: oldEngine, newEngine: newEngine)
         return (shouldPrompt: shouldPrompt, oldEngine: oldEngine, error: nil)
     }
@@ -121,7 +145,7 @@ struct AISettingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var errorHandler = ErrorHandler()
-    
+
     @Environment(\.dismiss) private var dismiss
     @State private var showingEngineChangePrompt = false
     @State private var previousEngine = ""
@@ -133,6 +157,7 @@ struct AISettingsView: View {
     @State private var showingAppleIntelligenceSettings = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
+    @State private var showingRegenerateConfirmation = false
     
     init() {
         // Initialize with a placeholder coordinator - will be replaced by environment
@@ -252,18 +277,25 @@ struct AISettingsView: View {
                         .onAppear {
                             viewModel.updateCoordinator(appCoordinator)
                         }
-                    
+
                     headerSection
                     engineSelectionSection
                     selectedEngineConfigurationSection
                     summaryManagementSection
-                    
+
                     Spacer(minLength: 40)
                 }
                 .padding(.horizontal, 16)
             }
             .navigationTitle("AI Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
 
         }
         .alert("Engine Change", isPresented: $showingEngineChangePrompt) {
@@ -296,6 +328,14 @@ struct AISettingsView: View {
             Button("OK") { viewModel.regenerationManager.regenerationResults = nil }
         } message: {
             Text(viewModel.regenerationManager.regenerationResults?.summary ?? "Regeneration process finished.")
+        }
+        .alert("Regenerate All Summaries?", isPresented: $showingRegenerateConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Regenerate", role: .destructive) {
+                Task { await viewModel.regenerationManager.regenerateAllSummaries() }
+            }
+        } message: {
+            Text("This will regenerate all summaries using the current AI engine. Only summaries with existing transcripts will be processed. This may take some time depending on how many recordings you have.")
         }
         .onAppear {
             // TODO: Implement setEngine with new Core Data system
@@ -1055,13 +1095,13 @@ private extension AISettingsView {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Regenerate All Summaries")
                             .font(.body)
-                        Text("Update all existing summaries with the current AI engine")
+                        Text("Update all existing summaries with the current AI engine. Only summaries with existing transcripts will be processed.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
                     Button(action: {
-                        Task { await viewModel.regenerationManager.regenerateAllSummaries() }
+                        showingRegenerateConfirmation = true
                     }) {
                         HStack {
                             if viewModel.regenerationManager.isRegenerating {
