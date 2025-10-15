@@ -17,6 +17,7 @@ Quick links: [Usage Quick Start](USAGE.md) • [Full User Guide](HOW_TO_USE.md) 
 - `BisonNotes AI/`: iOS app source
   - Notable folders: `Models/`, `Views/`, `ViewModels/`, `OpenAI/`, `AWS/`, `Wyoming/`, `WatchConnectivity/`
   - Assets: `Assets.xcassets`; config: `Info.plist`, `.entitlements`
+  - Uses Xcode's file-system synchronized groups, so dropping new Swift files into these folders automatically adds them to the project—no manual `.xcodeproj` edits are necessary.
 - `BisonNotes AI Watch App/`: watchOS companion app
 - Tests: `BisonNotes AITests/` (unit), `BisonNotes AIUITests/` (UI), plus watch tests
 

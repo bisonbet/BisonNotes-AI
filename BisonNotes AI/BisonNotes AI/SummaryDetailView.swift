@@ -47,12 +47,41 @@ struct SummaryDetailView: View {
     @State private var showingLocationPicker = false
     @State private var isUpdatingLocation = false
     @State private var showingAIWarning = false
-    @State private var isExportingPDF = false
+    @State private var isExporting = false
+    @State private var activeExportFormat: ExportFormat?
     @State private var showingShareSheet = false
-    @State private var pdfDataToShare: Data?
-    @State private var pdfFileName: String?
+    @State private var exportDataToShare: Data?
+    @State private var exportFileName: String?
+    @State private var exportSubject: String?
+    @State private var exportIconSystemName: String = "doc.richtext"
     @State private var exportError: String?
     @State private var geocodingTask: Task<Void, Never>?
+
+    private enum ExportFormat {
+        case pdf
+        case word
+
+        var fileExtension: String {
+            switch self {
+            case .pdf: return "pdf"
+            case .word: return "docx"
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .pdf: return "PDF"
+            case .word: return "Word"
+            }
+        }
+
+        var iconSystemName: String {
+            switch self {
+            case .pdf: return "doc.richtext"
+            case .word: return "doc"
+            }
+        }
+    }
     
     init(recording: RecordingFile, summaryData: EnhancedSummaryData) {
         self.recording = recording
@@ -72,15 +101,30 @@ struct SummaryDetailView: View {
                     }
 
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: {
-                            exportToPDF()
-                        }) {
+                        Menu {
+                            Button {
+                                export(format: .pdf)
+                            } label: {
+                                Label("Export as PDF", systemImage: "doc.richtext")
+                            }
+
+                            Button {
+                                export(format: .word)
+                            } label: {
+                                Label("Export as Word (.docx)", systemImage: "doc")
+                            }
+                        } label: {
                             HStack(spacing: 4) {
-                                if isExportingPDF {
+                                if isExporting {
                                     ProgressView()
                                         .scaleEffect(0.8)
-                                    Text("Exporting...")
-                                        .font(.caption)
+                                    if let activeExportFormat {
+                                        Text("Exporting \(activeExportFormat.displayName)...")
+                                            .font(.caption)
+                                    } else {
+                                        Text("Exporting...")
+                                            .font(.caption)
+                                    }
                                 } else {
                                     Image(systemName: "square.and.arrow.up")
                                     Text("Export")
@@ -88,7 +132,7 @@ struct SummaryDetailView: View {
                                 }
                             }
                         }
-                        .disabled(isExportingPDF)
+                        .disabled(isExporting)
                     }
                 }
         }
@@ -192,15 +236,16 @@ struct SummaryDetailView: View {
         }
         .sheet(isPresented: $showingShareSheet) {
             Group {
-                if let pdfData = pdfDataToShare,
-                   let fileName = pdfFileName {
+                if let exportData = exportDataToShare,
+                   let fileName = exportFileName {
                     ShareSheet(
-                        activityItems: [PDFActivityItem(data: pdfData, fileName: fileName)],
-                        subject: "PDF Summary - \(summaryData.recordingName)"
+                        activityItems: [ExportActivityItem(data: exportData, fileName: fileName, iconSystemName: exportIconSystemName)],
+                        subject: exportSubject ?? "Summary Export - \(summaryData.recordingName)"
                     )
                     .onDisappear {
-                        pdfDataToShare = nil
-                        pdfFileName = nil
+                        exportDataToShare = nil
+                        exportFileName = nil
+                        exportSubject = nil
                     }
                 } else {
                     ProgressView()
@@ -1399,44 +1444,63 @@ struct SummaryDetailView: View {
         try appCoordinator.coreDataManager.saveContext()
     }
 
-    // MARK: - PDF Export Functions
+    // MARK: - Export Functions
 
-    private func exportToPDF() {
-        isExportingPDF = true
+    private func export(format: ExportFormat) {
+        guard !isExporting else { return }
+
+        isExporting = true
+        activeExportFormat = format
+        exportDataToShare = nil
+        exportFileName = nil
+        exportSubject = nil
+        exportIconSystemName = format.iconSystemName
 
         Task { @MainActor in
             do {
-                print("📄 Starting PDF export for: \(summaryData.recordingName)")
+                print("📄 Starting \(format.displayName) export for: \(summaryData.recordingName)")
 
-                let pdfData = try PDFExportService.shared.generatePDF(
-                    summaryData: summaryData,
-                    locationData: recording.locationData,
-                    locationAddress: locationAddress
-                )
+                let exportData: Data
+                switch format {
+                case .pdf:
+                    exportData = try PDFExportService.shared.generatePDF(
+                        summaryData: summaryData,
+                        locationData: recording.locationData,
+                        locationAddress: locationAddress
+        if sanitized.lowercased().hasSuffix(".\(fileExtension.lowercased())") {
+                    exportData = try WordExportService.shared.generateDocument(
+                        summaryData: summaryData,
+                        locationData: recording.locationData,
+                        locationAddress: locationAddress
+                    )
+                }
 
-                print("✅ PDF generated successfully, size: \(pdfData.count) bytes")
+                print("✅ \(format.displayName) generated successfully, size: \(exportData.count) bytes")
 
-                pdfDataToShare = pdfData
-                pdfFileName = sanitizeFileName("\(summaryData.recordingName)_Summary.pdf")
+                exportDataToShare = exportData
+                exportFileName = sanitizeFileName("\(summaryData.recordingName)_Summary", fileExtension: format.fileExtension)
+                exportSubject = "\(format.displayName) Summary - \(summaryData.recordingName)"
+                exportIconSystemName = format.iconSystemName
                 showingShareSheet = true
-                isExportingPDF = false
 
                 print("📤 Opening share sheet")
             } catch {
-                print("❌ PDF export failed: \(error)")
-                exportError = "Failed to generate PDF: \(error.localizedDescription)"
-                isExportingPDF = false
+                print("❌ \(format.displayName) export failed: \(error)")
+                exportError = "Failed to generate \(format.displayName): \(error.localizedDescription)"
             }
+
+            isExporting = false
+            activeExportFormat = nil
         }
     }
 
-    private func sanitizeFileName(_ fileName: String) -> String {
+    private func sanitizeFileName(_ fileName: String, fileExtension: String) -> String {
         let invalidCharacters = CharacterSet(charactersIn: "\\/:*?\"<>|")
         let sanitized = fileName.components(separatedBy: invalidCharacters).joined(separator: "_")
-        if sanitized.lowercased().hasSuffix(".pdf") {
+        if sanitized.lowercased().hasSuffix(".\(fileExtension.lowercased())") {
             return sanitized
         }
-        return sanitized + ".pdf"
+        return sanitized + ".\(fileExtension)"
     }
 }
 
@@ -2788,86 +2852,7 @@ private final class MapSnapshotCache {
     }
 }
 
-private enum MapSnapshotStorage {
-    private static let directoryName = "SummaryLocationSnapshots"
-
-    private static func directoryURL() -> URL? {
-        guard let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-
-        let directory = baseURL.appendingPathComponent(directoryName, isDirectory: true)
-
-        if !FileManager.default.fileExists(atPath: directory.path) {
-            do {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            } catch {
-                print("❌ MapSnapshotStorage: Failed to create directory: \(error)")
-                return nil
-            }
-        }
-
-        return directory
-    }
-
-    private static func fileURL(summaryId: UUID, locationSignature: String) -> URL? {
-        directoryURL()?.appendingPathComponent("\(summaryId.uuidString)_\(locationSignature).png")
-    }
-
-    static func loadData(summaryId: UUID, locationSignature: String) -> Data? {
-        guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature),
-              FileManager.default.fileExists(atPath: url.path) else {
-            return nil
-        }
-
-        return try? Data(contentsOf: url)
-    }
-
-    static func loadImage(summaryId: UUID, locationSignature: String, scale: CGFloat) -> UIImage? {
-        guard let data = loadData(summaryId: summaryId, locationSignature: locationSignature) else {
-            return nil
-        }
-
-        return UIImage(data: data, scale: scale)
-    }
-
-    static func save(_ image: UIImage, summaryId: UUID, locationSignature: String) {
-        guard let data = image.pngData() else {
-            print("❌ MapSnapshotStorage: Failed to create PNG data for summary \(summaryId)")
-            return
-        }
-        saveData(data, summaryId: summaryId, locationSignature: locationSignature)
-    }
-
-    static func saveData(_ data: Data, summaryId: UUID, locationSignature: String) {
-        guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature) else {
-            return
-        }
-
-        cleanupOldSnapshots(for: summaryId, keeping: url.lastPathComponent)
-
-        do {
-            try data.write(to: url, options: .atomic)
-        } catch {
-            print("❌ MapSnapshotStorage: Failed to write snapshot for summary \(summaryId): \(error)")
-        }
-    }
-
-    private static func cleanupOldSnapshots(for summaryId: UUID, keeping fileName: String) {
-        guard let directory = directoryURL() else { return }
-
-        let prefix = "\(summaryId.uuidString)_"
-        let fileManager = FileManager.default
-
-        guard let contents = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
-            return
-        }
-
-        for fileURL in contents where fileURL.lastPathComponent.hasPrefix(prefix) && fileURL.lastPathComponent != fileName {
-            try? fileManager.removeItem(at: fileURL)
-        }
-    }
-}
+// MapSnapshotStorage is now in a shared file
 
 private enum MapSnapshotError: Error {
     case invalidSize
@@ -3126,7 +3111,7 @@ private struct StaticLocationMapView: View {
 
             if let imageData = image.pngData() {
                 Task.detached(priority: .utility) { [summaryId, signature, imageData] in
-                    MapSnapshotStorage.saveData(
+                    let _ = MapSnapshotStorage.saveImageData(
                         imageData,
                         summaryId: summaryId,
                         locationSignature: signature
@@ -3155,7 +3140,7 @@ private struct StaticLocationMapView: View {
 
             if let fallbackData = fallback.pngData() {
                 Task.detached(priority: .utility) { [summaryId, signature, fallbackData] in
-                    MapSnapshotStorage.saveData(
+                    let _ = MapSnapshotStorage.saveImageData(
                         fallbackData,
                         summaryId: summaryId,
                         locationSignature: signature
@@ -3227,16 +3212,18 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
 }
 
-// MARK: - PDF Activity Item
+// MARK: - Export Activity Item
 
-private final class PDFActivityItem: NSObject, UIActivityItemSource {
+private final class ExportActivityItem: NSObject, UIActivityItemSource {
     private let data: Data
     private let fileName: String
+    private let iconSystemName: String
     private var temporaryURL: URL?
 
-    init(data: Data, fileName: String) {
+    init(data: Data, fileName: String, iconSystemName: String) {
         self.data = data
         self.fileName = fileName
+        self.iconSystemName = iconSystemName
         super.init()
     }
 
@@ -3267,7 +3254,7 @@ private final class PDFActivityItem: NSObject, UIActivityItemSource {
     func activityViewControllerLinkMetadata(_ controller: UIActivityViewController) -> LPLinkMetadata? {
         let metadata = LPLinkMetadata()
         metadata.title = fileName
-        if let iconImage = UIImage(systemName: "doc.richtext") {
+        if let iconImage = UIImage(systemName: iconSystemName) {
             metadata.iconProvider = NSItemProvider(object: iconImage)
         }
         return metadata
@@ -3292,7 +3279,7 @@ private final class PDFActivityItem: NSObject, UIActivityItemSource {
             temporaryURL = destination
             return destination
         } catch {
-            print("❌ Failed to write temporary PDF for sharing: \(error)")
+            print("❌ Failed to write temporary export for sharing: \(error)")
             return nil
         }
     }
