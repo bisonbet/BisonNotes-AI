@@ -398,7 +398,15 @@ private enum MapSnapshotStorage {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             } catch {
                 print("❌ MapSnapshotStorage: Failed to create directory: \(error)")
+        if !FileManager.default.fileExists(atPath: directory.path) {
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            } catch {
+                // Consider using a more robust logging system
+                print("❌ MapSnapshotStorage: Failed to create directory: \(error)")
                 return nil
+            }
+        }
             }
         }
 
