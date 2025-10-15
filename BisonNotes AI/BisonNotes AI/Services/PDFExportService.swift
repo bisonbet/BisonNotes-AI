@@ -11,52 +11,6 @@ import PDFKit
 import MapKit
 import CoreLocation
 
-// MARK: - Map Snapshot Storage (copied from SummaryDetailView)
-
-private enum MapSnapshotStorage {
-    private static let directoryName = "SummaryLocationSnapshots"
-
-    private static func directoryURL() -> URL? {
-        guard let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-
-        let directory = baseURL.appendingPathComponent(directoryName, isDirectory: true)
-
-        if !FileManager.default.fileExists(atPath: directory.path) {
-            do {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            } catch {
-                print("❌ MapSnapshotStorage: Failed to create directory: \(error)")
-                return nil
-            }
-        }
-
-        return directory
-    }
-
-    private static func fileURL(summaryId: UUID, locationSignature: String) -> URL? {
-        directoryURL()?.appendingPathComponent("\(summaryId.uuidString)_\(locationSignature).png")
-    }
-
-    static func loadData(summaryId: UUID, locationSignature: String) -> Data? {
-        guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature),
-              FileManager.default.fileExists(atPath: url.path) else {
-            return nil
-        }
-
-        return try? Data(contentsOf: url)
-    }
-
-    static func loadImage(summaryId: UUID, locationSignature: String, scale: CGFloat) -> UIImage? {
-        guard let data = loadData(summaryId: summaryId, locationSignature: locationSignature) else {
-            return nil
-        }
-
-        return UIImage(data: data, scale: scale)
-    }
-}
-
 class PDFExportService {
     static let shared = PDFExportService()
 
@@ -80,12 +34,12 @@ class PDFExportService {
             locationSignature: locationSignature,
             scale: scale
         ) {
-            print("✅ Loaded stored map image for summary \(summaryId)")
+            print("✅ PDFExportService: Loaded stored map image for summary \(summaryId)")
             return storedImage
         }
 
         // If no stored image found, create a fallback with the requested size
-        print("⚠️ No stored map image found, creating fallback")
+        print("❌ PDFExportService: No stored map image found, creating fallback")
         return createSmallFallbackMapImage(for: locationData, size: CGSize(width: size, height: size * 0.75))
     }
 
@@ -96,7 +50,7 @@ class PDFExportService {
     @available(*, deprecated, message: "Maps are now stored persistently, this method is no longer needed")
     func resetMapGeneration() {
         UserDefaults.standard.set(false, forKey: "skipMapGeneration")
-        print("✅ Map generation re-enabled")
+        print("✅ PDFExportService: Map generation re-enabled")
     }
 
     // MARK: - Main Export Function

@@ -2,6 +2,24 @@ import Foundation
 import UIKit
 import MapKit
 
+/// Errors that can occur during Word document generation
+enum WordExportError: LocalizedError {
+    case documentGenerationFailed(String)
+    case invalidDocumentData
+    case memoryLimitExceeded
+    
+    var errorDescription: String? {
+        switch self {
+        case .documentGenerationFailed(let reason):
+            return "Failed to generate Word document: \(reason)"
+        case .invalidDocumentData:
+            return "Invalid document data - unable to create Word document"
+        case .memoryLimitExceeded:
+            return "Document too large - memory limit exceeded during generation"
+        }
+    }
+}
+
 final class WordExportService {
     static let shared = WordExportService()
 
@@ -13,42 +31,81 @@ final class WordExportService {
         locationData: LocationData?,
         locationAddress: String?
     ) throws -> Data {
+        print("✅ WordExportService: Starting document generation for \(summaryData.recordingName)")
+        
+        // Validate input data
+        guard !summaryData.recordingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            print("❌ WordExportService: Invalid summary data - recording name is empty")
+            throw WordExportError.invalidDocumentData
+        }
+        
         let document = NSMutableAttributedString()
 
-        appendTitle(for: summaryData, to: document)
-        appendMetadata(for: summaryData, to: document)
+        do {
+            appendTitle(for: summaryData, to: document)
+            appendMetadata(for: summaryData, to: document)
 
-        if let locationData {
-            appendLocationSection(
-                summaryData: summaryData,
-                locationData: locationData,
-                locationAddress: locationAddress,
-                to: document
-            )
+            if let locationData {
+                appendLocationSection(
+                    summaryData: summaryData,
+                    locationData: locationData,
+                    locationAddress: locationAddress,
+                    to: document
+                )
+            }
+
+            appendSummarySection(for: summaryData, to: document)
+
+            if !summaryData.tasks.isEmpty {
+                appendTasksSection(tasks: summaryData.tasks, to: document)
+            }
+
+            if !summaryData.reminders.isEmpty {
+                appendRemindersSection(reminders: summaryData.reminders, to: document)
+            }
+
+            if !summaryData.titles.isEmpty {
+                appendTitlesSection(titles: summaryData.titles, to: document)
+            }
+
+            appendProcessingDetails(for: summaryData, to: document)
+
+            // Check document size before conversion
+            let documentLength = document.length
+            guard documentLength > 0 else {
+                print("❌ WordExportService: Generated document is empty")
+                throw WordExportError.invalidDocumentData
+            }
+            
+            // Conservative memory limit check (10MB of attributed string)
+            let estimatedMemoryUsage = documentLength * 100 // Rough estimate
+            if estimatedMemoryUsage > 10_000_000 {
+                print("❌ WordExportService: Document too large, estimated memory usage: \(estimatedMemoryUsage) bytes")
+                throw WordExportError.memoryLimitExceeded
+            }
+
+            let documentAttributes: [NSAttributedString.DocumentAttributeKey: Any] = [
+                .documentType: NSAttributedString.DocumentType.officeOpenXML,
+                .characterEncoding: String.Encoding.utf8.rawValue
+            ]
+
+            print("✅ WordExportService: Converting attributed string to Word document data")
+            let data = try document.data(from: NSRange(location: 0, length: documentLength), documentAttributes: documentAttributes)
+            
+            guard !data.isEmpty else {
+                print("❌ WordExportService: Generated document data is empty")
+                throw WordExportError.invalidDocumentData
+            }
+            
+            print("✅ WordExportService: Successfully generated Word document (\(data.count) bytes)")
+            return data
+            
+        } catch let error as WordExportError {
+            throw error
+        } catch {
+            print("❌ WordExportService: Document generation failed with error: \(error.localizedDescription)")
+            throw WordExportError.documentGenerationFailed(error.localizedDescription)
         }
-
-        appendSummarySection(for: summaryData, to: document)
-
-        if !summaryData.tasks.isEmpty {
-            appendTasksSection(tasks: summaryData.tasks, to: document)
-        }
-
-        if !summaryData.reminders.isEmpty {
-            appendRemindersSection(reminders: summaryData.reminders, to: document)
-        }
-
-        if !summaryData.titles.isEmpty {
-            appendTitlesSection(titles: summaryData.titles, to: document)
-        }
-
-        appendProcessingDetails(for: summaryData, to: document)
-
-        let documentAttributes: [NSAttributedString.DocumentAttributeKey: Any] = [
-            .documentType: NSAttributedString.DocumentType.officeOpenXML,
-            .characterEncoding: String.Encoding.utf8.rawValue
-        ]
-
-        return try document.data(from: NSRange(location: 0, length: document.length), documentAttributes: documentAttributes)
     }
 
     // MARK: - Sections
@@ -383,50 +440,3 @@ final class WordExportService {
     }
 }
 
-private enum MapSnapshotStorage {
-    private static let directoryName = "SummaryLocationSnapshots"
-
-    private static func directoryURL() -> URL? {
-        guard let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-
-        let directory = baseURL.appendingPathComponent(directoryName, isDirectory: true)
-
-        if !FileManager.default.fileExists(atPath: directory.path) {
-            do {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            } catch {
-                print("❌ MapSnapshotStorage: Failed to create directory: \(error)")
-        if !FileManager.default.fileExists(atPath: directory.path) {
-            do {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            } catch {
-                // Consider using a more robust logging system
-                print("❌ MapSnapshotStorage: Failed to create directory: \(error)")
-                return nil
-            }
-        }
-            }
-        }
-
-        return directory
-    }
-
-    private static func fileURL(summaryId: UUID, locationSignature: String) -> URL? {
-        directoryURL()?.appendingPathComponent("\(summaryId.uuidString)_\(locationSignature).png")
-    }
-
-    static func loadImage(summaryId: UUID, locationSignature: String, scale: CGFloat) -> UIImage? {
-        guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature),
-              FileManager.default.fileExists(atPath: url.path) else {
-            return nil
-        }
-
-        guard let data = try? Data(contentsOf: url) else {
-            return nil
-        }
-
-        return UIImage(data: data, scale: scale)
-    }
-}

@@ -1,18 +1,34 @@
 import Foundation
 
 enum SummaryExportFormatter {
+    // MARK: - Cached Regex Patterns
+    
+    private static let jsonPrefixRegex = try! NSRegularExpression(pattern: "^\"summary\"\\s*:\\s*\"", options: [])
+    private static let jsonContentRegex = try! NSRegularExpression(pattern: "^\"content\"\\s*:\\s*\"", options: [])
+    private static let jsonTextRegex = try! NSRegularExpression(pattern: "^\"text\"\\s*:\\s*\"", options: [])
+    private static let jsonSuffixRegex = try! NSRegularExpression(pattern: "\"\\s*$", options: [])
+    private static let multipleNewlinesRegex = try! NSRegularExpression(pattern: "\n{3,}", options: [])
+    private static let headerRegex = try! NSRegularExpression(pattern: "^#{1,6}\\s+", options: [])
+    private static let bulletRegex = try! NSRegularExpression(pattern: "^[-*+]\\s+", options: [])
+    private static let orderedListRegex = try! NSRegularExpression(pattern: "^\\d+\\.\\s+", options: [])
+    private static let orderedListSpaceRegex = try! NSRegularExpression(pattern: "\\s+", options: [])
+    private static let markdownLinkRegex = try! NSRegularExpression(pattern: #"\[([^\]]+)\]\(([^)]+)\)"#, options: [])
     static func cleanMarkdown(_ text: String) -> String {
         var cleaned = text
 
+        // Replace literal newline sequences
         cleaned = cleaned.replacingOccurrences(of: "\\n", with: "\n")
         cleaned = cleaned.replacingOccurrences(of: "\\r", with: "\n")
 
-        cleaned = cleaned.replacingOccurrences(of: "^\"summary\"\\s*:\\s*\"", with: "", options: .regularExpression)
-        cleaned = cleaned.replacingOccurrences(of: "^\"content\"\\s*:\\s*\"", with: "", options: .regularExpression)
-        cleaned = cleaned.replacingOccurrences(of: "^\"text\"\\s*:\\s*\"", with: "", options: .regularExpression)
-        cleaned = cleaned.replacingOccurrences(of: "\"\\s*$", with: "", options: .regularExpression)
+        // Use cached regex patterns for JSON cleanup
+        let range = NSRange(location: 0, length: cleaned.utf16.count)
+        cleaned = jsonPrefixRegex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
+        cleaned = jsonContentRegex.stringByReplacingMatches(in: cleaned, options: [], range: NSRange(location: 0, length: cleaned.utf16.count), withTemplate: "")
+        cleaned = jsonTextRegex.stringByReplacingMatches(in: cleaned, options: [], range: NSRange(location: 0, length: cleaned.utf16.count), withTemplate: "")
+        cleaned = jsonSuffixRegex.stringByReplacingMatches(in: cleaned, options: [], range: NSRange(location: 0, length: cleaned.utf16.count), withTemplate: "")
 
-        cleaned = cleaned.replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+        // Clean up multiple newlines
+        cleaned = multipleNewlinesRegex.stringByReplacingMatches(in: cleaned, options: [], range: NSRange(location: 0, length: cleaned.utf16.count), withTemplate: "\n\n")
 
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -36,8 +52,10 @@ enum SummaryExportFormatter {
                 continue
             }
 
-            if let headerRange = line.range(of: "^#{1,6}\\s+", options: .regularExpression) {
-                let headerText = line[headerRange.upperBound...].trimmingCharacters(in: .whitespaces)
+            // Check for headers using cached regex
+            let headerMatches = headerRegex.matches(in: line, options: [], range: NSRange(location: 0, length: line.utf16.count))
+            if let headerMatch = headerMatches.first {
+                let headerText = String(line.dropFirst(headerMatch.range.length)).trimmingCharacters(in: .whitespaces)
                 if result.last?.isEmpty == false {
                     result.append("")
                 }
@@ -52,14 +70,20 @@ enum SummaryExportFormatter {
                 line = "“\(line)”"
             }
 
-            if let bulletRange = line.range(of: "^[-*+]\\s+", options: .regularExpression) {
-                line.replaceSubrange(bulletRange, with: "• ")
+            // Handle bullet points using cached regex
+            let bulletMatches = bulletRegex.matches(in: line, options: [], range: NSRange(location: 0, length: line.utf16.count))
+            if let bulletMatch = bulletMatches.first {
+                let range = Range(bulletMatch.range, in: line)!
+                line.replaceSubrange(range, with: "• ")
             }
 
-            if let orderedRange = line.range(of: "^\\d+\\.\\s+", options: .regularExpression) {
-                let prefix = String(line[orderedRange])
-                let normalizedPrefix = prefix.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-                line.replaceSubrange(orderedRange, with: normalizedPrefix)
+            // Handle ordered lists using cached regex
+            let orderedMatches = orderedListRegex.matches(in: line, options: [], range: NSRange(location: 0, length: line.utf16.count))
+            if let orderedMatch = orderedMatches.first {
+                let range = Range(orderedMatch.range, in: line)!
+                let prefix = String(line[range])
+                let normalizedPrefix = orderedListSpaceRegex.stringByReplacingMatches(in: prefix, options: [], range: NSRange(location: 0, length: prefix.utf16.count), withTemplate: " ")
+                line.replaceSubrange(range, with: normalizedPrefix)
             }
 
             line = replaceMarkdownLinks(in: line)
@@ -86,11 +110,7 @@ enum SummaryExportFormatter {
     }
 
     private static func replaceMarkdownLinks(in line: String) -> String {
-        guard let regex = try? NSRegularExpression(pattern: #"\[([^\]]+)\]\(([^)]+)\)"#, options: []) else {
-            return line
-        }
-
-        let matches = regex.matches(in: line, options: [], range: NSRange(location: 0, length: line.utf16.count))
+        let matches = markdownLinkRegex.matches(in: line, options: [], range: NSRange(location: 0, length: line.utf16.count))
         if matches.isEmpty {
             return line
         }
