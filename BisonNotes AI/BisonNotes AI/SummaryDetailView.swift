@@ -2852,86 +2852,7 @@ private final class MapSnapshotCache {
     }
 }
 
-private enum MapSnapshotStorage {
-    private static let directoryName = "SummaryLocationSnapshots"
-
-    private static func directoryURL() -> URL? {
-        guard let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-
-        let directory = baseURL.appendingPathComponent(directoryName, isDirectory: true)
-
-        if !FileManager.default.fileExists(atPath: directory.path) {
-            do {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            } catch {
-                print("❌ MapSnapshotStorage: Failed to create directory: \(error)")
-                return nil
-            }
-        }
-
-        return directory
-    }
-
-    private static func fileURL(summaryId: UUID, locationSignature: String) -> URL? {
-        directoryURL()?.appendingPathComponent("\(summaryId.uuidString)_\(locationSignature).png")
-    }
-
-    static func loadData(summaryId: UUID, locationSignature: String) -> Data? {
-        guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature),
-              FileManager.default.fileExists(atPath: url.path) else {
-            return nil
-        }
-
-        return try? Data(contentsOf: url)
-    }
-
-    static func loadImage(summaryId: UUID, locationSignature: String, scale: CGFloat) -> UIImage? {
-        guard let data = loadData(summaryId: summaryId, locationSignature: locationSignature) else {
-            return nil
-        }
-
-        return UIImage(data: data, scale: scale)
-    }
-
-    static func save(_ image: UIImage, summaryId: UUID, locationSignature: String) {
-        guard let data = image.pngData() else {
-            print("❌ MapSnapshotStorage: Failed to create PNG data for summary \(summaryId)")
-            return
-        }
-        saveData(data, summaryId: summaryId, locationSignature: locationSignature)
-    }
-
-    static func saveData(_ data: Data, summaryId: UUID, locationSignature: String) {
-        guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature) else {
-            return
-        }
-
-        cleanupOldSnapshots(for: summaryId, keeping: url.lastPathComponent)
-
-        do {
-            try data.write(to: url, options: .atomic)
-        } catch {
-            print("❌ MapSnapshotStorage: Failed to write snapshot for summary \(summaryId): \(error)")
-        }
-    }
-
-    private static func cleanupOldSnapshots(for summaryId: UUID, keeping fileName: String) {
-        guard let directory = directoryURL() else { return }
-
-        let prefix = "\(summaryId.uuidString)_"
-        let fileManager = FileManager.default
-
-        guard let contents = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
-            return
-        }
-
-        for fileURL in contents where fileURL.lastPathComponent.hasPrefix(prefix) && fileURL.lastPathComponent != fileName {
-            try? fileManager.removeItem(at: fileURL)
-        }
-    }
-}
+// MapSnapshotStorage is now in a shared file
 
 private enum MapSnapshotError: Error {
     case invalidSize
@@ -3190,7 +3111,7 @@ private struct StaticLocationMapView: View {
 
             if let imageData = image.pngData() {
                 Task.detached(priority: .utility) { [summaryId, signature, imageData] in
-                    MapSnapshotStorage.saveData(
+                    let _ = MapSnapshotStorage.saveImageData(
                         imageData,
                         summaryId: summaryId,
                         locationSignature: signature
@@ -3219,7 +3140,7 @@ private struct StaticLocationMapView: View {
 
             if let fallbackData = fallback.pngData() {
                 Task.detached(priority: .utility) { [summaryId, signature, fallbackData] in
-                    MapSnapshotStorage.saveData(
+                    let _ = MapSnapshotStorage.saveImageData(
                         fallbackData,
                         summaryId: summaryId,
                         locationSignature: signature
