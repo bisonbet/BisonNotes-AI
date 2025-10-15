@@ -1467,8 +1467,7 @@ struct SummaryDetailView: View {
                         summaryData: summaryData,
                         locationData: recording.locationData,
                         locationAddress: locationAddress
-                    )
-                case .word:
+        if sanitized.lowercased().hasSuffix(".\(fileExtension.lowercased())") {
                     exportData = try WordExportService.shared.generateDocument(
                         summaryData: summaryData,
                         locationData: recording.locationData,
