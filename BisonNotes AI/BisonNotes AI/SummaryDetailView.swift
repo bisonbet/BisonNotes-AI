@@ -56,29 +56,30 @@ struct SummaryDetailView: View {
     @State private var exportIconSystemName: String = "doc.richtext"
     @State private var exportError: String?
     @State private var geocodingTask: Task<Void, Never>?
+    @State private var showingExportFormatPicker = false
 
     private enum ExportFormat {
         case pdf
-        case word
+        case rtf
 
         var fileExtension: String {
             switch self {
             case .pdf: return "pdf"
-            case .word: return "docx"
+            case .rtf: return "rtf"
             }
         }
 
         var displayName: String {
             switch self {
             case .pdf: return "PDF"
-            case .word: return "Word"
+            case .rtf: return "RTF"
             }
         }
 
         var iconSystemName: String {
             switch self {
             case .pdf: return "doc.richtext"
-            case .word: return "doc"
+            case .rtf: return "doc.text"
             }
         }
     }
@@ -101,18 +102,8 @@ struct SummaryDetailView: View {
                     }
 
                     ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            Button {
-                                export(format: .pdf)
-                            } label: {
-                                Label("Export as PDF", systemImage: "doc.richtext")
-                            }
-
-                            Button {
-                                export(format: .word)
-                            } label: {
-                                Label("Export as Word (.docx)", systemImage: "doc")
-                            }
+                        Button {
+                            showingExportFormatPicker = true
                         } label: {
                             HStack(spacing: 4) {
                                 if isExporting {
@@ -263,6 +254,23 @@ struct SummaryDetailView: View {
             if let error = exportError {
                 Text(error)
             }
+        }
+        .confirmationDialog("Choose Export Format", isPresented: $showingExportFormatPicker, titleVisibility: .visible) {
+            Button {
+                export(format: .pdf)
+            } label: {
+                Text("PDF - Includes maps, best for viewing")
+            }
+
+            Button {
+                export(format: .rtf)
+            } label: {
+                Text("RTF (Word) - Editable text (no maps)")
+            }
+
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Select the format you'd like to export this summary in.")
         }
     }
     
@@ -1467,8 +1475,9 @@ struct SummaryDetailView: View {
                         summaryData: summaryData,
                         locationData: recording.locationData,
                         locationAddress: locationAddress
-        if sanitized.lowercased().hasSuffix(".\(fileExtension.lowercased())") {
-                    exportData = try WordExportService.shared.generateDocument(
+                    )
+                case .rtf:
+                    exportData = try RTFExportService.shared.generateDocument(
                         summaryData: summaryData,
                         locationData: recording.locationData,
                         locationAddress: locationAddress

@@ -148,10 +148,12 @@ enum MapSnapshotStorage {
             )
             
             var totalSize: Int64 = 0
-            for case let fileURL as URL in enumerator ?? [] {
-                let resourceValues = try fileURL.resourceValues(forKeys: Set(resourceKeys))
-                if resourceValues.isDirectory != true {
-                    totalSize += Int64(resourceValues.fileSize ?? 0)
+            if let enumerator = enumerator {
+                for case let fileURL as URL in enumerator {
+                    let resourceValues = try fileURL.resourceValues(forKeys: Set(resourceKeys))
+                    if resourceValues.isDirectory != true {
+                        totalSize += Int64(resourceValues.fileSize ?? 0)
+                    }
                 }
             }
             
