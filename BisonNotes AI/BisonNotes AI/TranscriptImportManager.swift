@@ -8,6 +8,9 @@
 import Foundation
 import AVFoundation
 import CoreData
+import PDFKit
+import UniformTypeIdentifiers
+import Compression
 
 @MainActor
 class TranscriptImportManager: NSObject, ObservableObject {
@@ -21,6 +24,11 @@ class TranscriptImportManager: NSObject, ObservableObject {
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
     private let supportedTextExtensions = ["txt", "text", "md", "markdown"]
+    private let supportedDocumentExtensions = ["pdf", "doc", "docx"]
+
+    var supportedExtensions: [String] {
+        return supportedTextExtensions + supportedDocumentExtensions
+    }
 
     override init() {
         self.persistenceController = PersistenceController.shared
@@ -109,14 +117,30 @@ class TranscriptImportManager: NSObject, ObservableObject {
     private func importTranscriptFile(from sourceURL: URL) async throws {
         // Validate file extension
         let fileExtension = sourceURL.pathExtension.lowercased()
-        guard supportedTextExtensions.contains(fileExtension) else {
+        guard supportedExtensions.contains(fileExtension) else {
             throw TranscriptImportError.unsupportedFormat(fileExtension)
         }
 
-        // Read file contents
+        // Extract text based on file type
         let text: String
         do {
-            text = try String(contentsOf: sourceURL, encoding: .utf8)
+            if supportedTextExtensions.contains(fileExtension) {
+                // Plain text files
+                text = try String(contentsOf: sourceURL, encoding: .utf8)
+            } else if fileExtension == "pdf" {
+                // PDF files
+                text = try await extractTextFromPDF(url: sourceURL)
+            } else if fileExtension == "docx" {
+                // Word DOCX files
+                text = try await extractTextFromDOCX(url: sourceURL)
+            } else if fileExtension == "doc" {
+                // Legacy DOC files - limited support
+                throw TranscriptImportError.unsupportedFormat("Legacy .doc format is not supported. Please convert to .docx, .pdf, or .txt")
+            } else {
+                throw TranscriptImportError.unsupportedFormat(fileExtension)
+            }
+        } catch let error as TranscriptImportError {
+            throw error
         } catch {
             throw TranscriptImportError.readFailed("Unable to read file: \(error.localizedDescription)")
         }
@@ -126,6 +150,242 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
         // Import the transcript
         _ = try await importTranscript(text: text, name: transcriptName)
+    }
+
+    // MARK: - Document Text Extraction
+
+    /// Extract text from a PDF file
+    private func extractTextFromPDF(url: URL) async throws -> String {
+        guard let document = PDFDocument(url: url) else {
+            throw TranscriptImportError.readFailed("Unable to open PDF document")
+        }
+
+        var extractedText = ""
+        let pageCount = document.pageCount
+
+        for pageIndex in 0..<pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+
+            if let pageText = page.string {
+                extractedText += pageText
+                // Add spacing between pages
+                if pageIndex < pageCount - 1 {
+                    extractedText += "\n\n"
+                }
+            }
+        }
+
+        if extractedText.isEmpty {
+            throw TranscriptImportError.readFailed("PDF contains no readable text")
+        }
+
+        return extractedText
+    }
+
+    /// Extract text from a DOCX file
+    private func extractTextFromDOCX(url: URL) async throws -> String {
+        // DOCX is a ZIP archive containing XML files
+        // We'll use Apple's built-in Archive API (available from Foundation)
+        let fileManager = FileManager.default
+
+        do {
+            // Read the DOCX file as data
+            let docxData = try Data(contentsOf: url)
+
+            // Create a temporary directory for extraction
+            let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+            // Write the data to a temporary zip file
+            let zipURL = tempDir.appendingPathComponent("document.zip")
+            try docxData.write(to: zipURL)
+
+            // Use FileManager to unzip (iOS 15+)
+            // Note: For iOS < 15, we could use a third-party library or manual ZIP parsing
+            if #available(iOS 15.0, *) {
+                // Try to extract using FileManager.unzipItem if available
+                // For now, we'll read the zip manually using ZipArchive approach
+                try await extractDOCXManually(from: zipURL, to: tempDir)
+            } else {
+                try await extractDOCXManually(from: zipURL, to: tempDir)
+            }
+
+            // Read the document.xml file
+            let documentXMLPath = tempDir.appendingPathComponent("word/document.xml")
+            guard fileManager.fileExists(atPath: documentXMLPath.path) else {
+                throw TranscriptImportError.readFailed("Invalid DOCX structure: document.xml not found")
+            }
+
+            let xmlData = try Data(contentsOf: documentXMLPath)
+            let xmlString = String(data: xmlData, encoding: .utf8) ?? ""
+
+            // Extract text from XML
+            let text = extractTextFromWordXML(xmlString)
+
+            // Clean up temp directory
+            try? fileManager.removeItem(at: tempDir)
+
+            if text.isEmpty {
+                throw TranscriptImportError.readFailed("DOCX contains no readable text")
+            }
+
+            return text
+
+        } catch let error as TranscriptImportError {
+            throw error
+        } catch {
+            throw TranscriptImportError.readFailed("Failed to extract text from DOCX: \(error.localizedDescription)")
+        }
+    }
+
+    /// Manually extract DOCX ZIP file using basic ZIP parsing
+    /// Note: This is a basic implementation. For production use with complex DOCX files,
+    /// consider adding ZIPFoundation or similar library to handle all compression methods.
+    private func extractDOCXManually(from zipURL: URL, to destURL: URL) async throws {
+        // Read the ZIP file
+        let zipData = try Data(contentsOf: zipURL)
+
+        // Parse ZIP structure to find document.xml
+        // ZIP file format: local file headers followed by central directory
+
+        // ZIP local file header signature (0x04034b50)
+        let signature: [UInt8] = [0x50, 0x4B, 0x03, 0x04]
+
+        var offset = 0
+        let bytes = [UInt8](zipData)
+
+        while offset < bytes.count - 30 {
+            // Check for local file header signature
+            if bytes[offset] == signature[0] &&
+               bytes[offset + 1] == signature[1] &&
+               bytes[offset + 2] == signature[2] &&
+               bytes[offset + 3] == signature[3] {
+
+                // Read compression method (offset + 8, 2 bytes)
+                let compressionMethod = Int(bytes[offset + 8]) + Int(bytes[offset + 9]) * 256
+
+                // Parse the header
+                let fileNameLength = Int(bytes[offset + 26]) + Int(bytes[offset + 27]) * 256
+                let extraFieldLength = Int(bytes[offset + 28]) + Int(bytes[offset + 29]) * 256
+                let compressedSize = Int(bytes[offset + 18]) + Int(bytes[offset + 19]) * 256 +
+                                   Int(bytes[offset + 20]) * 65536 + Int(bytes[offset + 21]) * 16777216
+
+                // Get filename
+                let fileNameStart = offset + 30
+                let fileNameEnd = fileNameStart + fileNameLength
+                if fileNameEnd <= bytes.count {
+                    let fileNameData = Data(bytes[fileNameStart..<fileNameEnd])
+                    if let fileName = String(data: fileNameData, encoding: .utf8) {
+                        // Check if this is the document.xml file
+                        if fileName == "word/document.xml" {
+                            // Extract the file content
+                            let dataStart = fileNameEnd + extraFieldLength
+                            let dataEnd = min(dataStart + compressedSize, bytes.count)
+
+                            if dataEnd <= bytes.count {
+                                var fileData = Data(bytes[dataStart..<dataEnd])
+
+                                // Handle compression
+                                if compressionMethod == 8 {
+                                    // DEFLATE compression - use Compression framework
+                                    if let decompressed = decompressZlibData(fileData) {
+                                        fileData = decompressed
+                                    } else {
+                                        throw TranscriptImportError.readFailed("Failed to decompress DOCX content. Try converting to PDF or TXT first.")
+                                    }
+                                } else if compressionMethod != 0 {
+                                    // Unsupported compression method
+                                    throw TranscriptImportError.readFailed("Unsupported DOCX compression. Try converting to PDF or TXT first.")
+                                }
+
+                                // Create directory structure
+                                let wordDir = destURL.appendingPathComponent("word")
+                                try FileManager.default.createDirectory(at: wordDir, withIntermediateDirectories: true)
+
+                                // Write the extracted file
+                                let outputURL = destURL.appendingPathComponent(fileName)
+                                try fileData.write(to: outputURL)
+
+                                // Successfully extracted document.xml
+                                return
+                            }
+                        }
+                    }
+                }
+
+                // Move to next entry
+                offset += 30 + fileNameLength + extraFieldLength + compressedSize
+            } else {
+                offset += 1
+            }
+        }
+
+        throw TranscriptImportError.readFailed("Could not find document.xml in DOCX file. Try converting to PDF or TXT first.")
+    }
+
+    /// Decompress zlib/DEFLATE compressed data
+    private func decompressZlibData(_ data: Data) -> Data? {
+        let bufferSize = 1024 * 64  // 64KB buffer
+        var decompressed = Data()
+
+        data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Void in
+            guard let baseAddress = sourcePtr.baseAddress else { return }
+
+            var stream = z_stream()
+            stream.next_in = UnsafeMutablePointer<Bytef>(mutating: baseAddress.assumingMemoryBound(to: Bytef.self))
+            stream.avail_in = uint(data.count)
+
+            // Initialize for DEFLATE decompression with automatic header detection
+            var status = inflateInit2_(&stream, MAX_WBITS + 32, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
+
+            guard status == Z_OK else { return }
+
+            defer {
+                inflateEnd(&stream)
+            }
+
+            repeat {
+                var buffer = [UInt8](repeating: 0, count: bufferSize)
+                stream.next_out = UnsafeMutablePointer<Bytef>(&buffer)
+                stream.avail_out = uint(bufferSize)
+
+                status = inflate(&stream, Z_NO_FLUSH)
+
+                let bytesDecompressed = bufferSize - Int(stream.avail_out)
+                if bytesDecompressed > 0 {
+                    decompressed.append(buffer, count: bytesDecompressed)
+                }
+
+            } while status == Z_OK
+
+            if status != Z_STREAM_END {
+                decompressed.removeAll()
+            }
+        }
+
+        return decompressed.isEmpty ? nil : decompressed
+    }
+
+    /// Extract text from Word XML content
+    private func extractTextFromWordXML(_ xmlString: String) -> String {
+        var text = ""
+
+        // Use XMLParser to extract text from <w:t> tags
+        let parser = WordXMLParser()
+        if let data = xmlString.data(using: .utf8) {
+            let xmlParser = XMLParser(data: data)
+            xmlParser.delegate = parser
+            xmlParser.parse()
+            text = parser.extractedText
+        }
+
+        // Clean up excessive whitespace and newlines
+        let lines = text.components(separatedBy: .newlines)
+        let cleanedLines = lines
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        return cleanedLines.joined(separator: "\n")
     }
 
     /// Creates a minimal dummy audio file (~1KB) for the imported transcript
@@ -395,7 +655,7 @@ enum TranscriptImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat(let format):
-            return "Unsupported text format: \(format). Supported formats: txt, text, md, markdown"
+            return "Unsupported format: \(format). Supported formats: txt, md, markdown, pdf, docx"
         case .readFailed(let reason):
             return "Failed to read file: \(reason)"
         case .dummyAudioCreationFailed(let reason):
@@ -429,6 +689,42 @@ struct TranscriptImportResults {
             return "Successfully imported all \(successful) transcripts"
         } else {
             return "Imported \(successful) of \(total) transcripts successfully"
+        }
+    }
+}
+
+// MARK: - Word XML Parser
+
+/// XML parser for extracting text from Word DOCX files
+class WordXMLParser: NSObject, XMLParserDelegate {
+    var extractedText = ""
+    private var currentElement = ""
+    private var isInTextElement = false
+
+    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+        currentElement = elementName
+        // Check if we're entering a text element (w:t in Word XML)
+        if elementName == "w:t" {
+            isInTextElement = true
+        }
+        // Check for paragraph breaks (w:p)
+        else if elementName == "w:p" {
+            // Add newline for new paragraph (if not the first one)
+            if !extractedText.isEmpty {
+                extractedText += "\n"
+            }
+        }
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        if isInTextElement {
+            extractedText += string
+        }
+    }
+
+    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+        if elementName == "w:t" {
+            isInTextElement = false
         }
     }
 }

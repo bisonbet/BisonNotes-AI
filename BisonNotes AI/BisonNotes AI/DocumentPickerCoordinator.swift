@@ -107,8 +107,12 @@ class TextDocumentPickerViewController: UIDocumentPickerViewController {
     init(coordinator: DocumentPickerCoordinator) {
         self.coordinator = coordinator
 
-        // Create supported text types
-        var supportedTypes: [UTType] = [UTType.plainText, UTType.text]
+        // Create supported text and document types
+        var supportedTypes: [UTType] = [
+            UTType.plainText,
+            UTType.text,
+            UTType.pdf  // Add PDF support
+        ]
 
         // Add specific text formats if available
         if let txtType = UTType(filenameExtension: "txt") {
@@ -119,6 +123,20 @@ class TextDocumentPickerViewController: UIDocumentPickerViewController {
         }
         if let markdownType = UTType(filenameExtension: "markdown") {
             supportedTypes.append(markdownType)
+        }
+
+        // Add Word document types
+        // DOCX - Office Open XML Document
+        if let docxType = UTType(filenameExtension: "docx") {
+            supportedTypes.append(docxType)
+        }
+        // Also try the standard Microsoft Word type
+        if let wordType = UTType(importedAs: "org.openxmlformats.wordprocessingml.document") {
+            supportedTypes.append(wordType)
+        }
+        // Legacy DOC format (limited support - will show warning)
+        if let docType = UTType(filenameExtension: "doc") {
+            supportedTypes.append(docType)
         }
 
         super.init(forOpeningContentTypes: supportedTypes, asCopy: true)
