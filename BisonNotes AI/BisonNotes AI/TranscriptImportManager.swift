@@ -594,10 +594,15 @@ class TranscriptImportManager: NSObject, ObservableObject {
         transcriptEntry.createdAt = Date()
         transcriptEntry.lastModified = Date()
 
-        // Encode segments to JSON
-        if let segmentsData = try? JSONEncoder().encode(segments),
-           let segmentsString = String(data: segmentsData, encoding: .utf8) {
+        // Encode segments to JSON with proper error handling
+        do {
+            let segmentsData = try JSONEncoder().encode(segments)
+            guard let segmentsString = String(data: segmentsData, encoding: .utf8) else {
+                throw TranscriptImportError.databaseError("Failed to encode segments to UTF-8 string")
+            }
             transcriptEntry.segments = segmentsString
+        } catch let encodingError {
+            throw TranscriptImportError.databaseError("Failed to encode transcript segments: \(encodingError.localizedDescription)")
         }
 
         // No speaker mappings for imported transcripts (users can edit later)
