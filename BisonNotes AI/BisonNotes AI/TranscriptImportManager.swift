@@ -224,14 +224,19 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // We'll use Apple's built-in Archive API (available from Foundation)
         let fileManager = FileManager.default
 
+        // Read the DOCX file as data
+        let docxData = try Data(contentsOf: url)
+
+        // Create a temporary directory for extraction
+        let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        // Ensure cleanup happens on ALL exit paths (success or error)
+        defer {
+            try? fileManager.removeItem(at: tempDir)
+        }
+
         do {
-            // Read the DOCX file as data
-            let docxData = try Data(contentsOf: url)
-
-            // Create a temporary directory for extraction
-            let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-            try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
-
             // Write the data to a temporary zip file
             let zipURL = tempDir.appendingPathComponent("document.zip")
             try docxData.write(to: zipURL)
@@ -257,9 +262,6 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
             // Extract text from XML
             let text = extractTextFromWordXML(xmlString)
-
-            // Clean up temp directory
-            try? fileManager.removeItem(at: tempDir)
 
             if text.isEmpty {
                 throw TranscriptImportError.readFailed("DOCX contains no readable text")
