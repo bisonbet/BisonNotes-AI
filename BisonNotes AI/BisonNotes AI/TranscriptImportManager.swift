@@ -89,7 +89,13 @@ class TranscriptImportManager: NSObject, ObservableObject {
     func importTranscript(text: String, name: String? = nil) async throws -> UUID {
         let transcriptName = name ?? "Imported Transcript \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short))"
 
-        // Create dummy audio file
+        // Check for duplicates BEFORE creating dummy audio file to avoid storage leak
+        if let existingId = try await checkForDuplicateRecording(name: transcriptName) {
+            print("⏭️ Recording entry already exists: \(transcriptName)")
+            return existingId
+        }
+
+        // Create dummy audio file (only if no duplicate found)
         let dummyAudioURL = try await createDummyAudioFile(name: transcriptName)
 
         // Parse text into transcript segments
@@ -113,6 +119,20 @@ class TranscriptImportManager: NSObject, ObservableObject {
     }
 
     // MARK: - Private Methods
+
+    /// Check if a recording with the same name already exists
+    private func checkForDuplicateRecording(name: String) async throws -> UUID? {
+        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "recordingName == %@", name)
+
+        do {
+            let existingRecordings = try context.fetch(fetchRequest)
+            return existingRecordings.first?.id
+        } catch {
+            print("❌ Error checking for existing recording: \(error)")
+            throw TranscriptImportError.databaseError("Failed to check existing recordings: \(error.localizedDescription)")
+        }
+    }
 
     private func importTranscriptFile(from sourceURL: URL) async throws {
         // Validate file extension
@@ -490,24 +510,8 @@ class TranscriptImportManager: NSObject, ObservableObject {
     }
 
     /// Create a recording entry for the imported transcript
+    /// Note: Duplicate check should be done before calling this function to avoid orphaned audio files
     private func createRecordingEntryForImportedTranscript(audioURL: URL, name: String) async throws -> UUID {
-        // Check if recording already exists
-        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "recordingName == %@", name)
-
-        do {
-            let existingRecordings = try context.fetch(fetchRequest)
-            if !existingRecordings.isEmpty {
-                print("⏭️ Recording entry already exists: \(name)")
-                if let existingId = existingRecordings.first?.id {
-                    return existingId
-                }
-            }
-        } catch {
-            print("❌ Error checking for existing recording: \(error)")
-            throw TranscriptImportError.databaseError("Failed to check existing recordings: \(error.localizedDescription)")
-        }
-
         // Create new recording entry
         let recordingEntry = RecordingEntry(context: context)
         let recordingId = UUID()
