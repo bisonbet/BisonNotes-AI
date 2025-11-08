@@ -11,6 +11,7 @@ import CoreData
 import PDFKit
 import UniformTypeIdentifiers
 import Compression
+import zlib
 
 @MainActor
 class TranscriptImportManager: NSObject, ObservableObject {
@@ -87,15 +88,12 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     /// Import a single transcript from text content
     func importTranscript(text: String, name: String? = nil) async throws -> UUID {
-        let transcriptName = name ?? "Imported Transcript \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short))"
+        let baseName = name ?? "Imported Transcript \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short))"
 
-        // Check for duplicates BEFORE creating dummy audio file to avoid storage leak
-        if let existingId = try await checkForDuplicateRecording(name: transcriptName) {
-            print("⏭️ Recording entry already exists: \(transcriptName)")
-            return existingId
-        }
+        // Generate unique name if duplicates exist (appends " (2)", " (3)", etc.)
+        let transcriptName = try await generateUniqueRecordingName(baseName: baseName)
 
-        // Create dummy audio file (only if no duplicate found)
+        // Create dummy audio file with unique name
         let dummyAudioURL = try await createDummyAudioFile(name: transcriptName)
 
         // Parse text into transcript segments
@@ -113,21 +111,39 @@ class TranscriptImportManager: NSObject, ObservableObject {
             segments: segments
         )
 
-        print("✅ Successfully imported transcript: \(transcriptName)")
+        if transcriptName != baseName {
+            print("✅ Successfully imported transcript with unique name: \(transcriptName) (original: \(baseName))")
+        } else {
+            print("✅ Successfully imported transcript: \(transcriptName)")
+        }
 
         return recordingId
     }
 
     // MARK: - Private Methods
 
-    /// Check if a recording with the same name already exists
-    private func checkForDuplicateRecording(name: String) async throws -> UUID? {
+    /// Generate a unique recording name by appending " (2)", " (3)", etc. if duplicates exist
+    private func generateUniqueRecordingName(baseName: String) async throws -> String {
+        var uniqueName = baseName
+        var counter = 2
+
+        // Keep checking until we find a unique name
+        while try await recordingExists(name: uniqueName) {
+            uniqueName = "\(baseName) (\(counter))"
+            counter += 1
+        }
+
+        return uniqueName
+    }
+
+    /// Check if a recording with the given name already exists
+    private func recordingExists(name: String) async throws -> Bool {
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "recordingName == %@", name)
 
         do {
-            let existingRecordings = try context.fetch(fetchRequest)
-            return existingRecordings.first?.id
+            let count = try context.count(for: fetchRequest)
+            return count > 0
         } catch {
             print("❌ Error checking for existing recording: \(error)")
             throw TranscriptImportError.databaseError("Failed to check existing recordings: \(error.localizedDescription)")
