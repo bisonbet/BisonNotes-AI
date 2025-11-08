@@ -27,6 +27,24 @@ class TranscriptImportManager: NSObject, ObservableObject {
     private let supportedTextExtensions = ["txt", "text", "md", "markdown"]
     private let supportedDocumentExtensions = ["pdf", "doc", "docx"]
 
+    // MARK: - Constants
+
+    // Dummy audio file settings
+    private enum DummyAudioConstants {
+        static let sampleRate: Double = 8000.0          // Low sample rate for minimal file size
+        static let numberOfChannels: Int = 1             // Mono audio
+        static let bitRate: Int = 8000                   // Very low bitrate (8 kbps)
+        static let durationSeconds: Double = 0.1         // 0.1 seconds of silence
+        static let durationNanoseconds: UInt64 = 100_000_000  // 0.1 seconds in nanoseconds
+    }
+
+    // Text parsing constants
+    private enum TextParsingConstants {
+        static let averageWordsPerMinute: Double = 150.0  // Average speaking rate
+        static let secondsPerMinute: Double = 60.0        // Conversion factor
+        static let minimumSegmentDuration: Double = 1.0   // Minimum duration per segment
+    }
+
     var supportedExtensions: [String] {
         return supportedTextExtensions + supportedDocumentExtensions
     }
@@ -241,8 +259,11 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // We'll use Apple's built-in Archive API (available from Foundation)
         let fileManager = FileManager.default
 
+        print("📄 Starting DOCX extraction for: \(url.lastPathComponent)")
+
         // Read the DOCX file as data
         let docxData = try Data(contentsOf: url)
+        print("📄 DOCX file size: \(docxData.count) bytes")
 
         // Create a temporary directory for extraction
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -271,24 +292,31 @@ class TranscriptImportManager: NSObject, ObservableObject {
             // Read the document.xml file
             let documentXMLPath = tempDir.appendingPathComponent("word/document.xml")
             guard fileManager.fileExists(atPath: documentXMLPath.path) else {
+                print("❌ DOCX extraction failed: document.xml not found at \(documentXMLPath.path)")
                 throw TranscriptImportError.readFailed("Invalid DOCX structure: document.xml not found")
             }
 
             let xmlData = try Data(contentsOf: documentXMLPath)
+            print("📄 Extracted document.xml: \(xmlData.count) bytes")
             let xmlString = String(data: xmlData, encoding: .utf8) ?? ""
 
             // Extract text from XML
             let text = extractTextFromWordXML(xmlString)
+            print("📄 Extracted text length: \(text.count) characters")
 
             if text.isEmpty {
+                print("❌ DOCX extraction failed: no readable text found")
                 throw TranscriptImportError.readFailed("DOCX contains no readable text")
             }
 
+            print("✅ Successfully extracted text from DOCX")
             return text
 
         } catch let error as TranscriptImportError {
+            print("❌ DOCX extraction error: \(error)")
             throw error
         } catch {
+            print("❌ Unexpected DOCX extraction error: \(error.localizedDescription)")
             throw TranscriptImportError.readFailed("Failed to extract text from DOCX: \(error.localizedDescription)")
         }
     }
@@ -297,8 +325,11 @@ class TranscriptImportManager: NSObject, ObservableObject {
     /// Note: This is a basic implementation. For production use with complex DOCX files,
     /// consider adding ZIPFoundation or similar library to handle all compression methods.
     private func extractDOCXManually(from zipURL: URL, to destURL: URL) async throws {
+        print("🔍 Parsing ZIP structure for DOCX extraction...")
+
         // Read the ZIP file
         let zipData = try Data(contentsOf: zipURL)
+        print("🔍 ZIP data size: \(zipData.count) bytes")
 
         // Parse ZIP structure to find document.xml
         // ZIP file format: local file headers followed by central directory
@@ -308,6 +339,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
         var offset = 0
         let bytes = [UInt8](zipData)
+        var filesFound = 0
 
         while offset < bytes.count - 30 {
             // Check for local file header signature
@@ -331,13 +363,18 @@ class TranscriptImportManager: NSObject, ObservableObject {
                 if fileNameEnd <= bytes.count {
                     let fileNameData = Data(bytes[fileNameStart..<fileNameEnd])
                     if let fileName = String(data: fileNameData, encoding: .utf8) {
+                        filesFound += 1
+                        print("🔍 Found ZIP entry: \(fileName) (compression: \(compressionMethod), size: \(compressedSize))")
+
                         // Check if this is the document.xml file
                         if fileName == "word/document.xml" {
+                            print("🔍 Found target file: word/document.xml")
                             // Extract the file content
                             let dataStart = fileNameEnd + extraFieldLength
 
                             // Validate dataStart to prevent crash from corrupted headers
                             guard dataStart <= bytes.count else {
+                                print("❌ Corrupted DOCX: invalid header field length (dataStart: \(dataStart), bytes.count: \(bytes.count))")
                                 throw TranscriptImportError.readFailed("Corrupted DOCX file: invalid header field length. Try converting to PDF or TXT first.")
                             }
 
@@ -346,18 +383,25 @@ class TranscriptImportManager: NSObject, ObservableObject {
                             // Validate the range is valid (dataStart < dataEnd)
                             if dataEnd <= bytes.count && dataStart < dataEnd {
                                 var fileData = Data(bytes[dataStart..<dataEnd])
+                                print("🔍 Extracting data range: \(dataStart)..<\(dataEnd)")
 
                                 // Handle compression
                                 if compressionMethod == 8 {
+                                    print("🔍 Decompressing DEFLATE data (\(fileData.count) bytes)...")
                                     // DEFLATE compression - use Compression framework
                                     if let decompressed = decompressZlibData(fileData) {
+                                        print("✅ Decompressed to \(decompressed.count) bytes")
                                         fileData = decompressed
                                     } else {
+                                        print("❌ DEFLATE decompression failed")
                                         throw TranscriptImportError.readFailed("Failed to decompress DOCX content. Try converting to PDF or TXT first.")
                                     }
                                 } else if compressionMethod != 0 {
                                     // Unsupported compression method
+                                    print("❌ Unsupported compression method: \(compressionMethod)")
                                     throw TranscriptImportError.readFailed("Unsupported DOCX compression. Try converting to PDF or TXT first.")
+                                } else {
+                                    print("🔍 No compression (stored)")
                                 }
 
                                 // Create directory structure
@@ -367,9 +411,12 @@ class TranscriptImportManager: NSObject, ObservableObject {
                                 // Write the extracted file
                                 let outputURL = destURL.appendingPathComponent(fileName)
                                 try fileData.write(to: outputURL)
+                                print("✅ Successfully extracted document.xml (\(fileData.count) bytes)")
 
                                 // Successfully extracted document.xml
                                 return
+                            } else {
+                                print("❌ Invalid data range: dataStart=\(dataStart), dataEnd=\(dataEnd), bytes.count=\(bytes.count)")
                             }
                         }
                     }
@@ -382,6 +429,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             }
         }
 
+        print("❌ document.xml not found after scanning \(filesFound) ZIP entries")
         throw TranscriptImportError.readFailed("Could not find document.xml in DOCX file. Try converting to PDF or TXT first.")
     }
 
@@ -464,18 +512,18 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // Create audio settings for minimal file size
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 8000.0,  // Low sample rate
-            AVNumberOfChannelsKey: 1,   // Mono
+            AVSampleRateKey: DummyAudioConstants.sampleRate,
+            AVNumberOfChannelsKey: DummyAudioConstants.numberOfChannels,
             AVEncoderAudioQualityKey: AVAudioQuality.min.rawValue,
-            AVEncoderBitRateKey: 8000   // Very low bitrate
+            AVEncoderBitRateKey: DummyAudioConstants.bitRate
         ]
 
         // Create a very short audio file (0.1 seconds of silence)
         let audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
         audioRecorder.record()
 
-        // Record for 0.1 seconds
-        try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+        // Record for configured duration
+        try await Task.sleep(nanoseconds: DummyAudioConstants.durationNanoseconds)
 
         audioRecorder.stop()
 
@@ -521,10 +569,10 @@ class TranscriptImportManager: NSObject, ObservableObject {
                 }
             }
 
-            // Estimate duration based on word count (average speaking rate: ~150 words/minute)
+            // Estimate duration based on word count using average speaking rate
             let words = text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-            let estimatedDuration = Double(words.count) / 150.0 * 60.0 // Convert to seconds
-            let duration = max(estimatedDuration, 1.0) // Minimum 1 second per segment
+            let estimatedDuration = Double(words.count) / TextParsingConstants.averageWordsPerMinute * TextParsingConstants.secondsPerMinute
+            let duration = max(estimatedDuration, TextParsingConstants.minimumSegmentDuration)
 
             let segment = TranscriptSegment(
                 speaker: speaker,
