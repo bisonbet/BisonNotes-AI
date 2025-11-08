@@ -15,14 +15,19 @@ import UniformTypeIdentifiers
 class DocumentPickerCoordinator: NSObject, ObservableObject {
     @Published var selectedURLs: [URL] = []
     @Published var isShowingPicker = false
-    
+
     private var completionHandler: (([URL]) -> Void)?
-    
+
     func selectAudioFiles(completion: @escaping ([URL]) -> Void) {
         self.completionHandler = completion
         self.isShowingPicker = true
     }
-    
+
+    func selectTextFiles(completion: @escaping ([URL]) -> Void) {
+        self.completionHandler = completion
+        self.isShowingPicker = true
+    }
+
     func handleSelectedURLs(_ urls: [URL]) {
         selectedURLs = urls
         completionHandler?(urls)
@@ -84,12 +89,61 @@ extension DocumentPickerCoordinator: UIDocumentPickerDelegate {
 struct AudioDocumentPicker: UIViewControllerRepresentable {
     @Binding var isPresented: Bool
     let coordinator: DocumentPickerCoordinator
-    
+
     func makeUIViewController(context: Context) -> AudioDocumentPickerViewController {
         return AudioDocumentPickerViewController(coordinator: coordinator)
     }
-    
+
     func updateUIViewController(_ uiViewController: AudioDocumentPickerViewController, context: Context) {
+        // No updates needed
+    }
+}
+
+// MARK: - Text Document Picker View Controller
+
+class TextDocumentPickerViewController: UIDocumentPickerViewController {
+    private let coordinator: DocumentPickerCoordinator
+
+    init(coordinator: DocumentPickerCoordinator) {
+        self.coordinator = coordinator
+
+        // Create supported text types
+        var supportedTypes: [UTType] = [UTType.plainText, UTType.text]
+
+        // Add specific text formats if available
+        if let txtType = UTType(filenameExtension: "txt") {
+            supportedTypes.append(txtType)
+        }
+        if let mdType = UTType(filenameExtension: "md") {
+            supportedTypes.append(mdType)
+        }
+        if let markdownType = UTType(filenameExtension: "markdown") {
+            supportedTypes.append(markdownType)
+        }
+
+        super.init(forOpeningContentTypes: supportedTypes, asCopy: true)
+
+        self.delegate = coordinator
+        self.allowsMultipleSelection = true
+        self.shouldShowFileExtensions = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+// MARK: - SwiftUI Text Document Picker
+
+struct TextDocumentPicker: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let coordinator: DocumentPickerCoordinator
+
+    func makeUIViewController(context: Context) -> TextDocumentPickerViewController {
+        return TextDocumentPickerViewController(coordinator: coordinator)
+    }
+
+    func updateUIViewController(_ uiViewController: TextDocumentPickerViewController, context: Context) {
         // No updates needed
     }
 } 

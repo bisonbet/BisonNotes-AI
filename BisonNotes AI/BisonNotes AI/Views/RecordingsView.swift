@@ -10,7 +10,9 @@ import SwiftUI
 struct RecordingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @StateObject private var importManager = FileImportManager()
+    @StateObject private var transcriptImportManager = TranscriptImportManager()
     @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
+    @StateObject private var textDocumentPickerCoordinator = DocumentPickerCoordinator()
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [AudioRecordingFile] = []
     @State private var showingRecordingsList = false
@@ -121,6 +123,34 @@ struct RecordingsView: View {
                             )
                             .padding(.horizontal, 40)
                         }
+
+                        Button(action: {
+                            // Trigger document picker for text files
+                            textDocumentPickerCoordinator.selectTextFiles { urls in
+                                if !urls.isEmpty {
+                                    Task {
+                                        await transcriptImportManager.importTranscriptFiles(from: urls)
+                                    }
+                                }
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "doc.text")
+                                    .font(.title3)
+                                Text("Import Transcripts")
+                                    .font(.title3)
+                                    .fontWeight(.semibold)
+                            }
+                            .foregroundColor(.purple)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.purple, lineWidth: 2)
+                                    .background(Color.purple.opacity(0.1))
+                            )
+                            .padding(.horizontal, 40)
+                        }
                         
                         if recorderVM.isRecording {
                             VStack(spacing: 8) {
@@ -162,8 +192,18 @@ struct RecordingsView: View {
             .sheet(isPresented: $documentPickerCoordinator.isShowingPicker) {
                 AudioDocumentPicker(isPresented: $documentPickerCoordinator.isShowingPicker, coordinator: documentPickerCoordinator)
             }
+            .sheet(isPresented: $textDocumentPickerCoordinator.isShowingPicker) {
+                TextDocumentPicker(isPresented: $textDocumentPickerCoordinator.isShowingPicker, coordinator: textDocumentPickerCoordinator)
+            }
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()
+            }
+            .alert("Transcript Import Results", isPresented: $transcriptImportManager.showingImportAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                if let results = transcriptImportManager.importResults {
+                    Text(results.summary)
+                }
             }
         }
     }
