@@ -105,11 +105,28 @@ class TranscriptImportManager: NSObject, ObservableObject {
             name: transcriptName
         )
 
-        // Create transcript entry
-        try await createTranscriptEntry(
-            for: recordingId,
-            segments: segments
-        )
+        // Create transcript entry with cleanup on failure
+        do {
+            try await createTranscriptEntry(
+                for: recordingId,
+                segments: segments
+            )
+        } catch {
+            // Clean up orphaned data if transcript creation fails
+            print("❌ Transcript creation failed, cleaning up orphaned data...")
+
+            // Delete the recording entry from Core Data
+            if let recording = getRecording(id: recordingId) {
+                context.delete(recording)
+                try? context.save()
+            }
+
+            // Delete the dummy audio file from disk
+            try? FileManager.default.removeItem(at: dummyAudioURL)
+
+            // Rethrow the original error
+            throw error
+        }
 
         if transcriptName != baseName {
             print("✅ Successfully imported transcript with unique name: \(transcriptName) (original: \(baseName))")
@@ -318,9 +335,16 @@ class TranscriptImportManager: NSObject, ObservableObject {
                         if fileName == "word/document.xml" {
                             // Extract the file content
                             let dataStart = fileNameEnd + extraFieldLength
+
+                            // Validate dataStart to prevent crash from corrupted headers
+                            guard dataStart <= bytes.count else {
+                                throw TranscriptImportError.readFailed("Corrupted DOCX file: invalid header field length. Try converting to PDF or TXT first.")
+                            }
+
                             let dataEnd = min(dataStart + compressedSize, bytes.count)
 
-                            if dataEnd <= bytes.count {
+                            // Validate the range is valid (dataStart < dataEnd)
+                            if dataEnd <= bytes.count && dataStart < dataEnd {
                                 var fileData = Data(bytes[dataStart..<dataEnd])
 
                                 // Handle compression
