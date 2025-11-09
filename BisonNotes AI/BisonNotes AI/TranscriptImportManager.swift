@@ -435,6 +435,22 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     /// Decompress zlib/DEFLATE compressed data
     private func decompressZlibData(_ data: Data) -> Data? {
+        // Try Apple's Compression framework first (most reliable)
+        if let decompressed = try? (data as NSData).decompressed(using: .zlib) as Data {
+            return decompressed
+        }
+
+        // Fall back to raw DEFLATE if zlib wrapper fails
+        if let decompressed = try? (data as NSData).decompressed(using: .lzfse) as Data {
+            return decompressed
+        }
+
+        // Fall back to manual zlib decompression with raw DEFLATE
+        return decompressWithZlib(data)
+    }
+
+    /// Manual zlib decompression fallback
+    private func decompressWithZlib(_ data: Data) -> Data? {
         let bufferSize = 1024 * 64  // 64KB buffer
         var decompressed = Data()
 
@@ -445,10 +461,14 @@ class TranscriptImportManager: NSObject, ObservableObject {
             stream.next_in = UnsafeMutablePointer<Bytef>(mutating: baseAddress.assumingMemoryBound(to: Bytef.self))
             stream.avail_in = uint(data.count)
 
-            // Initialize for DEFLATE decompression with automatic header detection
-            var status = inflateInit2_(&stream, MAX_WBITS + 32, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
+            // Initialize for raw DEFLATE decompression (negative window bits = no zlib header)
+            // This is standard for ZIP files
+            var status = inflateInit2_(&stream, -MAX_WBITS, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
 
-            guard status == Z_OK else { return }
+            guard status == Z_OK else {
+                print("⚠️ inflateInit2 failed with status: \(status)")
+                return
+            }
 
             defer {
                 inflateEnd(&stream)
@@ -456,10 +476,13 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
             repeat {
                 var buffer = [UInt8](repeating: 0, count: bufferSize)
-                stream.next_out = UnsafeMutablePointer<Bytef>(&buffer)
-                stream.avail_out = uint(bufferSize)
 
-                status = inflate(&stream, Z_NO_FLUSH)
+                buffer.withUnsafeMutableBytes { bufferPtr in
+                    stream.next_out = bufferPtr.baseAddress?.assumingMemoryBound(to: Bytef.self)
+                    stream.avail_out = uint(bufferSize)
+
+                    status = inflate(&stream, Z_NO_FLUSH)
+                }
 
                 let bytesDecompressed = bufferSize - Int(stream.avail_out)
                 if bytesDecompressed > 0 {
@@ -469,6 +492,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             } while status == Z_OK
 
             if status != Z_STREAM_END {
+                print("⚠️ Decompression ended with status: \(status) (expected Z_STREAM_END=1)")
                 decompressed.removeAll()
             }
         }
@@ -518,24 +542,41 @@ class TranscriptImportManager: NSObject, ObservableObject {
             AVEncoderBitRateKey: DummyAudioConstants.bitRate
         ]
 
+        // Set up audio session
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(.playAndRecord, mode: .default)
+        try audioSession.setActive(true)
+
         // Create a very short audio file (0.1 seconds of silence)
         let audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
-        audioRecorder.record()
+        audioRecorder.prepareToRecord()
+
+        guard audioRecorder.record() else {
+            throw TranscriptImportError.dummyAudioCreationFailed("Failed to start audio recording")
+        }
 
         // Record for configured duration
         try await Task.sleep(nanoseconds: DummyAudioConstants.durationNanoseconds)
 
         audioRecorder.stop()
 
+        // Deactivate audio session
+        try? audioSession.setActive(false)
+
         // Verify file was created
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw TranscriptImportError.dummyAudioCreationFailed("Failed to create dummy audio file")
         }
 
-        // Verify file size is reasonable (should be around 1KB or less)
+        // Verify file size is reasonable (should be at least 1KB for valid audio)
         let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
         let fileSize = attributes[.size] as? Int64 ?? 0
         print("📝 Created dummy audio file: \(filename) (\(fileSize) bytes)")
+
+        // Ensure file is valid by checking if it can be opened
+        if fileSize < 100 {
+            print("⚠️ Dummy audio file seems too small (\(fileSize) bytes), may be invalid")
+        }
 
         return fileURL
     }
@@ -715,7 +756,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             let duration = try await asset.load(.duration)
             return CMTimeGetSeconds(duration)
         } catch {
-            print("❌ Error getting audio duration: \(error)")
+            print("ℹ️ Using default duration for dummy audio file (error: \(error.localizedDescription))")
             return 0.1 // Default to 0.1 seconds for dummy file
         }
     }

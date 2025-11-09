@@ -131,9 +131,7 @@ class TextDocumentPickerViewController: UIDocumentPickerViewController {
             supportedTypes.append(docxType)
         }
         // Also try the standard Microsoft Word type
-        if let wordType = UTType(importedAs: "org.openxmlformats.wordprocessingml.document") {
-            supportedTypes.append(wordType)
-        }
+        supportedTypes.append(UTType(importedAs: "org.openxmlformats.wordprocessingml.document"))
         // Legacy DOC format (limited support - will show warning)
         if let docType = UTType(filenameExtension: "doc") {
             supportedTypes.append(docType)
