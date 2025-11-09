@@ -45,6 +45,13 @@ class TranscriptImportManager: NSObject, ObservableObject {
         static let minimumSegmentDuration: Double = 1.0   // Minimum duration per segment
     }
 
+    // File size limits (security)
+    private enum FileSizeLimits {
+        static let maxTextFileSize: Int64 = 10 * 1024 * 1024      // 10 MB for text files
+        static let maxPDFFileSize: Int64 = 50 * 1024 * 1024       // 50 MB for PDFs
+        static let maxDOCXFileSize: Int64 = 50 * 1024 * 1024      // 50 MB for DOCX files
+    }
+
     var supportedExtensions: [String] {
         return supportedTextExtensions + supportedDocumentExtensions
     }
@@ -161,9 +168,13 @@ class TranscriptImportManager: NSObject, ObservableObject {
     private func generateUniqueRecordingName(baseName: String) async throws -> String {
         var uniqueName = baseName
         var counter = 2
+        let maxRetries = 1000 // Prevent infinite loop
 
         // Keep checking until we find a unique name
         while try await recordingExists(name: uniqueName) {
+            guard counter <= maxRetries else {
+                throw TranscriptImportError.databaseError("Unable to generate unique name after \(maxRetries) attempts")
+            }
             uniqueName = "\(baseName) (\(counter))"
             counter += 1
         }
@@ -185,12 +196,40 @@ class TranscriptImportManager: NSObject, ObservableObject {
         }
     }
 
+    /// Validate file size to prevent memory exhaustion
+    private func validateFileSize(url: URL, fileExtension: String) throws {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard let fileSize = attributes[.size] as? Int64 else {
+            throw TranscriptImportError.readFailed("Unable to determine file size")
+        }
+
+        let maxSize: Int64
+        if supportedTextExtensions.contains(fileExtension) {
+            maxSize = FileSizeLimits.maxTextFileSize
+        } else if fileExtension == "pdf" {
+            maxSize = FileSizeLimits.maxPDFFileSize
+        } else if fileExtension == "docx" {
+            maxSize = FileSizeLimits.maxDOCXFileSize
+        } else {
+            maxSize = FileSizeLimits.maxTextFileSize
+        }
+
+        guard fileSize <= maxSize else {
+            let sizeMB = Double(fileSize) / (1024 * 1024)
+            let maxMB = Double(maxSize) / (1024 * 1024)
+            throw TranscriptImportError.readFailed("File too large: \(String(format: "%.1f", sizeMB)) MB (maximum: \(String(format: "%.0f", maxMB)) MB)")
+        }
+    }
+
     private func importTranscriptFile(from sourceURL: URL) async throws {
         // Validate file extension
         let fileExtension = sourceURL.pathExtension.lowercased()
         guard supportedExtensions.contains(fileExtension) else {
             throw TranscriptImportError.unsupportedFormat(fileExtension)
         }
+
+        // Validate file size before loading
+        try validateFileSize(url: sourceURL, fileExtension: fileExtension)
 
         // Extract text based on file type
         let text: String
@@ -509,6 +548,8 @@ class TranscriptImportManager: NSObject, ObservableObject {
         if let data = xmlString.data(using: .utf8) {
             let xmlParser = XMLParser(data: data)
             xmlParser.delegate = parser
+            // Security: Disable external entity resolution to prevent XXE attacks
+            xmlParser.shouldResolveExternalEntities = false
             xmlParser.parse()
             text = parser.extractedText
         }
@@ -542,10 +583,26 @@ class TranscriptImportManager: NSObject, ObservableObject {
             AVEncoderBitRateKey: DummyAudioConstants.bitRate
         ]
 
-        // Set up audio session
+        // Set up audio session - save previous state for restoration
         let audioSession = AVAudioSession.sharedInstance()
+        let previousCategory = audioSession.category
+        let previousMode = audioSession.mode
+        let wasActive = audioSession.isOtherAudioPlaying
+
         try audioSession.setCategory(.playAndRecord, mode: .default)
         try audioSession.setActive(true)
+
+        defer {
+            // Restore previous audio session state
+            do {
+                try audioSession.setCategory(previousCategory, mode: previousMode)
+                if !wasActive {
+                    try audioSession.setActive(false)
+                }
+            } catch {
+                print("⚠️ Failed to restore audio session state: \(error)")
+            }
+        }
 
         // Create a very short audio file (0.1 seconds of silence)
         let audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
@@ -559,9 +616,6 @@ class TranscriptImportManager: NSObject, ObservableObject {
         try await Task.sleep(nanoseconds: DummyAudioConstants.durationNanoseconds)
 
         audioRecorder.stop()
-
-        // Deactivate audio session
-        try? audioSession.setActive(false)
 
         // Verify file was created
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
