@@ -119,31 +119,46 @@ class OpenAISummarizationService: ObservableObject {
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         // First classify the content
         let contentType = try await classifyContent(text)
-        
+
         // Create a comprehensive prompt for all tasks
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .complete, text: text)
-        
+
         let messages = [
             ChatMessage(role: "system", content: systemPrompt),
             ChatMessage(role: "user", content: userPrompt)
         ]
-        
+
+        // IMPORTANT: For OpenAI Compatible APIs, don't use response_format
+        // LiteLLM and other routers may proxy to various providers (Bedrock, Anthropic, Ollama, etc.)
+        // and response_format support varies widely:
+        // - Some providers don't support it at all
+        // - Others interpret it differently (e.g., Bedrock wraps in {"json": {...}})
+        // - Some trigger tool calling instead of direct JSON
+        //
+        // Best practice: Only use response_format with official OpenAI API
+        // For all others, rely on explicit prompts and flexible parsing
+        let useResponseFormat = config.baseURL.contains("api.openai.com")
+
         let request = OpenAIChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
             temperature: config.temperature,
             maxCompletionTokens: config.maxTokens,
-            responseFormat: ResponseFormat.json
+            responseFormat: useResponseFormat ? ResponseFormat.json : nil
         )
-        
+
+        print("🔧 Provider: \(config.baseURL)")
+        print("🔧 Using response_format: \(useResponseFormat ? "json_object" : "none (flexible parsing)")")
+
         let response = try await makeAPICall(request: request)
-        
+
         guard let choice = response.choices.first else {
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI - No response choices")
         }
-        
-        // With structured output, we get guaranteed valid JSON
+
+        // Parse the JSON response with flexible format handling
+        // Supports: standard format, wrapped format, markdown code blocks, plain text fallback
         let result = try OpenAIResponseParser.parseCompleteResponseFromJSON(choice.message.content)
         return (result.summary, result.tasks, result.reminders, result.titles, contentType)
     }
@@ -162,35 +177,97 @@ class OpenAISummarizationService: ObservableObject {
     }
     
     // MARK: - Static Methods
-    
+
+    /// Fetch predefined OpenAI models (for official OpenAI API)
     static func fetchModels(apiKey: String, baseURL: String) async throws -> [OpenAISummarizationModel] {
         guard !apiKey.isEmpty else {
             throw SummarizationError.aiServiceUnavailable(service: "API key is empty")
         }
-        
+
         guard let url = URL(string: "\(baseURL)/models") else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid base URL")
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+
         let session = URLSession.shared
         let (_, response) = try await session.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid response")
         }
-        
+
         guard httpResponse.statusCode == 200 else {
             throw SummarizationError.aiServiceUnavailable(service: "HTTP \(httpResponse.statusCode)")
         }
-        
-        // For now, return the predefined models
-        // In a full implementation, you would parse the actual API response
+
+        // For OpenAI, return the predefined models
+        // The actual API returns many models but we only support specific ones
         return OpenAISummarizationModel.allCases
+    }
+
+    /// Fetch available models from an OpenAI-compatible API (for third-party providers)
+    /// Returns raw model IDs that can be used with any compatible API
+    static func fetchCompatibleModels(apiKey: String, baseURL: String) async throws -> [String] {
+        guard !apiKey.isEmpty else {
+            throw SummarizationError.aiServiceUnavailable(service: "API key is empty")
+        }
+
+        // Normalize base URL - remove trailing slash if present
+        var normalizedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedBaseURL.hasSuffix("/") {
+            normalizedBaseURL.removeLast()
+        }
+
+        guard let url = URL(string: "\(normalizedBaseURL)/models") else {
+            throw SummarizationError.aiServiceUnavailable(service: "Invalid base URL: \(baseURL)")
+        }
+
+        print("🔍 Fetching models from: \(url.absoluteString)")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15.0
+
+        let session = URLSession.shared
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SummarizationError.aiServiceUnavailable(service: "Invalid response from server")
+        }
+
+        print("📡 Models endpoint response status: \(httpResponse.statusCode)")
+
+        guard httpResponse.statusCode == 200 else {
+            // Try to parse error response
+            if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                throw SummarizationError.aiServiceUnavailable(service: "API Error: \(errorResponse.error.message)")
+            }
+
+            let responseString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw SummarizationError.aiServiceUnavailable(service: "HTTP \(httpResponse.statusCode): \(responseString)")
+        }
+
+        // Parse the models response
+        do {
+            let modelsResponse = try JSONDecoder().decode(OpenAIModelsListResponse.self, from: data)
+            let modelIds = modelsResponse.data.map { $0.id }.sorted()
+
+            print("✅ Successfully fetched \(modelIds.count) models from OpenAI-compatible API")
+            if !modelIds.isEmpty {
+                print("📋 Available models: \(modelIds.prefix(10).joined(separator: ", "))\(modelIds.count > 10 ? "..." : "")")
+            }
+
+            return modelIds
+        } catch {
+            print("❌ Failed to parse models response: \(error)")
+            throw SummarizationError.aiServiceUnavailable(service: "Failed to parse models response: \(error.localizedDescription)")
+        }
     }
     
     // MARK: - Private Helper Methods
@@ -223,10 +300,11 @@ class OpenAISummarizationService: ObservableObject {
         do {
             let encoder = JSONEncoder()
             urlRequest.httpBody = try encoder.encode(request)
-            
+
             // Log the request details for debugging
             if let requestBody = String(data: urlRequest.httpBody!, encoding: .utf8) {
-                print("📤 OpenAI API Request Body: \(requestBody)")
+                print("📤 OpenAI API Request Body (first 300 chars): \(requestBody.prefix(300))...")
+                print("📊 Total request size: \(requestBody.count) characters")
             }
         } catch {
             throw SummarizationError.aiServiceUnavailable(service: "Failed to encode request: \(error.localizedDescription)")

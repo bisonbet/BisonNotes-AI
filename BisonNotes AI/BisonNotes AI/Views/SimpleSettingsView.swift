@@ -20,7 +20,7 @@ enum ProcessingOption: String, CaseIterable {
         case .appleIntelligence:
             return "Apple Intelligence (On-Device)"
         case .chooseLater:
-            return "Choose Later"
+            return "Advanced & Other Options"
         }
     }
 
@@ -31,7 +31,7 @@ enum ProcessingOption: String, CaseIterable {
         case .appleIntelligence:
             return "Private, on-device processing (limited)"
         case .chooseLater:
-            return "Set up processing options later"
+            return "Configure additional providers later"
         }
     }
 }
@@ -253,11 +253,11 @@ struct SimpleSettingsView: View {
     private var chooseLaterSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Choose Later")
+                Text("Advanced & Other Options")
                     .font(.headline)
                     .foregroundColor(.primary)
 
-                Text("Skip initial setup and configure processing options later from the app settings.")
+                Text("Skip initial setup and configure additional processing providers later from the app settings.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -269,12 +269,12 @@ struct SimpleSettingsView: View {
                     .foregroundColor(.primary)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    FeatureBullet(text: "OpenAI - Cloud-based, high accuracy")
-                    FeatureBullet(text: "Google AI Studio - Advanced AI processing")
-                    FeatureBullet(text: "AWS Bedrock - Enterprise-grade AI")
-                    FeatureBullet(text: "Ollama - Local AI models")
-                    FeatureBullet(text: "Apple Intelligence - On-device privacy")
-                    FeatureBullet(text: "Local Whisper - Self-hosted transcription")
+                    FeatureBullet(text: "OpenAI Compatible - Use LiteLLM, vLLM, or similar proxies")
+                    FeatureBullet(text: "AWS Transcribe - Cloud-based transcription service")
+                    FeatureBullet(text: "Google AI Studio - Advanced Gemini AI processing")
+                    FeatureBullet(text: "AWS Bedrock - Enterprise-grade Claude AI")
+                    FeatureBullet(text: "Ollama - Run local AI models privately")
+                    FeatureBullet(text: "Local Whisper - Self-hosted transcription server")
                 }
             }
             .padding()

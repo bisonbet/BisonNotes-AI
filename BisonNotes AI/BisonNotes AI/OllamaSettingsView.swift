@@ -15,7 +15,6 @@ struct OllamaSettingsView: View {
     @AppStorage("ollamaTemperature") private var temperature: Double = 0.1
     /// Maximum context window the selected model supports
     @AppStorage("ollamaContextTokens") private var maxContextTokens: Int = 4096
-    @AppStorage("enableOllama") private var enableOllama: Bool = false
     
     var onConfigurationChanged: (() -> Void)?
     
@@ -38,13 +37,7 @@ struct OllamaSettingsView: View {
         let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
         let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
         let contextTokens = UserDefaults.standard.integer(forKey: "ollamaContextTokens")
-        
-        // Ensure enableOllama has a default value in UserDefaults
-        if UserDefaults.standard.object(forKey: "enableOllama") == nil {
-            UserDefaults.standard.set(false, forKey: "enableOllama")
-            print("🔧 OllamaSettingsView: Initialized enableOllama to false in UserDefaults")
-        }
-        
+
         let config = OllamaConfig(
             serverURL: serverURL,
             port: port > 0 ? port : 11434,
@@ -65,7 +58,6 @@ struct OllamaSettingsView: View {
                 if ollamaService.isConnected {
                     modelConfigurationSection
                 }
-                enableToggleSection
                 helpSection
             }
             .navigationTitle("Ollama Settings")
@@ -81,9 +73,6 @@ struct OllamaSettingsView: View {
                 }
             }
             .onAppear {
-                let userDefaultsValue = UserDefaults.standard.bool(forKey: "enableOllama")
-                print("🔧 OllamaSettingsView: onAppear - enableOllama value: \(enableOllama)")
-                print("🔧 OllamaSettingsView: UserDefaults value for enableOllama: \(userDefaultsValue)")
                 loadModelsIfConnected()
             }
             .onChange(of: serverURL) {
@@ -102,12 +91,6 @@ struct OllamaSettingsView: View {
                 onConfigurationChanged?()
             }
             .onChange(of: temperature) {
-                onConfigurationChanged?()
-            }
-            .onChange(of: enableOllama) {
-                print("🔧 OllamaSettingsView: enableOllama changed to: \(enableOllama)")
-                // Force UserDefaults to sync immediately
-                UserDefaults.standard.synchronize()
                 onConfigurationChanged?()
             }
             .alert("Error", isPresented: $showingError) {
@@ -334,19 +317,6 @@ struct OllamaSettingsView: View {
             Text("Lower values = more focused, Higher values = more creative")
                 .font(.caption)
                 .foregroundColor(.secondary)
-        }
-    }
-    
-    private var enableToggleSection: some View {
-        Section {
-            Toggle("Enable Ollama Processing", isOn: $enableOllama)
-                .disabled(!ollamaService.isConnected)
-            
-            if !ollamaService.isConnected {
-                Text("Connect to Ollama server first to enable processing")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
         }
     }
     

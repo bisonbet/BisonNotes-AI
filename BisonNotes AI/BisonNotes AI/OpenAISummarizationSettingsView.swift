@@ -325,12 +325,12 @@ struct OpenAISummarizationSettingsView: View {
 
 struct OpenAICompatibleSettingsView: View {
     @AppStorage("openAICompatibleAPIKey") private var apiKey: String = ""
-    @AppStorage("openAICompatibleModel") private var selectedModel: String = "gpt-3.5-turbo"
-    @AppStorage("openAICompatibleBaseURL") private var baseURL: String = "https://api.openai.com/v1"
+    @AppStorage("openAICompatibleModel") private var selectedModel: String = "gpt-4o"
+    @AppStorage("openAICompatibleBaseURL") private var baseURL: String = ""
     @AppStorage("openAICompatibleTemperature") private var temperature: Double = 0.1
     @AppStorage("openAICompatibleMaxTokens") private var maxTokens: Int = 2048
     @AppStorage("enableOpenAICompatible") private var enableOpenAICompatible: Bool = false
-    
+
     @State private var isTestingConnection = false
     @State private var connectionTestResult: String = ""
     @State private var showingConnectionResult = false
@@ -338,6 +338,7 @@ struct OpenAICompatibleSettingsView: View {
     @State private var showingAPIKeyInfo = false
     @State private var isLoadingModels = false
     @State private var availableModels: [OpenAISummarizationModel] = []
+    @State private var availableModelIds: [String] = [] // Store raw model IDs from API
     @State private var showingModelFetchError = false
     @State private var modelFetchError = ""
     @State private var useDynamicModels = false
@@ -348,33 +349,76 @@ struct OpenAICompatibleSettingsView: View {
     
     init(onConfigurationChanged: (() -> Void)? = nil) {
         self.onConfigurationChanged = onConfigurationChanged
-        
+
+        // Check if OpenAI Compatible is the selected engine
+        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? ""
+        let isSelectedEngine = selectedEngine == "OpenAI API Compatible"
+
+        // If this is the selected engine, automatically enable it
+        if isSelectedEngine {
+            UserDefaults.standard.set(true, forKey: "enableOpenAICompatible")
+            print("🔧 OpenAICompatibleSettingsView: Auto-enabled because it's the selected engine")
+        }
+
         // Ensure enableOpenAICompatible has a default value in UserDefaults
         if UserDefaults.standard.object(forKey: "enableOpenAICompatible") == nil {
-            UserDefaults.standard.set(false, forKey: "enableOpenAICompatible")
-            print("🔧 OpenAICompatibleSettingsView: Initialized enableOpenAICompatible to false in UserDefaults")
+            UserDefaults.standard.set(isSelectedEngine, forKey: "enableOpenAICompatible")
+            print("🔧 OpenAICompatibleSettingsView: Initialized enableOpenAICompatible to \(isSelectedEngine) in UserDefaults")
         }
     }
     
     // MARK: - Private Methods
     
     private func loadAvailableModels() {
+        guard !apiKey.isEmpty else {
+            modelFetchError = "Please enter an API key first"
+            showingModelFetchError = true
+            return
+        }
+
+        guard !baseURL.isEmpty else {
+            modelFetchError = "Please enter a base URL first"
+            showingModelFetchError = true
+            return
+        }
+
         isLoadingModels = true
         availableModels = []
         modelFetchError = ""
-        
+        showingModelFetchError = false
+
         Task {
             do {
-                let models = try await OpenAISummarizationService.fetchModels(apiKey: apiKey, baseURL: baseURL)
+                // Use fetchCompatibleModels to get raw model IDs from the API
+                let modelIds = try await OpenAISummarizationService.fetchCompatibleModels(apiKey: apiKey, baseURL: baseURL)
+
                 await MainActor.run {
-                    availableModels = models
+                    // Store the raw model IDs
+                    availableModelIds = modelIds
+
+                    // Also try to match with predefined models
+                    availableModels = modelIds.compactMap { id in
+                        OpenAISummarizationModel(rawValue: id)
+                    }
+
+                    // Set the first model as selected if not already set
+                    if !modelIds.isEmpty && selectedModel.isEmpty {
+                        selectedModel = modelIds.first!
+                    }
+
                     isLoadingModels = false
+
+                    print("✅ Successfully loaded \(modelIds.count) models")
+                    if !modelIds.isEmpty {
+                        print("📋 Models: \(modelIds.prefix(5).joined(separator: ", "))\(modelIds.count > 5 ? "..." : "")")
+                    }
                 }
             } catch {
                 await MainActor.run {
                     modelFetchError = error.localizedDescription
                     showingModelFetchError = true
                     isLoadingModels = false
+                    print("❌ Failed to load models: \(error)")
                 }
             }
         }
@@ -415,12 +459,13 @@ struct OpenAICompatibleSettingsView: View {
     
     private func resetToDefaults() {
         apiKey = ""
-        selectedModel = "gpt-3.5-turbo"
+        selectedModel = "gpt-4o"
         baseURL = "https://api.openai.com/v1"
         temperature = 0.1
         maxTokens = 2048
         useDynamicModels = false
         availableModels = []
+        availableModelIds = []
         showingConnectionResult = false
         showingModelFetchError = false
         modelFetchError = ""
@@ -429,19 +474,25 @@ struct OpenAICompatibleSettingsView: View {
     var body: some View {
         NavigationView {
             Form {
+                compatibilityGuideSection
                 authenticationSection
                 apiConfigurationSection
                 modelSelectionSection
                 generationParametersSection
                 connectionTestSection
                 featuresSection
-                enableSection
             }
             .navigationTitle("OpenAI Compatible")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
+                        // Ensure it's enabled when user is done configuring
+                        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? ""
+                        if selectedEngine == "OpenAI API Compatible" {
+                            UserDefaults.standard.set(true, forKey: "enableOpenAICompatible")
+                        }
+
                         // Force refresh engine availability when settings are dismissed
                         UserDefaults.standard.synchronize()
                         onConfigurationChanged?()
@@ -452,13 +503,160 @@ struct OpenAICompatibleSettingsView: View {
             .alert("API Key Information", isPresented: $showingAPIKeyInfo) {
                 Button("OK") { }
             } message: {
-                Text("You can get your API key from your OpenAI-compatible API provider. This could be OpenAI, Azure OpenAI, or any other compatible service.")
+                Text("Get your API key from your provider:\n\n• OpenRouter: openrouter.ai\n• Together AI: api.together.xyz\n• Groq: console.groq.com\n• Replicate: replicate.com\n• Fireworks AI: fireworks.ai\n• Local services (LiteLLM, vLLM, LocalAI): May not require a real key, use any value like 'local'")
+            }
+            .onAppear {
+                // Auto-enable when this is the selected engine
+                let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? ""
+                if selectedEngine == "OpenAI API Compatible" && !enableOpenAICompatible {
+                    enableOpenAICompatible = true
+                    print("🔧 OpenAICompatibleSettingsView: Auto-enabled on appear")
+                }
             }
         }
     }
-    
+
     // MARK: - View Components
-    
+
+    private var statusSection: some View {
+        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? ""
+        let isSelectedEngine = selectedEngine == "OpenAI API Compatible"
+
+        return Section {
+            if isSelectedEngine {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Text("Active Engine")
+                        .fontWeight(.medium)
+                    Spacer()
+                    if enableOpenAICompatible {
+                        Text("Enabled")
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.green.opacity(0.2))
+                            .cornerRadius(8)
+                    }
+                }
+            } else {
+                HStack {
+                    Image(systemName: "info.circle")
+                        .foregroundColor(.blue)
+                    Text("Not currently selected as AI engine")
+                        .font(.subheadline)
+                }
+            }
+        } header: {
+            Text("Status")
+        } footer: {
+            if isSelectedEngine {
+                Text("This engine is currently active and will be used for AI processing. It has been automatically enabled.")
+            } else {
+                Text("To use this engine, select 'OpenAI API Compatible' in the AI Engine settings.")
+            }
+        }
+    }
+
+    private var compatibilityGuideSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                // Main message
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundColor(.orange)
+                        .font(.title3)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Model Compatibility Varies")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Text("Different models have different capabilities. Some trial and error may be needed.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Divider()
+
+                // What works well
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                            .font(.caption)
+                        Text("Usually Work Well")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("• Larger models (70B+ parameters)")
+                            .font(.caption2)
+                        Text("• Models from major providers")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 20)
+                }
+
+                Divider()
+
+                // May need tuning
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .font(.caption)
+                        Text("May Need Adjustment")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("• Smaller models (<10B parameters)")
+                            .font(.caption2)
+                        Text("• Local models via Ollama/vLLM")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 20)
+                }
+
+                Divider()
+
+                // Troubleshooting tips
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "lightbulb.fill")
+                            .foregroundColor(.blue)
+                            .font(.caption)
+                        Text("Troubleshooting Tips")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("1. Test connection first")
+                            .font(.caption2)
+                        Text("2. Try different temperature settings")
+                            .font(.caption2)
+                        Text("3. Increase max tokens if output is cut off")
+                            .font(.caption2)
+                        Text("4. Try a different model from your provider")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 20)
+                }
+            }
+            .padding(.vertical, 4)
+        } header: {
+            Text("Compatibility Guide")
+        } footer: {
+            Text("This engine supports many providers through LiteLLM, OpenRouter, and similar services. JSON output quality varies by model. Larger, more recent models generally perform better.")
+        }
+    }
+
     private var authenticationSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
@@ -470,48 +668,71 @@ struct OpenAICompatibleSettingsView: View {
                             .foregroundColor(.blue)
                     }
                 }
-                
-                SecureField("Enter your API key", text: $apiKey)
+
+                SecureField("sk-... or your provider's key format", text: $apiKey)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
-                
+
                 if !apiKey.isEmpty {
-                    Text("API key configured (\(apiKey.count) characters)")
-                        .font(.caption)
-                        .foregroundColor(.green)
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                            .font(.caption)
+                        Text("API key configured (\(apiKey.count) characters)")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
                 } else {
-                    Text("API key required for OpenAI compatible API")
-                        .font(.caption)
-                        .foregroundColor(.red)
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .font(.caption)
+                        Text("API key required to connect to your provider")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
                 }
             }
         } header: {
             Text("Authentication")
         } footer: {
-            Text("Your API key is stored securely on your device and only used for summarization requests.")
+            Text("Your API key is stored securely on your device and only used for AI summarization. Some providers (like LocalAI or local LiteLLM) may not require an API key - in that case, you can use any placeholder value.")
         }
-                
+
     }
     
     private var apiConfigurationSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Base URL")
-                
-                TextField("API Base URL", text: $baseURL)
+
+                TextField("https://api.example.com/v1", text: $baseURL)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
-                
-                Text("Use your OpenAI-compatible API endpoint")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .keyboardType(.URL)
+
+                if !baseURL.isEmpty {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                            .font(.caption)
+                        Text(baseURL)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text("Enter your API endpoint URL")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
         } header: {
             Text("API Configuration")
         } footer: {
-            Text("Configure the base URL for your OpenAI-compatible API provider.")
+            Text("Enter the base URL for your OpenAI-compatible API. Examples:\n• LiteLLM: http://localhost:4000\n• vLLM: http://localhost:8000/v1\n• LocalAI: http://localhost:8080/v1\n• OpenRouter: https://openrouter.ai/api/v1\n• Together AI: https://api.together.xyz/v1")
         }
-                
+
     }
     
     private var modelSelectionSection: some View {
@@ -531,9 +752,9 @@ struct OpenAICompatibleSettingsView: View {
             Text("Model Selection")
         } footer: {
             if useDynamicModels {
-                Text("Fetch models from your API endpoint to see available options.")
+                Text("Enable to discover models from your API endpoint automatically. If your provider supports the /models endpoint (like LiteLLM, vLLM, LocalAI), it will list all available models.")
             } else {
-                Text("Enter the model ID (e.g., gpt-3.5-turbo, gpt-4, claude-3-sonnet) for your API provider.")
+                Text("Enter the model ID manually. Common examples: gpt-4o, claude-3-5-sonnet-20241022, llama-3.2-90b, gemini-2.0-flash, deepseek-chat, etc.")
             }
         }
     }
@@ -547,81 +768,97 @@ struct OpenAICompatibleSettingsView: View {
                         .scaleEffect(0.8)
                     Text("Loading available models...")
                 }
-            } else if !availableModels.isEmpty {
+            } else if !availableModelIds.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Available Models")
+                    Text("Found \(availableModelIds.count) Available Models")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                    
-                    ForEach(availableModels.prefix(5), id: \.rawValue) { model in
-                        HStack {
-                            Text(model.displayName)
-                                .font(.caption)
-                            Spacer()
-                            Text(model.rawValue)
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
+                        .foregroundColor(.green)
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(availableModelIds.prefix(10), id: \.self) { modelId in
+                                Button(action: {
+                                    selectedModel = modelId
+                                }) {
+                                    HStack {
+                                        Text(modelId)
+                                            .font(.caption)
+                                            .foregroundColor(selectedModel == modelId ? .blue : .primary)
+                                        Spacer()
+                                        if selectedModel == modelId {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundColor(.blue)
+                                                .font(.caption)
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                            }
+
+                            if availableModelIds.count > 10 {
+                                Text("... and \(availableModelIds.count - 10) more (scroll or type below)")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
-                    
-                    if availableModels.count > 5 {
-                        Text("... and \(availableModels.count - 5) more")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+                    .frame(maxHeight: 150)
                 }
             } else if showingModelFetchError {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundColor(.orange)
-                    Text("Failed to load models: \(modelFetchError)")
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.orange)
+                        Text("Model Discovery Failed")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.orange)
+                    }
+
+                    Text(modelFetchError)
                         .font(.caption)
-                        .foregroundColor(.orange)
+                        .foregroundColor(.secondary)
+
+                    Text("You can still enter a model ID manually below")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
+                .padding()
+                .background(Color.orange.opacity(0.1))
+                .cornerRadius(8)
             }
         }
     }
     
     @ViewBuilder
     private var manualModelContent: some View {
-        if !useDynamicModels || availableModels.isEmpty {
-            TextField("Model ID", text: $selectedModel)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Model ID")
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            TextField("e.g., gpt-4o, claude-3-5-sonnet, llama-3.2-90b", text: $selectedModel)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .autocapitalization(.none)
                 .disableAutocorrection(true)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Selected: \(selectedModel)")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                
-                Text("Enter the model ID for your API provider")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .padding(.vertical, 4)
-        } else {
-            Picker("Model", selection: $selectedModel) {
-                ForEach(availableModels, id: \.rawValue) { model in
-                    Text(model.displayName)
-                        .tag(model.rawValue)
-                }
-            }
-            .pickerStyle(.navigationLink)
-            
-            if let selectedModelInfo = availableModels.first(where: { $0.rawValue == selectedModel }) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Selected: \(selectedModelInfo.displayName)")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    
-                    Text("Model ID: \(selectedModelInfo.rawValue)")
+
+            if !selectedModel.isEmpty {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.caption)
+                    Text("Selected: \(selectedModel)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                .padding(.vertical, 4)
+            } else {
+                Text("Enter the model ID exactly as provided by your API")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
         }
+        .padding(.vertical, 4)
     }
     
     private var generationParametersSection: some View {
@@ -678,7 +915,7 @@ struct OpenAICompatibleSettingsView: View {
         } header: {
             Text("Connection Test")
         } footer: {
-            Text("Test your API key and connection to ensure summarization will work properly.")
+            Text("Test your API connection. A successful test means the provider is reachable, but individual model performance may vary. If your model produces poor results, try a different model or adjust generation parameters.")
         }
     }
     
@@ -701,13 +938,40 @@ struct OpenAICompatibleSettingsView: View {
     @ViewBuilder
     private var connectionTestResultView: some View {
         if showingConnectionResult {
-            HStack {
-                Image(systemName: isConnectionSuccessful ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundColor(isConnectionSuccessful ? .green : .red)
-                
-                Text(connectionTestResult)
-                    .font(.caption)
-                    .foregroundColor(isConnectionSuccessful ? .green : .red)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Image(systemName: isConnectionSuccessful ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundColor(isConnectionSuccessful ? .green : .red)
+
+                    Text(connectionTestResult)
+                        .font(.caption)
+                        .foregroundColor(isConnectionSuccessful ? .green : .red)
+                }
+
+                if !isConnectionSuccessful {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Common Issues:")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.orange)
+                        Text("• Check API key is correct")
+                            .font(.caption2)
+                        Text("• Verify base URL (no trailing slash)")
+                            .font(.caption2)
+                        Text("• Ensure model name is valid for provider")
+                            .font(.caption2)
+                        Text("• Check service/proxy is running")
+                            .font(.caption2)
+                        Text("• Review console logs for details")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(.secondary)
+                    .padding(.top, 4)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(8)
+                }
             }
         }
     }
@@ -754,25 +1018,6 @@ struct OpenAICompatibleSettingsView: View {
         }
     }
     
-    private var enableSection: some View {
-        Section {
-            Toggle("Enable OpenAI Compatible Processing", isOn: $enableOpenAICompatible)
-                .onChange(of: enableOpenAICompatible) {
-                    print("🔧 OpenAICompatibleSettingsView: enableOpenAICompatible changed to: \(enableOpenAICompatible)")
-                    // Force UserDefaults to sync immediately
-                    UserDefaults.standard.synchronize()
-                    onConfigurationChanged?()
-                }
-            
-            if !enableOpenAICompatible {
-                Text("OpenAI Compatible processing is disabled. Enable to use compatible APIs for summarization.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        } header: {
-            Text("Enable/Disable")
-        }
-    }
 }
 
 struct OpenAICompatibleSettingsView_Previews: PreviewProvider {

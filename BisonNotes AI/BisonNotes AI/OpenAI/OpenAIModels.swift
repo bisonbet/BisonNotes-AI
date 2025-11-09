@@ -332,4 +332,25 @@ extension ResponseFormat {
     }
 }
 
-// OpenAIErrorResponse and OpenAIError are defined in OpenAITranscribeService.swift 
+// OpenAIErrorResponse and OpenAIError are defined in OpenAITranscribeService.swift
+
+// MARK: - Model Discovery Support for OpenAI Compatible APIs
+
+struct OpenAIModelsListResponse: Codable {
+    let data: [OpenAIModelInfo]
+    let object: String?
+}
+
+struct OpenAIModelInfo: Codable {
+    let id: String
+    let object: String
+    let created: Int?
+    let ownedBy: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case object
+        case created
+        case ownedBy = "owned_by"
+    }
+}

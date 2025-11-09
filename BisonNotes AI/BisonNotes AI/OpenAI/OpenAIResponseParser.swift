@@ -15,17 +15,17 @@ class OpenAIResponseParser {
     
     static func parseCompleteResponseFromJSON(_ jsonString: String) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) {
         let cleanedJSON = extractJSONFromResponse(jsonString)
-        
+
         guard let data = cleanedJSON.data(using: .utf8) else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid JSON data")
         }
-        
+
         struct CompleteResponse: Codable {
             let summary: String
             let tasks: [TaskResponse]
             let reminders: [ReminderResponse]
             let titles: [TitleResponse]
-            
+
             struct TaskResponse: Codable {
                 let text: String
                 let priority: String?
@@ -33,27 +33,43 @@ class OpenAIResponseParser {
                 let timeReference: String?
                 let confidence: Double?
             }
-            
+
             struct ReminderResponse: Codable {
                 let text: String
                 let urgency: String?
                 let timeReference: String?
                 let confidence: Double?
             }
-            
+
             struct TitleResponse: Codable {
                 let text: String
                 let category: String?
                 let confidence: Double?
             }
         }
-        
+
+        // Wrapper structure for providers that wrap JSON in {"json": {...}}
+        struct WrappedResponse: Codable {
+            let json: CompleteResponse
+        }
+
         do {
             // Extract JSON from markdown code blocks if present
             let jsonString = extractJSONFromResponse(jsonString)
             let jsonData = jsonString.data(using: .utf8) ?? data
-            
-            let response = try JSONDecoder().decode(CompleteResponse.self, from: jsonData)
+
+            // First try to parse as a wrapped response (for providers like AWS Bedrock/Claude)
+            var response: CompleteResponse
+
+            do {
+                let wrapped = try JSONDecoder().decode(WrappedResponse.self, from: jsonData)
+                response = wrapped.json
+                print("✅ Parsed wrapped JSON response (provider wraps in {\"json\": {...}})")
+            } catch {
+                // If that fails, try direct parsing (standard OpenAI format)
+                response = try JSONDecoder().decode(CompleteResponse.self, from: jsonData)
+                print("✅ Parsed standard JSON response")
+            }
             
             let tasks = response.tasks.map { taskResponse in
                 TaskItem(
@@ -354,11 +370,11 @@ class OpenAIResponseParser {
     }
     
     // MARK: - Helper Methods
-    
+
     private static func extractJSONFromResponse(_ response: String) -> String {
-        // Remove markdown code blocks if present
-        var cleaned = response
-        
+        var cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Step 1: Remove markdown code blocks
         if cleaned.contains("```json") {
             if let start = cleaned.range(of: "```json") {
                 cleaned = String(cleaned[start.upperBound...])
@@ -374,7 +390,42 @@ class OpenAIResponseParser {
                 cleaned = String(cleaned[..<end.lowerBound])
             }
         }
-        
+
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Step 2: Try to extract JSON from text that might have explanations
+        // Some models output: "Here's the JSON: {..." or "The response is: {..."
+        if !cleaned.hasPrefix("{") && !cleaned.hasPrefix("[") {
+            // Look for the first { or [ and take everything from there
+            if let jsonStart = cleaned.firstIndex(where: { $0 == "{" || $0 == "[" }) {
+                cleaned = String(cleaned[jsonStart...])
+            }
+        }
+
+        // Step 3: Find the matching closing brace/bracket
+        if cleaned.hasPrefix("{") {
+            var braceCount = 0
+            var endIndex = cleaned.startIndex
+
+            for (index, char) in cleaned.enumerated() {
+                if char == "{" {
+                    braceCount += 1
+                } else if char == "}" {
+                    braceCount -= 1
+                    if braceCount == 0 {
+                        endIndex = cleaned.index(cleaned.startIndex, offsetBy: index + 1)
+                        break
+                    }
+                }
+            }
+
+            if endIndex > cleaned.startIndex {
+                cleaned = String(cleaned[..<endIndex])
+            }
+        }
+
+        print("📦 Extracted JSON (first 200 chars): \(cleaned.prefix(200))\(cleaned.count > 200 ? "..." : "")")
+
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
