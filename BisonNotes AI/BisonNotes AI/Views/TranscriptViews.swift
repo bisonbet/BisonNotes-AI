@@ -735,8 +735,26 @@ struct EditableTranscriptView: View {
     }
     
     private func saveTranscript() {
-        // Note: Transcript updates are now handled through Core Data
-        // This method is kept for potential future implementation
+        guard let recordingId = recording.id else {
+            print("❌ Cannot save transcript: missing recording ID")
+            return
+        }
+
+        let transcriptId = appCoordinator.addTranscript(
+            for: recordingId,
+            segments: editedSegments,
+            speakerMappings: transcript.speakerMappings,
+            engine: transcript.engine,
+            processingTime: transcript.processingTime,
+            confidence: transcript.confidence
+        )
+
+        if let transcriptId {
+            print("💾 Saved edited transcript with ID: \(transcriptId)")
+            NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
+        } else {
+            print("❌ Failed to save edited transcript")
+        }
     }
     
     private func rerunTranscription() {
