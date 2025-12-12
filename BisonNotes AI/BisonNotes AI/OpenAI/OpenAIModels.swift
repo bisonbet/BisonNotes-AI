@@ -211,6 +211,10 @@ struct ChatMessage: Codable {
 
 class MessageFormatDetector {
 
+    // UserDefaults keys for manual override
+    private static let manualOverrideEnabledKey = "openAICompatibleManualFormatOverride"
+    private static let manualFormatKey = "openAICompatibleManualFormat"
+
     // Known providers that use content blocks format
     private static let blockFormatProviders = [
         "tokenfactory.nebius.com",  // Nebius API
@@ -228,13 +232,23 @@ class MessageFormatDetector {
     ]
 
     /// Detect the message format based on the base URL
+    /// Checks manual override first, then falls back to automatic detection
     static func detectFormat(for baseURL: String) -> MessageContentFormat {
+        // Check for manual override first
+        if UserDefaults.standard.bool(forKey: manualOverrideEnabledKey) {
+            let manualFormat = UserDefaults.standard.string(forKey: manualFormatKey) ?? "string"
+            let format: MessageContentFormat = manualFormat == "blocks" ? .blocks : .string
+            print("🔧 Manual override enabled: \(manualFormat) format")
+            return format
+        }
+
+        // Automatic detection based on URL
         let lowercasedURL = baseURL.lowercased()
 
         // Check if it's a known block format provider
         for provider in blockFormatProviders {
             if lowercasedURL.contains(provider) {
-                print("🔍 Detected block format provider: \(provider)")
+                print("🔍 Auto-detected block format provider: \(provider)")
                 return .blocks
             }
         }
@@ -242,13 +256,38 @@ class MessageFormatDetector {
         // Check if it's a known string format provider
         for provider in stringFormatProviders {
             if lowercasedURL.contains(provider) {
-                print("🔍 Detected string format provider: \(provider)")
+                print("🔍 Auto-detected string format provider: \(provider)")
                 return .string
             }
         }
 
         // Default to string format (most common)
         print("🔍 Unknown provider, defaulting to string format")
+        return .string
+    }
+
+    /// Get the detected format as a string (for display purposes)
+    static func getDetectedFormatString(for baseURL: String) -> String {
+        let format = detectFormatWithoutOverride(for: baseURL)
+        return format == .blocks ? "Content Blocks" : "Simple String"
+    }
+
+    /// Detect format without considering manual override (for UI display)
+    static func detectFormatWithoutOverride(for baseURL: String) -> MessageContentFormat {
+        let lowercasedURL = baseURL.lowercased()
+
+        for provider in blockFormatProviders {
+            if lowercasedURL.contains(provider) {
+                return .blocks
+            }
+        }
+
+        for provider in stringFormatProviders {
+            if lowercasedURL.contains(provider) {
+                return .string
+            }
+        }
+
         return .string
     }
 
