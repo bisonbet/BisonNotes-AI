@@ -338,8 +338,10 @@ struct AISettingsView: View {
             Text("This will regenerate all summaries using the current AI engine. Only summaries with existing transcripts will be processed. This may take some time depending on how many recordings you have.")
         }
         .onAppear {
-            // TODO: Implement setEngine with new Core Data system
-            viewModel.regenerationManager.setEngine("OpenAI") // Use proper engine name
+            // Align regeneration manager with the user's currently selected engine instead of forcing OpenAI
+            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ??
+                AIEngineType.enhancedAppleIntelligence.rawValue
+            viewModel.regenerationManager.setEngine(currentEngine)
             self.refreshEngineStatuses()
         }
         .alert("Error", isPresented: $errorHandler.showingErrorAlert) {
