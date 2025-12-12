@@ -670,6 +670,7 @@ public class RecordingRegistryManager: ObservableObject {
         availableEngines["Local LLM (Ollama)"] = LocalLLMEngine()
         availableEngines["OpenAI API Compatible"] = OpenAICompatibleEngine()
         availableEngines["Google AI Studio"] = GoogleAIStudioEngine()
+        availableEngines["Mistral AI"] = MistralAIEngine()
         // AWS Bedrock is coming soon, so we'll add it when available
         // availableEngines["AWS Bedrock"] = AWSBedrockEngine()
         

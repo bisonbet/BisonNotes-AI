@@ -85,6 +85,9 @@ final class AISettingsViewModel: ObservableObject {
         case .awsBedrock:
             UserDefaults.standard.set(true, forKey: "enableAWSBedrock")
             print("🔧 Auto-enabled AWS Bedrock engine")
+        case .mistralAI:
+            UserDefaults.standard.set(true, forKey: "enableMistralAI")
+            print("🔧 Auto-enabled Mistral AI engine")
         case .openAI:
             UserDefaults.standard.set(true, forKey: "enableOpenAI")
             print("🔧 Auto-enabled OpenAI engine")
@@ -116,6 +119,10 @@ final class AISettingsViewModel: ObservableObject {
         case .openAICompatible:
             let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
             return !apiKey.isEmpty
+        case .mistralAI:
+            let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+            let isEnabled = UserDefaults.standard.bool(forKey: "enableMistralAI")
+            return !apiKey.isEmpty && isEnabled
         case .localLLM:
             let isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.enableOllama)
             return isEnabled
@@ -153,6 +160,7 @@ struct AISettingsView: View {
     @State private var showingOpenAISettings = false
     @State private var showingOpenAICompatibleSettings = false
     @State private var showingGoogleAIStudioSettings = false
+    @State private var showingMistralAISettings = false
     @State private var showingAWSBedrockSettings = false
     @State private var showingAppleIntelligenceSettings = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
@@ -219,6 +227,10 @@ struct AISettingsView: View {
         case .openAICompatible:
             let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
             return !apiKey.isEmpty
+        case .mistralAI:
+            let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+            let isEnabled = UserDefaults.standard.bool(forKey: "enableMistralAI")
+            return !apiKey.isEmpty && isEnabled
         case .localLLM:
             let isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.enableOllama)
             return isEnabled
@@ -253,6 +265,9 @@ struct AISettingsView: View {
             return "GPT-4"
         case .openAICompatible:
             return "API Compatible"
+        case .mistralAI:
+            let modelName = UserDefaults.standard.string(forKey: "mistralModel") ?? MistralAIModel.mistralMedium2508.rawValue
+            return MistralAIModel(rawValue: modelName)?.displayName ?? "Mistral"
         case .localLLM:
             let modelName = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaModelName) ?? AppSettingsKeys.Defaults.ollamaModelName
             return modelName
@@ -366,6 +381,11 @@ struct AISettingsView: View {
         }
         .sheet(isPresented: $showingGoogleAIStudioSettings) {
             GoogleAIStudioSettingsView(onConfigurationChanged: {
+                Task { refreshEngineStatuses() }
+            })
+        }
+        .sheet(isPresented: $showingMistralAISettings) {
+            MistralAISettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
         }
@@ -488,6 +508,8 @@ private extension AISettingsView {
                     ollamaConfigurationSection
                 case .googleAIStudio:
                     googleAIStudioConfigurationSection
+                case .mistralAI:
+                    mistralConfigurationSection
                 case .awsBedrock:
                     awsBedrockConfigurationSection
                 }
@@ -903,6 +925,110 @@ private extension AISettingsView {
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.purple.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+
+    var mistralConfigurationSection: some View {
+        let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+        let modelName = UserDefaults.standard.string(forKey: "mistralModel") ?? MistralAIModel.mistralMedium2508.rawValue
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableMistralAI")
+        let model = MistralAIModel(rawValue: modelName) ?? .mistralMedium2508
+
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("Mistral AI Configuration")
+                .font(.headline)
+                .padding(.horizontal, 24)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Mistral API Settings")
+                            .font(.body)
+                        Text("Configure Mistral API key and pick a chat model for summarization")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { self.showingMistralAISettings = true }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("Configure")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.orange)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Status:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(isEnabled && !apiKey.isEmpty ? Color.green : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text(isEnabled && !apiKey.isEmpty ? "Configured" : "Not Configured")
+                                .font(.caption)
+                                .foregroundColor(isEnabled && !apiKey.isEmpty ? .green : .red)
+                        }
+                    }
+
+                    HStack {
+                        Text("Model:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(model.displayName)
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+
+                    HStack {
+                        Text("Pricing Tier:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(model.costTier)
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+
+                    HStack {
+                        Text("API Key:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(apiKey.isEmpty ? "Not Set" : "Set")
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(apiKey.isEmpty ? .red : .green)
+                    }
+
+                    HStack {
+                        Text("Context Window:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("\(model.contextWindow/1000)K tokens")
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.orange.opacity(0.12))
             )
             .padding(.horizontal, 24)
         }

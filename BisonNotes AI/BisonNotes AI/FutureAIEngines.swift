@@ -1717,6 +1717,8 @@ class AIEngineFactory {
             return EnhancedAppleIntelligenceEngine()
         case .openAI:
             return OpenAISummarizationEngine()
+        case .mistralAI:
+            return MistralAIEngine()
         case .awsBedrock:
             return AWSBedrockEngine()
         case .openAICompatible:
@@ -1745,6 +1747,7 @@ enum AIEngineType: String, CaseIterable {
     case none = "None"
     case enhancedAppleIntelligence = "Enhanced Apple Intelligence"
     case openAI = "OpenAI"
+    case mistralAI = "Mistral AI"
     case awsBedrock = "AWS Bedrock"
     case openAICompatible = "OpenAI API Compatible"
     case localLLM = "Local LLM (Ollama)"
@@ -1760,6 +1763,8 @@ enum AIEngineType: String, CaseIterable {
             return "Advanced natural language processing using Apple's frameworks"
         case .openAI:
             return "Advanced AI-powered summaries using OpenAI's GPT models"
+        case .mistralAI:
+            return "Fast, high-quality summaries using Mistral's chat models"
         case .awsBedrock:
             return "Cloud-based AI using AWS Bedrock foundation models"
         case .openAICompatible:
@@ -1773,9 +1778,7 @@ enum AIEngineType: String, CaseIterable {
     
     var isComingSoon: Bool {
         switch self {
-        case .notConfigured, .none, .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio:
-            return false
-        case .awsBedrock:
+        case .notConfigured, .none, .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock:
             return false
         }
     }
@@ -1790,6 +1793,8 @@ enum AIEngineType: String, CaseIterable {
             return ["iOS 15.0+", "Built-in frameworks"]
         case .openAI:
             return ["OpenAI API Key", "Internet Connection", "Usage Credits"]
+        case .mistralAI:
+            return ["Mistral API Key", "Internet Connection"]
         case .awsBedrock:
             return ["AWS Account", "Internet Connection", "API Keys"]
         case .openAICompatible:
