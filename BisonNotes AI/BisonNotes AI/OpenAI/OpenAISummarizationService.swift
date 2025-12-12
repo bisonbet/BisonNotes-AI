@@ -32,75 +32,84 @@ class OpenAISummarizationService: ObservableObject {
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: text)
-        
+
+        // Detect the appropriate message format based on the API provider
+        let messageFormat = MessageFormatDetector.detectFormat(for: config.baseURL)
+
         let messages = [
-            ChatMessage(role: "system", content: systemPrompt),
-            ChatMessage(role: "user", content: userPrompt)
+            ChatMessage(role: "system", content: systemPrompt, format: messageFormat),
+            ChatMessage(role: "user", content: userPrompt, format: messageFormat)
         ]
-        
+
         let request = OpenAIChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
             temperature: config.temperature,
             maxCompletionTokens: config.maxTokens
         )
-        
+
         let response = try await makeAPICall(request: request)
-        
+
         guard let choice = response.choices.first else {
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI - No response choices")
         }
-        
+
         return choice.message.content
     }
     
     func extractTasks(from text: String) async throws -> [TaskItem] {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .tasks, text: text)
-        
+
+        // Detect the appropriate message format based on the API provider
+        let messageFormat = MessageFormatDetector.detectFormat(for: config.baseURL)
+
         let messages = [
-            ChatMessage(role: "system", content: systemPrompt),
-            ChatMessage(role: "user", content: userPrompt)
+            ChatMessage(role: "system", content: systemPrompt, format: messageFormat),
+            ChatMessage(role: "user", content: userPrompt, format: messageFormat)
         ]
-        
+
         let request = OpenAIChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
             temperature: 0.1,
             maxCompletionTokens: 1024
         )
-        
+
         let response = try await makeAPICall(request: request)
-        
+
         guard let choice = response.choices.first else {
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI - No response choices")
         }
-        
+
         return try OpenAIResponseParser.parseTasksFromJSON(choice.message.content)
     }
     
     func extractReminders(from text: String) async throws -> [ReminderItem] {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .reminders, text: text)
-        
+
+        // Detect the appropriate message format based on the API provider
+        let messageFormat = MessageFormatDetector.detectFormat(for: config.baseURL)
+
         let messages = [
-            ChatMessage(role: "system", content: systemPrompt),
-            ChatMessage(role: "user", content: userPrompt)
+            ChatMessage(role: "system", content: systemPrompt, format: messageFormat),
+            ChatMessage(role: "user", content: userPrompt, format: messageFormat)
         ]
-        
+
         let request = OpenAIChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
             temperature: 0.1,
             maxCompletionTokens: 1024
         )
-        
+
         let response = try await makeAPICall(request: request)
-        
+
         guard let choice = response.choices.first else {
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI - No response choices")
         }
-        
+
         return try OpenAIResponseParser.parseRemindersFromJSON(choice.message.content)
     }
     
@@ -124,9 +133,12 @@ class OpenAISummarizationService: ObservableObject {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .complete, text: text)
 
+        // Detect the appropriate message format based on the API provider
+        let messageFormat = MessageFormatDetector.detectFormat(for: config.baseURL)
+
         let messages = [
-            ChatMessage(role: "system", content: systemPrompt),
-            ChatMessage(role: "user", content: userPrompt)
+            ChatMessage(role: "system", content: systemPrompt, format: messageFormat),
+            ChatMessage(role: "user", content: userPrompt, format: messageFormat)
         ]
 
         // IMPORTANT: For OpenAI Compatible APIs, don't use response_format
@@ -138,7 +150,7 @@ class OpenAISummarizationService: ObservableObject {
         //
         // Best practice: Only use response_format with official OpenAI API
         // For all others, rely on explicit prompts and flexible parsing
-        let useResponseFormat = config.baseURL.contains("api.openai.com")
+        let useResponseFormat = MessageFormatDetector.shouldUseResponseFormat(for: config.baseURL)
 
         let request = OpenAIChatCompletionRequest(
             model: config.effectiveModelId,
@@ -149,6 +161,7 @@ class OpenAISummarizationService: ObservableObject {
         )
 
         print("🔧 Provider: \(config.baseURL)")
+        print("🔧 Message format: \(messageFormat == .blocks ? "content blocks" : "simple string")")
         print("🔧 Using response_format: \(useResponseFormat ? "json_object" : "none (flexible parsing)")")
 
         let response = try await makeAPICall(request: request)

@@ -120,9 +120,144 @@ struct OpenAIChatCompletionRequest: Codable {
     }
 }
 
+// MARK: - Message Content Models
+
+enum MessageContentFormat {
+    case string      // Standard OpenAI format: "content": "text"
+    case blocks      // Nebius/Anthropic format: "content": [{"type": "text", "text": "..."}]
+}
+
+struct ContentBlock: Codable {
+    let type: String
+    let text: String
+}
+
 struct ChatMessage: Codable {
     let role: String
-    let content: String
+    private let stringContent: String?
+    private let blockContent: [ContentBlock]?
+
+    // Internal format preference (not encoded)
+    private let preferredFormat: MessageContentFormat
+
+    // Convenience initializer for simple string content
+    init(role: String, content: String, format: MessageContentFormat = .string) {
+        self.role = role
+        self.preferredFormat = format
+
+        switch format {
+        case .string:
+            self.stringContent = content
+            self.blockContent = nil
+        case .blocks:
+            self.stringContent = nil
+            self.blockContent = [ContentBlock(type: "text", text: content)]
+        }
+    }
+
+    // Get the content as a string (for internal use)
+    var content: String {
+        if let stringContent = stringContent {
+            return stringContent
+        } else if let blockContent = blockContent, let firstBlock = blockContent.first {
+            return firstBlock.text
+        }
+        return ""
+    }
+
+    // MARK: - Codable Implementation
+
+    enum CodingKeys: String, CodingKey {
+        case role
+        case content
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(role, forKey: .role)
+
+        // Encode based on preferred format
+        switch preferredFormat {
+        case .string:
+            try container.encode(stringContent ?? "", forKey: .content)
+        case .blocks:
+            try container.encode(blockContent ?? [], forKey: .content)
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        role = try container.decode(String.self, forKey: .role)
+
+        // Try to decode as string first, then as blocks
+        if let stringValue = try? container.decode(String.self, forKey: .content) {
+            stringContent = stringValue
+            blockContent = nil
+            preferredFormat = .string
+        } else if let blocksValue = try? container.decode([ContentBlock].self, forKey: .content) {
+            stringContent = nil
+            blockContent = blocksValue
+            preferredFormat = .blocks
+        } else {
+            // Fallback to empty string
+            stringContent = ""
+            blockContent = nil
+            preferredFormat = .string
+        }
+    }
+}
+
+// MARK: - Provider Detection
+
+class MessageFormatDetector {
+
+    // Known providers that use content blocks format
+    private static let blockFormatProviders = [
+        "tokenfactory.nebius.com",  // Nebius API
+        "api.anthropic.com",         // Anthropic (if using OpenAI compat)
+        "fireworks.ai"               // Fireworks AI (some models)
+    ]
+
+    // Known providers that use simple string format
+    private static let stringFormatProviders = [
+        "api.openai.com",           // Official OpenAI
+        "api.groq.com",             // Groq
+        "openrouter.ai",            // OpenRouter
+        "api.together.xyz",         // Together AI
+        "api.perplexity.ai"         // Perplexity
+    ]
+
+    /// Detect the message format based on the base URL
+    static func detectFormat(for baseURL: String) -> MessageContentFormat {
+        let lowercasedURL = baseURL.lowercased()
+
+        // Check if it's a known block format provider
+        for provider in blockFormatProviders {
+            if lowercasedURL.contains(provider) {
+                print("🔍 Detected block format provider: \(provider)")
+                return .blocks
+            }
+        }
+
+        // Check if it's a known string format provider
+        for provider in stringFormatProviders {
+            if lowercasedURL.contains(provider) {
+                print("🔍 Detected string format provider: \(provider)")
+                return .string
+            }
+        }
+
+        // Default to string format (most common)
+        print("🔍 Unknown provider, defaulting to string format")
+        return .string
+    }
+
+    /// Check if a base URL should use response_format
+    static func shouldUseResponseFormat(for baseURL: String) -> Bool {
+        // Only use response_format with official OpenAI API
+        let isOpenAI = baseURL.contains("api.openai.com")
+        return isOpenAI
+    }
 }
 
 struct OpenAIChatCompletionResponse: Codable {
