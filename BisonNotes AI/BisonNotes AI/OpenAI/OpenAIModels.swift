@@ -265,7 +265,9 @@ class MessageFormatDetector {
         if UserDefaults.standard.bool(forKey: manualOverrideEnabledKey) {
             let manualFormat = UserDefaults.standard.string(forKey: manualFormatKey) ?? "string"
             let format: MessageContentFormat = manualFormat == "blocks" ? .blocks : .string
+            #if DEBUG
             print("🔧 Manual override enabled: \(manualFormat) format")
+            #endif
             return format
         }
 
@@ -273,14 +275,25 @@ class MessageFormatDetector {
         guard let url = URL(string: baseURL),
               let host = url.host?.lowercased() else {
             // If URL parsing fails, fall back to string matching
+            #if DEBUG
             print("⚠️ Failed to parse base URL: \(baseURL), using fallback detection")
+            #endif
             return detectFormatFallback(for: baseURL)
         }
 
+        // Use extracted logic for host-based detection
+        return detectFormatByHost(host)
+    }
+
+    /// Core detection logic based on host name
+    /// Extracted to avoid duplication between detectFormat and detectFormatWithoutOverride
+    private static func detectFormatByHost(_ host: String) -> MessageContentFormat {
         // Check if it's a known block format provider using proper host matching
         for provider in blockFormatProviders {
             if host == provider || host.hasSuffix("." + provider) {
+                #if DEBUG
                 print("🔍 Auto-detected block format provider: \(provider)")
+                #endif
                 return .blocks
             }
         }
@@ -288,13 +301,17 @@ class MessageFormatDetector {
         // Check if it's a known string format provider using proper host matching
         for provider in stringFormatProviders {
             if host == provider || host.hasSuffix("." + provider) {
+                #if DEBUG
                 print("🔍 Auto-detected string format provider: \(provider)")
+                #endif
                 return .string
             }
         }
 
         // Default to string format (most common)
+        #if DEBUG
         print("🔍 Unknown provider, defaulting to string format")
+        #endif
         return .string
     }
 
@@ -330,19 +347,8 @@ class MessageFormatDetector {
             return detectFormatFallback(for: baseURL)
         }
 
-        for provider in blockFormatProviders {
-            if host == provider || host.hasSuffix("." + provider) {
-                return .blocks
-            }
-        }
-
-        for provider in stringFormatProviders {
-            if host == provider || host.hasSuffix("." + provider) {
-                return .string
-            }
-        }
-
-        return .string
+        // Use extracted logic for host-based detection
+        return detectFormatByHost(host)
     }
 
     /// Check if a base URL should use response_format
