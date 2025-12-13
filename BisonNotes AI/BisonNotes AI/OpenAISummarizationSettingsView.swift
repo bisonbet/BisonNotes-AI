@@ -1000,9 +1000,9 @@ struct OpenAICompatibleSettingsView: View {
             Text("Message Format")
         } footer: {
             if manualFormatOverride {
-                Text("Manual override is enabled. The selected format will be used instead of automatic detection. Use this if the API doesn't work with the auto-detected format.")
+                Text("Using manual format override. Disable to use automatic detection based on your API provider.")
             } else {
-                Text("Format is automatically detected based on your base URL. Enable manual override if needed.")
+                Text("Format is automatically detected from your base URL. Enable override only if auto-detection fails.")
             }
         }
     }

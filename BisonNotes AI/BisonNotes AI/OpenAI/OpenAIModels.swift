@@ -221,6 +221,21 @@ struct ChatMessage: Codable {
 
 // MARK: - Provider Detection
 
+/// Detects the appropriate message format for OpenAI-compatible API providers
+///
+/// Supports automatic detection based on known provider URLs and manual override
+/// via UserDefaults. Thread-safe through service-level caching at initialization.
+///
+/// - Supported Formats:
+///   - `.string`: Standard OpenAI format {"content": "text"}
+///   - `.blocks`: Content blocks format {"content": [{"type": "text", "text": "..."}]}
+///
+/// - Detection Priority:
+///   1. Manual override (if enabled in settings)
+///   2. URL-based automatic detection (domain matching)
+///   3. Fallback to `.string` (most common)
+///
+/// - Note: Services cache format detection results at initialization to ensure thread safety
 class MessageFormatDetector {
 
     // UserDefaults keys for manual override
@@ -229,18 +244,18 @@ class MessageFormatDetector {
 
     // Known providers that use content blocks format
     private static let blockFormatProviders = [
-        "tokenfactory.nebius.com",  // Nebius API
-        "api.anthropic.com",         // Anthropic (if using OpenAI compat)
-        "fireworks.ai"               // Fireworks AI (some models)
+        "nebius.com",               // Nebius API (matches *.nebius.com including api.tokenfactory.nebius.com)
+        "anthropic.com",            // Anthropic (if using OpenAI compat)
+        "fireworks.ai"              // Fireworks AI (some models)
     ]
 
     // Known providers that use simple string format
     private static let stringFormatProviders = [
-        "api.openai.com",           // Official OpenAI
-        "api.groq.com",             // Groq
+        "openai.com",               // Official OpenAI (matches *.openai.com)
+        "groq.com",                 // Groq
         "openrouter.ai",            // OpenRouter
-        "api.together.xyz",         // Together AI
-        "api.perplexity.ai"         // Perplexity
+        "together.xyz",             // Together AI
+        "perplexity.ai"             // Perplexity
     ]
 
     /// Detect the message format based on the base URL
@@ -258,6 +273,7 @@ class MessageFormatDetector {
         guard let url = URL(string: baseURL),
               let host = url.host?.lowercased() else {
             // If URL parsing fails, fall back to string matching
+            print("⚠️ Failed to parse base URL: \(baseURL), using fallback detection")
             return detectFormatFallback(for: baseURL)
         }
 

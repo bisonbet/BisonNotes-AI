@@ -161,9 +161,11 @@ class OpenAISummarizationService: ObservableObject {
             responseFormat: cachedShouldUseResponseFormat ? ResponseFormat.json : nil
         )
 
+        #if DEBUG
         print("🔧 Provider: \(config.baseURL)")
         print("🔧 Message format: \(cachedMessageFormat == .blocks ? "content blocks" : "simple string")")
         print("🔧 Using response_format: \(cachedShouldUseResponseFormat ? "json_object" : "none (flexible parsing)")")
+        #endif
 
         let response = try await makeAPICall(request: request)
 
