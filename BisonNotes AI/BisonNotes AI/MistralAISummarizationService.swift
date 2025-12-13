@@ -38,6 +38,11 @@ class MistralAISummarizationService: ObservableObject {
     // MARK: - Public Methods
 
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
+        // Validate input
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral - Empty text provided")
+        }
+
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: text)
 
@@ -208,6 +213,24 @@ class MistralAISummarizationService: ObservableObject {
 
             logger.debug("Mistral API Response - Status: \(httpResponse.statusCode, privacy: .public)")
             logger.debug("Response data length: \(data.count, privacy: .public) bytes")
+
+            // Handle rate limiting with retry information
+            if httpResponse.statusCode == 429 {
+                let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After") ?? "unknown"
+                let rateLimitReset = httpResponse.value(forHTTPHeaderField: "X-RateLimit-Reset") ?? "unknown"
+
+                logger.warning("Mistral API rate limit exceeded - Retry-After: \(retryAfter), Reset: \(rateLimitReset)", privacy: .public)
+
+                // Provide helpful error message with retry timing
+                var errorMessage = "Mistral API rate limit exceeded."
+                if let retrySeconds = Int(retryAfter) {
+                    errorMessage += " Please retry after \(retrySeconds) seconds."
+                } else if rateLimitReset != "unknown" {
+                    errorMessage += " Rate limit resets at: \(rateLimitReset)."
+                }
+
+                throw SummarizationError.aiServiceUnavailable(service: errorMessage)
+            }
 
             if httpResponse.statusCode != 200 {
                 if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {

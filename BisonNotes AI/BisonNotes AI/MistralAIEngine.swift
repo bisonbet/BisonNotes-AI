@@ -177,12 +177,13 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             return false
         }
 
-        let testPrompt = "Hello from BisonNotes. Please reply with 'Mistral connection confirmed'."
+        let testPrompt = "Test connection."
 
         do {
             let response = try await service.generateSummary(from: testPrompt, contentType: .general)
-            let success = response.localizedCaseInsensitiveContains("connection confirmed")
-            logger.info("Mistral test connection \(success ? "successful" : "failed")")
+            // Accept any non-empty response as success - the model doesn't need to return specific text
+            let success = !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            logger.info("Mistral test connection \(success ? "successful" : "failed") - Response length: \(response.count)")
             return success
         } catch {
             logger.error("Mistral test connection failed: \(error.localizedDescription)")
@@ -192,6 +193,11 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
 
     // MARK: - Configuration Management
 
+    /// Updates configuration from UserDefaults if settings have changed
+    ///
+    /// This method is called at the start of each operation to ensure the latest user settings are used.
+    /// The configuration is only recreated if settings have actually changed (via equality check),
+    /// preventing unnecessary service recreation and ensuring thread-safe access to latest settings.
     private func updateConfiguration() {
         let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
         let modelId = UserDefaults.standard.string(forKey: "mistralModel") ?? MistralAIModel.mistralMedium2508.rawValue
@@ -216,6 +222,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             supportsJsonResponseFormat: supportsJsonResponseFormat
         )
 
+        // Only recreate service if configuration actually changed (prevents unnecessary overhead)
         if currentConfig == nil || currentConfig != newConfig {
             currentConfig = newConfig
 
@@ -290,24 +297,35 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
         var uniqueTasks: [TaskItem] = []
         var seenHashes = Set<String>()
+        var normalizedTexts: [String] = []  // Store normalized texts for similarity check
 
         for task in tasks {
             let normalizedText = task.text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Fast exact duplicate check using hash
+            // Fast exact duplicate check using hash - skip immediately if found
             if seenHashes.contains(normalizedText) {
                 continue
             }
 
-            // Slower similarity check for near-duplicates
-            let isDuplicate = uniqueTasks.contains { existingTask in
-                let similarity = calculateTextSimilarity(task.text, existingTask.text)
-                return similarity > 0.8
+            // Slower similarity check for near-duplicates - only check against unique items
+            var isDuplicate = false
+            for (index, existingNormalizedText) in normalizedTexts.enumerated() {
+                // Skip if this existing task was already caught by hash check (shouldn't happen but defensive)
+                if seenHashes.contains(existingNormalizedText) && existingNormalizedText == normalizedText {
+                    continue
+                }
+
+                let similarity = calculateTextSimilarity(normalizedText, existingNormalizedText)
+                if similarity > 0.8 {
+                    isDuplicate = true
+                    break  // Early exit - no need to check remaining items
+                }
             }
 
             if !isDuplicate {
                 uniqueTasks.append(task)
                 seenHashes.insert(normalizedText)
+                normalizedTexts.append(normalizedText)  // Cache normalized text for reuse
             }
         }
 
@@ -317,24 +335,30 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     private func deduplicateReminders(_ reminders: [ReminderItem]) -> [ReminderItem] {
         var uniqueReminders: [ReminderItem] = []
         var seenHashes = Set<String>()
+        var normalizedTexts: [String] = []  // Store normalized texts for similarity check
 
         for reminder in reminders {
             let normalizedText = reminder.text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Fast exact duplicate check using hash
+            // Fast exact duplicate check using hash - skip immediately if found
             if seenHashes.contains(normalizedText) {
                 continue
             }
 
-            // Slower similarity check for near-duplicates
-            let isDuplicate = uniqueReminders.contains { existingReminder in
-                let similarity = calculateTextSimilarity(reminder.text, existingReminder.text)
-                return similarity > 0.8
+            // Slower similarity check for near-duplicates - only check against unique items
+            var isDuplicate = false
+            for existingNormalizedText in normalizedTexts {
+                let similarity = calculateTextSimilarity(normalizedText, existingNormalizedText)
+                if similarity > 0.8 {
+                    isDuplicate = true
+                    break  // Early exit - no need to check remaining items
+                }
             }
 
             if !isDuplicate {
                 uniqueReminders.append(reminder)
                 seenHashes.insert(normalizedText)
+                normalizedTexts.append(normalizedText)  // Cache normalized text for reuse
             }
         }
 
@@ -344,24 +368,30 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
         var uniqueTitles: [TitleItem] = []
         var seenHashes = Set<String>()
+        var normalizedTexts: [String] = []  // Store normalized texts for similarity check
 
         for title in titles {
             let normalizedText = title.text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Fast exact duplicate check using hash
+            // Fast exact duplicate check using hash - skip immediately if found
             if seenHashes.contains(normalizedText) {
                 continue
             }
 
-            // Slower similarity check for near-duplicates
-            let isDuplicate = uniqueTitles.contains { existingTitle in
-                let similarity = calculateTextSimilarity(title.text, existingTitle.text)
-                return similarity > 0.8
+            // Slower similarity check for near-duplicates - only check against unique items
+            var isDuplicate = false
+            for existingNormalizedText in normalizedTexts {
+                let similarity = calculateTextSimilarity(normalizedText, existingNormalizedText)
+                if similarity > 0.8 {
+                    isDuplicate = true
+                    break  // Early exit - no need to check remaining items
+                }
             }
 
             if !isDuplicate {
                 uniqueTitles.append(title)
                 seenHashes.insert(normalizedText)
+                normalizedTexts.append(normalizedText)  // Cache normalized text for reuse
             }
         }
 
@@ -380,17 +410,31 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         let combinedText = summaries.joined(separator: "\n\n")
 
         // Generate meta-summary ensuring context limits are respected
-        let metaSummary = try await generateMetaSummary(from: combinedText, contentType: contentType, service: service)
+        let metaSummary = try await generateMetaSummary(from: combinedText, contentType: contentType, service: service, depth: 0)
 
         return metaSummary
     }
 
     /// Recursively generate a meta-summary that fits within the model's context window
+    ///
+    /// - Parameters:
+    ///   - text: The text to summarize
+    ///   - contentType: The type of content being summarized
+    ///   - service: The Mistral AI service instance
+    ///   - depth: Current recursion depth (used to prevent infinite recursion)
+    /// - Returns: A summarized version of the text
+    /// - Throws: `SummarizationError` if recursion depth is exceeded or API call fails
     private func generateMetaSummary(
         from text: String,
         contentType: ContentType,
-        service: MistralAISummarizationService
+        service: MistralAISummarizationService,
+        depth: Int = 0
     ) async throws -> String {
+        // Prevent infinite recursion
+        guard depth < 10 else {
+            logger.error("Meta-summary recursion depth exceeded at level \(depth)")
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral - Summary processing too complex (recursion limit reached)")
+        }
         let maxTokens = currentConfig?.model.contextWindow ?? TokenManager.maxTokensPerChunk
 
         // If text fits within context window, summarize directly
@@ -416,7 +460,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
 
         // Recursively summarize the combined intermediate summaries
         let reducedText = intermediateSummaries.joined(separator: "\n\n")
-        return try await generateMetaSummary(from: reducedText, contentType: contentType, service: service)
+        return try await generateMetaSummary(from: reducedText, contentType: contentType, service: service, depth: depth + 1)
     }
 
     private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
