@@ -158,19 +158,6 @@ class MistralAISummarizationService: ObservableObject {
         return (result.summary, result.tasks, result.reminders, result.titles, contentType)
     }
 
-    func testConnection() async -> Bool {
-        do {
-            let testPrompt = "Hello, this is a test message. Please respond with 'Test successful'."
-            let response = try await generateSummary(from: testPrompt, contentType: .general)
-            let success = response.contains("Test successful") || response.contains("test successful")
-            logger.info("Mistral connection test \(success ? "successful" : "failed", privacy: .public)")
-            return success
-        } catch {
-            logger.error("Mistral connection test failed: \(error.localizedDescription, privacy: .public)")
-            return false
-        }
-    }
-
     // MARK: - Private Helper Methods
 
     private func makeAPICall(request: OpenAIChatCompletionRequest) async throws -> OpenAIChatCompletionResponse {

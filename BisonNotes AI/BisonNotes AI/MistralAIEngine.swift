@@ -28,6 +28,11 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     /// Maximum number of title suggestions per recording to keep UI manageable
     private let maxTitlesPerRecording = 5
 
+    /// Similarity threshold for deduplication (0.0 = no match, 1.0 = exact match)
+    /// Values above this threshold are considered duplicates and filtered out.
+    /// Set to 0.8 to catch near-duplicates while allowing slight variations in wording.
+    private let deduplicationSimilarityThreshold = 0.8
+
     var isAvailable: Bool {
         let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
         guard !apiKey.isEmpty else {
@@ -81,6 +86,16 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         }
     }
 
+    /// Extract tasks from the provided text
+    ///
+    /// - Parameter text: The transcript text to extract tasks from
+    /// - Returns: Array of task items (max 15)
+    /// - Throws: `SummarizationError` if the API call fails or service is unavailable
+    ///
+    /// **Performance Note:**
+    /// This method calls `processComplete()` internally, which extracts ALL content (summary, tasks, reminders, titles).
+    /// If you need multiple types of extracted data, call `processComplete()` directly instead of calling
+    /// `extractTasks()`, `extractReminders()`, and `extractTitles()` separately to avoid redundant API calls.
     func extractTasks(from text: String) async throws -> [TaskItem] {
         updateConfiguration()
 
@@ -97,6 +112,16 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         }
     }
 
+    /// Extract reminders from the provided text
+    ///
+    /// - Parameter text: The transcript text to extract reminders from
+    /// - Returns: Array of reminder items (max 15)
+    /// - Throws: `SummarizationError` if the API call fails or service is unavailable
+    ///
+    /// **Performance Note:**
+    /// This method calls `processComplete()` internally, which extracts ALL content (summary, tasks, reminders, titles).
+    /// If you need multiple types of extracted data, call `processComplete()` directly instead of calling
+    /// `extractTasks()`, `extractReminders()`, and `extractTitles()` separately to avoid redundant API calls.
     func extractReminders(from text: String) async throws -> [ReminderItem] {
         updateConfiguration()
 
@@ -113,6 +138,16 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         }
     }
 
+    /// Extract title suggestions from the provided text
+    ///
+    /// - Parameter text: The transcript text to extract title suggestions from
+    /// - Returns: Array of title items (max 5)
+    /// - Throws: `SummarizationError` if the API call fails or service is unavailable
+    ///
+    /// **Performance Note:**
+    /// This method calls `processComplete()` internally, which extracts ALL content (summary, tasks, reminders, titles).
+    /// If you need multiple types of extracted data, call `processComplete()` directly instead of calling
+    /// `extractTasks()`, `extractReminders()`, and `extractTitles()` separately to avoid redundant API calls.
     func extractTitles(from text: String) async throws -> [TitleItem] {
         updateConfiguration()
 
@@ -177,7 +212,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             return false
         }
 
-        let testPrompt = "Test connection."
+        let testPrompt = "Test connection"
 
         do {
             let response = try await service.generateSummary(from: testPrompt, contentType: .general)
@@ -245,11 +280,17 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     /// 4. Deduplicate extracted items using hash + similarity checks
     /// 5. Apply rate limiting between chunks based on model tier
     ///
+    /// **Error Recovery:**
+    /// - If a chunk fails, it will be retried once after a short delay
+    /// - If retry fails, the chunk is skipped and processing continues with remaining chunks
+    /// - At least one successful chunk is required; otherwise the entire operation fails
+    ///
     /// - Parameters:
     ///   - text: The large transcript text to process
     ///   - service: The Mistral AI service instance to use
     ///   - contextWindow: Maximum tokens per chunk (model-specific)
     /// - Returns: Combined results from all chunks with deduplicated items
+    /// - Throws: `SummarizationError` if all chunks fail or no successful results are obtained
     private func processChunkedText(_ text: String, service: MistralAISummarizationService, contextWindow: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         let startTime = Date()
 
@@ -259,27 +300,56 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         var allReminders: [ReminderItem] = []
         var allTitles: [TitleItem] = []
         var contentType: ContentType = .general
+        var successfulChunks = 0
+        var failedChunks = 0
 
         for (index, chunk) in chunks.enumerated() {
-            do {
-                let chunkResult = try await service.processComplete(text: chunk)
-                summaries.append(chunkResult.summary)
-                allTasks.append(contentsOf: chunkResult.tasks)
-                allReminders.append(contentsOf: chunkResult.reminders)
-                allTitles.append(contentsOf: chunkResult.titles)
+            var retryCount = 0
+            let maxRetries = 1
+            var chunkProcessed = false
 
-                if index == 0 {
-                    contentType = chunkResult.contentType
-                }
+            while retryCount <= maxRetries && !chunkProcessed {
+                do {
+                    let chunkResult = try await service.processComplete(text: chunk)
+                    summaries.append(chunkResult.summary)
+                    allTasks.append(contentsOf: chunkResult.tasks)
+                    allReminders.append(contentsOf: chunkResult.reminders)
+                    allTitles.append(contentsOf: chunkResult.titles)
 
-                if index < chunks.count - 1 {
-                    let delay = currentConfig?.model.rateLimitDelay ?? 300_000_000
-                    try await Task.sleep(nanoseconds: delay)
+                    if index == 0 {
+                        contentType = chunkResult.contentType
+                    }
+
+                    successfulChunks += 1
+                    chunkProcessed = true
+
+                    if index < chunks.count - 1 {
+                        let delay = currentConfig?.model.rateLimitDelay ?? 300_000_000
+                        try await Task.sleep(nanoseconds: delay)
+                    }
+                } catch {
+                    retryCount += 1
+                    if retryCount <= maxRetries {
+                        logger.warning("Failed to process Mistral chunk \(index + 1), retrying (\(retryCount)/\(maxRetries)): \(error.localizedDescription)")
+                        // Brief delay before retry (1 second)
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    } else {
+                        logger.error("Failed to process Mistral chunk \(index + 1) after \(maxRetries) retries, skipping: \(error.localizedDescription)")
+                        failedChunks += 1
+                        chunkProcessed = true  // Move on to next chunk
+                    }
                 }
-            } catch {
-                logger.error("Failed to process Mistral chunk \(index + 1): \(error.localizedDescription)")
-                throw error
             }
+        }
+
+        // Require at least one successful chunk
+        guard successfulChunks > 0 else {
+            logger.error("All \(chunks.count) chunks failed to process")
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral - All chunks failed to process")
+        }
+
+        if failedChunks > 0 {
+            logger.warning("Completed chunked processing with \(successfulChunks) successful and \(failedChunks) failed chunks")
         }
 
         let combinedSummary = try await combineSummaries(summaries, contentType: contentType, service: service)
@@ -309,14 +379,14 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
 
             // Slower similarity check for near-duplicates - only check against unique items
             var isDuplicate = false
-            for (index, existingNormalizedText) in normalizedTexts.enumerated() {
+            for existingNormalizedText in normalizedTexts {
                 // Skip if this existing task was already caught by hash check (shouldn't happen but defensive)
                 if seenHashes.contains(existingNormalizedText) && existingNormalizedText == normalizedText {
                     continue
                 }
 
                 let similarity = calculateTextSimilarity(normalizedText, existingNormalizedText)
-                if similarity > 0.8 {
+                if similarity > deduplicationSimilarityThreshold {
                     isDuplicate = true
                     break  // Early exit - no need to check remaining items
                 }
@@ -349,7 +419,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             var isDuplicate = false
             for existingNormalizedText in normalizedTexts {
                 let similarity = calculateTextSimilarity(normalizedText, existingNormalizedText)
-                if similarity > 0.8 {
+                if similarity > deduplicationSimilarityThreshold {
                     isDuplicate = true
                     break  // Early exit - no need to check remaining items
                 }
@@ -382,7 +452,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             var isDuplicate = false
             for existingNormalizedText in normalizedTexts {
                 let similarity = calculateTextSimilarity(normalizedText, existingNormalizedText)
-                if similarity > 0.8 {
+                if similarity > deduplicationSimilarityThreshold {
                     isDuplicate = true
                     break  // Early exit - no need to check remaining items
                 }
