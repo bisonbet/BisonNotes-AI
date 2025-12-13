@@ -6,13 +6,23 @@
 //
 
 import Foundation
+import os.log
 
+/// Service for interacting with Mistral AI's OpenAI-compatible chat completion API
+///
+/// This service handles all direct API communication with Mistral, including:
+/// - Request construction and JSON encoding
+/// - Authentication and headers
+/// - Response parsing and error handling
+/// - Structured output using JSON mode (when supported)
+/// - Logging with appropriate privacy levels
 class MistralAISummarizationService: ObservableObject {
 
     // MARK: - Properties
 
     @Published var config: MistralAIConfig
     private let session: URLSession
+    private let logger = Logger(subsystem: "com.audiojournal.app", category: "MistralAISummarizationService")
 
     // MARK: - Initialization
 
@@ -122,18 +132,16 @@ class MistralAISummarizationService: ObservableObject {
             ChatMessage(role: "user", content: userPrompt)
         ]
 
-        let useResponseFormat = config.baseURL.contains("api.mistral.ai")
-
         let request = OpenAIChatCompletionRequest(
             model: config.model.rawValue,
             messages: messages,
             temperature: config.temperature,
             maxCompletionTokens: config.maxTokens,
-            responseFormat: useResponseFormat ? ResponseFormat.json : nil
+            responseFormat: config.supportsJsonResponseFormat ? ResponseFormat.json : nil
         )
 
-        print("🔧 Mistral Provider: \(config.baseURL)")
-        print("🔧 Using response_format: \(useResponseFormat ? "json_object" : "none (flexible parsing)")")
+        logger.debug("Mistral Provider: \(config.baseURL, privacy: .public)")
+        logger.debug("Using response_format: \(config.supportsJsonResponseFormat ? "json_object" : "none (flexible parsing)", privacy: .public)")
 
         let response = try await makeAPICall(request: request)
 
@@ -150,10 +158,10 @@ class MistralAISummarizationService: ObservableObject {
             let testPrompt = "Hello, this is a test message. Please respond with 'Test successful'."
             let response = try await generateSummary(from: testPrompt, contentType: .general)
             let success = response.contains("Test successful") || response.contains("test successful")
-            print("✅ Mistral connection test \(success ? "successful" : "failed")")
+            logger.info("Mistral connection test \(success ? "successful" : "failed", privacy: .public)")
             return success
         } catch {
-            print("❌ Mistral connection test failed: \(error)")
+            logger.error("Mistral connection test failed: \(error.localizedDescription, privacy: .public)")
             return false
         }
     }
@@ -162,12 +170,12 @@ class MistralAISummarizationService: ObservableObject {
 
     private func makeAPICall(request: OpenAIChatCompletionRequest) async throws -> OpenAIChatCompletionResponse {
         guard !config.apiKey.isEmpty else {
-            print("❌ Mistral API key is empty")
+            logger.error("Mistral API key is empty")
             throw SummarizationError.aiServiceUnavailable(service: "Mistral API key not configured")
         }
 
-        print("🔧 Mistral API Configuration - Model: \(config.model.rawValue), BaseURL: \(config.baseURL)")
-        print("🔑 API Key: \(String(config.apiKey.prefix(7)))...")
+        logger.debug("Mistral API Configuration - Model: \(config.model.rawValue, privacy: .public), BaseURL: \(config.baseURL, privacy: .public)")
+        logger.debug("API Key configured: \(config.apiKey.isEmpty ? "No" : "Yes", privacy: .public)")
 
         guard let url = URL(string: "\(config.baseURL)/chat/completions") else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid Mistral base URL: \(config.baseURL)")
@@ -183,33 +191,31 @@ class MistralAISummarizationService: ObservableObject {
             let encoder = JSONEncoder()
             urlRequest.httpBody = try encoder.encode(request)
 
-            if let requestBody = String(data: urlRequest.httpBody!, encoding: .utf8) {
-                print("📤 Mistral API Request Body (first 300 chars): \(requestBody.prefix(300))...")
-                print("📊 Total request size: \(requestBody.count) characters")
+            if let requestData = urlRequest.httpBody {
+                logger.debug("Request size: \(requestData.count, privacy: .public) bytes")
             }
         } catch {
             throw SummarizationError.aiServiceUnavailable(service: "Failed to encode request: \(error.localizedDescription)")
         }
 
         do {
-            print("🌐 Making Mistral API request...")
+            logger.debug("Making Mistral API request")
             let (data, response) = try await session.data(for: urlRequest)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw SummarizationError.aiServiceUnavailable(service: "Invalid response from Mistral")
             }
 
-            let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
-            print("🌐 Mistral API Response - Status: \(httpResponse.statusCode)")
-            print("📝 Raw response: \(responseString)")
-            print("📊 Response data length: \(data.count) bytes")
+            logger.debug("Mistral API Response - Status: \(httpResponse.statusCode, privacy: .public)")
+            logger.debug("Response data length: \(data.count, privacy: .public) bytes")
 
             if httpResponse.statusCode != 200 {
                 if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
-                    print("❌ Mistral API Error: \(errorResponse.error.message)")
+                    logger.error("Mistral API Error: \(errorResponse.error.message, privacy: .public)")
                     throw SummarizationError.aiServiceUnavailable(service: "Mistral API Error: \(errorResponse.error.message)")
                 } else {
-                    print("❌ Mistral API Error: HTTP \(httpResponse.statusCode) - \(responseString)")
+                    let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
+                    logger.error("Mistral API Error: HTTP \(httpResponse.statusCode, privacy: .public)")
                     throw SummarizationError.aiServiceUnavailable(service: "Mistral API Error: HTTP \(httpResponse.statusCode) - \(responseString)")
                 }
             }
@@ -218,12 +224,12 @@ class MistralAISummarizationService: ObservableObject {
             let apiResponse = try decoder.decode(OpenAIChatCompletionResponse.self, from: data)
 
             if let usage = apiResponse.usage {
-                print("📊 Usage - Prompt Tokens: \(usage.promptTokens), Completion Tokens: \(usage.completionTokens), Total: \(usage.totalTokens)")
+                logger.info("Usage - Prompt: \(usage.promptTokens, privacy: .public), Completion: \(usage.completionTokens, privacy: .public), Total: \(usage.totalTokens, privacy: .public)")
             }
 
             return apiResponse
         } catch {
-            print("❌ Mistral API call failed: \(error)")
+            logger.error("Mistral API call failed: \(error.localizedDescription, privacy: .public)")
             throw SummarizationError.aiServiceUnavailable(service: error.localizedDescription)
         }
     }

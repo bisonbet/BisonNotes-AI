@@ -17,6 +17,7 @@ struct MistralAISettingsView: View {
     @AppStorage("mistralTemperature") private var temperature: Double = 0.1
     @AppStorage("mistralMaxTokens") private var maxTokens: Int = 4096
     @AppStorage("enableMistralAI") private var isEnabled: Bool = false
+    @AppStorage("mistralSupportsJsonResponseFormat") private var supportsJsonResponseFormat: Bool = true
 
     @State private var isTestingConnection = false
     @State private var showingAlert = false
@@ -52,9 +53,34 @@ struct MistralAISettingsView: View {
                             .foregroundColor(.secondary)
                     }
                     .padding(.vertical, 4)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("JSON Response Format", isOn: $supportsJsonResponseFormat)
+
+                        Text("Enable strict JSON mode for structured outputs. Official Mistral API supports this. Disable if using a custom gateway that doesn't support response_format parameter.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
                 }
 
                 Section(header: Text("Model Settings")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Which model should I choose?")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("• Large: Best quality for complex/long recordings")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text("• Medium: Balanced quality & cost (recommended)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text("• Magistral: Budget-friendly for simple tasks")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+
                     Picker("Model", selection: $selectedModel) {
                         ForEach(MistralAIModel.allCases, id: \.self) { model in
                             HStack {
@@ -77,19 +103,29 @@ struct MistralAISettingsView: View {
                         .foregroundColor(.secondary)
                         .padding(.top, 4)
 
-                    Text("Temperature: \(temperature, specifier: "%.1f")")
-                        .font(.headline)
-                    Slider(value: $temperature, in: 0...1, step: 0.1)
-                        .accentColor(.blue)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Temperature: \(temperature, specifier: "%.1f")")
+                            .font(.headline)
+                        Slider(value: $temperature, in: 0...1, step: 0.1)
+                            .accentColor(.blue)
+                        Text("Lower = more focused & consistent, Higher = more creative")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
 
                     Text("Max Output Tokens: \(maxTokens)")
                         .font(.headline)
                     Stepper("", value: $maxTokens, in: 512...selectedModelEnum.maxTokens, step: 256)
                         .labelsHidden()
 
-                    Text("Context window: \(selectedModelEnum.contextWindow/1000)K tokens • \(selectedModelEnum.costTier) pricing")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Context window: \(selectedModelEnum.contextWindow/1000)K tokens • \(selectedModelEnum.costTier) pricing")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Large transcripts are automatically chunked and combined")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
 
                 Section(header: Text("Status")) {
@@ -174,6 +210,7 @@ struct MistralAISettingsView: View {
         logger.info("Model: \(selectedModel)")
         logger.info("Temperature: \(temperature)")
         logger.info("Max Tokens: \(maxTokens)")
+        logger.info("JSON Response Format: \(supportsJsonResponseFormat)")
         logger.info("Enabled: \(isEnabled)")
 
         onConfigurationChanged()

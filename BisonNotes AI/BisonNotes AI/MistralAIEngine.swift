@@ -17,6 +17,17 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     private var currentConfig: MistralAIConfig?
     private let logger = Logger(subsystem: "com.audiojournal.app", category: "MistralAIEngine")
 
+    // MARK: - Configuration Constants
+
+    /// Maximum number of tasks to extract per recording to prevent overwhelming the user
+    private let maxTasksPerRecording = 15
+
+    /// Maximum number of reminders to extract per recording to prevent overwhelming the user
+    private let maxRemindersPerRecording = 15
+
+    /// Maximum number of title suggestions per recording to keep UI manageable
+    private let maxTitlesPerRecording = 5
+
     var isAvailable: Bool {
         let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
         guard !apiKey.isEmpty else {
@@ -44,6 +55,17 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         updateConfiguration()
     }
 
+    /// Generate a summary of the provided text
+    ///
+    /// - Parameters:
+    ///   - text: The transcript text to summarize
+    ///   - contentType: The type of content (meeting, lecture, conversation, etc.)
+    /// - Returns: A markdown-formatted summary appropriate for the content type
+    /// - Throws: `SummarizationError` if the API call fails or service is unavailable
+    ///
+    /// **Chunking Strategy:**
+    /// If text exceeds the model's context window, it will be automatically chunked,
+    /// processed in segments, and combined into a cohesive meta-summary.
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
         updateConfiguration()
 
@@ -122,6 +144,16 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         }
     }
 
+    /// Process text and extract all available information in a single call
+    ///
+    /// - Parameter text: The transcript text to process
+    /// - Returns: A tuple containing summary, tasks (max 15), reminders (max 15), titles (max 5), and detected content type
+    /// - Throws: `SummarizationError` if the API call fails or service is unavailable
+    ///
+    /// **Performance:**
+    /// - Uses chunked processing for large transcripts (>context window)
+    /// - Implements hash-based deduplication for extracted items
+    /// - Applies configurable rate limiting between chunks based on model tier
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         updateConfiguration()
 
@@ -167,6 +199,12 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         let temperature = UserDefaults.standard.double(forKey: "mistralTemperature")
         let maxTokens = UserDefaults.standard.integer(forKey: "mistralMaxTokens")
 
+        // Auto-detect JSON response format support based on URL, but allow user override
+        let autoDetectedJsonSupport = baseURL.lowercased().contains("api.mistral.ai")
+        let supportsJsonResponseFormat = UserDefaults.standard.object(forKey: "mistralSupportsJsonResponseFormat") != nil
+            ? UserDefaults.standard.bool(forKey: "mistralSupportsJsonResponseFormat")
+            : autoDetectedJsonSupport
+
         let model = MistralAIModel(rawValue: modelId) ?? .mistralMedium2508
         let newConfig = MistralAIConfig(
             apiKey: apiKey,
@@ -174,7 +212,8 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             baseURL: baseURL,
             temperature: temperature > 0 ? temperature : 0.1,
             maxTokens: maxTokens > 0 ? maxTokens : model.maxTokens,
-            timeout: 45.0
+            timeout: 45.0,
+            supportsJsonResponseFormat: supportsJsonResponseFormat
         )
 
         if currentConfig == nil || currentConfig != newConfig {
@@ -183,13 +222,27 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             service = MistralAISummarizationService(config: newConfig)
 
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Updated Mistral configuration - Model: \(modelId), BaseURL: \(baseURL)", category: "MistralAIEngine")
+                AppLogger.shared.verbose("Updated Mistral configuration - Model: \(modelId), BaseURL: \(baseURL), JSON Format: \(supportsJsonResponseFormat)", category: "MistralAIEngine")
             }
         }
     }
 
     // MARK: - Chunked Processing
 
+    /// Process large transcripts that exceed the model's context window
+    ///
+    /// **Chunking Strategy:**
+    /// 1. Split text into sentence-boundary chunks that fit within context window
+    /// 2. Process each chunk independently to extract summaries, tasks, reminders, and titles
+    /// 3. Combine chunk summaries using recursive meta-summarization
+    /// 4. Deduplicate extracted items using hash + similarity checks
+    /// 5. Apply rate limiting between chunks based on model tier
+    ///
+    /// - Parameters:
+    ///   - text: The large transcript text to process
+    ///   - service: The Mistral AI service instance to use
+    ///   - contextWindow: Maximum tokens per chunk (model-specific)
+    /// - Returns: Combined results from all chunks with deduplicated items
     private func processChunkedText(_ text: String, service: MistralAISummarizationService, contextWindow: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         let startTime = Date()
 
@@ -213,7 +266,8 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
                 }
 
                 if index < chunks.count - 1 {
-                    try await Task.sleep(nanoseconds: 300_000_000)
+                    let delay = currentConfig?.model.rateLimitDelay ?? 300_000_000
+                    try await Task.sleep(nanoseconds: delay)
                 }
             } catch {
                 logger.error("Failed to process Mistral chunk \(index + 1): \(error.localizedDescription)")
@@ -221,11 +275,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             }
         }
 
-        let combinedSummary = try await TokenManager.combineSummaries(
-            summaries,
-            contentType: contentType,
-            service: OllamaService()
-        )
+        let combinedSummary = try await combineSummaries(summaries, contentType: contentType, service: service)
 
         let deduplicatedTasks = deduplicateTasks(allTasks)
         let deduplicatedReminders = deduplicateReminders(allReminders)
@@ -239,8 +289,17 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
 
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
         var uniqueTasks: [TaskItem] = []
+        var seenHashes = Set<String>()
 
         for task in tasks {
+            let normalizedText = task.text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Fast exact duplicate check using hash
+            if seenHashes.contains(normalizedText) {
+                continue
+            }
+
+            // Slower similarity check for near-duplicates
             let isDuplicate = uniqueTasks.contains { existingTask in
                 let similarity = calculateTextSimilarity(task.text, existingTask.text)
                 return similarity > 0.8
@@ -248,16 +307,26 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
 
             if !isDuplicate {
                 uniqueTasks.append(task)
+                seenHashes.insert(normalizedText)
             }
         }
 
-        return Array(uniqueTasks.prefix(15))
+        return Array(uniqueTasks.prefix(maxTasksPerRecording))
     }
 
     private func deduplicateReminders(_ reminders: [ReminderItem]) -> [ReminderItem] {
         var uniqueReminders: [ReminderItem] = []
+        var seenHashes = Set<String>()
 
         for reminder in reminders {
+            let normalizedText = reminder.text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Fast exact duplicate check using hash
+            if seenHashes.contains(normalizedText) {
+                continue
+            }
+
+            // Slower similarity check for near-duplicates
             let isDuplicate = uniqueReminders.contains { existingReminder in
                 let similarity = calculateTextSimilarity(reminder.text, existingReminder.text)
                 return similarity > 0.8
@@ -265,16 +334,26 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
 
             if !isDuplicate {
                 uniqueReminders.append(reminder)
+                seenHashes.insert(normalizedText)
             }
         }
 
-        return Array(uniqueReminders.prefix(15))
+        return Array(uniqueReminders.prefix(maxRemindersPerRecording))
     }
 
     private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
         var uniqueTitles: [TitleItem] = []
+        var seenHashes = Set<String>()
 
         for title in titles {
+            let normalizedText = title.text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Fast exact duplicate check using hash
+            if seenHashes.contains(normalizedText) {
+                continue
+            }
+
+            // Slower similarity check for near-duplicates
             let isDuplicate = uniqueTitles.contains { existingTitle in
                 let similarity = calculateTextSimilarity(title.text, existingTitle.text)
                 return similarity > 0.8
@@ -282,10 +361,72 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
 
             if !isDuplicate {
                 uniqueTitles.append(title)
+                seenHashes.insert(normalizedText)
             }
         }
 
-        return Array(uniqueTitles.prefix(5))
+        return Array(uniqueTitles.prefix(maxTitlesPerRecording))
+    }
+
+    /// Combine multiple summaries into a cohesive meta-summary using Mistral
+    private func combineSummaries(
+        _ summaries: [String],
+        contentType: ContentType,
+        service: MistralAISummarizationService
+    ) async throws -> String {
+        guard !summaries.isEmpty else { return "" }
+
+        // Join all summaries into one text block
+        let combinedText = summaries.joined(separator: "\n\n")
+
+        // Generate meta-summary ensuring context limits are respected
+        let metaSummary = try await generateMetaSummary(from: combinedText, contentType: contentType, service: service)
+
+        return metaSummary
+    }
+
+    /// Recursively generate a meta-summary that fits within the model's context window
+    private func generateMetaSummary(
+        from text: String,
+        contentType: ContentType,
+        service: MistralAISummarizationService
+    ) async throws -> String {
+        let maxTokens = currentConfig?.model.contextWindow ?? TokenManager.maxTokensPerChunk
+
+        // If text fits within context window, summarize directly
+        if TokenManager.getTokenCount(text) <= maxTokens {
+            return try await service.generateSummary(from: text, contentType: contentType)
+        }
+
+        // Otherwise, chunk the text and summarize each piece
+        let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
+        var intermediateSummaries: [String] = []
+
+        for (index, chunk) in chunks.enumerated() {
+            logger.info("Processing meta-summary chunk \(index + 1) of \(chunks.count)")
+            let summary = try await service.generateSummary(from: chunk, contentType: contentType)
+            intermediateSummaries.append(summary)
+
+            // Small delay between requests to prevent overwhelming the server
+            if index < chunks.count - 1 {
+                let delay = currentConfig?.model.rateLimitDelay ?? 300_000_000
+                try await Task.sleep(nanoseconds: delay)
+            }
+        }
+
+        // Recursively summarize the combined intermediate summaries
+        let reducedText = intermediateSummaries.joined(separator: "\n\n")
+        return try await generateMetaSummary(from: reducedText, contentType: contentType, service: service)
+    }
+
+    private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
+        let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
+        let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
+
+        let intersection = words1.intersection(words2)
+        let union = words1.union(words2)
+
+        return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
     }
 
     private func handleAPIError(_ error: Error) -> SummarizationError {
