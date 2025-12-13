@@ -19,13 +19,37 @@ import Darwin
 struct BisonNotesAIApp: App {
     let persistenceController = PersistenceController.shared
     @StateObject private var appCoordinator = AppDataCoordinator()
-    
+
+    /// Performs one-time migration of AWS Bedrock settings from legacy model identifiers
+    /// This ensures UserDefaults is updated rather than migrating on every access
+    private func migrateAWSBedrockSettings() {
+        let key = "awsBedrockModel"
+        let migrationKey = "awsBedrockModelMigrated_v1.3"
+
+        // Check if migration has already been performed
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+
+        if let storedModel = UserDefaults.standard.string(forKey: key) {
+            let migratedModel = AWSBedrockModel.migrate(rawValue: storedModel)
+            if migratedModel != storedModel {
+                UserDefaults.standard.set(migratedModel, forKey: key)
+                NSLog("✅ AWS Bedrock model migrated from \(storedModel) to \(migratedModel)")
+            }
+        }
+
+        // Mark migration as complete
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
     init() {
 #if DEBUG
         Self.configureCoverageOutputIfNeeded()
 #endif
         setupBackgroundTasks()
         setupAppShortcuts()
+        migrateAWSBedrockSettings()
     }
     
     var body: some Scene {

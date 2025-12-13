@@ -7,11 +7,6 @@
 
 import Foundation
 
-// MARK: - Response Validation Constants
-
-/// Maximum allowed length for model responses to prevent DoS attacks
-private let kMaxResponseLength = 1_000_000 // 1MB of text
-
 // MARK: - AWS Bedrock Models
 
 enum AWSBedrockModel: String, CaseIterable {
@@ -119,6 +114,19 @@ enum AWSBedrockModel: String, CaseIterable {
             return true
         case .llama4Maverick, .qwenQwen3Vl235bA22b:
             return false
+        }
+    }
+
+    /// Maximum allowed response length to prevent DoS attacks
+    /// Different models have different verbosity characteristics
+    var maxResponseLength: Int {
+        switch self {
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
+            return 500_000  // Claude models are generally concise
+        case .llama4Maverick:
+            return 500_000  // Llama models are reasonably concise
+        case .qwenQwen3Vl235bA22b:
+            return 1_000_000  // Qwen tends to be more verbose, especially with vision context
         }
     }
 }
@@ -257,7 +265,10 @@ struct LlamaRequest: BedrockModelRequest {
     }
 }
 
-// Qwen Models
+// MARK: - Qwen Models
+
+/// Qwen3-VL API request structure
+/// Note: This model supports vision features, but we currently only use text-based prompts in this app
 struct QwenRequest: BedrockModelRequest {
     let messages: [QwenMessage]
     let maxTokens: Int
@@ -278,6 +289,11 @@ struct QwenMessage: Codable {
     let role: String
     let content: [QwenContent]
 
+    /// Builds text-only message array for Qwen API
+    /// - Parameters:
+    ///   - prompt: User prompt text
+    ///   - systemPrompt: Optional system instruction
+    /// - Returns: Array of Qwen messages with text content only
     static func buildMessages(prompt: String, systemPrompt: String?) -> [QwenMessage] {
         var messages = [QwenMessage]()
         if let systemPrompt = systemPrompt, !systemPrompt.isEmpty {
@@ -288,17 +304,24 @@ struct QwenMessage: Codable {
     }
 }
 
+/// Qwen content block supporting both text and vision
+/// Vision features are available but currently unused in this app
 struct QwenContent: Codable {
     let type: String
     let text: String?
     let image: String?
 
+    /// Creates text-only content (currently the only type used in this app)
     init(text: String) {
         self.type = "text"
         self.text = text
         self.image = nil
     }
 
+    /// Creates image content for vision features
+    /// - Parameter base64Image: Base64-encoded image data
+    /// - Note: Vision features are available but not currently utilized in this app.
+    ///         Kept for potential future expansion to multimodal processing.
     init(base64Image: String) {
         self.type = "image"
         self.text = nil
@@ -367,12 +390,17 @@ struct LlamaResponse: BedrockModelResponse {
     }
 }
 
+/// Qwen response structure with error handling and security validation
+/// Error handling strategy: Silent fallbacks with logging for unexpected structures
+/// - Returns empty string rather than throwing errors to prevent pipeline failures
+/// - Logs warnings for debugging while maintaining service availability
 struct QwenResponse: BedrockModelResponse, Codable {
     let output: QwenOutput?
     let outputText: String?
 
     var content: String {
         let rawContent: String
+        let maxLength = AWSBedrockModel.qwenQwen3Vl235bA22b.maxResponseLength
 
         // Extract content from structured response
         if let choices = output?.choices, !choices.isEmpty {
@@ -403,9 +431,9 @@ struct QwenResponse: BedrockModelResponse, Codable {
         }
 
         // Validate response length to prevent DoS attacks
-        guard rawContent.count <= kMaxResponseLength else {
-            NSLog("Security Warning: Qwen response exceeded maximum length (\(rawContent.count) > \(kMaxResponseLength)). Truncating to prevent DoS.")
-            return String(rawContent.prefix(kMaxResponseLength))
+        guard rawContent.count <= maxLength else {
+            NSLog("Security Warning: Qwen response exceeded maximum length (\(rawContent.count) > \(maxLength)). Truncating to prevent DoS.")
+            return String(rawContent.prefix(maxLength))
         }
 
         // Validate reasonable content length for logging
@@ -505,21 +533,23 @@ class AWSBedrockModelFactory {
         for model: AWSBedrockModel,
         data: Data
     ) throws -> any BedrockModelResponse {
-        let decoder = JSONDecoder()
-
         switch model {
         case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             // Claude models use explicit CodingKeys, no strategy needed
+            let decoder = JSONDecoder()
             return try decoder.decode(Claude35Response.self, from: data)
 
         case .llama4Maverick:
             // Llama models use explicit CodingKeys, no strategy needed
+            let decoder = JSONDecoder()
             return try decoder.decode(LlamaResponse.self, from: data)
 
         case .qwenQwen3Vl235bA22b:
-            // Qwen API uses snake_case, apply conversion for this model only
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
-            return try decoder.decode(QwenResponse.self, from: data)
+            // Qwen API uses snake_case, create fresh decoder with conversion strategy
+            // Using a fresh decoder instance prevents side effects on other models
+            let qwenDecoder = JSONDecoder()
+            qwenDecoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try qwenDecoder.decode(QwenResponse.self, from: data)
         }
     }
     
