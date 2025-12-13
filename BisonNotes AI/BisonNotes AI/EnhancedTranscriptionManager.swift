@@ -642,7 +642,7 @@ private func transcribeSingleChunk(url: URL) async throws -> TranscriptionResult
                     }
                     
                     // Create a weak reference to avoid retain cycles
-                    weak var weakSelf = self
+                    weak let weakSelf = self
                     var hasResumed = false
                     
                     self.currentTask = recognizer.recognitionTask(with: request) { result, error in

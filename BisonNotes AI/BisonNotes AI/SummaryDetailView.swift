@@ -1,7 +1,7 @@
 import SwiftUI
-import MapKit
+@preconcurrency import MapKit
 import Contacts
-import CoreLocation
+@preconcurrency import CoreLocation
 import UIKit
 import LinkPresentation
 
@@ -2657,7 +2657,7 @@ struct LocationPickerView: View {
                     continuation.resume(returning: self.deduplicate(results))
                 }
             }
-        } onCancel: {
+        } onCancel: { [search] in
             search.cancel()
         }
     }
@@ -2691,7 +2691,7 @@ struct LocationPickerView: View {
                     continuation.resume(returning: self.deduplicate(results))
                 }
             }
-        } onCancel: {
+        } onCancel: { [geocoder] in
             geocoder.cancelGeocode()
         }
     }
