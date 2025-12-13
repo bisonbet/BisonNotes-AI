@@ -217,6 +217,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
                 }
             } catch {
                 logger.error("Failed to process Mistral chunk \(index + 1): \(error.localizedDescription)")
+                throw error
             }
         }
 
