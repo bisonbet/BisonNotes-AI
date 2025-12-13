@@ -150,9 +150,9 @@ struct AWSBedrockConfig: Equatable {
         accessKeyId: "",
         secretAccessKey: "",
         sessionToken: nil,
-        model: .llama4Maverick,
+        model: .claude45Haiku,
         temperature: 0.1,
-        maxTokens: 4096,
+        maxTokens: 8192,
         timeout: 60.0,
         useProfile: false,
         profileName: nil
@@ -283,6 +283,22 @@ struct QwenRequest: BedrockModelRequest {
         case topP = "top_p"
         case presencePenalty = "presence_penalty"
     }
+
+    /// Custom encoding to omit nil optional values instead of encoding them as null
+    /// This prevents API rejections from services that don't accept null for optional parameters
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(messages, forKey: .messages)
+        try container.encode(maxTokens, forKey: .maxTokens)
+        try container.encode(temperature, forKey: .temperature)
+        // Only encode optional values if they are non-nil
+        if let topP = topP {
+            try container.encode(topP, forKey: .topP)
+        }
+        if let presencePenalty = presencePenalty {
+            try container.encode(presencePenalty, forKey: .presencePenalty)
+        }
+    }
 }
 
 struct QwenMessage: Codable {
@@ -394,9 +410,16 @@ struct LlamaResponse: BedrockModelResponse {
 /// Error handling strategy: Silent fallbacks with logging for unexpected structures
 /// - Returns empty string rather than throwing errors to prevent pipeline failures
 /// - Logs warnings for debugging while maintaining service availability
+/// - Posts notifications for telemetry when fallbacks occur
 struct QwenResponse: BedrockModelResponse, Codable {
     let output: QwenOutput?
     let outputText: String?
+
+    /// Notification posted when response structure fallback occurs
+    static let fallbackOccurredNotification = Notification.Name("QwenResponseFallbackOccurred")
+
+    /// User info key for fallback reason in notification
+    static let fallbackReasonKey = "fallbackReason"
 
     var content: String {
         let rawContent: String
@@ -418,15 +441,27 @@ struct QwenResponse: BedrockModelResponse, Codable {
             if let text = foundText {
                 rawContent = text
             } else {
-                // Log unexpected structure for debugging
+                // Log unexpected structure for debugging and post telemetry
+                let reason = "choices_array_no_text_content"
                 NSLog("Warning: Qwen response had choices array but no valid text content. Falling back to outputText.")
+                NotificationCenter.default.post(
+                    name: QwenResponse.fallbackOccurredNotification,
+                    object: nil,
+                    userInfo: [QwenResponse.fallbackReasonKey: reason]
+                )
                 rawContent = outputText ?? ""
             }
         } else if let fallback = outputText, !fallback.isEmpty {
             rawContent = fallback
         } else {
-            // Log completely empty response
+            // Log completely empty response and post telemetry
+            let reason = "missing_both_choices_and_output_text"
             NSLog("Warning: Qwen response missing expected structure. No output.choices and no outputText found.")
+            NotificationCenter.default.post(
+                name: QwenResponse.fallbackOccurredNotification,
+                object: nil,
+                userInfo: [QwenResponse.fallbackReasonKey: reason]
+            )
             return ""
         }
 
@@ -443,7 +478,9 @@ struct QwenResponse: BedrockModelResponse, Codable {
 
         // Sanitize for control characters (keep newlines and tabs)
         let sanitized = rawContent.filter { char in
-            let scalar = char.unicodeScalars.first!
+            guard let scalar = char.unicodeScalars.first else {
+                return false  // Skip malformed characters
+            }
             return !scalar.properties.isControl || char == "\n" || char == "\t" || char == "\r"
         }
 
