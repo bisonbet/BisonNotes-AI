@@ -12,8 +12,9 @@ import Foundation
 enum AWSBedrockModel: String, CaseIterable {
     case claude4Sonnet = "global.anthropic.claude-sonnet-4-20250514-v1:0"
     case claude45Sonnet = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-    case claude35Haiku = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+    case claude45Haiku = "us.anthropic.claude-haiku-4-5-20250301-v1:0"
     case llama4Maverick = "us.meta.llama4-maverick-17b-instruct-v1:0"
+    case qwenQwen3Vl235bA22b = "us.qwen.qwen3-vl-235b-a22b"
     
     var displayName: String {
         switch self {
@@ -21,10 +22,12 @@ enum AWSBedrockModel: String, CaseIterable {
             return "Claude Sonnet 4"
         case .claude45Sonnet:
             return "Claude Sonnet 4.5"
-        case .claude35Haiku:
-            return "Claude 3.5 Haiku"
+        case .claude45Haiku:
+            return "Claude 4.5 Haiku"
         case .llama4Maverick:
             return "Llama 4 Maverick 17B Instruct"
+        case .qwenQwen3Vl235bA22b:
+            return "Qwen3-VL 235B A22B"
         }
     }
     
@@ -34,28 +37,34 @@ enum AWSBedrockModel: String, CaseIterable {
             return "Latest Claude Sonnet 4 with advanced reasoning, coding, and analysis capabilities"
         case .claude45Sonnet:
             return "Latest Claude Sonnet 4.5 with advanced reasoning, coding, and analysis capabilities"
-        case .claude35Haiku:
-            return "Fast and efficient Claude model optimized for quick responses"
+        case .claude45Haiku:
+            return "Fast and efficient Claude Haiku 4.5 model optimized for quick responses"
         case .llama4Maverick:
             return "Meta's latest Llama 4 Maverick model with enhanced reasoning and performance"
+        case .qwenQwen3Vl235bA22b:
+            return "Qwen3 vision-language model for rich text and visual understanding"
         }
     }
     
     var maxTokens: Int {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return 8192
         case .llama4Maverick:
             return 4096
+        case .qwenQwen3Vl235bA22b:
+            return 8192
         }
     }
     
     var contextWindow: Int {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return 200000
         case .llama4Maverick:
             return 128000
+        case .qwenQwen3Vl235bA22b:
+            return 64000
         }
     }
     
@@ -63,27 +72,29 @@ enum AWSBedrockModel: String, CaseIterable {
         switch self {
         case .claude4Sonnet, .claude45Sonnet:
             return "Premium"
-        case .claude35Haiku:
+        case .claude45Haiku:
             return "Standard"
-        case .llama4Maverick:
+        case .llama4Maverick, .qwenQwen3Vl235bA22b:
             return "Economy"
         }
     }
     
     var provider: String {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return "Anthropic"
         case .llama4Maverick:
             return "Meta"
+        case .qwenQwen3Vl235bA22b:
+            return "Qwen"
         }
     }
     
     var supportsStructuredOutput: Bool {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return true
-        case .llama4Maverick:
+        case .llama4Maverick, .qwenQwen3Vl235bA22b:
             return false
         }
     }
@@ -223,6 +234,55 @@ struct LlamaRequest: BedrockModelRequest {
     }
 }
 
+// Qwen Models
+struct QwenRequest: BedrockModelRequest {
+    let messages: [QwenMessage]
+    let maxTokens: Int
+    let temperature: Double
+    let topP: Double?
+    let presencePenalty: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case messages
+        case maxTokens = "max_tokens"
+        case temperature
+        case topP = "top_p"
+        case presencePenalty = "presence_penalty"
+    }
+}
+
+struct QwenMessage: Codable {
+    let role: String
+    let content: [QwenContent]
+
+    static func buildMessages(prompt: String, systemPrompt: String?) -> [QwenMessage] {
+        var messages = [QwenMessage]()
+        if let systemPrompt = systemPrompt, !systemPrompt.isEmpty {
+            messages.append(QwenMessage(role: "system", content: [QwenContent(text: systemPrompt)]))
+        }
+        messages.append(QwenMessage(role: "user", content: [QwenContent(text: prompt)]))
+        return messages
+    }
+}
+
+struct QwenContent: Codable {
+    let type: String
+    let text: String?
+    let image: String?
+
+    init(text: String) {
+        self.type = "text"
+        self.text = text
+        self.image = nil
+    }
+
+    init(base64Image: String) {
+        self.type = "image"
+        self.text = nil
+        self.image = base64Image
+    }
+}
+
 
 // MARK: - Model-Specific Response Bodies
 
@@ -284,6 +344,44 @@ struct LlamaResponse: BedrockModelResponse {
     }
 }
 
+struct QwenResponse: BedrockModelResponse, Codable {
+    let output: QwenOutput?
+    let outputText: String?
+
+    var content: String {
+        if let choices = output?.choices {
+            for choice in choices {
+                if let text = choice.message.content.first(where: { responseContent in
+                    guard let text = responseContent.text else { return false }
+                    return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                })?.text {
+                    return text
+                }
+            }
+        }
+        return outputText ?? ""
+    }
+}
+
+struct QwenOutput: Codable {
+    let choices: [QwenChoice]
+}
+
+struct QwenChoice: Codable {
+    let message: QwenResponseMessage
+    let finishReason: String?
+}
+
+struct QwenResponseMessage: Codable {
+    let role: String?
+    let content: [QwenResponseContent]
+}
+
+struct QwenResponseContent: Codable {
+    let text: String?
+    let image: String?
+}
+
 
 // MARK: - AWS Error Response
 
@@ -314,7 +412,7 @@ class AWSBedrockModelFactory {
         temperature: Double
     ) -> any BedrockModelRequest {
         switch model {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             var messages = [Claude35Message]()
             messages.append(Claude35Message(role: "user", text: prompt))
             return Claude35Request(
@@ -331,6 +429,15 @@ class AWSBedrockModelFactory {
                 maxTokens: maxTokens,
                 temperature: temperature
             )
+        case .qwenQwen3Vl235bA22b:
+            let request = QwenRequest(
+                messages: QwenMessage.buildMessages(prompt: prompt, systemPrompt: systemPrompt),
+                maxTokens: maxTokens,
+                temperature: temperature,
+                topP: 0.9,
+                presencePenalty: nil
+            )
+            return request
         }
     }
     
@@ -339,13 +446,16 @@ class AWSBedrockModelFactory {
         data: Data
     ) throws -> any BedrockModelResponse {
         let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
         
         switch model {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return try decoder.decode(Claude35Response.self, from: data)
 
         case .llama4Maverick:
             return try decoder.decode(LlamaResponse.self, from: data)
+        case .qwenQwen3Vl235bA22b:
+            return try decoder.decode(QwenResponse.self, from: data)
         }
     }
     
