@@ -171,8 +171,10 @@ struct ChatMessage: Codable {
         if let stringContent = stringContent {
             return stringContent
         } else if let blockContent = blockContent, !blockContent.isEmpty {
-            // Combine all text blocks with newlines to preserve multi-block responses
-            return blockContent.map { $0.text }.joined(separator: "\n")
+            // Filter out non-text blocks and combine text blocks
+            let textBlocks = blockContent.filter { $0.type == "text" }
+            guard !textBlocks.isEmpty else { return "" }
+            return textBlocks.map { $0.text }.joined(separator: "\n")
         }
         return ""
     }
@@ -197,24 +199,24 @@ struct ChatMessage: Codable {
         }
     }
 
-    init(from decoder: Decoder) throws {
+    init(from decoder: Decoder, expectedFormat: MessageContentFormat = .string) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         role = try container.decode(String.self, forKey: .role)
 
-        // Try to decode as string first, then as blocks
+        // Try to decode both ways, but respect expectedFormat for consistency
         if let stringValue = try? container.decode(String.self, forKey: .content) {
             stringContent = stringValue
             blockContent = nil
-            preferredFormat = .string
+            preferredFormat = expectedFormat  // Use expected, not inferred
         } else if let blocksValue = try? container.decode([ContentBlock].self, forKey: .content) {
             stringContent = nil
             blockContent = blocksValue
-            preferredFormat = .blocks
+            preferredFormat = expectedFormat  // Use expected, not inferred
         } else {
             // Fallback to empty string
             stringContent = ""
             blockContent = nil
-            preferredFormat = .string
+            preferredFormat = expectedFormat
         }
     }
 }
@@ -289,12 +291,12 @@ class MessageFormatDetector {
     /// Extracted to avoid duplication between detectFormat and detectFormatWithoutOverride
     /// Handles edge cases: ports, IP addresses, localhost, and subdomains
     private static func detectFormatByHost(_ host: String) -> MessageContentFormat {
-        // Extract the base host without port (e.g., "api.example.com:8080" -> "api.example.com")
-        let baseHost = host.split(separator: ":").first.map(String.init) ?? host
+        // URL.host already strips the port for us, no manual extraction needed
+        let lowercasedHost = host.lowercased()
 
         // Check if it's a known block format provider using proper host matching
         for provider in blockFormatProviders {
-            if isHostMatch(baseHost, provider: provider) {
+            if isHostMatch(lowercasedHost, provider: provider) {
                 #if DEBUG
                 print("🔍 Auto-detected block format provider: \(provider)")
                 #endif
@@ -304,7 +306,7 @@ class MessageFormatDetector {
 
         // Check if it's a known string format provider using proper host matching
         for provider in stringFormatProviders {
-            if isHostMatch(baseHost, provider: provider) {
+            if isHostMatch(lowercasedHost, provider: provider) {
                 #if DEBUG
                 print("🔍 Auto-detected string format provider: \(provider)")
                 #endif
@@ -333,9 +335,14 @@ class MessageFormatDetector {
         }
 
         // Localhost variations (for development servers)
-        // Only match if provider is explicitly "localhost" or an IP
-        if provider == "localhost" || provider.starts(with: "127.") || provider.starts(with: "::1") {
-            return host == provider || host.starts(with: provider)
+        // Only match localhost variants exactly to prevent false positives
+        if provider == "localhost" && (host == "localhost" || host == "127.0.0.1" || host == "::1") {
+            return true
+        }
+
+        // For IP addresses, require exact match
+        if provider.starts(with: "127.") || provider.starts(with: "::1") {
+            return host == provider
         }
 
         return false
