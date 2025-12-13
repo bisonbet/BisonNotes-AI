@@ -12,8 +12,27 @@ import Foundation
 enum AWSBedrockModel: String, CaseIterable {
     case claude4Sonnet = "global.anthropic.claude-sonnet-4-20250514-v1:0"
     case claude45Sonnet = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-    case claude35Haiku = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+    case claude45Haiku = "us.anthropic.claude-haiku-4-5-20250301-v1:0"
     case llama4Maverick = "us.meta.llama4-maverick-17b-instruct-v1:0"
+    /// Qwen3-VL 235B model - Vision-language capable but used for text-only in this app
+    /// Regional availability: US regions only (us.* prefix)
+    /// Note: While this model supports vision features via base64 images, we only use text-based prompts
+    case qwenQwen3Vl235bA22b = "us.qwen.qwen3-vl-235b-a22b"
+
+    /// Legacy model identifier for migration purposes
+    private static let legacyClaude35Haiku = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+
+    /// Migrates legacy model identifiers to current model cases
+    /// - Parameter rawValue: The stored model identifier
+    /// - Returns: Migrated model identifier compatible with current enum
+    static func migrate(rawValue: String) -> String {
+        switch rawValue {
+        case legacyClaude35Haiku:
+            return AWSBedrockModel.claude45Haiku.rawValue
+        default:
+            return rawValue
+        }
+    }
     
     var displayName: String {
         switch self {
@@ -21,10 +40,12 @@ enum AWSBedrockModel: String, CaseIterable {
             return "Claude Sonnet 4"
         case .claude45Sonnet:
             return "Claude Sonnet 4.5"
-        case .claude35Haiku:
-            return "Claude 3.5 Haiku"
+        case .claude45Haiku:
+            return "Claude 4.5 Haiku"
         case .llama4Maverick:
             return "Llama 4 Maverick 17B Instruct"
+        case .qwenQwen3Vl235bA22b:
+            return "Qwen3-VL 235B A22B"
         }
     }
     
@@ -34,28 +55,34 @@ enum AWSBedrockModel: String, CaseIterable {
             return "Latest Claude Sonnet 4 with advanced reasoning, coding, and analysis capabilities"
         case .claude45Sonnet:
             return "Latest Claude Sonnet 4.5 with advanced reasoning, coding, and analysis capabilities"
-        case .claude35Haiku:
-            return "Fast and efficient Claude model optimized for quick responses"
+        case .claude45Haiku:
+            return "Fast and efficient Claude Haiku 4.5 model optimized for quick responses"
         case .llama4Maverick:
             return "Meta's latest Llama 4 Maverick model with enhanced reasoning and performance"
+        case .qwenQwen3Vl235bA22b:
+            return "Qwen3-VL 235B multimodal model (used for text-only processing in this app)"
         }
     }
     
     var maxTokens: Int {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return 8192
         case .llama4Maverick:
             return 4096
+        case .qwenQwen3Vl235bA22b:
+            return 8192
         }
     }
     
     var contextWindow: Int {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return 200000
         case .llama4Maverick:
             return 128000
+        case .qwenQwen3Vl235bA22b:
+            return 64000
         }
     }
     
@@ -63,28 +90,43 @@ enum AWSBedrockModel: String, CaseIterable {
         switch self {
         case .claude4Sonnet, .claude45Sonnet:
             return "Premium"
-        case .claude35Haiku:
+        case .claude45Haiku:
             return "Standard"
-        case .llama4Maverick:
+        case .llama4Maverick, .qwenQwen3Vl235bA22b:
             return "Economy"
         }
     }
     
     var provider: String {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return "Anthropic"
         case .llama4Maverick:
             return "Meta"
+        case .qwenQwen3Vl235bA22b:
+            return "Qwen"
         }
     }
     
     var supportsStructuredOutput: Bool {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return true
-        case .llama4Maverick:
+        case .llama4Maverick, .qwenQwen3Vl235bA22b:
             return false
+        }
+    }
+
+    /// Maximum allowed response length to prevent DoS attacks
+    /// Different models have different verbosity characteristics
+    var maxResponseLength: Int {
+        switch self {
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
+            return 500_000  // Claude models are generally concise
+        case .llama4Maverick:
+            return 500_000  // Llama models are reasonably concise
+        case .qwenQwen3Vl235bA22b:
+            return 1_000_000  // Qwen tends to be more verbose, especially with vision context
         }
     }
 }
@@ -108,9 +150,9 @@ struct AWSBedrockConfig: Equatable {
         accessKeyId: "",
         secretAccessKey: "",
         sessionToken: nil,
-        model: .llama4Maverick,
+        model: .claude45Haiku,
         temperature: 0.1,
-        maxTokens: 4096,
+        maxTokens: 8192,
         timeout: 60.0,
         useProfile: false,
         profileName: nil
@@ -223,6 +265,86 @@ struct LlamaRequest: BedrockModelRequest {
     }
 }
 
+// MARK: - Qwen Models
+
+/// Qwen3-VL API request structure
+/// Note: This model supports vision features, but we currently only use text-based prompts in this app
+struct QwenRequest: BedrockModelRequest {
+    let messages: [QwenMessage]
+    let maxTokens: Int
+    let temperature: Double
+    let topP: Double?
+    let presencePenalty: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case messages
+        case maxTokens = "max_tokens"
+        case temperature
+        case topP = "top_p"
+        case presencePenalty = "presence_penalty"
+    }
+
+    /// Custom encoding to omit nil optional values instead of encoding them as null
+    /// This prevents API rejections from services that don't accept null for optional parameters
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(messages, forKey: .messages)
+        try container.encode(maxTokens, forKey: .maxTokens)
+        try container.encode(temperature, forKey: .temperature)
+        // Only encode optional values if they are non-nil
+        if let topP = topP {
+            try container.encode(topP, forKey: .topP)
+        }
+        if let presencePenalty = presencePenalty {
+            try container.encode(presencePenalty, forKey: .presencePenalty)
+        }
+    }
+}
+
+struct QwenMessage: Codable {
+    let role: String
+    let content: [QwenContent]
+
+    /// Builds text-only message array for Qwen API
+    /// - Parameters:
+    ///   - prompt: User prompt text
+    ///   - systemPrompt: Optional system instruction
+    /// - Returns: Array of Qwen messages with text content only
+    static func buildMessages(prompt: String, systemPrompt: String?) -> [QwenMessage] {
+        var messages = [QwenMessage]()
+        if let systemPrompt = systemPrompt, !systemPrompt.isEmpty {
+            messages.append(QwenMessage(role: "system", content: [QwenContent(text: systemPrompt)]))
+        }
+        messages.append(QwenMessage(role: "user", content: [QwenContent(text: prompt)]))
+        return messages
+    }
+}
+
+/// Qwen content block supporting both text and vision
+/// Vision features are available but currently unused in this app
+struct QwenContent: Codable {
+    let type: String
+    let text: String?
+    let image: String?
+
+    /// Creates text-only content (currently the only type used in this app)
+    init(text: String) {
+        self.type = "text"
+        self.text = text
+        self.image = nil
+    }
+
+    /// Creates image content for vision features
+    /// - Parameter base64Image: Base64-encoded image data
+    /// - Note: Vision features are available but not currently utilized in this app.
+    ///         Kept for potential future expansion to multimodal processing.
+    init(base64Image: String) {
+        self.type = "image"
+        self.text = nil
+        self.image = base64Image
+    }
+}
+
 
 // MARK: - Model-Specific Response Bodies
 
@@ -284,6 +406,107 @@ struct LlamaResponse: BedrockModelResponse {
     }
 }
 
+/// Qwen response structure with error handling and security validation
+/// Error handling strategy: Silent fallbacks with logging for unexpected structures
+/// - Returns empty string rather than throwing errors to prevent pipeline failures
+/// - Logs warnings for debugging while maintaining service availability
+/// - Posts notifications for telemetry when fallbacks occur
+struct QwenResponse: BedrockModelResponse, Codable {
+    let output: QwenOutput?
+    let outputText: String?
+
+    /// Notification posted when response structure fallback occurs
+    static let fallbackOccurredNotification = Notification.Name("QwenResponseFallbackOccurred")
+
+    /// User info key for fallback reason in notification
+    static let fallbackReasonKey = "fallbackReason"
+
+    var content: String {
+        let rawContent: String
+        let maxLength = AWSBedrockModel.qwenQwen3Vl235bA22b.maxResponseLength
+
+        // Extract content from structured response
+        if let choices = output?.choices, !choices.isEmpty {
+            var foundText: String?
+            for choice in choices {
+                if let text = choice.message.content.first(where: { responseContent in
+                    guard let text = responseContent.text else { return false }
+                    return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                })?.text {
+                    foundText = text
+                    break
+                }
+            }
+
+            if let text = foundText {
+                rawContent = text
+            } else {
+                // Log unexpected structure for debugging and post telemetry
+                let reason = "choices_array_no_text_content"
+                NSLog("Warning: Qwen response had choices array but no valid text content. Falling back to outputText.")
+                NotificationCenter.default.post(
+                    name: QwenResponse.fallbackOccurredNotification,
+                    object: nil,
+                    userInfo: [QwenResponse.fallbackReasonKey: reason]
+                )
+                rawContent = outputText ?? ""
+            }
+        } else if let fallback = outputText, !fallback.isEmpty {
+            rawContent = fallback
+        } else {
+            // Log completely empty response and post telemetry
+            let reason = "missing_both_choices_and_output_text"
+            NSLog("Warning: Qwen response missing expected structure. No output.choices and no outputText found.")
+            NotificationCenter.default.post(
+                name: QwenResponse.fallbackOccurredNotification,
+                object: nil,
+                userInfo: [QwenResponse.fallbackReasonKey: reason]
+            )
+            return ""
+        }
+
+        // Validate response length to prevent DoS attacks
+        guard rawContent.count <= maxLength else {
+            NSLog("Security Warning: Qwen response exceeded maximum length (\(rawContent.count) > \(maxLength)). Truncating to prevent DoS.")
+            return String(rawContent.prefix(maxLength))
+        }
+
+        // Validate reasonable content length for logging
+        if rawContent.count > 100_000 {
+            NSLog("Notice: Qwen response is unusually large (\(rawContent.count) characters). This may impact performance.")
+        }
+
+        // Sanitize for control characters (keep newlines and tabs)
+        let sanitized = rawContent.filter { char in
+            guard let scalar = char.unicodeScalars.first else {
+                return false  // Skip malformed characters
+            }
+            return !scalar.properties.isControl || char == "\n" || char == "\t" || char == "\r"
+        }
+
+        return sanitized
+    }
+}
+
+struct QwenOutput: Codable {
+    let choices: [QwenChoice]
+}
+
+struct QwenChoice: Codable {
+    let message: QwenResponseMessage
+    let finishReason: String?
+}
+
+struct QwenResponseMessage: Codable {
+    let role: String?
+    let content: [QwenResponseContent]
+}
+
+struct QwenResponseContent: Codable {
+    let text: String?
+    let image: String?
+}
+
 
 // MARK: - AWS Error Response
 
@@ -314,7 +537,7 @@ class AWSBedrockModelFactory {
         temperature: Double
     ) -> any BedrockModelRequest {
         switch model {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             var messages = [Claude35Message]()
             messages.append(Claude35Message(role: "user", text: prompt))
             return Claude35Request(
@@ -331,6 +554,15 @@ class AWSBedrockModelFactory {
                 maxTokens: maxTokens,
                 temperature: temperature
             )
+        case .qwenQwen3Vl235bA22b:
+            let request = QwenRequest(
+                messages: QwenMessage.buildMessages(prompt: prompt, systemPrompt: systemPrompt),
+                maxTokens: maxTokens,
+                temperature: temperature,
+                topP: 0.9,
+                presencePenalty: nil
+            )
+            return request
         }
     }
     
@@ -338,14 +570,23 @@ class AWSBedrockModelFactory {
         for model: AWSBedrockModel,
         data: Data
     ) throws -> any BedrockModelResponse {
-        let decoder = JSONDecoder()
-        
         switch model {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
+            // Claude models use explicit CodingKeys, no strategy needed
+            let decoder = JSONDecoder()
             return try decoder.decode(Claude35Response.self, from: data)
 
         case .llama4Maverick:
+            // Llama models use explicit CodingKeys, no strategy needed
+            let decoder = JSONDecoder()
             return try decoder.decode(LlamaResponse.self, from: data)
+
+        case .qwenQwen3Vl235bA22b:
+            // Qwen API uses snake_case, create fresh decoder with conversion strategy
+            // Using a fresh decoder instance prevents side effects on other models
+            let qwenDecoder = JSONDecoder()
+            qwenDecoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try qwenDecoder.decode(QwenResponse.self, from: data)
         }
     }
     

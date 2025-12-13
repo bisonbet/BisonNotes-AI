@@ -260,11 +260,13 @@ struct AISettingsView: View {
             let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-2.5-flash"
             return model
         case .awsBedrock:
-            let modelName = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude35Haiku.rawValue
+            let storedModelName = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
+            // Migrate legacy model identifiers
+            let modelName = AWSBedrockModel.migrate(rawValue: storedModelName)
             if let model = AWSBedrockModel(rawValue: modelName) {
                 return model.displayName
             }
-            return "Claude 3.5 Haiku"
+            return "Claude 4.5 Haiku"
         }
     }
     
@@ -915,8 +917,10 @@ private extension AISettingsView {
         let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
         let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
         let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
-        let modelName = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude35Haiku.rawValue
-        let model = AWSBedrockModel(rawValue: modelName) ?? .claude35Haiku
+        let storedModelName = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
+        // Migrate legacy model identifiers
+        let modelName = AWSBedrockModel.migrate(rawValue: storedModelName)
+        let model = AWSBedrockModel(rawValue: modelName) ?? .claude45Haiku
         let region = UserDefaults.standard.string(forKey: "awsBedrockRegion") ?? "us-east-1"
         
         // Use unified credentials manager for configuration validation
