@@ -13,8 +13,8 @@ import Foundation
 ///
 /// **Model Selection Guide:**
 /// - **Large (25.12)**: Best for complex reasoning, long transcripts (128K context), highest quality
-/// - **Medium (25.08)**: Balanced choice for most use cases, good quality at standard pricing
-/// - **Magistral (25.09)**: Budget-friendly option for simple summaries and task extraction
+/// - **Medium (25.08)**: Balanced choice for most use cases (128K context), good quality at standard pricing
+/// - **Magistral (25.09)**: Budget-friendly option for simple summaries and task extraction (40K context)
 ///
 /// All models support chunked processing for transcripts exceeding their context windows.
 enum MistralAIModel: String, CaseIterable {
@@ -57,8 +57,10 @@ enum MistralAIModel: String, CaseIterable {
         switch self {
         case .mistralLarge2512:
             return 128_000
-        case .mistralMedium2508, .magistralMedium2509:
-            return 32_000
+        case .mistralMedium2508:
+            return 128_000
+        case .magistralMedium2509:
+            return 40_000
         }
     }
 

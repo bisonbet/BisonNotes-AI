@@ -149,8 +149,8 @@ class MistralAISummarizationService {
             responseFormat: config.supportsJsonResponseFormat ? ResponseFormat.json : nil
         )
 
-        logger.debug("Mistral AI Provider: \(config.baseURL, privacy: .public)")
-        logger.debug("Using response_format: \(config.supportsJsonResponseFormat ? "json_object" : "none (flexible parsing)", privacy: .public)")
+        logger.debug("Mistral AI Provider: \(self.config.baseURL, privacy: .public)")
+        logger.debug("Using response_format: \(self.config.supportsJsonResponseFormat ? "json_object" : "none (flexible parsing)", privacy: .public)")
 
         let response = try await makeAPICall(request: request)
 
@@ -170,8 +170,8 @@ class MistralAISummarizationService {
             throw SummarizationError.aiServiceUnavailable(service: "Mistral AI API key not configured")
         }
 
-        logger.debug("Mistral AI API Configuration - Model: \(config.model.rawValue, privacy: .public), BaseURL: \(config.baseURL, privacy: .public)")
-        logger.debug("API Key configured: \(config.apiKey.isEmpty ? "No" : "Yes", privacy: .public)")
+        logger.debug("Mistral AI API Configuration - Model: \(self.config.model.rawValue, privacy: .public), BaseURL: \(self.config.baseURL, privacy: .public)")
+        logger.debug("API Key configured: \(self.config.apiKey.isEmpty ? "No" : "Yes", privacy: .public)")
 
         guard let url = URL(string: "\(config.baseURL)/chat/completions") else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid Mistral AI base URL: \(config.baseURL)")
@@ -210,7 +210,7 @@ class MistralAISummarizationService {
                 let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After") ?? "unknown"
                 let rateLimitReset = httpResponse.value(forHTTPHeaderField: "X-RateLimit-Reset") ?? "unknown"
 
-                logger.warning("Mistral API rate limit exceeded - Retry-After: \(retryAfter), Reset: \(rateLimitReset)", privacy: .public)
+                logger.warning("Mistral API rate limit exceeded - Retry-After: \(retryAfter, privacy: .public), Reset: \(rateLimitReset, privacy: .public)")
 
                 // Provide helpful error message with retry timing
                 var errorMessage = "Mistral API rate limit exceeded."
