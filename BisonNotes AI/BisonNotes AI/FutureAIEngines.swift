@@ -194,12 +194,14 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
         // Use unified credentials manager instead of separate UserDefaults keys
         let credentials = AWSCredentialsManager.shared.credentials
         let sessionToken = UserDefaults.standard.string(forKey: "awsBedrockSessionToken")
-        let modelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
+        let storedModelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
+        // Migrate legacy model identifiers
+        let modelString = AWSBedrockModel.migrate(rawValue: storedModelString)
         let temperature = UserDefaults.standard.double(forKey: "awsBedrockTemperature")
         let maxTokens = UserDefaults.standard.integer(forKey: "awsBedrockMaxTokens")
         let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
         let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName")
-        
+
         let model = AWSBedrockModel(rawValue: modelString) ?? .claude45Haiku
         
         let newConfig = AWSBedrockConfig(

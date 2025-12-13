@@ -7,6 +7,11 @@
 
 import Foundation
 
+// MARK: - Response Validation Constants
+
+/// Maximum allowed length for model responses to prevent DoS attacks
+private let kMaxResponseLength = 1_000_000 // 1MB of text
+
 // MARK: - AWS Bedrock Models
 
 enum AWSBedrockModel: String, CaseIterable {
@@ -14,7 +19,25 @@ enum AWSBedrockModel: String, CaseIterable {
     case claude45Sonnet = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     case claude45Haiku = "us.anthropic.claude-haiku-4-5-20250301-v1:0"
     case llama4Maverick = "us.meta.llama4-maverick-17b-instruct-v1:0"
+    /// Qwen3-VL 235B model - Vision-language capable but used for text-only in this app
+    /// Regional availability: US regions only (us.* prefix)
+    /// Note: While this model supports vision features via base64 images, we only use text-based prompts
     case qwenQwen3Vl235bA22b = "us.qwen.qwen3-vl-235b-a22b"
+
+    /// Legacy model identifier for migration purposes
+    private static let legacyClaude35Haiku = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+
+    /// Migrates legacy model identifiers to current model cases
+    /// - Parameter rawValue: The stored model identifier
+    /// - Returns: Migrated model identifier compatible with current enum
+    static func migrate(rawValue: String) -> String {
+        switch rawValue {
+        case legacyClaude35Haiku:
+            return AWSBedrockModel.claude45Haiku.rawValue
+        default:
+            return rawValue
+        }
+    }
     
     var displayName: String {
         switch self {
@@ -42,7 +65,7 @@ enum AWSBedrockModel: String, CaseIterable {
         case .llama4Maverick:
             return "Meta's latest Llama 4 Maverick model with enhanced reasoning and performance"
         case .qwenQwen3Vl235bA22b:
-            return "Qwen3 vision-language model for rich text and visual understanding"
+            return "Qwen3-VL 235B multimodal model (used for text-only processing in this app)"
         }
     }
     
@@ -349,17 +372,54 @@ struct QwenResponse: BedrockModelResponse, Codable {
     let outputText: String?
 
     var content: String {
-        if let choices = output?.choices {
+        let rawContent: String
+
+        // Extract content from structured response
+        if let choices = output?.choices, !choices.isEmpty {
+            var foundText: String?
             for choice in choices {
                 if let text = choice.message.content.first(where: { responseContent in
                     guard let text = responseContent.text else { return false }
                     return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 })?.text {
-                    return text
+                    foundText = text
+                    break
                 }
             }
+
+            if let text = foundText {
+                rawContent = text
+            } else {
+                // Log unexpected structure for debugging
+                NSLog("Warning: Qwen response had choices array but no valid text content. Falling back to outputText.")
+                rawContent = outputText ?? ""
+            }
+        } else if let fallback = outputText, !fallback.isEmpty {
+            rawContent = fallback
+        } else {
+            // Log completely empty response
+            NSLog("Warning: Qwen response missing expected structure. No output.choices and no outputText found.")
+            return ""
         }
-        return outputText ?? ""
+
+        // Validate response length to prevent DoS attacks
+        guard rawContent.count <= kMaxResponseLength else {
+            NSLog("Security Warning: Qwen response exceeded maximum length (\(rawContent.count) > \(kMaxResponseLength)). Truncating to prevent DoS.")
+            return String(rawContent.prefix(kMaxResponseLength))
+        }
+
+        // Validate reasonable content length for logging
+        if rawContent.count > 100_000 {
+            NSLog("Notice: Qwen response is unusually large (\(rawContent.count) characters). This may impact performance.")
+        }
+
+        // Sanitize for control characters (keep newlines and tabs)
+        let sanitized = rawContent.filter { char in
+            let scalar = char.unicodeScalars.first!
+            return !scalar.properties.isControl || char == "\n" || char == "\t" || char == "\r"
+        }
+
+        return sanitized
     }
 }
 
@@ -446,15 +506,19 @@ class AWSBedrockModelFactory {
         data: Data
     ) throws -> any BedrockModelResponse {
         let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        
+
         switch model {
         case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
+            // Claude models use explicit CodingKeys, no strategy needed
             return try decoder.decode(Claude35Response.self, from: data)
 
         case .llama4Maverick:
+            // Llama models use explicit CodingKeys, no strategy needed
             return try decoder.decode(LlamaResponse.self, from: data)
+
         case .qwenQwen3Vl235bA22b:
+            // Qwen API uses snake_case, apply conversion for this model only
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
             return try decoder.decode(QwenResponse.self, from: data)
         }
     }
