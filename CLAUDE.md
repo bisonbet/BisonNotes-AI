@@ -42,7 +42,8 @@ The app has **migrated from legacy file-based storage to Core Data-only architec
 The app supports multiple AI engines:
 - **Apple Intelligence**: Local processing using Apple frameworks
 - **OpenAI**: GPT-4o models for transcription and summarization
-- **Google AI Studio**: Gemini models for AI processing
+- **Google AI Studio**: Gemini 2.5 models for AI processing
+- **AWS Bedrock**: Claude models (Sonnet 4, Sonnet 4.5, Haiku 4.5), Llama 4 Maverick, and Qwen3-VL (text-only)
 - **Whisper**: Local Whisper server for transcription
 - **Ollama**: Local AI models for privacy-focused processing
 - **AWS Transcribe**: Cloud-based transcription service
@@ -94,6 +95,18 @@ New AI engines should follow the existing pattern:
 3. Integrate with `EnhancedTranscriptionManager` or appropriate manager
 4. Add engine monitoring and error handling
 
+#### AWS Bedrock Models
+The app includes comprehensive AWS Bedrock integration (`AWS/AWSBedrockModels.swift`):
+- **Claude 4.5 Haiku**: Default model for fast, efficient processing (Standard tier)
+- **Claude Sonnet 4/4.5**: Premium models for advanced reasoning and analysis
+- **Llama 4 Maverick**: Meta's economy-tier model with 128K context window
+- **Qwen3-VL 235B**: Multimodal model used for text-only processing (Economy tier)
+
+**Important**:
+- Legacy model migration: `claude35Haiku` automatically migrates to `claude45Haiku`
+- Security: Response validation includes 1MB max length and control character sanitization
+- Qwen3-VL supports vision features but is currently used text-only in this app
+
 ### Background Processing
 For long-running operations, use `BackgroundProcessingManager` to queue jobs and track progress.
 
@@ -121,4 +134,7 @@ For AI-generated content display:
 - `Views/AITextView.swift`: MarkdownUI-powered content rendering
 - `EnhancedTranscriptionManager.swift`: Transcription orchestration
 - `BackgroundProcessingManager.swift`: Background job management
+- `AWS/AWSBedrockModels.swift`: AWS Bedrock model definitions and API handling
+- `FutureAIEngines.swift`: AI engine implementations including AWS Bedrock
+- `AISettingsView.swift`: AI engine configuration UI
 - `BisonNotes_AI.xcdatamodeld/`: Core Data model definitions
