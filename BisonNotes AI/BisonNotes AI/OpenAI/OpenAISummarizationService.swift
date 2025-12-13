@@ -10,21 +10,32 @@ import Foundation
 // MARK: - OpenAI Summarization Service
 
 class OpenAISummarizationService: ObservableObject {
-    
+
     // MARK: - Properties
-    
+
     @Published var config: OpenAISummarizationConfig
     private let session: URLSession
-    
+
+    // Cache the message format to avoid repeated UserDefaults reads and ensure consistency
+    private let cachedMessageFormat: MessageContentFormat
+    private let cachedShouldUseResponseFormat: Bool
+
     // MARK: - Initialization
-    
+
     init(config: OpenAISummarizationConfig) {
         self.config = config
-        
+
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.timeoutIntervalForRequest = config.timeout
         sessionConfig.timeoutIntervalForResource = config.timeout * 2
         self.session = URLSession(configuration: sessionConfig)
+
+        // Cache format detection results at initialization to avoid:
+        // 1. Thread safety issues with UserDefaults access during concurrent API calls
+        // 2. Performance overhead of repeated UserDefaults reads
+        // 3. Inconsistent format detection mid-session if settings change
+        self.cachedMessageFormat = MessageFormatDetector.detectFormat(for: config.baseURL)
+        self.cachedShouldUseResponseFormat = MessageFormatDetector.shouldUseResponseFormat(for: config.baseURL)
     }
     
     // MARK: - Public Methods
@@ -33,12 +44,10 @@ class OpenAISummarizationService: ObservableObject {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: text)
 
-        // Detect the appropriate message format based on the API provider
-        let messageFormat = MessageFormatDetector.detectFormat(for: config.baseURL)
-
+        // Use cached message format (determined at initialization)
         let messages = [
-            ChatMessage(role: "system", content: systemPrompt, format: messageFormat),
-            ChatMessage(role: "user", content: userPrompt, format: messageFormat)
+            ChatMessage(role: "system", content: systemPrompt, format: cachedMessageFormat),
+            ChatMessage(role: "user", content: userPrompt, format: cachedMessageFormat)
         ]
 
         let request = OpenAIChatCompletionRequest(
@@ -61,12 +70,10 @@ class OpenAISummarizationService: ObservableObject {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .tasks, text: text)
 
-        // Detect the appropriate message format based on the API provider
-        let messageFormat = MessageFormatDetector.detectFormat(for: config.baseURL)
-
+        // Use cached message format (determined at initialization)
         let messages = [
-            ChatMessage(role: "system", content: systemPrompt, format: messageFormat),
-            ChatMessage(role: "user", content: userPrompt, format: messageFormat)
+            ChatMessage(role: "system", content: systemPrompt, format: cachedMessageFormat),
+            ChatMessage(role: "user", content: userPrompt, format: cachedMessageFormat)
         ]
 
         let request = OpenAIChatCompletionRequest(
@@ -89,12 +96,10 @@ class OpenAISummarizationService: ObservableObject {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .reminders, text: text)
 
-        // Detect the appropriate message format based on the API provider
-        let messageFormat = MessageFormatDetector.detectFormat(for: config.baseURL)
-
+        // Use cached message format (determined at initialization)
         let messages = [
-            ChatMessage(role: "system", content: systemPrompt, format: messageFormat),
-            ChatMessage(role: "user", content: userPrompt, format: messageFormat)
+            ChatMessage(role: "system", content: systemPrompt, format: cachedMessageFormat),
+            ChatMessage(role: "user", content: userPrompt, format: cachedMessageFormat)
         ]
 
         let request = OpenAIChatCompletionRequest(
@@ -133,12 +138,10 @@ class OpenAISummarizationService: ObservableObject {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .complete, text: text)
 
-        // Detect the appropriate message format based on the API provider
-        let messageFormat = MessageFormatDetector.detectFormat(for: config.baseURL)
-
+        // Use cached message format and response format settings (determined at initialization)
         let messages = [
-            ChatMessage(role: "system", content: systemPrompt, format: messageFormat),
-            ChatMessage(role: "user", content: userPrompt, format: messageFormat)
+            ChatMessage(role: "system", content: systemPrompt, format: cachedMessageFormat),
+            ChatMessage(role: "user", content: userPrompt, format: cachedMessageFormat)
         ]
 
         // IMPORTANT: For OpenAI Compatible APIs, don't use response_format
@@ -150,19 +153,17 @@ class OpenAISummarizationService: ObservableObject {
         //
         // Best practice: Only use response_format with official OpenAI API
         // For all others, rely on explicit prompts and flexible parsing
-        let useResponseFormat = MessageFormatDetector.shouldUseResponseFormat(for: config.baseURL)
-
         let request = OpenAIChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
             temperature: config.temperature,
             maxCompletionTokens: config.maxTokens,
-            responseFormat: useResponseFormat ? ResponseFormat.json : nil
+            responseFormat: cachedShouldUseResponseFormat ? ResponseFormat.json : nil
         )
 
         print("🔧 Provider: \(config.baseURL)")
-        print("🔧 Message format: \(messageFormat == .blocks ? "content blocks" : "simple string")")
-        print("🔧 Using response_format: \(useResponseFormat ? "json_object" : "none (flexible parsing)")")
+        print("🔧 Message format: \(cachedMessageFormat == .blocks ? "content blocks" : "simple string")")
+        print("🔧 Using response_format: \(cachedShouldUseResponseFormat ? "json_object" : "none (flexible parsing)")")
 
         let response = try await makeAPICall(request: request)
 

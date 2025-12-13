@@ -151,16 +151,28 @@ struct ChatMessage: Codable {
             self.blockContent = nil
         case .blocks:
             self.stringContent = nil
+            // Note: Single text block for now. Future: support multiple content blocks
+            // for multimodal features (text + images, etc.)
             self.blockContent = [ContentBlock(type: "text", text: content)]
         }
     }
 
+    // Initializer for multiple content blocks (supports multimodal content)
+    init(role: String, blocks: [ContentBlock], format: MessageContentFormat = .blocks) {
+        self.role = role
+        self.preferredFormat = format
+        self.stringContent = nil
+        self.blockContent = blocks
+    }
+
     // Get the content as a string (for internal use)
+    // Combines all content blocks into a single string when multiple blocks are present
     var content: String {
         if let stringContent = stringContent {
             return stringContent
-        } else if let blockContent = blockContent, let firstBlock = blockContent.first {
-            return firstBlock.text
+        } else if let blockContent = blockContent, !blockContent.isEmpty {
+            // Combine all text blocks with newlines to preserve multi-block responses
+            return blockContent.map { $0.text }.joined(separator: "\n")
         }
         return ""
     }
@@ -242,20 +254,24 @@ class MessageFormatDetector {
             return format
         }
 
-        // Automatic detection based on URL
-        let lowercasedURL = baseURL.lowercased()
+        // Automatic detection based on URL host
+        guard let url = URL(string: baseURL),
+              let host = url.host?.lowercased() else {
+            // If URL parsing fails, fall back to string matching
+            return detectFormatFallback(for: baseURL)
+        }
 
-        // Check if it's a known block format provider
+        // Check if it's a known block format provider using proper host matching
         for provider in blockFormatProviders {
-            if lowercasedURL.contains(provider) {
+            if host == provider || host.hasSuffix("." + provider) {
                 print("🔍 Auto-detected block format provider: \(provider)")
                 return .blocks
             }
         }
 
-        // Check if it's a known string format provider
+        // Check if it's a known string format provider using proper host matching
         for provider in stringFormatProviders {
-            if lowercasedURL.contains(provider) {
+            if host == provider || host.hasSuffix("." + provider) {
                 print("🔍 Auto-detected string format provider: \(provider)")
                 return .string
             }
@@ -263,6 +279,25 @@ class MessageFormatDetector {
 
         // Default to string format (most common)
         print("🔍 Unknown provider, defaulting to string format")
+        return .string
+    }
+
+    /// Fallback detection using string matching when URL parsing fails
+    private static func detectFormatFallback(for baseURL: String) -> MessageContentFormat {
+        let lowercasedURL = baseURL.lowercased()
+
+        for provider in blockFormatProviders {
+            if lowercasedURL.contains(provider) {
+                return .blocks
+            }
+        }
+
+        for provider in stringFormatProviders {
+            if lowercasedURL.contains(provider) {
+                return .string
+            }
+        }
+
         return .string
     }
 
@@ -274,16 +309,19 @@ class MessageFormatDetector {
 
     /// Detect format without considering manual override (for UI display)
     static func detectFormatWithoutOverride(for baseURL: String) -> MessageContentFormat {
-        let lowercasedURL = baseURL.lowercased()
+        guard let url = URL(string: baseURL),
+              let host = url.host?.lowercased() else {
+            return detectFormatFallback(for: baseURL)
+        }
 
         for provider in blockFormatProviders {
-            if lowercasedURL.contains(provider) {
+            if host == provider || host.hasSuffix("." + provider) {
                 return .blocks
             }
         }
 
         for provider in stringFormatProviders {
-            if lowercasedURL.contains(provider) {
+            if host == provider || host.hasSuffix("." + provider) {
                 return .string
             }
         }
