@@ -16,11 +16,15 @@ import os.log
 /// - Response parsing and error handling
 /// - Structured output using JSON mode (when supported)
 /// - Logging with appropriate privacy levels
-class MistralAISummarizationService: ObservableObject {
+///
+/// **Thread Safety:**
+/// This service is designed to be used from async contexts. The config is immutable after initialization,
+/// ensuring thread-safe access across multiple concurrent operations.
+class MistralAISummarizationService {
 
     // MARK: - Properties
 
-    @Published var config: MistralAIConfig
+    private let config: MistralAIConfig
     private let session: URLSession
     private let logger = Logger(subsystem: "com.audiojournal.app", category: "MistralAISummarizationService")
 
@@ -40,7 +44,7 @@ class MistralAISummarizationService: ObservableObject {
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
         // Validate input
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral - Empty text provided")
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - Empty text provided")
         }
 
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
@@ -61,7 +65,7 @@ class MistralAISummarizationService: ObservableObject {
         let response = try await makeAPICall(request: request)
 
         guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral - No response choices")
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
         }
 
         return choice.message.content
@@ -86,7 +90,7 @@ class MistralAISummarizationService: ObservableObject {
         let response = try await makeAPICall(request: request)
 
         guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral - No response choices")
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
         }
 
         return try OpenAIResponseParser.parseTasksFromJSON(choice.message.content)
@@ -111,7 +115,7 @@ class MistralAISummarizationService: ObservableObject {
         let response = try await makeAPICall(request: request)
 
         guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral - No response choices")
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
         }
 
         return try OpenAIResponseParser.parseRemindersFromJSON(choice.message.content)
@@ -145,13 +149,13 @@ class MistralAISummarizationService: ObservableObject {
             responseFormat: config.supportsJsonResponseFormat ? ResponseFormat.json : nil
         )
 
-        logger.debug("Mistral Provider: \(config.baseURL, privacy: .public)")
+        logger.debug("Mistral AI Provider: \(config.baseURL, privacy: .public)")
         logger.debug("Using response_format: \(config.supportsJsonResponseFormat ? "json_object" : "none (flexible parsing)", privacy: .public)")
 
         let response = try await makeAPICall(request: request)
 
         guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral - No response choices")
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
         }
 
         let result = try OpenAIResponseParser.parseCompleteResponseFromJSON(choice.message.content)
@@ -162,15 +166,15 @@ class MistralAISummarizationService: ObservableObject {
 
     private func makeAPICall(request: OpenAIChatCompletionRequest) async throws -> OpenAIChatCompletionResponse {
         guard !config.apiKey.isEmpty else {
-            logger.error("Mistral API key is empty")
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral API key not configured")
+            logger.error("Mistral AI API key is empty")
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI API key not configured")
         }
 
-        logger.debug("Mistral API Configuration - Model: \(config.model.rawValue, privacy: .public), BaseURL: \(config.baseURL, privacy: .public)")
+        logger.debug("Mistral AI API Configuration - Model: \(config.model.rawValue, privacy: .public), BaseURL: \(config.baseURL, privacy: .public)")
         logger.debug("API Key configured: \(config.apiKey.isEmpty ? "No" : "Yes", privacy: .public)")
 
         guard let url = URL(string: "\(config.baseURL)/chat/completions") else {
-            throw SummarizationError.aiServiceUnavailable(service: "Invalid Mistral base URL: \(config.baseURL)")
+            throw SummarizationError.aiServiceUnavailable(service: "Invalid Mistral AI base URL: \(config.baseURL)")
         }
 
         var urlRequest = URLRequest(url: url)
@@ -191,14 +195,14 @@ class MistralAISummarizationService: ObservableObject {
         }
 
         do {
-            logger.debug("Making Mistral API request")
+            logger.debug("Making Mistral AI API request")
             let (data, response) = try await session.data(for: urlRequest)
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                throw SummarizationError.aiServiceUnavailable(service: "Invalid response from Mistral")
+                throw SummarizationError.aiServiceUnavailable(service: "Invalid response from Mistral AI")
             }
 
-            logger.debug("Mistral API Response - Status: \(httpResponse.statusCode, privacy: .public)")
+            logger.debug("Mistral AI API Response - Status: \(httpResponse.statusCode, privacy: .public)")
             logger.debug("Response data length: \(data.count, privacy: .public) bytes")
 
             // Handle rate limiting with retry information

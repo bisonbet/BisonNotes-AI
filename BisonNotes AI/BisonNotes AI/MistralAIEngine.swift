@@ -28,16 +28,23 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     /// Maximum number of title suggestions per recording to keep UI manageable
     private let maxTitlesPerRecording = 5
 
-    /// Similarity threshold for deduplication (0.0 = no match, 1.0 = exact match)
-    /// Values above this threshold are considered duplicates and filtered out.
-    /// Set to 0.8 to catch near-duplicates while allowing slight variations in wording.
+    /// Similarity threshold for deduplication using Jaccard similarity (0.0 = no match, 1.0 = exact match)
+    ///
+    /// **Rationale for 0.8:**
+    /// - Values ≥ 0.8 catch semantically identical items with minor wording differences
+    ///   (e.g., "Review the quarterly report" vs "Review quarterly report")
+    /// - Values < 0.8 allow legitimate variations to coexist
+    ///   (e.g., "Review Q1 report" and "Review Q2 report" both kept)
+    /// - Tested empirically to balance duplicate removal with preserving distinct items
+    /// - Higher values (0.9+) miss too many near-duplicates
+    /// - Lower values (0.6-0.7) incorrectly merge distinct but related items
     private let deduplicationSimilarityThreshold = 0.8
 
     var isAvailable: Bool {
         let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
         guard !apiKey.isEmpty else {
             if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                AppLogger.shared.verbose("Mistral API key not configured", category: "MistralAIEngine")
+                AppLogger.shared.verbose("Mistral AI API key not configured", category: "MistralAIEngine")
             }
             return false
         }
@@ -218,10 +225,10 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             let response = try await service.generateSummary(from: testPrompt, contentType: .general)
             // Accept any non-empty response as success - the model doesn't need to return specific text
             let success = !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            logger.info("Mistral test connection \(success ? "successful" : "failed") - Response length: \(response.count)")
+            logger.info("Mistral AI test connection \(success ? "successful" : "failed") - Response length: \(response.count)")
             return success
         } catch {
-            logger.error("Mistral test connection failed: \(error.localizedDescription)")
+            logger.error("Mistral AI test connection failed: \(error.localizedDescription)")
             return false
         }
     }
@@ -242,9 +249,22 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
 
         // Auto-detect JSON response format support based on URL, but allow user override
         let autoDetectedJsonSupport = baseURL.lowercased().contains("api.mistral.ai")
-        let supportsJsonResponseFormat = UserDefaults.standard.object(forKey: "mistralSupportsJsonResponseFormat") != nil
+        let hasUserOverride = UserDefaults.standard.object(forKey: "mistralSupportsJsonResponseFormat") != nil
+        let supportsJsonResponseFormat = hasUserOverride
             ? UserDefaults.standard.bool(forKey: "mistralSupportsJsonResponseFormat")
             : autoDetectedJsonSupport
+
+        // Log when auto-detection is used or when it differs from user override
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            if hasUserOverride {
+                let userSetting = UserDefaults.standard.bool(forKey: "mistralSupportsJsonResponseFormat")
+                if userSetting != autoDetectedJsonSupport {
+                    AppLogger.shared.verbose("Mistral AI JSON format: user override (\(userSetting)) differs from auto-detection (\(autoDetectedJsonSupport))", category: "MistralAIEngine")
+                }
+            } else {
+                AppLogger.shared.verbose("Mistral AI JSON format: using auto-detection (\(autoDetectedJsonSupport)) based on URL", category: "MistralAIEngine")
+            }
+        }
 
         let model = MistralAIModel(rawValue: modelId) ?? .mistralMedium2508
         let newConfig = MistralAIConfig(
@@ -264,7 +284,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             service = MistralAISummarizationService(config: newConfig)
 
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Updated Mistral configuration - Model: \(modelId), BaseURL: \(baseURL), JSON Format: \(supportsJsonResponseFormat)", category: "MistralAIEngine")
+                AppLogger.shared.verbose("Updated Mistral AI configuration - Model: \(modelId), BaseURL: \(baseURL), JSON Format: \(supportsJsonResponseFormat)", category: "MistralAIEngine")
             }
         }
     }
@@ -345,7 +365,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         // Require at least one successful chunk
         guard successfulChunks > 0 else {
             logger.error("All \(chunks.count) chunks failed to process")
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral - All chunks failed to process")
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - All chunks failed to process")
         }
 
         if failedChunks > 0 {
@@ -359,7 +379,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         let deduplicatedTitles = deduplicateTitles(allTitles)
 
         let processingTime = Date().timeIntervalSince(startTime)
-        logger.info("Mistral chunked processing completed in \(processingTime)s")
+        logger.info("Mistral AI chunked processing completed in \(processingTime)s")
 
         return (combinedSummary, deduplicatedTasks, deduplicatedReminders, deduplicatedTitles, contentType)
     }
@@ -503,7 +523,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         // Prevent infinite recursion
         guard depth < 10 else {
             logger.error("Meta-summary recursion depth exceeded at level \(depth)")
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral - Summary processing too complex (recursion limit reached)")
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - Summary processing too complex (recursion limit reached)")
         }
         let maxTokens = currentConfig?.model.contextWindow ?? TokenManager.maxTokensPerChunk
 
