@@ -287,10 +287,14 @@ class MessageFormatDetector {
 
     /// Core detection logic based on host name
     /// Extracted to avoid duplication between detectFormat and detectFormatWithoutOverride
+    /// Handles edge cases: ports, IP addresses, localhost, and subdomains
     private static func detectFormatByHost(_ host: String) -> MessageContentFormat {
+        // Extract the base host without port (e.g., "api.example.com:8080" -> "api.example.com")
+        let baseHost = host.split(separator: ":").first.map(String.init) ?? host
+
         // Check if it's a known block format provider using proper host matching
         for provider in blockFormatProviders {
-            if host == provider || host.hasSuffix("." + provider) {
+            if isHostMatch(baseHost, provider: provider) {
                 #if DEBUG
                 print("🔍 Auto-detected block format provider: \(provider)")
                 #endif
@@ -300,7 +304,7 @@ class MessageFormatDetector {
 
         // Check if it's a known string format provider using proper host matching
         for provider in stringFormatProviders {
-            if host == provider || host.hasSuffix("." + provider) {
+            if isHostMatch(baseHost, provider: provider) {
                 #if DEBUG
                 print("🔍 Auto-detected string format provider: \(provider)")
                 #endif
@@ -315,23 +319,95 @@ class MessageFormatDetector {
         return .string
     }
 
-    /// Fallback detection using string matching when URL parsing fails
-    private static func detectFormatFallback(for baseURL: String) -> MessageContentFormat {
-        let lowercasedURL = baseURL.lowercased()
+    /// Check if a host matches a provider domain
+    /// Handles: exact matches, subdomains, localhost, and IP addresses
+    private static func isHostMatch(_ host: String, provider: String) -> Bool {
+        // Exact match
+        if host == provider {
+            return true
+        }
 
+        // Subdomain match (e.g., "api.openai.com" matches "openai.com")
+        if host.hasSuffix("." + provider) {
+            return true
+        }
+
+        // Localhost variations (for development servers)
+        // Only match if provider is explicitly "localhost" or an IP
+        if provider == "localhost" || provider.starts(with: "127.") || provider.starts(with: "::1") {
+            return host == provider || host.starts(with: provider)
+        }
+
+        return false
+    }
+
+    /// Fallback detection using string matching when URL parsing fails
+    /// Uses more restrictive matching to avoid false positives from query params/fragments
+    /// Logs a warning and defaults to .string format for safety
+    private static func detectFormatFallback(for baseURL: String) -> MessageContentFormat {
+        #if DEBUG
+        print("⚠️ URL parsing failed for: \(baseURL)")
+        print("⚠️ Using fallback string matching - this may not be reliable")
+        #endif
+
+        // Extract only the host portion before query params (?) and fragments (#)
+        // This prevents matching providers in URLs like: https://example.com?provider=openai.com
+        let hostPortion: String
+        if let queryIndex = baseURL.firstIndex(of: "?") {
+            hostPortion = String(baseURL[..<queryIndex])
+        } else if let fragmentIndex = baseURL.firstIndex(of: "#") {
+            hostPortion = String(baseURL[..<fragmentIndex])
+        } else {
+            hostPortion = baseURL
+        }
+
+        let lowercasedHost = hostPortion.lowercased()
+
+        // More restrictive matching: require the provider domain to appear in the host portion
+        // with proper domain boundaries (preceded by "://" or ".")
         for provider in blockFormatProviders {
-            if lowercasedURL.contains(provider) {
+            if matchesProviderDomain(lowercasedHost, provider: provider) {
+                #if DEBUG
+                print("⚠️ Fallback matched block format provider: \(provider)")
+                #endif
                 return .blocks
             }
         }
 
         for provider in stringFormatProviders {
-            if lowercasedURL.contains(provider) {
+            if matchesProviderDomain(lowercasedHost, provider: provider) {
+                #if DEBUG
+                print("⚠️ Fallback matched string format provider: \(provider)")
+                #endif
                 return .string
             }
         }
 
+        #if DEBUG
+        print("⚠️ No provider match in fallback, defaulting to .string format")
+        #endif
         return .string
+    }
+
+    /// Check if a URL string contains a provider domain with proper boundaries
+    /// Prevents false matches in query params or malicious URLs
+    private static func matchesProviderDomain(_ urlString: String, provider: String) -> Bool {
+        // Match if provider appears after "://" (protocol boundary)
+        if urlString.contains("://\(provider)") {
+            return true
+        }
+
+        // Match if provider appears after "." (subdomain boundary)
+        if urlString.contains(".\(provider)") {
+            return true
+        }
+
+        // Match if provider appears at start with "://" following
+        if urlString.hasPrefix(provider + "/") || urlString.hasPrefix(provider + ":") {
+            return true
+        }
+
+        return false
     }
 
     /// Get the detected format as a string (for display purposes)
@@ -352,10 +428,16 @@ class MessageFormatDetector {
     }
 
     /// Check if a base URL should use response_format
+    /// Uses precise URL matching to avoid false positives
     static func shouldUseResponseFormat(for baseURL: String) -> Bool {
+        guard let url = URL(string: baseURL),
+              let host = url.host?.lowercased() else {
+            return false
+        }
+
         // Only use response_format with official OpenAI API
-        let isOpenAI = baseURL.contains("api.openai.com")
-        return isOpenAI
+        // Must be exactly "api.openai.com" or a subdomain of "openai.com"
+        return host == "api.openai.com" || host == "openai.com" || host.hasSuffix(".openai.com")
     }
 }
 

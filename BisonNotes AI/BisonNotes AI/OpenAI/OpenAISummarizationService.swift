@@ -299,7 +299,19 @@ class OpenAISummarizationService: ObservableObject {
     }
     
     // MARK: - Private Helper Methods
-    
+
+    /// Check if a base URL is the official OpenAI API
+    /// Uses precise URL parsing to avoid false positives
+    private func isOfficialOpenAI(baseURL: String) -> Bool {
+        guard let url = URL(string: baseURL),
+              let host = url.host?.lowercased() else {
+            return false
+        }
+
+        // Must be exactly "api.openai.com" or a subdomain of "openai.com"
+        return host == "api.openai.com" || host == "openai.com" || host.hasSuffix(".openai.com")
+    }
+
     private func makeAPICall(request: OpenAIChatCompletionRequest) async throws -> OpenAIChatCompletionResponse {
         // Validate configuration before making API call
         guard !config.apiKey.isEmpty else {
@@ -311,7 +323,8 @@ class OpenAISummarizationService: ObservableObject {
 
         // Only validate sk- prefix for official OpenAI API
         // Third-party providers (LiteLLM, Nebius, etc.) use different key formats
-        if config.baseURL.contains("api.openai.com") && !config.apiKey.hasPrefix("sk-") {
+        // Use precise URL matching to avoid false positives (e.g., malicious-api.openai.com.evil.com)
+        if isOfficialOpenAI(baseURL: config.baseURL) && !config.apiKey.hasPrefix("sk-") {
             #if DEBUG
             print("❌ OpenAI API key format is invalid (should start with 'sk-')")
             #endif
