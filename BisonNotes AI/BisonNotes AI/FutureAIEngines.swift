@@ -1706,6 +1706,172 @@ class NoOpEngine: SummarizationEngine {
     }
 }
 
+// MARK: - On-Device LLM Engine
+
+class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
+    let name: String = "On-Device LLM"
+    let description: String = "Privacy-focused local AI processing directly on your device"
+    let version: String = "1.0"
+
+    private let service = OnDeviceLLMService.shared
+    private let downloadManager = ModelDownloadManager.shared
+    private var config: OnDeviceLLMConfig
+
+    var isAvailable: Bool {
+        // Check if enabled in settings
+        let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMSettingsKeys.enableOnDeviceLLM)
+        guard isEnabled else { return false }
+
+        // Check if a model is downloaded
+        let config = OnDeviceLLMConfig.load()
+        guard let model = OnDeviceLLMModel.model(byID: config.modelID) else { return false }
+
+        return downloadManager.isModelDownloaded(model, quantization: config.quantization)
+    }
+
+    init() {
+        self.config = OnDeviceLLMConfig.load()
+    }
+
+    private func updateConfiguration() {
+        self.config = OnDeviceLLMConfig.load()
+    }
+
+    private func ensureModelLoaded() async throws {
+        updateConfiguration()
+
+        guard let model = OnDeviceLLMModel.model(byID: config.modelID) else {
+            throw OnDeviceLLMError.modelNotFound(config.modelID)
+        }
+
+        guard downloadManager.isModelDownloaded(model, quantization: config.quantization) else {
+            throw OnDeviceLLMError.modelNotDownloaded
+        }
+
+        // Load model if not already loaded or if different model is requested
+        if !service.isModelLoaded || service.currentModelID != config.modelID {
+            try await service.loadModel(modelID: config.modelID, quantization: config.quantization)
+        }
+    }
+
+    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
+        try await ensureModelLoaded()
+        return try await service.generateSummary(from: text, contentType: contentType, config: config)
+    }
+
+    func extractTasks(from text: String) async throws -> [TaskItem] {
+        try await ensureModelLoaded()
+        return try await service.extractTasks(from: text, config: config)
+    }
+
+    func extractReminders(from text: String) async throws -> [ReminderItem] {
+        try await ensureModelLoaded()
+        return try await service.extractReminders(from: text, config: config)
+    }
+
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        try await ensureModelLoaded()
+        return try await service.extractTitles(from: text, config: config)
+    }
+
+    func classifyContent(_ text: String) async throws -> ContentType {
+        try await ensureModelLoaded()
+        return try await service.classifyContent(text, config: config)
+    }
+
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        try await ensureModelLoaded()
+
+        // Check if text needs chunking
+        let tokenCount = TokenManager.getTokenCount(text)
+        print("📊 OnDeviceLLM: Text token count: \(tokenCount)")
+
+        if TokenManager.needsChunking(text, maxTokens: config.contextWindow) {
+            print("🔀 OnDeviceLLM: Large transcript detected, using chunked processing")
+            return try await processChunkedText(text)
+        } else {
+            print("📝 OnDeviceLLM: Processing single chunk")
+            let result = try await service.processComplete(text: text, contentType: .general, config: config)
+            let contentType = try await service.classifyContent(text, config: config)
+            return (result.summary, result.tasks, result.reminders, result.titles, contentType)
+        }
+    }
+
+    private func processChunkedText(_ text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        let chunks = TokenManager.chunkText(text, maxTokens: config.contextWindow)
+        print("📊 OnDeviceLLM: Split into \(chunks.count) chunks")
+
+        var allTasks: [TaskItem] = []
+        var allReminders: [ReminderItem] = []
+        var allTitles: [TitleItem] = []
+        var summaries: [String] = []
+
+        for (index, chunk) in chunks.enumerated() {
+            print("🔄 OnDeviceLLM: Processing chunk \(index + 1) of \(chunks.count)")
+
+            do {
+                let result = try await service.processComplete(text: chunk, contentType: .general, config: config)
+                summaries.append(result.summary)
+                allTasks.append(contentsOf: result.tasks)
+                allReminders.append(contentsOf: result.reminders)
+                allTitles.append(contentsOf: result.titles)
+
+                // Small delay between chunks to manage memory
+                if index < chunks.count - 1 {
+                    let chunkDelay: UInt64 = 500_000_000 // 0.5 seconds
+                    try await Task.sleep(nanoseconds: chunkDelay)
+                }
+            } catch {
+                print("❌ OnDeviceLLM: Error processing chunk \(index + 1): \(error)")
+            }
+        }
+
+        // Combine summaries
+        let finalSummary = summaries.joined(separator: "\n\n---\n\n")
+
+        // Deduplicate results
+        let deduplicatedTasks = deduplicateItems(allTasks, keyPath: \.text).prefix(15).map { $0 }
+        let deduplicatedReminders = deduplicateItems(allReminders, keyPath: \.text).prefix(15).map { $0 }
+        let deduplicatedTitles = deduplicateItems(allTitles, keyPath: \.text).prefix(5).map { $0 }
+
+        return (
+            summary: finalSummary,
+            tasks: Array(deduplicatedTasks),
+            reminders: Array(deduplicatedReminders),
+            titles: Array(deduplicatedTitles),
+            contentType: .general
+        )
+    }
+
+    private func deduplicateItems<T>(_ items: [T], keyPath: KeyPath<T, String>) -> [T] {
+        var seen = Set<String>()
+        return items.filter { item in
+            let key = item[keyPath: keyPath].lowercased()
+            if seen.contains(key) {
+                return false
+            }
+            seen.insert(key)
+            return true
+        }
+    }
+
+    // MARK: - ConnectionTestable
+
+    func testConnection() async -> Bool {
+        updateConfiguration()
+
+        guard let model = OnDeviceLLMModel.model(byID: config.modelID) else {
+            return false
+        }
+
+        guard downloadManager.isModelDownloaded(model, quantization: config.quantization) else {
+            return false
+        }
+
+        return await service.testModel(modelID: config.modelID, quantization: config.quantization)
+    }
+}
+
 // MARK: - Engine Factory
 
 class AIEngineFactory {
@@ -1725,6 +1891,8 @@ class AIEngineFactory {
             return LocalLLMEngine()
         case .googleAIStudio:
             return GoogleAIStudioEngine()
+        case .onDeviceLLM:
+            return OnDeviceLLMEngine()
         }
     }
     
@@ -1748,6 +1916,7 @@ enum AIEngineType: String, CaseIterable {
     case openAICompatible = "OpenAI API Compatible"
     case localLLM = "Ollama"
     case googleAIStudio = "Google AI Studio"
+    case onDeviceLLM = "On-Device LLM"
 
     var description: String {
         switch self {
@@ -1765,12 +1934,14 @@ enum AIEngineType: String, CaseIterable {
             return "Privacy-focused local language model processing"
         case .googleAIStudio:
             return "Advanced AI-powered summaries using Google's Gemini models"
+        case .onDeviceLLM:
+            return "Privacy-focused on-device AI - no internet required"
         }
     }
 
     var isComingSoon: Bool {
         switch self {
-        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock:
+        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM:
             return false
         }
     }
@@ -1791,6 +1962,8 @@ enum AIEngineType: String, CaseIterable {
             return ["Ollama Server", "Local Network", "Model Download"]
         case .googleAIStudio:
             return ["Google AI Studio API Key", "Internet Connection", "Usage Credits"]
+        case .onDeviceLLM:
+            return ["Downloaded Model (~2.5 GB)", "iPhone 12+ Recommended", "No Internet Required"]
         }
     }
 }

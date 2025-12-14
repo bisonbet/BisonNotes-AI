@@ -1,4 +1,4 @@
-# Audio Journal
+# BisonNotes AI
 
 SwiftUI iOS + watchOS app for recording audio, transcribing it with local or cloud engines, and generating summaries, tasks, and reminders. Core Data powers persistence; background jobs handle long/complex processing; WatchConnectivity syncs state between watch and phone.
 
@@ -8,14 +8,14 @@ Quick links: [Usage Quick Start](USAGE.md) • [Full User Guide](HOW_TO_USE.md) 
 
 ## Architecture
 - Data: Core Data model at `BisonNotes AI/BisonNotes_AI.xcdatamodeld` stores recordings, transcripts, summaries, and jobs.
-- Engines: Pluggable services for Apple on‑device NLP, OpenAI, Google AI Studio, AWS Bedrock/Transcribe, Whisper (REST), Wyoming streaming, and Ollama. Each engine pairs a service with a settings view.
+- Engines: Pluggable services for Apple on‑device NLP, OpenAI, OpenAI-compatible APIs, Mistral AI, Google AI Studio, AWS Bedrock/Transcribe, Whisper (REST), Wyoming streaming, Ollama, and On-Device LLM. Each engine pairs a service with a settings view.
 - Background: `BackgroundProcessingManager` coordinates queued work with retries, timeouts, and recovery. Large files are chunked and processed streaming‑first.
 - Watch Sync: `WatchConnectivityManager` (on iOS and watch targets) manages reachability, queued transfers, and state recovery.
 - UI: SwiftUI views under `Views/` implement recording, summaries, transcripts, and settings. AI-generated content uses MarkdownUI for professional formatting. View models isolate state and side effects.
 
 ## Project Structure
 - `BisonNotes AI/`: iOS app source
-  - Notable folders: `Models/`, `Views/`, `ViewModels/`, `OpenAI/`, `AWS/`, `Wyoming/`, `WatchConnectivity/`
+  - Notable folders: `Models/`, `Views/`, `ViewModels/`, `OpenAI/`, `AWS/`, `Wyoming/`, `WatchConnectivity/`, `OnDeviceLLM/`
   - Assets: `Assets.xcassets`; config: `Info.plist`, `.entitlements`
   - Uses Xcode's file-system synchronized groups, so dropping new Swift files into these folders automatically adds them to the project—no manual `.xcodeproj` edits are necessary.
 - `BisonNotes AI Watch App/`: watchOS companion app
@@ -33,10 +33,17 @@ The project uses Swift Package Manager for dependency management. Major dependen
 
 ### **Cloud Services**
 - **AWS SDK for Swift**: Cloud transcription and AI processing
-  - `AWSBedrock` & `AWSBedrockRuntime`: Claude AI models
+  - `AWSBedrock` & `AWSBedrockRuntime`: Claude AI models (Claude 4.5 Haiku, Sonnet 4/4.5, Llama 4 Maverick)
   - `AWSTranscribe` & `AWSTranscribeStreaming`: Speech-to-text
   - `AWSS3`: File storage and retrieval
   - `AWSClientRuntime`: Core AWS functionality
+
+### **On-Device AI**
+- **LocalLLMClient** (v0.4.6): Swift wrapper for llama.cpp enabling on-device LLM inference
+  - GitHub: https://github.com/tattn/LocalLLMClient
+  - Supports GGUF model format with quantization (Q4_K_M, Q5_K_M, Q8_0)
+  - Built-in download management for Hugging Face models
+  - Available models: Ministral 3B Reasoning, Granite 4.0 Micro
 
 ### **UI & Formatting**
 - **MarkdownUI**: Professional markdown rendering for AI-generated summaries, headers, lists, and formatted text
@@ -58,15 +65,47 @@ All external dependencies are resolved automatically via Swift Package Manager w
 ## Key Modules
 - Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel`
 - Transcription: `OpenAITranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`
-- Summarization: `OpenAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `EnhancedAppleIntelligenceEngine`
+- Summarization: `OpenAISummarizationService`, `MistralAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `EnhancedAppleIntelligenceEngine`, `OnDeviceLLMService`
 - UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI)
 - Persistence: `Persistence`, `CoreDataManager`, models under `Models/`
 - Background: `BackgroundProcessingManager`
 - Watch: `WatchConnectivityManager` (both targets)
 
+## AI Engines
+
+The app supports multiple AI engines for summarization and content analysis:
+
+| Engine | Description | Requirements |
+|--------|-------------|--------------|
+| **Apple Intelligence** | On-device NLP using Apple frameworks | iOS 15.0+ |
+| **OpenAI** | GPT-4.1 models (GPT-4.1, Mini, Nano) | API key, internet |
+| **OpenAI Compatible** | Any OpenAI-compatible API (Nebius, Groq, etc.) | API key, internet |
+| **Mistral AI** | Mistral Large/Medium, Magistral (25.08-25.12) | API key, internet |
+| **Google AI Studio** | Gemini models | API key, internet |
+| **AWS Bedrock** | Claude 4.5 Haiku, Sonnet 4/4.5, Llama 4 Maverick | AWS credentials |
+| **Ollama** | Local LLM server | Ollama server running |
+| **On-Device LLM** | Fully offline, privacy-focused | Downloaded model (~2.5 GB) |
+
+### On-Device LLM
+
+The on-device LLM feature enables completely private, offline AI processing:
+
+- **Models**: Ministral 3B Reasoning (Mistral), Granite 4.0 Micro (IBM)
+- **Quantization**: Q4_K_M (recommended), Q5_K_M, Q8_0
+- **Storage**: Models stored in Application Support (~2-4 GB each)
+- **Requirements**: iPhone 12+ recommended, `com.apple.developer.kernel.increased-memory-limit` entitlement
+- **Downloads**: WiFi by default with optional cellular download support
+
+**Adding LocalLLMClient to the project:**
+1. In Xcode, go to File → Add Package Dependencies
+2. Enter: `https://github.com/tattn/LocalLLMClient`
+3. Set version rule to "Exact Version" → `0.4.6`
+4. Add `LocalLLMClient` to your target
+
 ## Configuration
-- Secrets are entered in‑app via settings views (OpenAI, Google, AWS, Ollama, Whisper). Do not commit API keys.
+- Secrets are entered in‑app via settings views (OpenAI, Mistral AI, Google, AWS, Ollama, Whisper). Do not commit API keys.
 - Enable required capabilities in Xcode (Microphone, Background Modes, iCloud if used). Keep `Info.plist` and `.entitlements` aligned with features.
+- For on-device LLM, the `com.apple.developer.kernel.increased-memory-limit` entitlement is required for memory-intensive model inference.
 
 ## Contributing
 See AGENTS.md for repository guidelines (style, structure, commands, testing, PRs). Follow the Local Dev Setup above to run and validate changes before opening a PR.
