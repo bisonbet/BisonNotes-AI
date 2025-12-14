@@ -34,6 +34,16 @@ enum OnDeviceLLMQuantization: String, CaseIterable, Identifiable, Codable {
         case .q8_0: return "Highest quality, requires significant memory"
         }
     }
+
+    /// Estimated download size in gigabytes for a typical 3B parameter model
+    /// These are approximate values based on quantization bit depth
+    var estimatedSizeGB: Double {
+        switch self {
+        case .q4_K_M: return 2.0  // ~2 GB for 4-bit quantization
+        case .q5_K_M: return 2.5  // ~2.5 GB for 5-bit quantization
+        case .q8_0: return 3.5    // ~3.5 GB for 8-bit quantization
+        }
+    }
 }
 
 // MARK: - Model Definition

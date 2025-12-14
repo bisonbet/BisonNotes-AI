@@ -4,13 +4,30 @@
 //
 //  Service for running inference on locally downloaded LLM models using LocalLLMClient
 //
+//  IMPORTANT: Required Dependencies and Configuration
+//  ==================================================
+//
+//  1. Swift Package Dependency:
+//     - Package: LocalLLMClient
+//     - URL: https://github.com/tattn/LocalLLMClient.git
+//     - Version: 0.4.6 (exact)
+//     - Add via: Xcode → File → Add Package Dependencies
+//
+//  2. Required Entitlement:
+//     - com.apple.developer.kernel.increased-memory-limit = true
+//     - Required for loading ~3GB models into memory
+//     - May require Apple review approval for App Store distribution
+//
+//  3. Without LocalLLMClient package:
+//     - All methods return placeholder/error responses
+//     - App compiles successfully with conditional import (#if canImport)
+//
 
 import Foundation
 import os.log
 
-// Note: LocalLLMClient must be added as a Swift Package dependency
-// Package URL: https://github.com/tattn/LocalLLMClient.git
-// Version: 0.4.6
+// LocalLLMClient must be added as a Swift Package dependency for on-device inference
+// Without it, placeholder implementations are used (see #else blocks below)
 
 #if canImport(LocalLLMClient)
 import LocalLLMClient
