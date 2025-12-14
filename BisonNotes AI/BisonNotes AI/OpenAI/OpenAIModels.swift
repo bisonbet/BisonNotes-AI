@@ -245,6 +245,18 @@ struct ChatMessage: Codable {
         let expectedFormat = decoder.userInfo[ChatMessage.formatKey] as? MessageContentFormat ?? .string
 
         // Try to decode both ways, but respect expectedFormat for consistency
+        // IMPORTANT: We always use expectedFormat (not the detected format) for preferredFormat
+        // because we need re-encoding to match what the service expects, not what we received.
+        //
+        // Example scenario:
+        // - Service expects .blocks (Nebius/Anthropic)
+        // - Server mistakenly sends .string format
+        // - We decode successfully (string format detected)
+        // - We store preferredFormat = .blocks (expected, not detected)
+        // - When re-encoding for conversation history, we use .blocks (correct for this API)
+        //
+        // This ensures format consistency across the entire conversation, even if individual
+        // responses arrive in unexpected formats.
         if let stringValue = try? container.decode(String.self, forKey: .content) {
             stringContent = stringValue
             blockContent = nil
@@ -363,26 +375,33 @@ class MessageFormatDetector {
     }
 
     /// Check if a host matches a provider domain
-    /// Handles: exact matches, subdomains, localhost, and IP addresses
+    /// Handles: exact matches, subdomains, localhost variations, and IP addresses
+    ///
+    /// **Note**: Currently "localhost" is not in any provider list, but this logic is
+    /// future-proof for development/testing scenarios where localhost-based providers
+    /// might be added (e.g., for local LLM servers or testing environments).
     private static func isHostMatch(_ host: String, provider: String) -> Bool {
-        // Exact match
+        // Exact match (works for domains, IPs, and "localhost")
         if host == provider {
             return true
         }
 
         // Subdomain match (e.g., "api.openai.com" matches "openai.com")
+        // Does not apply to IP addresses or "localhost"
         if host.hasSuffix("." + provider) {
             return true
         }
 
-        // Localhost variations (for development servers)
-        // Only match localhost variants exactly to prevent false positives
-        if provider == "localhost" && (host == "localhost" || host == "127.0.0.1" || host == "::1") {
+        // Special handling for localhost variants (future-proofing)
+        // If "localhost" is ever added to a provider list, this ensures
+        // that "127.0.0.1" and "::1" are also matched
+        if provider == "localhost" && (host == "127.0.0.1" || host == "::1") {
             return true
         }
 
-        // For IP addresses, require exact match
-        if provider.starts(with: "127.") || provider.starts(with: "::1") {
+        // IP address exact match (IPv4 and IPv6)
+        // Prevents prefix matching for security (e.g., "127.0.0.1" shouldn't match "127.0.0.10")
+        if provider.starts(with: "127.") || provider.starts(with: "::1") || provider.contains(":") {
             return host == provider
         }
 
