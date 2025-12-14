@@ -43,6 +43,64 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
+    /// Migrates legacy "None" and "Not Configured" AI engine selections to intelligent defaults
+    /// Defaults to Apple Intelligence on supported devices, OpenAI with dummy key on older devices
+    private func migrateAIEngineSelection() {
+        let aiEngineKey = "SelectedAIEngine"
+        let transcriptionEngineKey = "SelectedTranscriptionEngine"
+        let migrationKey = "aiEngineSelectionMigrated_v1.3"
+
+        // Check if migration has already been performed
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+
+        let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
+        let currentTranscriptionEngine = UserDefaults.standard.string(forKey: transcriptionEngineKey)
+
+        // Determine the appropriate default based on device capabilities
+        let isAppleIntelligenceSupported = DeviceCompatibility.isAppleIntelligenceSupported
+
+        // Migrate AI engine if not configured
+        if currentAIEngine == "None" || currentAIEngine == "Not Configured" || currentAIEngine == nil {
+            if isAppleIntelligenceSupported {
+                UserDefaults.standard.set("Enhanced Apple Intelligence", forKey: aiEngineKey)
+                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'Enhanced Apple Intelligence' (device supported)")
+            } else {
+                // Set OpenAI as default for older devices
+                UserDefaults.standard.set("OpenAI", forKey: aiEngineKey)
+                // Set dummy API key if none exists
+                if UserDefaults.standard.string(forKey: "openAIAPIKey") == nil {
+                    UserDefaults.standard.set("sk-000000000000", forKey: "openAIAPIKey")
+                    NSLog("✅ Set dummy OpenAI API key for older device")
+                }
+                UserDefaults.standard.set(true, forKey: "enableOpenAI")
+                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'OpenAI' (device not supported for Apple Intelligence)")
+            }
+        }
+
+        // Migrate transcription engine if not configured
+        if currentTranscriptionEngine == "Not Configured" || currentTranscriptionEngine == nil {
+            if isAppleIntelligenceSupported {
+                UserDefaults.standard.set("Apple Intelligence (Limited)", forKey: transcriptionEngineKey)
+                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'Apple Intelligence (Limited)' (device supported)")
+            } else {
+                // Set OpenAI as default for older devices
+                UserDefaults.standard.set("OpenAI", forKey: transcriptionEngineKey)
+                // Set dummy API key if none exists
+                if UserDefaults.standard.string(forKey: "openAIAPIKey") == nil {
+                    UserDefaults.standard.set("sk-000000000000", forKey: "openAIAPIKey")
+                    NSLog("✅ Set dummy OpenAI API key for older device")
+                }
+                UserDefaults.standard.set(true, forKey: "enableOpenAI")
+                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'OpenAI' (device not supported for Apple Intelligence)")
+            }
+        }
+
+        // Mark migration as complete
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
     init() {
 #if DEBUG
         Self.configureCoverageOutputIfNeeded()
@@ -50,6 +108,7 @@ struct BisonNotesAIApp: App {
         setupBackgroundTasks()
         setupAppShortcuts()
         migrateAWSBedrockSettings()
+        migrateAIEngineSelection()
     }
     
     var body: some Scene {

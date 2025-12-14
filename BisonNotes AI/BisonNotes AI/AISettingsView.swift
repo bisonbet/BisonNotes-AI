@@ -107,10 +107,6 @@ final class AISettingsViewModel: ObservableObject {
     
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
-        case .notConfigured:
-            return false // "Not Configured" is never available
-        case .none:
-            return true // "None" is always available
         case .enhancedAppleIntelligence:
             return true // Always available on iOS 15+
         case .openAI:
@@ -134,7 +130,7 @@ final class AISettingsViewModel: ObservableObject {
             let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
             let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
             let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
-            
+
             if useProfile {
                 return !profileName.isEmpty && isEnabled
             } else {
@@ -215,10 +211,6 @@ struct AISettingsView: View {
     
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
-        case .notConfigured:
-            return false // "Not Configured" is never available
-        case .none:
-            return true // "None" is always available
         case .enhancedAppleIntelligence:
             return true // Always available on iOS 15+
         case .openAI:
@@ -242,7 +234,7 @@ struct AISettingsView: View {
             let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
             let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
             let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
-            
+
             if useProfile {
                 return !profileName.isEmpty && isEnabled
             } else {
@@ -255,10 +247,6 @@ struct AISettingsView: View {
     
     private func getEngineVersion(_ engineType: AIEngineType) -> String {
         switch engineType {
-        case .notConfigured:
-            return "Not Configured"
-        case .none:
-            return "N/A"
         case .enhancedAppleIntelligence:
             return "iOS 15.0+"
         case .openAI:
@@ -494,14 +482,10 @@ private extension AISettingsView {
     
     var selectedEngineConfigurationSection: some View {
         let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
-        
+
         return Group {
             if let currentEngine = AIEngineType.allCases.first(where: { $0.rawValue == currentEngineName }) {
                 switch currentEngine {
-                case .notConfigured:
-                    notConfiguredConfigurationSection
-                case .none:
-                    noneConfigurationSection
                 case .enhancedAppleIntelligence:
                     appleIntelligenceConfigurationSection
                 case .openAI:
@@ -521,104 +505,6 @@ private extension AISettingsView {
         }
     }
 
-    var notConfiguredConfigurationSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("AI Engine Not Configured")
-                .font(.headline)
-                .padding(.horizontal, 24)
-
-            Text("No AI summarization engine has been configured yet. Please select and configure an AI engine below to enable AI summaries, task extraction, and other advanced features.")
-                .font(.body)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 24)
-
-            VStack(spacing: 12) {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundColor(.orange)
-                    Text("Features requiring AI processing will show configuration warnings until an engine is selected.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 24)
-
-                HStack {
-                    Image(systemName: "gear")
-                        .foregroundColor(.blue)
-                    Text("Select an AI engine from the list above to get started.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 24)
-            }
-        }
-        .padding(.vertical, 16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.orange.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
-                )
-        )
-        .padding(.horizontal, 16)
-    }
-
-    var noneConfigurationSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("No AI Engine Selected")
-                .font(.headline)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("AI Summarization Disabled")
-                            .font(.body)
-                        Text("Select an AI engine above to enable summarization, task extraction, and reminder identification")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Status:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(Color.gray)
-                                .frame(width: 8, height: 8)
-                            Text("Disabled")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                    }
-                    
-                    HStack {
-                        Text("Features:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text("None")
-                            .font(.body)
-                            .fontWeight(.medium)
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.gray.opacity(0.1))
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-    
     var appleIntelligenceConfigurationSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Apple Intelligence Configuration")

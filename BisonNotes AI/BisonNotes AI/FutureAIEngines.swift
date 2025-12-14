@@ -1711,10 +1711,6 @@ class NoOpEngine: SummarizationEngine {
 class AIEngineFactory {
     static func createEngine(type: AIEngineType) -> SummarizationEngine {
         switch type {
-        case .notConfigured:
-            return NotConfiguredEngine()
-        case .none:
-            return NoOpEngine()
         case .enhancedAppleIntelligence:
             return EnhancedAppleIntelligenceEngine()
         case .openAI:
@@ -1745,22 +1741,16 @@ class AIEngineFactory {
 }
 
 enum AIEngineType: String, CaseIterable {
-    case notConfigured = "Not Configured"
-    case none = "None"
     case enhancedAppleIntelligence = "Enhanced Apple Intelligence"
     case openAI = "OpenAI"
     case mistralAI = "Mistral AI"
     case awsBedrock = "AWS Bedrock"
     case openAICompatible = "OpenAI API Compatible"
-    case localLLM = "Local LLM (Ollama)"
+    case localLLM = "Ollama"
     case googleAIStudio = "Google AI Studio"
-    
+
     var description: String {
         switch self {
-        case .notConfigured:
-            return "No AI summarization engine has been configured yet"
-        case .none:
-            return "No AI summarization engine selected"
         case .enhancedAppleIntelligence:
             return "Advanced natural language processing using Apple's frameworks"
         case .openAI:
@@ -1777,20 +1767,16 @@ enum AIEngineType: String, CaseIterable {
             return "Advanced AI-powered summaries using Google's Gemini models"
         }
     }
-    
+
     var isComingSoon: Bool {
         switch self {
-        case .notConfigured, .none, .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock:
+        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock:
             return false
         }
     }
-    
+
     var requirements: [String] {
         switch self {
-        case .notConfigured:
-            return ["Configuration required - please select and configure an AI engine"]
-        case .none:
-            return ["No requirements - AI features disabled"]
         case .enhancedAppleIntelligence:
             return ["iOS 15.0+", "Built-in frameworks"]
         case .openAI:
