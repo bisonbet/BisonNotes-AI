@@ -32,14 +32,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     private var appCoordinator: AppDataCoordinator?
     private var workflowManager: RecordingWorkflowManager?
     private var cancellables = Set<AnyCancellable>()
-    
+
     private var audioRecorder: AVAudioRecorder?
     private var audioPlayer: AVAudioPlayer?
     private var recordingTimer: Timer?
-	private var playingTimer: Timer?
-	private var interruptionObserver: NSObjectProtocol?
-	private var routeChangeObserver: NSObjectProtocol?
+    private var playingTimer: Timer?
+    private var interruptionObserver: NSObjectProtocol?
+    private var routeChangeObserver: NSObjectProtocol?
     private var willEnterForegroundObserver: NSObjectProtocol?
+    private let preferredInputDefaultsKey = "PreferredAudioInputUID"
     // Failsafe tracking to detect stalled recordings when input disappears
     private var lastRecordedFileSize: Int64 = -1
     private var stalledTickCount: Int = 0
@@ -837,15 +838,29 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             // Temporarily configure session to get accurate input list
             try await enhancedAudioSessionManager.configureMixedAudioSession()
             let inputs = enhancedAudioSessionManager.getAvailableInputs()
-            
+            let activeInput = enhancedAudioSessionManager.getActiveInput()
+            let storedPreferredInputUID = UserDefaults.standard.string(
+                forKey: preferredInputDefaultsKey
+            )
+
             // Immediately deactivate to avoid interfering with other audio
             try await enhancedAudioSessionManager.deactivateSession()
-            
+
             await MainActor.run {
                 availableInputs = inputs
-                if let firstInput = inputs.first {
-                    selectedInput = firstInput
-                }
+                selectedInput = {
+                    if let storedUID = storedPreferredInputUID,
+                       let storedInput = inputs.first(where: { $0.uid == storedUID }) {
+                        return storedInput
+                    }
+
+                    if let activeInput,
+                       let matchedInput = inputs.first(where: { $0.uid == activeInput.uid }) {
+                        return matchedInput
+                    }
+
+                    return inputs.first
+                }()
             }
         } catch {
             await MainActor.run {
@@ -853,22 +868,35 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             }
         }
     }
-    
+
     func setPreferredInput() {
         guard let input = selectedInput else { return }
-        
+
         Task {
             do {
                 // Temporarily configure session to set preferred input
                 try await enhancedAudioSessionManager.configureMixedAudioSession()
                 try await enhancedAudioSessionManager.setPreferredInput(input)
+                UserDefaults.standard.set(input.uid, forKey: preferredInputDefaultsKey)
                 // Keep session active for now since user likely will record soon
             } catch {
                 errorMessage = "Failed to set preferred input: \(error.localizedDescription)"
             }
         }
     }
-    
+
+    @MainActor
+    private func applySelectedInputToSession() async {
+        guard let input = selectedInput else { return }
+
+        do {
+            try await enhancedAudioSessionManager.setPreferredInput(input)
+            UserDefaults.standard.set(input.uid, forKey: preferredInputDefaultsKey)
+        } catch {
+            errorMessage = "Failed to set preferred input: \(error.localizedDescription)"
+        }
+    }
+
     func startRecording() {
         AVAudioApplication.requestRecordPermission { [weak self] granted in
             DispatchQueue.main.async {
@@ -877,6 +905,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
                     Task {
                         do {
                             try await self.enhancedAudioSessionManager.configureMixedAudioSession()
+                            await self.applySelectedInputToSession()
                         } catch {
                             print("Failed to configure enhanced audio session: \(error)")
                             return
@@ -901,6 +930,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
                     Task {
                         do {
                             try await self.enhancedAudioSessionManager.configureBackgroundRecording()
+                            await self.applySelectedInputToSession()
                         } catch {
                             print("Failed to configure background recording session: \(error)")
                             return
