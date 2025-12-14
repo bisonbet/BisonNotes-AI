@@ -150,6 +150,9 @@ struct ChatMessage: Codable {
     // Internal format preference (not encoded)
     private let preferredFormat: MessageContentFormat
 
+    /// CodingUserInfo key for passing MessageContentFormat through the decoder
+    static let formatKey = CodingUserInfoKey(rawValue: "messageContentFormat")!
+
     // Convenience initializer for simple string content
     init(role: String, content: String, format: MessageContentFormat = .string) {
         self.role = role
@@ -211,24 +214,35 @@ struct ChatMessage: Codable {
 
     /// Decode ChatMessage from JSON
     ///
-    /// **Important**: The `expectedFormat` parameter is NOT automatically used by JSONDecoder.
-    /// Swift's automatic decoder synthesis calls `init(from:)` without custom parameters.
+    /// **Format Detection**: The expected format is passed via `decoder.userInfo[ChatMessage.formatKey]`.
+    /// Services should set this when configuring the JSONDecoder to ensure format consistency.
     ///
     /// **How this works**:
-    /// 1. When decoding API responses, Swift uses the default `expectedFormat = .string`
-    /// 2. The decoder tries both string and block formats automatically (lines 207-214)
-    /// 3. Successfully decodes either format but stores `preferredFormat = expectedFormat`
-    /// 4. When re-encoded (e.g., for conversation history), uses the expected format
+    /// 1. Service sets `decoder.userInfo[ChatMessage.formatKey] = cachedMessageFormat`
+    /// 2. Decoder retrieves expected format from userInfo (defaults to `.string` if not set)
+    /// 3. Tries to decode both string and block formats automatically
+    /// 4. Stores the expected format in `preferredFormat` for re-encoding consistency
+    /// 5. When re-encoded (e.g., for conversation history), uses the expected format
     ///
     /// **Thread Safety**: This ensures format consistency even when servers send unexpected formats.
     /// For example, if a service expects `.string` but receives `.blocks`, the message will
     /// decode successfully but re-encode as `.string` to match service expectations.
     ///
+    /// **Usage**:
+    /// ```swift
+    /// let decoder = JSONDecoder()
+    /// decoder.userInfo[ChatMessage.formatKey] = .blocks  // or .string
+    /// let response = try decoder.decode(OpenAIChatCompletionResponse.self, from: data)
+    /// ```
+    ///
     /// **Testing Note**: To verify content blocks decode correctly from Nebius/Anthropic responses,
     /// test with actual API responses containing `"content": [{"type": "text", "text": "..."}]`
-    init(from decoder: Decoder, expectedFormat: MessageContentFormat = .string) throws {
+    init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         role = try container.decode(String.self, forKey: .role)
+
+        // Get expected format from decoder userInfo (defaults to .string)
+        let expectedFormat = decoder.userInfo[ChatMessage.formatKey] as? MessageContentFormat ?? .string
 
         // Try to decode both ways, but respect expectedFormat for consistency
         if let stringValue = try? container.decode(String.self, forKey: .content) {

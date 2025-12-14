@@ -396,6 +396,8 @@ class OpenAISummarizationService: ObservableObject {
             }
 
             let decoder = JSONDecoder()
+            // Pass the expected message format through userInfo for proper ChatMessage decoding
+            decoder.userInfo[ChatMessage.formatKey] = cachedMessageFormat
             let apiResponse = try decoder.decode(OpenAIChatCompletionResponse.self, from: data)
 
             #if DEBUG
