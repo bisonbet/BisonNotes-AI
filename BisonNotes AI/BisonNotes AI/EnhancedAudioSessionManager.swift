@@ -207,6 +207,15 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     func getAvailableInputs() -> [AVAudioSessionPortDescription] {
         return session.availableInputs ?? []
     }
+
+    /// Get the currently active or preferred input
+    func getActiveInput() -> AVAudioSessionPortDescription? {
+        if let preferredInput = session.preferredInput {
+            return preferredInput
+        }
+
+        return session.currentRoute.inputs.first
+    }
     
     /// Check if mixed audio recording is currently supported
     func isMixedAudioSupported() -> Bool {

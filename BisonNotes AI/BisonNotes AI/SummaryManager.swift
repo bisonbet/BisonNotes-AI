@@ -748,13 +748,7 @@ class SummaryManager: ObservableObject {
     }
     
     private func syncCurrentEngineWithSettings() {
-        let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "None"
-        
-        // If "None" is selected, clear current engine
-        if selectedEngineName == "None" {
-            currentEngine = nil
-            return
-        }
+        let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
         
         // If current engine doesn't match the selected engine, update it
         if currentEngine?.name != selectedEngineName {
@@ -1129,7 +1123,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Enhanced Summary Generation
     
     func generateEnhancedSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator? = nil, engineName: String? = nil) async throws -> EnhancedSummaryData {
-        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "None"
+        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
 
         if selectedEngine == "Enhanced Apple Intelligence" && !DeviceCompatibility.isAppleIntelligenceSupported {
             showUnsupportedDeviceAlert()

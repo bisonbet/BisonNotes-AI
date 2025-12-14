@@ -601,6 +601,9 @@ struct EditableTranscriptView: View {
     @State private var editedSegments: [TranscriptSegment]
     @State private var isRerunningTranscription = false
     @State private var showingRerunAlert = false
+    @State private var showingSaveSuccessAlert = false
+    @State private var showingSaveErrorAlert = false
+    @State private var saveErrorMessage = ""
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
     
@@ -687,8 +690,11 @@ struct EditableTranscriptView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
-                        saveTranscript()
-                        dismiss()
+                        if saveTranscript() {
+                            showingSaveSuccessAlert = true
+                        } else {
+                            showingSaveErrorAlert = true
+                        }
                     }
                     .fontWeight(.semibold)
                 }
@@ -700,6 +706,21 @@ struct EditableTranscriptView: View {
                 }
             } message: {
                 Text("This will replace the current transcript with a new transcription using the currently configured transcription service. This action cannot be undone.")
+            }
+            .alert("Transcript Saved", isPresented: $showingSaveSuccessAlert) {
+                Button("OK") {
+                    showingSaveSuccessAlert = false
+                    dismiss()
+                }
+            } message: {
+                Text("Your transcript changes have been saved.")
+            }
+            .alert("Save Failed", isPresented: $showingSaveErrorAlert) {
+                Button("OK", role: .cancel) {
+                    showingSaveErrorAlert = false
+                }
+            } message: {
+                Text(saveErrorMessage)
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionRerunCompleted"))) { notification in
                 // Handle transcription rerun completion
@@ -733,10 +754,38 @@ struct EditableTranscriptView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    
-    private func saveTranscript() {
-        // Note: Transcript updates are now handled through Core Data
-        // This method is kept for potential future implementation
+
+    private func saveTranscript() -> Bool {
+        guard let recordingId = recording.id else {
+            #if DEBUG
+            print("❌ Cannot save transcript: missing recording ID")
+            #endif
+            saveErrorMessage = "Unable to save transcript because the recording is missing an identifier."
+            return false
+        }
+
+        let transcriptId = appCoordinator.addTranscript(
+            for: recordingId,
+            segments: editedSegments,
+            speakerMappings: transcript.speakerMappings,
+            engine: transcript.engine,
+            processingTime: transcript.processingTime,
+            confidence: transcript.confidence
+        )
+
+        if let transcriptId {
+            #if DEBUG
+            print("💾 Saved edited transcript with ID: \(transcriptId)")
+            #endif
+            NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
+            return true
+        } else {
+            #if DEBUG
+            print("❌ Failed to save edited transcript")
+            #endif
+            saveErrorMessage = "We couldn't save your transcript changes. Please try again."
+            return false
+        }
     }
     
     private func rerunTranscription() {

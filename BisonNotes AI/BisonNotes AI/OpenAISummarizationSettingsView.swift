@@ -330,6 +330,8 @@ struct OpenAICompatibleSettingsView: View {
     @AppStorage("openAICompatibleTemperature") private var temperature: Double = 0.1
     @AppStorage("openAICompatibleMaxTokens") private var maxTokens: Int = 2048
     @AppStorage("enableOpenAICompatible") private var enableOpenAICompatible: Bool = false
+    @AppStorage("openAICompatibleManualFormatOverride") private var manualFormatOverride: Bool = false
+    @AppStorage("openAICompatibleManualFormat") private var manualFormat: String = "string"
 
     @State private var isTestingConnection = false
     @State private var connectionTestResult: String = ""
@@ -469,6 +471,8 @@ struct OpenAICompatibleSettingsView: View {
         showingConnectionResult = false
         showingModelFetchError = false
         modelFetchError = ""
+        manualFormatOverride = false
+        manualFormat = "string"
     }
     
     var body: some View {
@@ -479,6 +483,7 @@ struct OpenAICompatibleSettingsView: View {
                 apiConfigurationSection
                 modelSelectionSection
                 generationParametersSection
+                messageFormatSection
                 connectionTestSection
                 featuresSection
             }
@@ -897,17 +902,111 @@ struct OpenAICompatibleSettingsView: View {
                 Text("\(maxTokens)")
                     .foregroundColor(.secondary)
             }
-            
+
             Stepper(value: $maxTokens, in: 256...8192, step: 256) {
                 EmptyView()
             }
-            
+
             Text("Maximum tokens for response. Higher values allow longer summaries but cost more.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
     }
-    
+
+    private var messageFormatSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                // Auto-detected format info
+                if !baseURL.isEmpty {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "wand.and.stars")
+                            .foregroundColor(.blue)
+                            .font(.caption)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Auto-Detected Format")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                            Text(MessageFormatDetector.getDetectedFormatString(for: baseURL))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.bottom, 8)
+                }
+
+                // Manual override toggle
+                Toggle("Override Format Detection", isOn: $manualFormatOverride)
+
+                // Manual format picker (only shown when override is enabled)
+                if manualFormatOverride {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Message Format")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        Picker("Format", selection: $manualFormat) {
+                            Text("Simple String").tag("string")
+                            Text("Content Blocks").tag("blocks")
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+
+                        // Format explanation
+                        VStack(alignment: .leading, spacing: 4) {
+                            if manualFormat == "string" {
+                                HStack(alignment: .top, spacing: 6) {
+                                    Image(systemName: "info.circle.fill")
+                                        .foregroundColor(.blue)
+                                        .font(.caption)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Simple String Format")
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                        Text("Standard OpenAI format: {\"content\": \"text\"}")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                        Text("Used by: OpenAI, Groq, OpenRouter, Together AI")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            } else {
+                                HStack(alignment: .top, spacing: 6) {
+                                    Image(systemName: "info.circle.fill")
+                                        .foregroundColor(.blue)
+                                        .font(.caption)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Content Blocks Format")
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                        Text("Block-based format: {\"content\": [{\"type\": \"text\", \"text\": \"...\"}]}")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                        Text("Used by: Nebius, Anthropic, some Fireworks models")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.top, 4)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 8)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(8)
+                    }
+                }
+            }
+        } header: {
+            Text("Message Format")
+        } footer: {
+            if manualFormatOverride {
+                Text("Using manual format override. Disable to use automatic detection based on your API provider.")
+            } else {
+                Text("Format is automatically detected from your base URL. Enable override only if auto-detection fails.")
+            }
+        }
+    }
+
     private var connectionTestSection: some View {
         Section {
             connectionTestButton

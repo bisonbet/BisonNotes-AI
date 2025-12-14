@@ -7,6 +7,19 @@
 - Assets live in `BisonNotes AI/Assets.xcassets`; app capabilities and settings are in `Info.plist` and `.entitlements`.
 
 ## Build, Test, and Development Commands
+
+**CRITICAL: DO NOT BUILD, TEST, OR RUN WITHOUT EXPLICIT USER REQUEST**
+
+Never execute build, test, or run commands unless the user explicitly asks you to do so. This includes:
+- Do NOT run `xcodebuild` to verify fixes
+- Do NOT compile to check for errors
+- Do NOT run tests automatically
+- Do NOT execute the app to verify functionality
+- Do NOT open Xcode programmatically
+
+If you make code changes, explain what you fixed and let the user verify by building themselves.
+
+When explicitly requested by the user, these commands are available:
 - `open "BisonNotes AI/BisonNotes AI.xcodeproj"` launches the workspace in Xcode.
 - `xcodebuild -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -configuration Debug build` performs a Debug build of the iOS app.
 - `xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=iOS Simulator,name=iPhone 15'` runs the iOS test suite.

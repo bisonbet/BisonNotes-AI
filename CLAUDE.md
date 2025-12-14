@@ -9,7 +9,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build and Development Commands
 
-This is an iOS application built with Xcode. Use standard Xcode commands:
+**CRITICAL: DO NOT BUILD OR RUN WITHOUT EXPLICIT USER REQUEST**
+
+Never run `xcodebuild`, build commands, or any compilation/execution commands unless the user explicitly asks you to do so. This includes:
+- Do NOT run `xcodebuild` to verify fixes
+- Do NOT compile to check for errors
+- Do NOT run tests automatically
+- Do NOT execute the app to verify functionality
+
+If you make code changes, explain what you fixed and let the user verify by building themselves.
+
+This is an iOS application built with Xcode. When explicitly requested by the user, use standard Xcode commands:
 
 - **Build**: Open `BisonNotes AI.xcodeproj` in Xcode and build (⌘+B)
 - **Run**: Build and run on simulator or device (⌘+R)
@@ -42,7 +52,8 @@ The app has **migrated from legacy file-based storage to Core Data-only architec
 The app supports multiple AI engines:
 - **Apple Intelligence**: Local processing using Apple frameworks
 - **OpenAI**: GPT-4o models for transcription and summarization
-- **Google AI Studio**: Gemini models for AI processing
+- **Google AI Studio**: Gemini 2.5 models for AI processing
+- **AWS Bedrock**: Claude models (Sonnet 4, Sonnet 4.5, Haiku 4.5) and Llama 4 Maverick
 - **Whisper**: Local Whisper server for transcription
 - **Ollama**: Local AI models for privacy-focused processing
 - **AWS Transcribe**: Cloud-based transcription service
@@ -94,6 +105,22 @@ New AI engines should follow the existing pattern:
 3. Integrate with `EnhancedTranscriptionManager` or appropriate manager
 4. Add engine monitoring and error handling
 
+#### AWS Bedrock Models
+The app includes comprehensive AWS Bedrock integration (`AWS/AWSBedrockModels.swift`):
+- **Claude 4.5 Haiku**: Default model for fast, efficient processing (Standard tier)
+  - Model ID: `global.anthropic.claude-haiku-4-5-20251001-v1:0` (global cross-region inference profile)
+- **Claude Sonnet 4/4.5**: Premium models for advanced reasoning and analysis
+  - Model IDs: `global.anthropic.claude-sonnet-4-20250514-v1:0`, `global.anthropic.claude-sonnet-4-5-20250929-v1:0`
+- **Llama 4 Maverick**: Meta's economy-tier model with 128K context window
+  - Model ID: `us.meta.llama4-maverick-17b-instruct-v1:0`
+
+**Important**:
+- Legacy model migration: `claude35Haiku` automatically migrates to `claude45Haiku`
+- Security: Response validation includes 500KB max length and control character sanitization
+- **Model ID Formats**:
+  - **Cross-Region Inference Profiles**: Claude and Llama models use `us.*`, `global.*`, `eu.*` prefixes for cross-region routing
+  - Cross-region profiles provide ~10% cost savings and higher throughput by routing requests to available regions
+
 ### Background Processing
 For long-running operations, use `BackgroundProcessingManager` to queue jobs and track progress.
 
@@ -121,4 +148,7 @@ For AI-generated content display:
 - `Views/AITextView.swift`: MarkdownUI-powered content rendering
 - `EnhancedTranscriptionManager.swift`: Transcription orchestration
 - `BackgroundProcessingManager.swift`: Background job management
+- `AWS/AWSBedrockModels.swift`: AWS Bedrock model definitions and API handling
+- `FutureAIEngines.swift`: AI engine implementations including AWS Bedrock
+- `AISettingsView.swift`: AI engine configuration UI
 - `BisonNotes_AI.xcdatamodeld/`: Core Data model definitions

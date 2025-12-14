@@ -194,13 +194,15 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
         // Use unified credentials manager instead of separate UserDefaults keys
         let credentials = AWSCredentialsManager.shared.credentials
         let sessionToken = UserDefaults.standard.string(forKey: "awsBedrockSessionToken")
-        let modelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude35Haiku.rawValue
+        let storedModelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
+        // Migrate legacy model identifiers
+        let modelString = AWSBedrockModel.migrate(rawValue: storedModelString)
         let temperature = UserDefaults.standard.double(forKey: "awsBedrockTemperature")
         let maxTokens = UserDefaults.standard.integer(forKey: "awsBedrockMaxTokens")
         let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
         let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName")
-        
-        let model = AWSBedrockModel(rawValue: modelString) ?? .claude35Haiku
+
+        let model = AWSBedrockModel(rawValue: modelString) ?? .claude45Haiku
         
         let newConfig = AWSBedrockConfig(
             region: credentials.region,
@@ -1709,14 +1711,12 @@ class NoOpEngine: SummarizationEngine {
 class AIEngineFactory {
     static func createEngine(type: AIEngineType) -> SummarizationEngine {
         switch type {
-        case .notConfigured:
-            return NotConfiguredEngine()
-        case .none:
-            return NoOpEngine()
         case .enhancedAppleIntelligence:
             return EnhancedAppleIntelligenceEngine()
         case .openAI:
             return OpenAISummarizationEngine()
+        case .mistralAI:
+            return MistralAIEngine()
         case .awsBedrock:
             return AWSBedrockEngine()
         case .openAICompatible:
@@ -1741,25 +1741,22 @@ class AIEngineFactory {
 }
 
 enum AIEngineType: String, CaseIterable {
-    case notConfigured = "Not Configured"
-    case none = "None"
     case enhancedAppleIntelligence = "Enhanced Apple Intelligence"
     case openAI = "OpenAI"
+    case mistralAI = "Mistral AI"
     case awsBedrock = "AWS Bedrock"
     case openAICompatible = "OpenAI API Compatible"
-    case localLLM = "Local LLM (Ollama)"
+    case localLLM = "Ollama"
     case googleAIStudio = "Google AI Studio"
-    
+
     var description: String {
         switch self {
-        case .notConfigured:
-            return "No AI summarization engine has been configured yet"
-        case .none:
-            return "No AI summarization engine selected"
         case .enhancedAppleIntelligence:
             return "Advanced natural language processing using Apple's frameworks"
         case .openAI:
             return "Advanced AI-powered summaries using OpenAI's GPT models"
+        case .mistralAI:
+            return "Fast, high-quality summaries using Mistral's chat models"
         case .awsBedrock:
             return "Cloud-based AI using AWS Bedrock foundation models"
         case .openAICompatible:
@@ -1770,26 +1767,22 @@ enum AIEngineType: String, CaseIterable {
             return "Advanced AI-powered summaries using Google's Gemini models"
         }
     }
-    
+
     var isComingSoon: Bool {
         switch self {
-        case .notConfigured, .none, .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio:
-            return false
-        case .awsBedrock:
+        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock:
             return false
         }
     }
-    
+
     var requirements: [String] {
         switch self {
-        case .notConfigured:
-            return ["Configuration required - please select and configure an AI engine"]
-        case .none:
-            return ["No requirements - AI features disabled"]
         case .enhancedAppleIntelligence:
             return ["iOS 15.0+", "Built-in frameworks"]
         case .openAI:
             return ["OpenAI API Key", "Internet Connection", "Usage Credits"]
+        case .mistralAI:
+            return ["Mistral API Key", "Internet Connection"]
         case .awsBedrock:
             return ["AWS Account", "Internet Connection", "API Keys"]
         case .openAICompatible:

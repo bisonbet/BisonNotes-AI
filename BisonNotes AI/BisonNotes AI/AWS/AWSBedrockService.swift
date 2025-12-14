@@ -304,11 +304,6 @@ class AWSBedrockService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "Failed to encode request: \(error.localizedDescription)")
         }
         
-        // Log the request details for debugging
-        if let requestBodyString = String(data: requestBody, encoding: .utf8) {
-            print("📤 AWS Bedrock API Request Body: \(requestBodyString)")
-        }
-        
         do {
             print("🌐 Making AWS Bedrock API request using official SDK...")
             

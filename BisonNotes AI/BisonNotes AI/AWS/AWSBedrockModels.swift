@@ -11,9 +11,24 @@ import Foundation
 
 enum AWSBedrockModel: String, CaseIterable {
     case claude4Sonnet = "global.anthropic.claude-sonnet-4-20250514-v1:0"
-    case claude45Sonnet = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-    case claude35Haiku = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+    case claude45Sonnet = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    case claude45Haiku = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
     case llama4Maverick = "us.meta.llama4-maverick-17b-instruct-v1:0"
+
+    /// Legacy model identifier for migration purposes
+    private static let legacyClaude35Haiku = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+
+    /// Migrates legacy model identifiers to current model cases
+    /// - Parameter rawValue: The stored model identifier
+    /// - Returns: Migrated model identifier compatible with current enum
+    static func migrate(rawValue: String) -> String {
+        switch rawValue {
+        case legacyClaude35Haiku:
+            return AWSBedrockModel.claude45Haiku.rawValue
+        default:
+            return rawValue
+        }
+    }
     
     var displayName: String {
         switch self {
@@ -21,70 +36,81 @@ enum AWSBedrockModel: String, CaseIterable {
             return "Claude Sonnet 4"
         case .claude45Sonnet:
             return "Claude Sonnet 4.5"
-        case .claude35Haiku:
-            return "Claude 3.5 Haiku"
+        case .claude45Haiku:
+            return "Claude 4.5 Haiku"
         case .llama4Maverick:
             return "Llama 4 Maverick 17B Instruct"
         }
     }
-    
+
     var description: String {
         switch self {
         case .claude4Sonnet:
             return "Latest Claude Sonnet 4 with advanced reasoning, coding, and analysis capabilities"
         case .claude45Sonnet:
             return "Latest Claude Sonnet 4.5 with advanced reasoning, coding, and analysis capabilities"
-        case .claude35Haiku:
-            return "Fast and efficient Claude model optimized for quick responses"
+        case .claude45Haiku:
+            return "Fast and efficient Claude Haiku 4.5 model optimized for quick responses"
         case .llama4Maverick:
             return "Meta's latest Llama 4 Maverick model with enhanced reasoning and performance"
         }
     }
-    
+
     var maxTokens: Int {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return 8192
         case .llama4Maverick:
             return 4096
         }
     }
-    
+
     var contextWindow: Int {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return 200000
         case .llama4Maverick:
             return 128000
         }
     }
-    
+
     var costTier: String {
         switch self {
         case .claude4Sonnet, .claude45Sonnet:
             return "Premium"
-        case .claude35Haiku:
+        case .claude45Haiku:
             return "Standard"
         case .llama4Maverick:
             return "Economy"
         }
     }
-    
+
     var provider: String {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return "Anthropic"
         case .llama4Maverick:
             return "Meta"
         }
     }
-    
+
     var supportsStructuredOutput: Bool {
         switch self {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             return true
         case .llama4Maverick:
             return false
+        }
+    }
+
+    /// Maximum allowed response length to prevent DoS attacks
+    /// Different models have different verbosity characteristics
+    var maxResponseLength: Int {
+        switch self {
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
+            return 500_000  // Claude models are generally concise
+        case .llama4Maverick:
+            return 500_000  // Llama models are reasonably concise
         }
     }
 }
@@ -108,9 +134,9 @@ struct AWSBedrockConfig: Equatable {
         accessKeyId: "",
         secretAccessKey: "",
         sessionToken: nil,
-        model: .llama4Maverick,
+        model: .claude45Haiku,
         temperature: 0.1,
-        maxTokens: 4096,
+        maxTokens: 8192,
         timeout: 60.0,
         useProfile: false,
         profileName: nil
@@ -223,7 +249,6 @@ struct LlamaRequest: BedrockModelRequest {
     }
 }
 
-
 // MARK: - Model-Specific Response Bodies
 
 protocol BedrockModelResponse: Codable {
@@ -284,7 +309,6 @@ struct LlamaResponse: BedrockModelResponse {
     }
 }
 
-
 // MARK: - AWS Error Response
 
 struct AWSBedrockError: Codable, LocalizedError {
@@ -314,7 +338,7 @@ class AWSBedrockModelFactory {
         temperature: Double
     ) -> any BedrockModelRequest {
         switch model {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
             var messages = [Claude35Message]()
             messages.append(Claude35Message(role: "user", text: prompt))
             return Claude35Request(
@@ -333,18 +357,20 @@ class AWSBedrockModelFactory {
             )
         }
     }
-    
+
     static func parseResponse(
         for model: AWSBedrockModel,
         data: Data
     ) throws -> any BedrockModelResponse {
-        let decoder = JSONDecoder()
-        
         switch model {
-        case .claude4Sonnet, .claude45Sonnet, .claude35Haiku:
+        case .claude4Sonnet, .claude45Sonnet, .claude45Haiku:
+            // Claude models use explicit CodingKeys, no strategy needed
+            let decoder = JSONDecoder()
             return try decoder.decode(Claude35Response.self, from: data)
 
         case .llama4Maverick:
+            // Llama models use explicit CodingKeys, no strategy needed
+            let decoder = JSONDecoder()
             return try decoder.decode(LlamaResponse.self, from: data)
         }
     }
