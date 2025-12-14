@@ -757,7 +757,9 @@ struct EditableTranscriptView: View {
 
     private func saveTranscript() -> Bool {
         guard let recordingId = recording.id else {
+            #if DEBUG
             print("❌ Cannot save transcript: missing recording ID")
+            #endif
             saveErrorMessage = "Unable to save transcript because the recording is missing an identifier."
             return false
         }
@@ -772,11 +774,15 @@ struct EditableTranscriptView: View {
         )
 
         if let transcriptId {
+            #if DEBUG
             print("💾 Saved edited transcript with ID: \(transcriptId)")
+            #endif
             NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
             return true
         } else {
+            #if DEBUG
             print("❌ Failed to save edited transcript")
+            #endif
             saveErrorMessage = "We couldn't save your transcript changes. Please try again."
             return false
         }
