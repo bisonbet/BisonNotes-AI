@@ -125,6 +125,16 @@ struct OpenAIChatCompletionRequest: Codable {
 enum MessageContentFormat {
     case string      // Standard OpenAI format: "content": "text"
     case blocks      // Nebius/Anthropic format: "content": [{"type": "text", "text": "..."}]
+
+    /// Human-readable description for logging and display
+    var displayName: String {
+        switch self {
+        case .string:
+            return "simple string"
+        case .blocks:
+            return "content blocks"
+        }
+    }
 }
 
 struct ContentBlock: Codable {
@@ -199,6 +209,23 @@ struct ChatMessage: Codable {
         }
     }
 
+    /// Decode ChatMessage from JSON
+    ///
+    /// **Important**: The `expectedFormat` parameter is NOT automatically used by JSONDecoder.
+    /// Swift's automatic decoder synthesis calls `init(from:)` without custom parameters.
+    ///
+    /// **How this works**:
+    /// 1. When decoding API responses, Swift uses the default `expectedFormat = .string`
+    /// 2. The decoder tries both string and block formats automatically (lines 207-214)
+    /// 3. Successfully decodes either format but stores `preferredFormat = expectedFormat`
+    /// 4. When re-encoded (e.g., for conversation history), uses the expected format
+    ///
+    /// **Thread Safety**: This ensures format consistency even when servers send unexpected formats.
+    /// For example, if a service expects `.string` but receives `.blocks`, the message will
+    /// decode successfully but re-encode as `.string` to match service expectations.
+    ///
+    /// **Testing Note**: To verify content blocks decode correctly from Nebius/Anthropic responses,
+    /// test with actual API responses containing `"content": [{"type": "text", "text": "..."}]`
     init(from decoder: Decoder, expectedFormat: MessageContentFormat = .string) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         role = try container.decode(String.self, forKey: .role)

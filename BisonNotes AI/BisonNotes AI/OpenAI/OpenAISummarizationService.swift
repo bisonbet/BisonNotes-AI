@@ -163,7 +163,7 @@ class OpenAISummarizationService: ObservableObject {
 
         #if DEBUG
         print("🔧 Provider: \(config.baseURL)")
-        print("🔧 Message format: \(cachedMessageFormat == .blocks ? "content blocks" : "simple string")")
+        print("🔧 Message format: \(cachedMessageFormat.displayName)")
         print("🔧 Using response_format: \(cachedShouldUseResponseFormat ? "json_object" : "none (flexible parsing)")")
         #endif
 
