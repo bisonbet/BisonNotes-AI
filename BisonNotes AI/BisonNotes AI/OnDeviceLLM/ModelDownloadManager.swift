@@ -26,7 +26,6 @@ class ModelDownloadManager: NSObject, ObservableObject {
 
     private var backgroundSession: URLSession!
     private var downloadTasks: [String: URLSessionDownloadTask] = [:]
-    private var downloadCompletionHandlers: [String: (Result<URL, Error>) -> Void] = [:]
     private let networkMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.bisonnotes.networkmonitor")
     private let fileManager = FileManager.default
@@ -35,7 +34,11 @@ class ModelDownloadManager: NSObject, ObservableObject {
     // MARK: - Storage Paths
 
     private var modelsDirectory: URL {
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            // Fallback to temporary directory if Application Support is unavailable (should never happen)
+            logger.error("Application Support directory unavailable, using temporary directory")
+            return fileManager.temporaryDirectory.appendingPathComponent("OnDeviceLLM/Models", isDirectory: true)
+        }
         let modelsDir = appSupport.appendingPathComponent("OnDeviceLLM/Models", isDirectory: true)
 
         // Create directory if needed
@@ -131,6 +134,9 @@ class ModelDownloadManager: NSObject, ObservableObject {
         }
 
         // Build download URL
+        // Note: Downloads are from Hugging Face over HTTPS. Checksum verification is not currently
+        // implemented as Hugging Face provides file integrity through their CDN. For additional
+        // security, consider implementing SHA256 verification against published checksums in future.
         let filename = model.huggingFaceFilename(for: quantization)
         guard let downloadURL = URL(string: "https://huggingface.co/\(model.huggingFaceRepo)/resolve/main/\(filename)") else {
             throw OnDeviceLLMError.downloadFailed("Invalid download URL")

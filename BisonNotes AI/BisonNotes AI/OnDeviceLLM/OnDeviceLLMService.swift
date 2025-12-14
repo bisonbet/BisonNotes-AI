@@ -40,6 +40,15 @@ import LocalLLMClientLlama
 class OnDeviceLLMService: ObservableObject {
     static let shared = OnDeviceLLMService()
 
+    // MARK: - Constants
+
+    private enum Constants {
+        /// Maximum characters to use for content classification to avoid excessive processing
+        static let classificationTextLimit = 2000
+        /// Maximum characters to use for title generation prompts
+        static let titleGenerationTextLimit = 2000
+    }
+
     // MARK: - Published Properties
 
     @Published private(set) var isModelLoaded: Bool = false
@@ -247,7 +256,7 @@ class OnDeviceLLMService: ObservableObject {
         Return ONLY the category name, nothing else.
 
         Text:
-        \(text.prefix(2000))
+        \(text.prefix(Constants.classificationTextLimit))
         """
 
         let fullPrompt = formatPrompt(system: "You are a content classifier.", user: prompt, config: config)
@@ -465,7 +474,7 @@ class OnDeviceLLMService: ObservableObject {
         {"titles": [{"text": "title", "category": "general", "confidence": 0.85}]}
 
         Content:
-        \(text.prefix(2000))
+        \(text.prefix(Constants.titleGenerationTextLimit))
         """
     }
 

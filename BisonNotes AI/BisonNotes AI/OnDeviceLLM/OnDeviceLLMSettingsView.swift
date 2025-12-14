@@ -24,6 +24,8 @@ struct OnDeviceLLMSettingsView: View {
     @State private var modelToDelete: (OnDeviceLLMModel, OnDeviceLLMQuantization)?
     @State private var showingCellularWarning = false
     @State private var pendingDownload: (OnDeviceLLMModel, OnDeviceLLMQuantization)?
+    @State private var showingErrorAlert = false
+    @State private var errorMessage = ""
 
     @Environment(\.dismiss) private var dismiss
 
@@ -87,6 +89,11 @@ struct OnDeviceLLMSettingsView: View {
                 }
             } message: {
                 Text("You're not connected to WiFi. Downloading will use cellular data (~2.5 GB). Continue?")
+            }
+            .alert("Error", isPresented: $showingErrorAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(errorMessage)
             }
         }
     }
@@ -507,7 +514,8 @@ struct OnDeviceLLMSettingsView: View {
             do {
                 try await downloadManager.downloadModel(model, quantization: quantization, allowCellular: allowCellular)
             } catch {
-                print("Download error: \(error)")
+                errorMessage = error.localizedDescription
+                showingErrorAlert = true
             }
         }
     }
@@ -517,7 +525,8 @@ struct OnDeviceLLMSettingsView: View {
             try downloadManager.deleteModel(model, quantization: quantization)
             onConfigurationChanged?()
         } catch {
-            print("Delete error: \(error)")
+            errorMessage = "Failed to delete model: \(error.localizedDescription)"
+            showingErrorAlert = true
         }
     }
 }
