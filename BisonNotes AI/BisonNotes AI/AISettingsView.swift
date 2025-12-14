@@ -91,6 +91,9 @@ final class AISettingsViewModel: ObservableObject {
         case .openAI:
             UserDefaults.standard.set(true, forKey: "enableOpenAI")
             print("🔧 Auto-enabled OpenAI engine")
+        case .onDeviceLLM:
+            UserDefaults.standard.set(true, forKey: OnDeviceLLMSettingsKeys.enableOnDeviceLLM)
+            print("🔧 Auto-enabled On-Device LLM engine")
         default:
             break
         }
@@ -159,6 +162,7 @@ struct AISettingsView: View {
     @State private var showingMistralAISettings = false
     @State private var showingAWSBedrockSettings = false
     @State private var showingAppleIntelligenceSettings = false
+    @State private var showingOnDeviceLLMSettings = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     @State private var showingRegenerateConfirmation = false
@@ -242,9 +246,16 @@ struct AISettingsView: View {
                 let credentials = AWSCredentialsManager.shared.credentials
                 return credentials.isValid && isEnabled
             }
+        case .onDeviceLLM:
+            let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMSettingsKeys.enableOnDeviceLLM)
+            guard isEnabled else { return false }
+            // Check if a model is downloaded
+            let config = OnDeviceLLMConfig.load()
+            guard let model = OnDeviceLLMModel.model(byID: config.modelID) else { return false }
+            return ModelDownloadManager.shared.isModelDownloaded(model, quantization: config.quantization)
         }
     }
-    
+
     private func getEngineVersion(_ engineType: AIEngineType) -> String {
         switch engineType {
         case .enhancedAppleIntelligence:
@@ -270,9 +281,15 @@ struct AISettingsView: View {
                 return model.displayName
             }
             return "Claude 4.5 Haiku"
+        case .onDeviceLLM:
+            let config = OnDeviceLLMConfig.load()
+            if let model = OnDeviceLLMModel.model(byID: config.modelID) {
+                return "\(model.displayName) (\(config.quantization.rawValue))"
+            }
+            return "MedGemma 4B"
         }
     }
-    
+
     var body: some View {
         NavigationView {
             ScrollView(.vertical, showsIndicators: true) {
@@ -387,6 +404,11 @@ struct AISettingsView: View {
         .sheet(isPresented: $showingAppleIntelligenceSettings) {
             AppleIntelligenceSettingsView()
         }
+        .sheet(isPresented: $showingOnDeviceLLMSettings) {
+            OnDeviceLLMSettingsView(onConfigurationChanged: {
+                self.refreshEngineStatuses()
+            })
+        }
     }
 }
 
@@ -500,8 +522,120 @@ private extension AISettingsView {
                     mistralConfigurationSection
                 case .awsBedrock:
                     awsBedrockConfigurationSection
+                case .onDeviceLLM:
+                    onDeviceLLMConfigurationSection
                 }
             }
+        }
+    }
+
+    var onDeviceLLMConfigurationSection: some View {
+        let config = OnDeviceLLMConfig.load()
+        let model = OnDeviceLLMModel.model(byID: config.modelID)
+        let isModelDownloaded = model.map { ModelDownloadManager.shared.isModelDownloaded($0, quantization: config.quantization) } ?? false
+        let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMSettingsKeys.enableOnDeviceLLM)
+
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("On-Device LLM Configuration")
+                .font(.headline)
+                .padding(.horizontal, 24)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("On-Device AI Settings")
+                            .font(.body)
+                        Text("Run AI models directly on your device for complete privacy")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { showingOnDeviceLLMSettings = true }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("Configure")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.purple)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Model:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(model?.displayName ?? "Not Selected")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    HStack {
+                        Text("Quality:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(config.quantization.displayName)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    HStack {
+                        Text("Status:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if !isEnabled {
+                            Text("Disabled")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.orange)
+                        } else if isModelDownloaded {
+                            Text("Ready")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.green)
+                        } else {
+                            Text("Model Not Downloaded")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.red)
+                        }
+                    }
+                    HStack {
+                        Text("Privacy:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Fully Private - No Internet")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(.green)
+                    }
+                }
+                .padding(.top, 8)
+
+                if !isModelDownloaded {
+                    Button(action: { showingOnDeviceLLMSettings = true }) {
+                        HStack {
+                            Image(systemName: "arrow.down.circle.fill")
+                            Text("Download Model to Get Started")
+                        }
+                        .font(.caption)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.purple.opacity(0.2))
+                        .foregroundColor(.purple)
+                        .cornerRadius(8)
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.purple.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
         }
     }
 
