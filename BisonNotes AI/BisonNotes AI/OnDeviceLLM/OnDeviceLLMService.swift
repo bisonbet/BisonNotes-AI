@@ -25,6 +25,7 @@
 
 import Foundation
 import os.log
+import UIKit
 
 // LocalLLMClient must be added as a Swift Package dependency for on-device inference
 // Without it, placeholder implementations are used (see #else blocks below)
@@ -47,6 +48,10 @@ class OnDeviceLLMService: ObservableObject {
         static let classificationTextLimit = 2000
         /// Maximum characters to use for title generation prompts
         static let titleGenerationTextLimit = 2000
+        /// Maximum model file size in bytes (5GB limit for memory safety)
+        static let maxModelFileSizeBytes: Int64 = 5_000_000_000
+        /// Delay between chunk processing in nanoseconds to manage memory
+        static let chunkProcessingDelayNs: UInt64 = 500_000_000
     }
 
     // MARK: - Published Properties
@@ -55,6 +60,8 @@ class OnDeviceLLMService: ObservableObject {
     @Published private(set) var isProcessing: Bool = false
     @Published private(set) var currentModelID: String?
     @Published private(set) var lastError: String?
+    @Published private(set) var lastParsingWarning: String?
+    private var isModelLoading: Bool = false
 
     // MARK: - Private Properties
 
@@ -67,12 +74,54 @@ class OnDeviceLLMService: ObservableObject {
 
     // MARK: - Initialization
 
-    private init() {}
+    private init() {
+        // Register for memory warnings
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMemoryWarning),
+            name: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - Memory Management
+
+    @objc private func handleMemoryWarning() {
+        logger.warning("Received memory warning")
+        // Only unload if not currently processing
+        if !isProcessing {
+            logger.info("Unloading model due to memory pressure")
+            unloadModel()
+        } else {
+            logger.warning("Cannot unload model - processing in progress")
+        }
+    }
 
     // MARK: - Model Loading
 
     /// Load a model for inference
     func loadModel(modelID: String, quantization: OnDeviceLLMQuantization) async throws {
+        // Prevent concurrent model loading
+        guard !isModelLoading else {
+            logger.warning("Model loading already in progress, waiting...")
+            // Wait for current load to complete
+            while isModelLoading {
+                try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+            }
+            // Check if the requested model is now loaded
+            if isModelLoaded && currentModelID == modelID {
+                return
+            }
+            // If a different model was loaded, proceed with loading the requested one
+        }
+
+        isModelLoading = true
+        defer { isModelLoading = false }
+
         guard let model = OnDeviceLLMModel.model(byID: modelID) else {
             throw OnDeviceLLMError.modelNotFound(modelID)
         }
@@ -81,7 +130,23 @@ class OnDeviceLLMService: ObservableObject {
             throw OnDeviceLLMError.modelNotDownloaded
         }
 
-        logger.info("Loading model: \(modelID) at \(modelPath.path)")
+        // Validate file size before loading to prevent memory issues
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: modelPath.path)
+            let fileSize = attributes[.size] as? Int64 ?? 0
+
+            logger.info("Loading model: \(modelID) (\(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)))")
+
+            guard fileSize <= Constants.maxModelFileSizeBytes else {
+                logger.error("Model file too large: \(fileSize) bytes (max: \(Constants.maxModelFileSizeBytes))")
+                throw OnDeviceLLMError.modelTooLarge(fileSize)
+            }
+        } catch let error as OnDeviceLLMError {
+            throw error
+        } catch {
+            logger.error("Failed to get file attributes: \(error.localizedDescription)")
+            throw OnDeviceLLMError.modelLoadFailed
+        }
 
         #if canImport(LocalLLMClient)
         do {
@@ -94,9 +159,9 @@ class OnDeviceLLMService: ObservableObject {
         } catch {
             isModelLoaded = false
             currentModelID = nil
-            lastError = error.localizedDescription
-            logger.error("Failed to load model: \(error.localizedDescription)")
-            throw OnDeviceLLMError.modelLoadFailed(error.localizedDescription)
+            lastError = "Failed to load model"
+            logger.error("Model load error: \(error.localizedDescription)")
+            throw OnDeviceLLMError.modelLoadFailed
         }
         #else
         // Placeholder for when LocalLLMClient is not available
@@ -140,7 +205,7 @@ class OnDeviceLLMService: ObservableObject {
             return response
         } catch {
             logger.error("Generation failed: \(error.localizedDescription)")
-            throw OnDeviceLLMError.inferenceError(error.localizedDescription)
+            throw OnDeviceLLMError.inferenceError
         }
         #else
         // Placeholder response for testing without LocalLLMClient
@@ -174,7 +239,8 @@ class OnDeviceLLMService: ObservableObject {
                     }
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: OnDeviceLLMError.inferenceError(error.localizedDescription))
+                    logger.error("Streaming generation failed: \(error.localizedDescription)")
+                    continuation.finish(throwing: OnDeviceLLMError.inferenceError)
                 }
                 #else
                 // Placeholder streaming for testing
@@ -483,35 +549,25 @@ class OnDeviceLLMService: ObservableObject {
     private func cleanResponse(_ response: String) -> String {
         var cleaned = response
 
-        // Remove Mistral artifacts
-        cleaned = cleaned.replacingOccurrences(of: "[INST]", with: "")
-        cleaned = cleaned.replacingOccurrences(of: "[/INST]", with: "")
+        // Define all artifacts to remove in a single array for efficient processing
+        let artifacts = [
+            "[INST]", "[/INST]",
+            "<|system|>", "<|user|>", "<|assistant|>", "<|end|>",
+            "<|begin_of_text|>", "<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>",
+            "<|im_start|>", "<|im_end|>",
+            "<end_of_turn>", "<start_of_turn>"
+        ]
 
-        // Remove Granite artifacts
-        cleaned = cleaned.replacingOccurrences(of: "<|system|>", with: "")
-        cleaned = cleaned.replacingOccurrences(of: "<|user|>", with: "")
-        cleaned = cleaned.replacingOccurrences(of: "<|assistant|>", with: "")
-        cleaned = cleaned.replacingOccurrences(of: "<|end|>", with: "")
-
-        // Remove Llama artifacts
-        cleaned = cleaned.replacingOccurrences(of: "<|begin_of_text|>", with: "")
-        cleaned = cleaned.replacingOccurrences(of: "<|start_header_id|>", with: "")
-        cleaned = cleaned.replacingOccurrences(of: "<|end_header_id|>", with: "")
-        cleaned = cleaned.replacingOccurrences(of: "<|eot_id|>", with: "")
-
-        // Remove ChatML artifacts
-        cleaned = cleaned.replacingOccurrences(of: "<|im_start|>", with: "")
-        cleaned = cleaned.replacingOccurrences(of: "<|im_end|>", with: "")
-
-        // Remove Gemma artifacts (legacy)
-        cleaned = cleaned.replacingOccurrences(of: "<end_of_turn>", with: "")
-        cleaned = cleaned.replacingOccurrences(of: "<start_of_turn>", with: "")
+        // Remove all artifacts in a single pass
+        for artifact in artifacts {
+            cleaned = cleaned.replacingOccurrences(of: artifact, with: "")
+        }
 
         // Remove role labels at start
-        cleaned = cleaned.replacingOccurrences(of: "model", with: "", options: .anchored)
-        cleaned = cleaned.replacingOccurrences(of: "assistant", with: "", options: .anchored)
-        cleaned = cleaned.replacingOccurrences(of: "system", with: "", options: .anchored)
-        cleaned = cleaned.replacingOccurrences(of: "user", with: "", options: .anchored)
+        let roleLabels = ["model", "assistant", "system", "user"]
+        for label in roleLabels {
+            cleaned = cleaned.replacingOccurrences(of: label, with: "", options: .anchored)
+        }
 
         // Remove thinking blocks if present
         if let thinkStart = cleaned.range(of: "<think>"),
@@ -543,7 +599,9 @@ class OnDeviceLLMService: ObservableObject {
     private func parseCompleteResponse(_ response: String) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) {
         guard let jsonString = extractJSON(from: response),
               let data = jsonString.data(using: .utf8) else {
-            // Return just the cleaned response as summary if JSON parsing fails
+            // Set warning for user visibility
+            lastParsingWarning = "Could not extract structured data. Returning summary only."
+            logger.warning("JSON extraction failed from response")
             return (cleanResponse(response), [], [], [])
         }
 
@@ -555,9 +613,13 @@ class OnDeviceLLMService: ObservableObject {
             let reminders = try parseRemindersFromJSON(json?["reminders"])
             let titles = try parseTitlesFromJSON(json?["titles"])
 
+            // Clear warning on successful parse
+            lastParsingWarning = nil
             return (summary, tasks, reminders, titles)
         } catch {
-            logger.warning("JSON parsing failed, returning raw summary: \(error.localizedDescription)")
+            // Set warning for user visibility
+            lastParsingWarning = "Could not extract tasks and reminders. Returning summary only."
+            logger.warning("JSON parsing failed: \(error.localizedDescription)")
             return (cleanResponse(response), [], [], [])
         }
     }

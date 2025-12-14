@@ -287,48 +287,52 @@ class ModelDownloadManager: NSObject, ObservableObject {
             return
         }
 
-        // Move file to models directory
-        let filename = model.huggingFaceFilename(for: quantization)
-        let destinationURL = modelsDirectory.appendingPathComponent(filename)
+        // Move file operation to background queue to avoid blocking main thread
+        Task.detached { [weak self] in
+            guard let self = self else { return }
 
-        do {
-            // Remove existing file if present
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.removeItem(at: destinationURL)
-            }
+            let filename = model.huggingFaceFilename(for: quantization)
+            let destinationURL = self.modelsDirectory.appendingPathComponent(filename)
 
-            // Move downloaded file
-            try fileManager.moveItem(at: location, to: destinationURL)
+            do {
+                // Remove existing file if present
+                if self.fileManager.fileExists(atPath: destinationURL.path) {
+                    try self.fileManager.removeItem(at: destinationURL)
+                }
 
-            // Get file size
-            let attributes = try fileManager.attributesOfItem(atPath: destinationURL.path)
-            let fileSize = attributes[.size] as? Int64 ?? 0
+                // Move downloaded file
+                try self.fileManager.moveItem(at: location, to: destinationURL)
 
-            // Create downloaded model record
-            let downloadedModel = DownloadedModel(
-                id: UUID().uuidString,
-                modelID: model.id,
-                quantization: quantization,
-                filePath: destinationURL.path,
-                fileSize: fileSize,
-                downloadedAt: Date()
-            )
+                // Get file size
+                let attributes = try self.fileManager.attributesOfItem(atPath: destinationURL.path)
+                let fileSize = attributes[.size] as? Int64 ?? 0
 
-            Task { @MainActor in
-                // Update states
-                self.downloadStates[key] = .downloaded(model: downloadedModel)
-                self.downloadedModels.append(downloadedModel)
-                self.saveDownloadedModels()
-                self.updateTotalStorageUsed()
-                self.downloadTasks.removeValue(forKey: key)
+                // Create downloaded model record
+                let downloadedModel = DownloadedModel(
+                    id: UUID().uuidString,
+                    modelID: model.id,
+                    quantization: quantization,
+                    filePath: destinationURL.path,
+                    fileSize: fileSize,
+                    downloadedAt: Date()
+                )
 
-                self.logger.info("Download completed: \(key), size: \(fileSize) bytes")
-            }
-        } catch {
-            logger.error("Failed to move downloaded file: \(error.localizedDescription)")
-            Task { @MainActor in
-                self.downloadStates[key] = .failed(error: error.localizedDescription)
-                self.downloadTasks.removeValue(forKey: key)
+                Task { @MainActor in
+                    // Update states on main thread
+                    self.downloadStates[key] = .downloaded(model: downloadedModel)
+                    self.downloadedModels.append(downloadedModel)
+                    self.saveDownloadedModels()
+                    self.updateTotalStorageUsed()
+                    self.downloadTasks.removeValue(forKey: key)
+
+                    self.logger.info("Download completed: \(key), size: \(fileSize) bytes")
+                }
+            } catch {
+                self.logger.error("Failed to move downloaded file: \(error.localizedDescription)")
+                Task { @MainActor in
+                    self.downloadStates[key] = .failed(error: error.localizedDescription)
+                    self.downloadTasks.removeValue(forKey: key)
+                }
             }
         }
     }

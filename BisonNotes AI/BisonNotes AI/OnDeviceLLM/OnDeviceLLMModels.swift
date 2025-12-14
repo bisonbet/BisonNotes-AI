@@ -62,6 +62,11 @@ struct OnDeviceLLMModel: Identifiable, Codable, Equatable {
     let specialization: ModelSpecialization
     let promptTemplate: PromptTemplate
 
+    /// SHA256 checksums for integrity verification
+    /// Note: These should be obtained from the official model repository
+    /// Currently placeholder values - update with actual checksums before production
+    let checksums: [OnDeviceLLMQuantization: String]?
+
     enum ModelSpecialization: String, Codable {
         case general
         case reasoning
@@ -108,7 +113,8 @@ extension OnDeviceLLMModel {
         quantizations: [.q4_K_M, .q5_K_M, .q8_0],
         defaultQuantization: .q4_K_M,
         specialization: .reasoning,
-        promptTemplate: .mistral
+        promptTemplate: .mistral,
+        checksums: nil // TODO: Add actual SHA256 checksums from Hugging Face
     )
 
     /// Granite 4.0 Hybrid Micro - IBM's efficient hybrid model
@@ -123,7 +129,8 @@ extension OnDeviceLLMModel {
         quantizations: [.q4_K_M, .q5_K_M, .q8_0],
         defaultQuantization: .q4_K_M,
         specialization: .general,
-        promptTemplate: .granite
+        promptTemplate: .granite,
+        checksums: nil // TODO: Add actual SHA256 checksums from Hugging Face
     )
 
     /// All available models
@@ -280,6 +287,8 @@ enum OnDeviceLLMError: LocalizedError {
     case modelLoadFailed(String)
     case contextTooLong(Int, max: Int)
     case invalidResponse
+    case checksumMismatch
+    case modelTooLarge(Int64)
 
     var errorDescription: String? {
         switch self {
@@ -297,14 +306,20 @@ enum OnDeviceLLMError: LocalizedError {
             let formatter = ByteCountFormatter()
             formatter.countStyle = .file
             return "Insufficient storage. Required: \(formatter.string(fromByteCount: required)), Available: \(formatter.string(fromByteCount: available))"
-        case .inferenceError(let reason):
-            return "Inference failed: \(reason)"
-        case .modelLoadFailed(let reason):
-            return "Failed to load model: \(reason)"
+        case .inferenceError:
+            return "Model inference failed. Please try again."
+        case .modelLoadFailed:
+            return "Failed to load model. Please try again or select a different model."
         case .contextTooLong(let length, let max):
             return "Input too long (\(length) tokens). Maximum is \(max) tokens."
         case .invalidResponse:
             return "Invalid response from model."
+        case .checksumMismatch:
+            return "Model file integrity check failed. Please delete and re-download the model."
+        case .modelTooLarge(let size):
+            let formatter = ByteCountFormatter()
+            formatter.countStyle = .file
+            return "Model file too large (\(formatter.string(fromByteCount: size))). Maximum supported size is 5GB."
         }
     }
 }

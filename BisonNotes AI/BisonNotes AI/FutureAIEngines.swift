@@ -1818,7 +1818,8 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
                 // Small delay between chunks to manage memory
                 if index < chunks.count - 1 {
-                    try await Task.sleep(nanoseconds: 500_000_000)
+                    let chunkDelay: UInt64 = 500_000_000 // 0.5 seconds
+                    try await Task.sleep(nanoseconds: chunkDelay)
                 }
             } catch {
                 print("❌ OnDeviceLLM: Error processing chunk \(index + 1): \(error)")
