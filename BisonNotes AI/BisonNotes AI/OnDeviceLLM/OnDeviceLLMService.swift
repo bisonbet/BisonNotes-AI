@@ -173,7 +173,7 @@ class OnDeviceLLMService: ObservableObject {
     func generateSummary(from text: String, contentType: ContentType, config: OnDeviceLLMConfig) async throws -> String {
         let systemPrompt = createSystemPrompt(for: .summary, contentType: contentType)
         let userPrompt = createSummaryUserPrompt(text)
-        let fullPrompt = formatPromptForGemma(system: systemPrompt, user: userPrompt)
+        let fullPrompt = formatPrompt(system: systemPrompt, user: userPrompt, config: config)
 
         let response = try await generate(prompt: fullPrompt, config: config)
         return cleanResponse(response)
@@ -187,7 +187,7 @@ class OnDeviceLLMService: ObservableObject {
     ) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) {
         let systemPrompt = createSystemPrompt(for: .complete, contentType: contentType)
         let userPrompt = createCompleteUserPrompt(text)
-        let fullPrompt = formatPromptForGemma(system: systemPrompt, user: userPrompt)
+        let fullPrompt = formatPrompt(system: systemPrompt, user: userPrompt, config: config)
 
         let response = try await generate(prompt: fullPrompt, config: config)
         return try parseCompleteResponse(response)
@@ -197,7 +197,7 @@ class OnDeviceLLMService: ObservableObject {
     func extractTasks(from text: String, config: OnDeviceLLMConfig) async throws -> [TaskItem] {
         let systemPrompt = createSystemPrompt(for: .tasks, contentType: .general)
         let userPrompt = createTasksUserPrompt(text)
-        let fullPrompt = formatPromptForGemma(system: systemPrompt, user: userPrompt)
+        let fullPrompt = formatPrompt(system: systemPrompt, user: userPrompt, config: config)
 
         let response = try await generate(prompt: fullPrompt, config: config)
         return try parseTasksResponse(response)
@@ -207,7 +207,7 @@ class OnDeviceLLMService: ObservableObject {
     func extractReminders(from text: String, config: OnDeviceLLMConfig) async throws -> [ReminderItem] {
         let systemPrompt = createSystemPrompt(for: .reminders, contentType: .general)
         let userPrompt = createRemindersUserPrompt(text)
-        let fullPrompt = formatPromptForGemma(system: systemPrompt, user: userPrompt)
+        let fullPrompt = formatPrompt(system: systemPrompt, user: userPrompt, config: config)
 
         let response = try await generate(prompt: fullPrompt, config: config)
         return try parseRemindersResponse(response)
@@ -217,7 +217,7 @@ class OnDeviceLLMService: ObservableObject {
     func extractTitles(from text: String, config: OnDeviceLLMConfig) async throws -> [TitleItem] {
         let systemPrompt = createSystemPrompt(for: .titles, contentType: .general)
         let userPrompt = createTitlesUserPrompt(text)
-        let fullPrompt = formatPromptForGemma(system: systemPrompt, user: userPrompt)
+        let fullPrompt = formatPrompt(system: systemPrompt, user: userPrompt, config: config)
 
         let response = try await generate(prompt: fullPrompt, config: config)
         return try parseTitlesResponse(response)
@@ -233,7 +233,7 @@ class OnDeviceLLMService: ObservableObject {
         \(text.prefix(2000))
         """
 
-        let fullPrompt = formatPromptForGemma(system: "You are a content classifier.", user: prompt)
+        let fullPrompt = formatPrompt(system: "You are a content classifier.", user: prompt, config: config)
         let response = try await generate(prompt: fullPrompt, config: config)
         let cleaned = response.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -249,27 +249,78 @@ class OnDeviceLLMService: ObservableObject {
         case summary, tasks, reminders, titles, complete
     }
 
-    /// Format prompt for Gemma-style models
-    private func formatPromptForGemma(system: String, user: String) -> String {
-        return """
-        <start_of_turn>user
-        \(system)
+    /// Format prompt based on model's prompt template
+    private func formatPrompt(system: String, user: String, config: OnDeviceLLMConfig) -> String {
+        guard let model = OnDeviceLLMModel.model(byID: config.modelID) else {
+            // Default to Mistral format
+            return formatPromptForMistral(system: system, user: user)
+        }
 
-        \(user)<end_of_turn>
-        <start_of_turn>model
+        switch model.promptTemplate {
+        case .mistral:
+            return formatPromptForMistral(system: system, user: user)
+        case .granite:
+            return formatPromptForGranite(system: system, user: user)
+        case .llama:
+            return formatPromptForLlama(system: system, user: user)
+        case .chatml:
+            return formatPromptForChatML(system: system, user: user)
+        }
+    }
+
+    /// Format prompt for Mistral-style models
+    private func formatPromptForMistral(system: String, user: String) -> String {
+        return """
+        [INST] \(system)
+
+        \(user) [/INST]
+        """
+    }
+
+    /// Format prompt for Granite-style models
+    private func formatPromptForGranite(system: String, user: String) -> String {
+        return """
+        <|system|>
+        \(system)
+        <|user|>
+        \(user)
+        <|assistant|>
+        """
+    }
+
+    /// Format prompt for Llama-style models
+    private func formatPromptForLlama(system: String, user: String) -> String {
+        return """
+        <|begin_of_text|><|start_header_id|>system<|end_header_id|>
+
+        \(system)<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+        \(user)<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+        """
+    }
+
+    /// Format prompt for ChatML-style models
+    private func formatPromptForChatML(system: String, user: String) -> String {
+        return """
+        <|im_start|>system
+        \(system)<|im_end|>
+        <|im_start|>user
+        \(user)<|im_end|>
+        <|im_start|>assistant
         """
     }
 
     private func createSystemPrompt(for type: PromptType, contentType: ContentType) -> String {
         let basePrompt = """
-        You are a medical AI assistant specialized in analyzing and summarizing audio transcripts and clinical conversations. Your role is to provide clear, actionable insights from the content provided.
+        You are an AI assistant specialized in analyzing and summarizing audio transcripts and conversations. Your role is to provide clear, actionable insights from the content provided.
 
         Key Guidelines:
-        - Focus on extracting meaningful, actionable medical information
-        - Maintain accuracy and clinical relevance
-        - Use clear, professional medical language
+        - Focus on extracting meaningful, actionable information
+        - Maintain accuracy and relevance to the source material
+        - Use clear, professional language
         - Structure responses logically and coherently
-        - Prioritize patient safety and important clinical findings
+        - Prioritize the most important information first
         """
 
         let contentTypePrompt = createContentTypePrompt(contentType)
@@ -279,31 +330,31 @@ class OnDeviceLLMService: ObservableObject {
             return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + """
             Summary Guidelines:
             - Create a comprehensive summary using Markdown formatting
-            - Use **bold** for key clinical findings
+            - Use **bold** for key points and important information
             - Use headers for main sections
             - Use bullet points for lists
-            - Focus on medically relevant content
+            - Focus on the most relevant content
             """
         case .tasks:
             return basePrompt + "\n\n" + """
             Task Extraction Guidelines:
-            - Identify actionable medical tasks and follow-ups
+            - Identify actionable tasks and to-dos
             - Include specific deadlines when mentioned
             - Categorize tasks appropriately
-            - Assign priority based on clinical urgency
+            - Assign priority based on urgency and importance
             """
         case .reminders:
             return basePrompt + "\n\n" + """
             Reminder Extraction Guidelines:
-            - Identify time-sensitive medical items
-            - Focus on appointments, medications, and follow-ups
+            - Identify time-sensitive items and deadlines
+            - Focus on appointments, meetings, and scheduled events
             - Include specific dates and times
             """
         case .titles:
             return basePrompt + "\n\n" + """
             Title Generation Guidelines:
             - Generate concise, descriptive titles (20-50 characters)
-            - Capture the main medical topic or patient concern
+            - Capture the main topic or key subject
             - Use proper capitalization
             """
         case .complete:
@@ -314,19 +365,19 @@ class OnDeviceLLMService: ObservableObject {
     private func createContentTypePrompt(_ contentType: ContentType) -> String {
         switch contentType {
         case .meeting:
-            return "Focus on clinical meeting outcomes, decisions, and action items."
+            return "Focus on meeting outcomes, decisions, and action items."
         case .personalJournal:
-            return "Focus on patient symptoms, personal health observations, and wellbeing."
+            return "Focus on personal insights, reflections, and goals."
         case .technical:
-            return "Focus on technical medical details, procedures, and specifications."
+            return "Focus on technical details, specifications, and procedures."
         case .general:
-            return "Provide a balanced analysis of the medical content."
+            return "Provide a balanced analysis of the content."
         }
     }
 
     private func createSummaryUserPrompt(_ text: String) -> String {
         return """
-        Please provide a comprehensive summary of the following medical content using Markdown formatting:
+        Please provide a comprehensive summary of the following content using Markdown formatting:
 
         \(text)
         """
@@ -406,10 +457,35 @@ class OnDeviceLLMService: ObservableObject {
     private func cleanResponse(_ response: String) -> String {
         var cleaned = response
 
-        // Remove common artifacts
+        // Remove Mistral artifacts
+        cleaned = cleaned.replacingOccurrences(of: "[INST]", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "[/INST]", with: "")
+
+        // Remove Granite artifacts
+        cleaned = cleaned.replacingOccurrences(of: "<|system|>", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "<|user|>", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "<|assistant|>", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "<|end|>", with: "")
+
+        // Remove Llama artifacts
+        cleaned = cleaned.replacingOccurrences(of: "<|begin_of_text|>", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "<|start_header_id|>", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "<|end_header_id|>", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "<|eot_id|>", with: "")
+
+        // Remove ChatML artifacts
+        cleaned = cleaned.replacingOccurrences(of: "<|im_start|>", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "<|im_end|>", with: "")
+
+        // Remove Gemma artifacts (legacy)
         cleaned = cleaned.replacingOccurrences(of: "<end_of_turn>", with: "")
         cleaned = cleaned.replacingOccurrences(of: "<start_of_turn>", with: "")
+
+        // Remove role labels at start
         cleaned = cleaned.replacingOccurrences(of: "model", with: "", options: .anchored)
+        cleaned = cleaned.replacingOccurrences(of: "assistant", with: "", options: .anchored)
+        cleaned = cleaned.replacingOccurrences(of: "system", with: "", options: .anchored)
+        cleaned = cleaned.replacingOccurrences(of: "user", with: "", options: .anchored)
 
         // Remove thinking blocks if present
         if let thinkStart = cleaned.range(of: "<think>"),

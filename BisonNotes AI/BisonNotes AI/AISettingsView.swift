@@ -286,7 +286,7 @@ struct AISettingsView: View {
             if let model = OnDeviceLLMModel.model(byID: config.modelID) {
                 return "\(model.displayName) (\(config.quantization.rawValue))"
             }
-            return "MedGemma 4B"
+            return "Ministral 3B"
         }
     }
 

@@ -168,10 +168,23 @@ struct OnDeviceLLMSettingsView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
 
-                        if model.specialization == .medical {
-                            Label("Medical", systemImage: "cross.case.fill")
+                        switch model.specialization {
+                        case .reasoning:
+                            Label("Reasoning", systemImage: "brain.head.profile")
+                                .font(.caption2)
+                                .foregroundColor(.purple)
+                        case .coding:
+                            Label("Coding", systemImage: "chevron.left.forwardslash.chevron.right")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        case .general:
+                            Label("General", systemImage: "sparkles")
                                 .font(.caption2)
                                 .foregroundColor(.blue)
+                        case .conversation:
+                            Label("Chat", systemImage: "bubble.left.and.bubble.right")
+                                .font(.caption2)
+                                .foregroundColor(.green)
                         }
                     }
                 }
@@ -450,10 +463,14 @@ struct OnDeviceLLMSettingsView: View {
     private var helpSection: some View {
         Section(header: Text("About")) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("MedGemma")
+                Text("Available Models")
                     .font(.headline)
 
-                Text("MedGemma is Google's medical-specialized language model, optimized for healthcare applications. It excels at understanding medical terminology, clinical notes, and health-related content.")
+                Text("**Ministral 3B Reasoning** - Mistral's reasoning-optimized model with 256K context window. Excellent for complex analysis and logical reasoning tasks.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Text("**Granite 4.0 Micro** - IBM's efficient hybrid transformer with Mamba2 architecture. 128K context, optimized for fast inference on mobile.")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -465,8 +482,8 @@ struct OnDeviceLLMSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Label("iPhone 12 or newer recommended", systemImage: "iphone")
-                    Label("~3.5 GB RAM required during inference", systemImage: "memorychip")
-                    Label("~2.5 GB storage for model files", systemImage: "internaldrive")
+                    Label("~3 GB RAM required during inference", systemImage: "memorychip")
+                    Label("~2-4 GB storage per model", systemImage: "internaldrive")
                 }
                 .font(.caption)
                 .foregroundColor(.secondary)

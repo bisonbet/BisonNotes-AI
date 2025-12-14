@@ -1710,7 +1710,7 @@ class NoOpEngine: SummarizationEngine {
 
 class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     let name: String = "On-Device LLM"
-    let description: String = "Privacy-focused local AI processing directly on your device using MedGemma"
+    let description: String = "Privacy-focused local AI processing directly on your device"
     let version: String = "1.0"
 
     private let service = OnDeviceLLMService.shared
@@ -1934,7 +1934,7 @@ enum AIEngineType: String, CaseIterable {
         case .googleAIStudio:
             return "Advanced AI-powered summaries using Google's Gemini models"
         case .onDeviceLLM:
-            return "Privacy-focused on-device AI using MedGemma - no internet required"
+            return "Privacy-focused on-device AI - no internet required"
         }
     }
 

@@ -34,24 +34,6 @@ enum OnDeviceLLMQuantization: String, CaseIterable, Identifiable, Codable {
         case .q8_0: return "Highest quality, requires significant memory"
         }
     }
-
-    /// Estimated file size in GB
-    var estimatedSizeGB: Double {
-        switch self {
-        case .q4_K_M: return 2.49
-        case .q5_K_M: return 2.83
-        case .q8_0: return 4.13
-        }
-    }
-
-    /// Estimated RAM requirement in GB
-    var estimatedRAMGB: Double {
-        switch self {
-        case .q4_K_M: return 3.5
-        case .q5_K_M: return 4.0
-        case .q8_0: return 5.5
-        }
-    }
 }
 
 // MARK: - Model Definition
@@ -72,16 +54,16 @@ struct OnDeviceLLMModel: Identifiable, Codable, Equatable {
 
     enum ModelSpecialization: String, Codable {
         case general
-        case medical
+        case reasoning
         case coding
         case conversation
     }
 
     enum PromptTemplate: String, Codable {
-        case gemma
+        case mistral
+        case granite
         case llama
         case chatml
-        case alpaca
     }
 
     /// Generate the filename for a specific quantization
@@ -91,44 +73,62 @@ struct OnDeviceLLMModel: Identifiable, Codable, Equatable {
 
     /// Generate the Hugging Face download URL for a specific quantization
     func downloadURL(for quantization: OnDeviceLLMQuantization) -> URL? {
-        let filename = filename(for: quantization)
+        let filename = huggingFaceFilename(for: quantization)
         return URL(string: "https://huggingface.co/\(huggingFaceRepo)/resolve/main/\(filename)")
     }
 
     /// Get the correct filename format from the Hugging Face repo
     func huggingFaceFilename(for quantization: OnDeviceLLMQuantization) -> String {
-        // MedGemma uses format: medgemma-4b-it-Q4_K_M.gguf
-        return "medgemma-4b-it-\(quantization.rawValue).gguf"
+        return "\(name)-\(quantization.rawValue).gguf"
     }
 }
 
 // MARK: - Available Models
 
 extension OnDeviceLLMModel {
-    /// MedGemma 4B - Medical-specialized model
-    static let medGemma4B = OnDeviceLLMModel(
-        id: "medgemma-4b-it",
-        name: "medgemma-4b-it",
-        displayName: "MedGemma 4B",
-        description: "Google's medical-specialized language model, fine-tuned for healthcare applications. Excellent for medical notes, clinical summaries, and health-related content.",
-        huggingFaceRepo: "unsloth/medgemma-4b-it-GGUF",
-        parameters: "4B",
-        contextWindow: 8192,
+    /// Ministral 3B Reasoning - Mistral's reasoning-optimized model
+    static let ministral3BReasoning = OnDeviceLLMModel(
+        id: "ministral-3b-reasoning",
+        name: "Ministral-3-3B-Reasoning-2512",
+        displayName: "Ministral 3B Reasoning",
+        description: "Mistral's reasoning-optimized 3B model with 256K context window. Excellent for complex analysis, summarization, and logical reasoning tasks.",
+        huggingFaceRepo: "unsloth/Ministral-3-3B-Reasoning-2512-GGUF",
+        parameters: "3B",
+        contextWindow: 32768, // Using practical limit for mobile
         quantizations: [.q4_K_M, .q5_K_M, .q8_0],
         defaultQuantization: .q4_K_M,
-        specialization: .medical,
-        promptTemplate: .gemma
+        specialization: .reasoning,
+        promptTemplate: .mistral
+    )
+
+    /// Granite 4.0 Hybrid Micro - IBM's efficient hybrid model
+    static let granite4Micro = OnDeviceLLMModel(
+        id: "granite-4-micro",
+        name: "granite-4.0-h-micro",
+        displayName: "Granite 4.0 Micro",
+        description: "IBM's efficient hybrid transformer model with Mamba2 architecture. 128K context, optimized for fast inference on mobile devices.",
+        huggingFaceRepo: "unsloth/granite-4.0-h-micro-GGUF",
+        parameters: "3B",
+        contextWindow: 32768, // Using practical limit for mobile
+        quantizations: [.q4_K_M, .q5_K_M, .q8_0],
+        defaultQuantization: .q4_K_M,
+        specialization: .general,
+        promptTemplate: .granite
     )
 
     /// All available models
     static let allModels: [OnDeviceLLMModel] = [
-        .medGemma4B
+        .ministral3BReasoning,
+        .granite4Micro
     ]
 
     /// Get model by ID
     static func model(byID id: String) -> OnDeviceLLMModel? {
         return allModels.first { $0.id == id }
     }
+
+    /// Default model
+    static let defaultModel = ministral3BReasoning
 }
 
 // MARK: - Downloaded Model Info
@@ -200,11 +200,11 @@ struct OnDeviceLLMConfig: Equatable {
     var allowCellularDownload: Bool
 
     static let `default` = OnDeviceLLMConfig(
-        modelID: OnDeviceLLMModel.medGemma4B.id,
+        modelID: OnDeviceLLMModel.defaultModel.id,
         quantization: .q4_K_M,
         temperature: 0.1,
         maxTokens: 2048,
-        contextWindow: 8192,
+        contextWindow: 32768,
         allowCellularDownload: false
     )
 
@@ -213,11 +213,11 @@ struct OnDeviceLLMConfig: Equatable {
         let defaults = UserDefaults.standard
 
         return OnDeviceLLMConfig(
-            modelID: defaults.string(forKey: "onDeviceLLMModelID") ?? OnDeviceLLMModel.medGemma4B.id,
+            modelID: defaults.string(forKey: "onDeviceLLMModelID") ?? OnDeviceLLMModel.defaultModel.id,
             quantization: OnDeviceLLMQuantization(rawValue: defaults.string(forKey: "onDeviceLLMQuantization") ?? "Q4_K_M") ?? .q4_K_M,
             temperature: defaults.object(forKey: "onDeviceLLMTemperature") as? Double ?? 0.1,
             maxTokens: defaults.object(forKey: "onDeviceLLMMaxTokens") as? Int ?? 2048,
-            contextWindow: defaults.object(forKey: "onDeviceLLMContextWindow") as? Int ?? 8192,
+            contextWindow: defaults.object(forKey: "onDeviceLLMContextWindow") as? Int ?? 32768,
             allowCellularDownload: defaults.bool(forKey: "onDeviceLLMAllowCellular")
         )
     }
@@ -248,11 +248,11 @@ struct OnDeviceLLMSettingsKeys {
     static let downloadedModels = "onDeviceLLMDownloadedModels"
 
     struct Defaults {
-        static let modelID = OnDeviceLLMModel.medGemma4B.id
+        static let modelID = OnDeviceLLMModel.defaultModel.id
         static let quantization = OnDeviceLLMQuantization.q4_K_M
         static let temperature = 0.1
         static let maxTokens = 2048
-        static let contextWindow = 8192
+        static let contextWindow = 32768
         static let allowCellularDownload = false
     }
 }
