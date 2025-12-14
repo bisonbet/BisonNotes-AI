@@ -9,7 +9,7 @@ import SwiftUI
 
 struct OnDeviceLLMSettingsView: View {
     @AppStorage(OnDeviceLLMSettingsKeys.enableOnDeviceLLM) private var isEnabled: Bool = false
-    @AppStorage(OnDeviceLLMSettingsKeys.modelID) private var selectedModelID: String = OnDeviceLLMModel.medGemma4B.id
+    @AppStorage(OnDeviceLLMSettingsKeys.modelID) private var selectedModelID: String = OnDeviceLLMModel.defaultModel.id
     @AppStorage(OnDeviceLLMSettingsKeys.quantization) private var selectedQuantization: String = OnDeviceLLMQuantization.q4_K_M.rawValue
     @AppStorage(OnDeviceLLMSettingsKeys.temperature) private var temperature: Double = 0.1
     @AppStorage(OnDeviceLLMSettingsKeys.maxTokens) private var maxTokens: Int = 2048
