@@ -1178,7 +1178,7 @@ class BackgroundProcessingManager: ObservableObject {
             baseURL: baseURL,
             temperature: 0.1,
             maxTokens: 2048,
-            timeout: 30.0,
+            timeout: OpenAISummarizationConfig.defaultTimeout,
             dynamicModelId: nil
         )
     }
