@@ -39,8 +39,8 @@ The project uses Swift Package Manager for dependency management. Major dependen
   - `AWSClientRuntime`: Core AWS functionality
 
 ### **On-Device AI**
-- **LocalLLMClient** (v0.4.6): Swift wrapper for llama.cpp enabling on-device LLM inference
-  - GitHub: https://github.com/tattn/LocalLLMClient
+- **LocalLLMClient**: Swift wrapper for llama.cpp enabling on-device LLM inference
+  - GitHub: https://github.com/bisonbet/LocalLLMClient-iOS
   - Supports GGUF model format with quantization (Q4_K_M, Q5_K_M, Q8_0)
   - Built-in download management for Hugging Face models
   - Available models: Ministral 3B Reasoning, Granite 4.0 Micro
@@ -98,8 +98,8 @@ The on-device LLM feature enables completely private, offline AI processing:
 
 **Adding LocalLLMClient to the project:**
 1. In Xcode, go to File → Add Package Dependencies
-2. Enter: `https://github.com/tattn/LocalLLMClient`
-3. Set version rule to "Exact Version" → `0.4.6`
+2. Enter: `https://github.com/bisonbet/LocalLLMClient-iOS`
+3. Set version rule to "Branch" → `main`
 4. Add `LocalLLMClient` to your target
 
 ## Configuration

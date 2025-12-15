@@ -526,6 +526,7 @@
 			packageReferences = (
 				14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
 				148A7AC42E593E1D00666860 /* XCRemoteSwiftPackageReference "MarkdownUI" */,
+				14ABC1232E5F4D8A00123456 /* XCRemoteSwiftPackageReference "LocalLLMClient-iOS" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 14DBC83E2E34F7B500DAD442 /* Products */;
@@ -1283,6 +1284,14 @@
 			requirement = {
 				kind = upToNextMinorVersion;
 				minimumVersion = 1.5.12;
+			};
+		};
+		14ABC1232E5F4D8A00123456 /* XCRemoteSwiftPackageReference "LocalLLMClient-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/bisonbet/LocalLLMClient-iOS";
+			requirement = {
+				kind = branch;
+				branch = main;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

@@ -9,8 +9,8 @@
 //
 //  1. Swift Package Dependency:
 //     - Package: LocalLLMClient
-//     - URL: https://github.com/tattn/LocalLLMClient.git
-//     - Version: 0.4.6 (exact)
+//     - URL: https://github.com/bisonbet/LocalLLMClient-iOS
+//     - Branch: main (no version pinning)
 //     - Add via: Xcode → File → Add Package Dependencies
 //
 //  2. Required Entitlement:
