@@ -28,6 +28,8 @@ struct OnDeviceLLMSettingsView: View {
     @State private var showingErrorAlert = false
     @State private var errorMessage = ""
     @State private var showingInsufficientRAMAlert = false
+    @State private var showingSuccessAlert = false
+    @State private var successMessage = ""
 
     @Environment(\.dismiss) private var dismiss
 
@@ -112,6 +114,11 @@ struct OnDeviceLLMSettingsView: View {
                 }
             } message: {
                 Text(DeviceCapability.insufficientMemoryMessage)
+            }
+            .alert("Success", isPresented: $showingSuccessAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(successMessage)
             }
         }
     }
@@ -576,9 +583,9 @@ struct OnDeviceLLMSettingsView: View {
             if downloadManager.downloadedModels.count > 0 {
                 Button(role: .destructive) {
                     // Show confirmation for deleting all
-                    showingDeleteConfirmation = true
-                    modelToDelete = nil
+                    modelToDelete = nil  // Clear first to prevent race condition
                     isDeletingAllModels = true
+                    showingDeleteConfirmation = true
                 } label: {
                     Label("Delete All Models", systemImage: "trash")
                 }
@@ -680,8 +687,14 @@ struct OnDeviceLLMSettingsView: View {
 
     private func deleteAllModels() {
         do {
+            let modelCount = downloadManager.downloadedModels.count
+            let storageFreed = downloadManager.formatStorageSize(downloadManager.totalStorageUsed)
             try downloadManager.deleteAllModels()
             onConfigurationChanged?()
+
+            // Show success feedback for this significant action
+            successMessage = "Successfully deleted \(modelCount) model\(modelCount == 1 ? "" : "s"), freeing up \(storageFreed)."
+            showingSuccessAlert = true
         } catch {
             errorMessage = "Failed to delete models: \(error.localizedDescription)"
             showingErrorAlert = true

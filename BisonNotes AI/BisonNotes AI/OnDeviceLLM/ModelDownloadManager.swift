@@ -208,10 +208,16 @@ class ModelDownloadManager: NSObject, ObservableObject {
 
     /// Delete all downloaded models
     func deleteAllModels() throws {
+        var errors: [Error] = []
         for model in downloadedModels {
             let fileURL = URL(fileURLWithPath: model.filePath)
             if fileManager.fileExists(atPath: fileURL.path) {
-                try? fileManager.removeItem(at: fileURL)
+                do {
+                    try fileManager.removeItem(at: fileURL)
+                } catch {
+                    errors.append(error)
+                    logger.error("Failed to delete model file: \(model.filePath), error: \(error.localizedDescription)")
+                }
             }
         }
 
@@ -219,6 +225,10 @@ class ModelDownloadManager: NSObject, ObservableObject {
         downloadStates.removeAll()
         saveDownloadedModels()
         updateTotalStorageUsed()
+
+        if !errors.isEmpty {
+            throw OnDeviceLLMError.downloadFailed("Failed to delete \(errors.count) model file(s)")
+        }
 
         logger.info("Deleted all models")
     }
