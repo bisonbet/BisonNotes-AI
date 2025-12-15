@@ -113,7 +113,7 @@ struct MistralAIConfig: Equatable {
         baseURL: "https://api.mistral.ai/v1",
         temperature: 0.1,
         maxTokens: 4096,
-        timeout: 45.0,
+        timeout: 180.0,
         supportsJsonResponseFormat: true
     )
 
