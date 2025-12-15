@@ -71,6 +71,7 @@ struct OpenAISummarizationConfig: Equatable {
     let dynamicModelId: String? // For dynamic models not in the predefined enum
 
     static let defaultTimeout: TimeInterval = 180.0
+    static let connectionTestTimeout: TimeInterval = 30.0
 
     static let `default` = OpenAISummarizationConfig(
         apiKey: "",
