@@ -10,39 +10,24 @@ import Foundation
 // MARK: - Model Quantization
 
 /// Available quantization levels for GGUF models
-/// Lower quantization = smaller size but lower quality
-/// Higher quantization = larger size but better quality
+/// BisonNotes AI only supports Q4_K_M for optimal balance of quality and memory usage
 enum OnDeviceLLMQuantization: String, CaseIterable, Identifiable, Codable {
-    case q4_K_M = "Q4_K_M"  // Recommended for iPhone - good balance
-    case q5_K_M = "Q5_K_M"  // Higher quality, more RAM
-    case q8_0 = "Q8_0"      // Best quality, most RAM
+    case q4_K_M = "Q4_K_M"  // Only supported quantization - good balance of quality and memory
 
     var id: String { rawValue }
 
     var displayName: String {
-        switch self {
-        case .q4_K_M: return "Q4_K_M (Recommended)"
-        case .q5_K_M: return "Q5_K_M (Higher Quality)"
-        case .q8_0: return "Q8_0 (Best Quality)"
-        }
+        return "Q4_K_M (Standard)"
     }
 
     var description: String {
-        switch self {
-        case .q4_K_M: return "Best balance of quality and performance for iPhone"
-        case .q5_K_M: return "Better quality, requires more memory"
-        case .q8_0: return "Highest quality, requires significant memory"
-        }
+        return "Optimized for devices with 6GB+ RAM"
     }
 
-    /// Estimated download size in gigabytes for a typical 3B parameter model
-    /// These are approximate values based on quantization bit depth
+    /// Estimated download size in gigabytes
+    /// Q4_K_M models range from 1-2GB depending on parameter count
     var estimatedSizeGB: Double {
-        switch self {
-        case .q4_K_M: return 2.0  // ~2 GB for 4-bit quantization
-        case .q5_K_M: return 2.5  // ~2.5 GB for 5-bit quantization
-        case .q8_0: return 3.5    // ~3.5 GB for 8-bit quantization
-        }
+        return 1.5  // ~2 GB for 3B models, ~1 GB for 1.7B models
     }
 }
 
@@ -96,6 +81,90 @@ struct OnDeviceLLMModel: Identifiable, Codable, Equatable {
     func huggingFaceFilename(for quantization: OnDeviceLLMQuantization) -> String {
         return "\(name)-\(quantization.rawValue).gguf"
     }
+
+    /// Estimated model file size in GB (Q4_K_M quantization)
+    var estimatedSizeGB: Double {
+        switch id {
+        case "qwen3-1.7b": return 1.0
+        case "ministral-3b-reasoning", "granite-4-micro": return 2.0
+        default: return 1.5
+        }
+    }
+
+    /// Inference speed rating (1-5, higher is faster)
+    var speedRating: Int {
+        switch id {
+        case "qwen3-1.7b": return 5  // Fastest - smallest model
+        case "granite-4-micro": return 3  // Medium - hybrid architecture
+        case "ministral-3b-reasoning": return 3  // Medium - standard 3B
+        default: return 3
+        }
+    }
+
+    /// Accuracy/Quality rating (1-5, higher is better)
+    var qualityRating: Int {
+        switch id {
+        case "ministral-3b-reasoning": return 5  // Highest - reasoning optimized
+        case "granite-4-micro": return 4  // High - hybrid architecture
+        case "qwen3-1.7b": return 3  // Good - compact model
+        default: return 3
+        }
+    }
+
+    /// Memory usage during inference (approximate)
+    var memoryUsageGB: Double {
+        return estimatedSizeGB * 1.5  // Model file + overhead
+    }
+
+    /// Get pros for this model
+    var pros: [String] {
+        switch id {
+        case "ministral-3b-reasoning":
+            return [
+                "Best quality and reasoning",
+                "256K context window",
+                "Excellent for complex analysis"
+            ]
+        case "granite-4-micro":
+            return [
+                "Hybrid Mamba2 architecture",
+                "Fast inference speed",
+                "Good balance of quality/speed"
+            ]
+        case "qwen3-1.7b":
+            return [
+                "Smallest size (~1GB)",
+                "Fastest inference",
+                "Lower memory usage"
+            ]
+        default:
+            return []
+        }
+    }
+
+    /// Get cons for this model
+    var cons: [String] {
+        switch id {
+        case "ministral-3b-reasoning":
+            return [
+                "Larger size (~2GB)",
+                "Slower inference",
+                "Higher memory usage"
+            ]
+        case "granite-4-micro":
+            return [
+                "Larger size (~2GB)",
+                "Medium quality vs Ministral"
+            ]
+        case "qwen3-1.7b":
+            return [
+                "Lower quality than 3B models",
+                "32K context (vs 128K-256K)"
+            ]
+        default:
+            return []
+        }
+    }
 }
 
 // MARK: - Available Models
@@ -110,7 +179,7 @@ extension OnDeviceLLMModel {
         huggingFaceRepo: "unsloth/Ministral-3-3B-Reasoning-2512-GGUF",
         parameters: "3B",
         contextWindow: 32768, // Using practical limit for mobile
-        quantizations: [.q4_K_M, .q5_K_M, .q8_0],
+        quantizations: [.q4_K_M],
         defaultQuantization: .q4_K_M,
         specialization: .reasoning,
         promptTemplate: .mistral,
@@ -126,17 +195,35 @@ extension OnDeviceLLMModel {
         huggingFaceRepo: "unsloth/granite-4.0-h-micro-GGUF",
         parameters: "3B",
         contextWindow: 32768, // Using practical limit for mobile
-        quantizations: [.q4_K_M, .q5_K_M, .q8_0],
+        quantizations: [.q4_K_M],
         defaultQuantization: .q4_K_M,
         specialization: .general,
         promptTemplate: .granite,
         checksums: nil // TODO: Add actual SHA256 checksums from Hugging Face
     )
 
+    /// Qwen3-1.7B - Compact and efficient model
+    /// Smaller 1.7B model optimized for devices with 6GB RAM
+    static let qwen3_1_7B = OnDeviceLLMModel(
+        id: "qwen3-1.7b",
+        name: "Qwen3-1.7B",
+        displayName: "Qwen3 1.7B",
+        description: "Compact and efficient 1.7B model. Smaller footprint (~1GB), faster inference, ideal for devices with 6GB RAM. Good for quick summaries and general tasks.",
+        huggingFaceRepo: "unsloth/Qwen3-1.7B-GGUF",
+        parameters: "1.7B",
+        contextWindow: 32768,
+        quantizations: [.q4_K_M],
+        defaultQuantization: .q4_K_M,
+        specialization: .general,
+        promptTemplate: .chatml,
+        checksums: nil // TODO: Add actual SHA256 checksums from Hugging Face
+    )
+
     /// All available models
     static let allModels: [OnDeviceLLMModel] = [
         .ministral3BReasoning,
-        .granite4Micro
+        .granite4Micro,
+        .qwen3_1_7B
     ]
 
     /// Get model by ID
@@ -283,6 +370,7 @@ enum OnDeviceLLMError: LocalizedError {
     case downloadCancelled
     case cellularNotAllowed
     case insufficientStorage(required: Int64, available: Int64)
+    case insufficientMemory(required: Int64, available: Int64)
     case inferenceError(String)
     case modelLoadFailed(String)
     case contextTooLong(Int, max: Int)
@@ -306,6 +394,10 @@ enum OnDeviceLLMError: LocalizedError {
             let formatter = ByteCountFormatter()
             formatter.countStyle = .file
             return "Insufficient storage. Required: \(formatter.string(fromByteCount: required)), Available: \(formatter.string(fromByteCount: available))"
+        case .insufficientMemory(let required, let available):
+            let formatter = ByteCountFormatter()
+            formatter.countStyle = .file
+            return "Insufficient device memory. Your device has \(formatter.string(fromByteCount: available)) RAM. On-device LLM requires at least 6GB RAM. Please use a newer device."
         case .inferenceError:
             return "Model inference failed. Please try again."
         case .modelLoadFailed:

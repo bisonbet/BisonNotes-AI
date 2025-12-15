@@ -26,6 +26,7 @@ struct OnDeviceLLMSettingsView: View {
     @State private var pendingDownload: (OnDeviceLLMModel, OnDeviceLLMQuantization)?
     @State private var showingErrorAlert = false
     @State private var errorMessage = ""
+    @State private var showingInsufficientRAMAlert = false
 
     @Environment(\.dismiss) private var dismiss
 
@@ -41,6 +42,7 @@ struct OnDeviceLLMSettingsView: View {
         NavigationView {
             Form {
                 headerSection
+                deviceCapabilitySection
                 modelSelectionSection
                 downloadSection
                 storageSection
@@ -95,6 +97,14 @@ struct OnDeviceLLMSettingsView: View {
             } message: {
                 Text(errorMessage)
             }
+            .alert("Insufficient Device Memory", isPresented: $showingInsufficientRAMAlert) {
+                Button("OK", role: .cancel) {
+                    // Turn off the toggle if they acknowledged the error
+                    isEnabled = false
+                }
+            } message: {
+                Text(DeviceCapability.insufficientMemoryMessage)
+            }
         }
     }
 
@@ -133,6 +143,11 @@ struct OnDeviceLLMSettingsView: View {
                 Toggle("Enable On-Device LLM", isOn: $isEnabled)
                     .onChange(of: isEnabled) { _, newValue in
                         if newValue {
+                            // Check if device has sufficient RAM before enabling
+                            if !DeviceCapability.canSupportOnDeviceLLM {
+                                showingInsufficientRAMAlert = true
+                                return
+                            }
                             UserDefaults.standard.set(true, forKey: OnDeviceLLMSettingsKeys.enableOnDeviceLLM)
                         }
                         onConfigurationChanged?()
@@ -141,12 +156,61 @@ struct OnDeviceLLMSettingsView: View {
         }
     }
 
+    // MARK: - Device Capability Section
+
+    private var deviceCapabilitySection: some View {
+        Section(header: Text("Device Compatibility")) {
+            if DeviceCapability.canSupportOnDeviceLLM {
+                // Device supports on-device LLM
+                Label {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(DeviceCapability.memoryDescription)
+                            .font(.body)
+                            .fontWeight(.medium)
+                        Text("Your device supports on-device AI models")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                }
+            } else {
+                // Device does NOT support on-device LLM
+                Label {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(DeviceCapability.memoryDescription)
+                            .font(.body)
+                            .fontWeight(.medium)
+                        Text("Requires 6GB+ RAM")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("On-Device LLM Not Available")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+
+                    Text("Your device does not have enough RAM for on-device AI models. This feature requires:\n\n• iPhone 14 Pro or newer\n• iPhone 15 or newer\n• iPad Pro with M1 chip or newer\n• At least 6GB of RAM")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
     // MARK: - Model Selection Section
 
     private var modelSelectionSection: some View {
-        Section(header: Text("Model")) {
+        Section(header: Text("Model Selection")) {
             ForEach(OnDeviceLLMModel.allModels) { model in
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 12) {
+                    // Header with name and selection indicator
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(model.displayName)
@@ -163,9 +227,92 @@ struct OnDeviceLLMSettingsView: View {
                         if model.id == selectedModelID {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(.blue)
+                                .font(.title3)
                         }
                     }
 
+                    // Ratings Grid
+                    HStack(spacing: 20) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Size")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            HStack(spacing: 2) {
+                                Text(String(format: "%.1f GB", model.estimatedSizeGB))
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Speed")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            HStack(spacing: 2) {
+                                ForEach(1...5, id: \.self) { index in
+                                    Image(systemName: index <= model.speedRating ? "bolt.fill" : "bolt")
+                                        .font(.caption2)
+                                        .foregroundColor(index <= model.speedRating ? .green : .gray.opacity(0.3))
+                                }
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Quality")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            HStack(spacing: 2) {
+                                ForEach(1...5, id: \.self) { index in
+                                    Image(systemName: index <= model.qualityRating ? "star.fill" : "star")
+                                        .font(.caption2)
+                                        .foregroundColor(index <= model.qualityRating ? .yellow : .gray.opacity(0.3))
+                                }
+                            }
+                        }
+                    }
+
+                    // Pros and Cons
+                    VStack(alignment: .leading, spacing: 8) {
+                        // Pros
+                        if !model.pros.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Pros:")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.green)
+                                ForEach(model.pros, id: \.self) { pro in
+                                    HStack(alignment: .top, spacing: 4) {
+                                        Text("•")
+                                            .foregroundColor(.green)
+                                        Text(pro)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Cons
+                        if !model.cons.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Cons:")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.orange)
+                                ForEach(model.cons, id: \.self) { con in
+                                    HStack(alignment: .top, spacing: 4) {
+                                        Text("•")
+                                            .foregroundColor(.orange)
+                                        Text(con)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Technical specs
                     HStack(spacing: 16) {
                         Label(model.parameters, systemImage: "cpu")
                             .font(.caption2)
@@ -175,50 +322,38 @@ struct OnDeviceLLMSettingsView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
 
-                        switch model.specialization {
-                        case .reasoning:
-                            Label("Reasoning", systemImage: "brain.head.profile")
-                                .font(.caption2)
-                                .foregroundColor(.purple)
-                        case .coding:
-                            Label("Coding", systemImage: "chevron.left.forwardslash.chevron.right")
-                                .font(.caption2)
-                                .foregroundColor(.orange)
-                        case .general:
-                            Label("General", systemImage: "sparkles")
-                                .font(.caption2)
-                                .foregroundColor(.blue)
-                        case .conversation:
-                            Label("Chat", systemImage: "bubble.left.and.bubble.right")
-                                .font(.caption2)
-                                .foregroundColor(.green)
-                        }
+                        Label(String(format: "~%.1f GB RAM", model.memoryUsageGB), systemImage: "memorychip")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
                 }
+                .padding(.vertical, 8)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     selectedModelID = model.id
                     onConfigurationChanged?()
                 }
+
+                if model.id != OnDeviceLLMModel.allModels.last?.id {
+                    Divider()
+                }
             }
 
-            // Quantization picker
-            if let model = selectedModel {
-                Picker("Quality Level", selection: $selectedQuantization) {
-                    ForEach(model.quantizations, id: \.rawValue) { quant in
-                        VStack(alignment: .leading) {
-                            Text(quant.displayName)
-                            Text("\(quant.estimatedSizeGB, specifier: "%.1f") GB")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .tag(quant.rawValue)
-                    }
+            // Quantization info (Q4_K_M only)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: "gearshape.2.fill")
+                        .foregroundColor(.blue)
+                        .font(.caption)
+                    Text("Quantization: Q4_K_M")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
                 }
-                .onChange(of: selectedQuantization) { _, _ in
-                    onConfigurationChanged?()
-                }
+                Text("Optimal balance of quality and memory usage for mobile devices. All models use 4-bit quantization.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
+            .padding(.top, 8)
         }
     }
 
@@ -481,6 +616,10 @@ struct OnDeviceLLMSettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
 
+                Text("**Qwen3 1.7B** - Compact and efficient 1.7B model. Smaller footprint (~1GB), faster inference, ideal for devices with 6GB RAM. Good for quick summaries.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
                 Divider()
 
                 Text("Device Requirements")
@@ -488,12 +627,22 @@ struct OnDeviceLLMSettingsView: View {
                     .fontWeight(.medium)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Label("iPhone 12 or newer recommended", systemImage: "iphone")
-                    Label("~3 GB RAM required during inference", systemImage: "memorychip")
-                    Label("~2-4 GB storage per model", systemImage: "internaldrive")
+                    Label("6GB+ RAM required (iPhone 14 Pro or newer)", systemImage: "iphone")
+                    Label("Q4_K_M quantization only (optimal balance)", systemImage: "gearshape.2")
+                    Label("~1-2 GB storage per model", systemImage: "internaldrive")
                 }
                 .font(.caption)
                 .foregroundColor(.secondary)
+
+                Divider()
+
+                Text("Why 6GB RAM?")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Text("On-device AI models require significant memory during inference. Models need ~3-4GB when loaded (file size + overhead). iOS limits app memory usage, so 6GB+ device RAM ensures stable operation.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
         }
     }

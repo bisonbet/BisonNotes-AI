@@ -109,6 +109,21 @@ class ModelDownloadManager: NSObject, ObservableObject {
     ) async throws {
         let key = downloadKey(model: model, quantization: quantization)
 
+        // Check device capability FIRST - most important check
+        if !DeviceCapability.canSupportOnDeviceLLM {
+            let availableRAM = Int64(DeviceCapability.physicalMemoryGB * 1_000_000_000)
+            let requiredRAM = Int64(DeviceCapability.minimumRequiredRAMGB * 1_000_000_000)
+            throw OnDeviceLLMError.insufficientMemory(required: requiredRAM, available: availableRAM)
+        }
+
+        // Check if model size is compatible with device
+        let estimatedModelSize = Int64(quantization.estimatedSizeGB * 1_073_741_824)
+        if !DeviceCapability.canSupportModel(sizeBytes: estimatedModelSize) {
+            let availableRAM = Int64(DeviceCapability.physicalMemoryGB * 1_000_000_000)
+            let requiredRAM = Int64(DeviceCapability.minimumRequiredRAMGB * 1_000_000_000)
+            throw OnDeviceLLMError.insufficientMemory(required: requiredRAM, available: availableRAM)
+        }
+
         // Check if already downloading or downloaded
         if case .downloading = downloadStates[key] {
             logger.info("Model already downloading: \(key)")

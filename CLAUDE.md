@@ -57,6 +57,7 @@ The app supports multiple AI engines:
 - **Whisper**: Local Whisper server for transcription
 - **Ollama**: Local AI models for privacy-focused processing
 - **AWS Transcribe**: Cloud-based transcription service
+- **On-Device LLM**: Fully private on-device AI using GGUF models (requires 6GB+ RAM)
 
 #### Core Managers
 - **EnhancedTranscriptionManager**: Handles all transcription workflows
@@ -121,6 +122,46 @@ The app includes comprehensive AWS Bedrock integration (`AWS/AWSBedrockModels.sw
   - **Cross-Region Inference Profiles**: Claude and Llama models use `us.*`, `global.*`, `eu.*` prefixes for cross-region routing
   - Cross-region profiles provide ~10% cost savings and higher throughput by routing requests to available regions
 
+#### On-Device LLM (Local AI Models)
+BisonNotes AI supports fully private on-device AI using GGUF quantized models:
+
+**Device Requirements**:
+- **Minimum RAM**: 6GB (iPhone 14 Pro or newer, iPhone 15+, iPad Pro M1+)
+- **Quantization**: Q4_K_M only (optimal balance of quality and memory usage)
+- **Storage**: ~1.5-2.5 GB per model
+- **Memory Overhead**: Models require ~3-4GB when loaded (file size × 1.5)
+
+**Why 6GB RAM Requirement?**
+- iOS limits app memory usage based on total device RAM
+- Models need significant memory during inference (file + runtime overhead)
+- 6GB+ device RAM ensures stable operation without memory pressure
+- The `increased-memory-limit` entitlement has been removed as it requires Apple approval and often leads to App Store rejection
+
+**Supported Models**:
+- **Ministral 3B Reasoning**: Mistral's reasoning-optimized model (256K context, ~2GB)
+  - Repo: `unsloth/Ministral-3-3B-Reasoning-2512-GGUF`
+  - Best for: Complex analysis, summarization, logical reasoning
+- **Granite 4.0 Micro**: IBM's hybrid transformer with Mamba2 architecture (128K context, ~2GB)
+  - Repo: `unsloth/granite-4.0-h-micro-GGUF`
+  - Best for: Fast inference, general tasks
+- **Qwen3 1.7B**: Compact and efficient model (32K context, ~1GB)
+  - Repo: `unsloth/Qwen3-1.7B-GGUF`
+  - Best for: Quick summaries, smaller memory footprint, faster inference
+
+**Implementation Files**:
+- `OnDeviceLLM/DeviceCapability.swift`: RAM detection and device compatibility checks
+- `OnDeviceLLM/OnDeviceLLMModels.swift`: Model definitions, quantization, error handling
+- `OnDeviceLLM/OnDeviceLLMService.swift`: Model loading and inference using LocalLLMClient
+- `OnDeviceLLM/ModelDownloadManager.swift`: Model downloads from Hugging Face with RAM pre-checks
+- `OnDeviceLLM/OnDeviceLLMSettingsView.swift`: UI for model management and device warnings
+
+**Key Features**:
+- Device capability detection prevents downloads on unsupported devices
+- Pre-download RAM checks with user-friendly error messages
+- Automatic model download from Hugging Face
+- Background download support with progress tracking
+- File integrity through HTTPS from trusted CDN
+
 ### Background Processing
 For long-running operations, use `BackgroundProcessingManager` to queue jobs and track progress.
 
@@ -151,4 +192,9 @@ For AI-generated content display:
 - `AWS/AWSBedrockModels.swift`: AWS Bedrock model definitions and API handling
 - `FutureAIEngines.swift`: AI engine implementations including AWS Bedrock
 - `AISettingsView.swift`: AI engine configuration UI
+- `OnDeviceLLM/DeviceCapability.swift`: Device RAM detection for on-device AI
+- `OnDeviceLLM/OnDeviceLLMModels.swift`: On-device model definitions and errors
+- `OnDeviceLLM/OnDeviceLLMService.swift`: Local model inference service
+- `OnDeviceLLM/ModelDownloadManager.swift`: Model download and storage management
+- `OnDeviceLLM/OnDeviceLLMSettingsView.swift`: On-device AI configuration UI
 - `BisonNotes_AI.xcdatamodeld/`: Core Data model definitions

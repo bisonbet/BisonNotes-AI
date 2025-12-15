@@ -41,9 +41,9 @@ The project uses Swift Package Manager for dependency management. Major dependen
 ### **On-Device AI**
 - **LocalLLMClient**: Swift wrapper for llama.cpp enabling on-device LLM inference
   - GitHub: https://github.com/bisonbet/LocalLLMClient-iOS
-  - Supports GGUF model format with quantization (Q4_K_M, Q5_K_M, Q8_0)
+  - Supports GGUF model format with Q4_K_M quantization (optimal for mobile)
   - Built-in download management for Hugging Face models
-  - Available models: Ministral 3B Reasoning, Granite 4.0 Micro
+  - Available models: Ministral 3B Reasoning, Granite 4.0 Micro, Qwen3 1.7B
 
 ### **UI & Formatting**
 - **MarkdownUI**: Professional markdown rendering for AI-generated summaries, headers, lists, and formatted text
@@ -84,17 +84,24 @@ The app supports multiple AI engines for summarization and content analysis:
 | **Google AI Studio** | Gemini models | API key, internet |
 | **AWS Bedrock** | Claude 4.5 Haiku, Sonnet 4/4.5, Llama 4 Maverick | AWS credentials |
 | **Ollama** | Local LLM server | Ollama server running |
-| **On-Device LLM** | Fully offline, privacy-focused | Downloaded model (~2.5 GB) |
+| **On-Device LLM** | Fully offline, privacy-focused | 6GB+ RAM device, model (~1-2 GB) |
 
 ### On-Device LLM
 
 The on-device LLM feature enables completely private, offline AI processing:
 
-- **Models**: Ministral 3B Reasoning (Mistral), Granite 4.0 Micro (IBM)
-- **Quantization**: Q4_K_M (recommended), Q5_K_M, Q8_0
-- **Storage**: Models stored in Application Support (~2-4 GB each)
-- **Requirements**: iPhone 12+ recommended, `com.apple.developer.kernel.increased-memory-limit` entitlement
+- **Models**:
+  - Ministral 3B Reasoning (Mistral) - ~2GB, 256K context
+  - Granite 4.0 Micro (IBM) - ~2GB, 128K context
+  - Qwen3 1.7B (Alibaba) - ~1GB, 32K context (smallest, fastest)
+- **Quantization**: Q4_K_M only (optimal balance of quality and memory usage)
+- **Storage**: Models stored in Application Support (~1-2 GB each)
+- **Requirements**:
+  - **6GB+ RAM required** (iPhone 14 Pro or newer, iPhone 15+, iPad Pro M1+)
+  - Device capability check prevents downloads on unsupported devices
+  - The `increased-memory-limit` entitlement has been removed (not needed with 6GB+ requirement)
 - **Downloads**: WiFi by default with optional cellular download support
+- **Why 6GB RAM?**: Models need ~2-3GB when loaded (file + overhead). iOS limits app memory based on device RAM, so 6GB+ ensures stable operation.
 
 **Adding LocalLLMClient to the project:**
 1. In Xcode, go to File → Add Package Dependencies
@@ -105,7 +112,7 @@ The on-device LLM feature enables completely private, offline AI processing:
 ## Configuration
 - Secrets are entered in‑app via settings views (OpenAI, Mistral AI, Google, AWS, Ollama, Whisper). Do not commit API keys.
 - Enable required capabilities in Xcode (Microphone, Background Modes, iCloud if used). Keep `Info.plist` and `.entitlements` aligned with features.
-- For on-device LLM, the `com.apple.developer.kernel.increased-memory-limit` entitlement is required for memory-intensive model inference.
+- For on-device LLM, device capability checks ensure your device has sufficient RAM (6GB+) before allowing downloads.
 
 ## Contributing
 See AGENTS.md for repository guidelines (style, structure, commands, testing, PRs). Follow the Local Dev Setup above to run and validate changes before opening a PR.
