@@ -41,7 +41,7 @@ struct SummarizationConfig {
         maxReminders: 5,
         maxTokens: 8192,
         minConfidenceThreshold: 0.8,
-        timeoutInterval: 30.0,
+        timeoutInterval: 180.0,
         enableParallelProcessing: true
     )
     
@@ -51,7 +51,7 @@ struct SummarizationConfig {
         maxReminders: 5,
         maxTokens: 4096,
         minConfidenceThreshold: 0.5,
-        timeoutInterval: 15.0,
+        timeoutInterval: 180.0,
         enableParallelProcessing: false
     )
 }
