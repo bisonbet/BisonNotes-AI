@@ -254,7 +254,7 @@ class OpenAISummarizationService: ObservableObject {
         request.httpMethod = "GET"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = OpenAISummarizationConfig.defaultTimeout
+        request.timeoutInterval = OpenAISummarizationConfig.connectionTestTimeout
 
         let session = URLSession.shared
         let (data, response) = try await session.data(for: request)
