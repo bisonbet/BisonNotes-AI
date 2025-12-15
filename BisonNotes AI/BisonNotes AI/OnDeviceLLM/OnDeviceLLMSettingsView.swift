@@ -22,6 +22,7 @@ struct OnDeviceLLMSettingsView: View {
 
     @State private var showingDeleteConfirmation = false
     @State private var modelToDelete: (OnDeviceLLMModel, OnDeviceLLMQuantization)?
+    @State private var isDeletingAllModels = false
     @State private var showingCellularWarning = false
     @State private var pendingDownload: (OnDeviceLLMModel, OnDeviceLLMQuantization)?
     @State private var showingErrorAlert = false
@@ -61,15 +62,22 @@ struct OnDeviceLLMSettingsView: View {
                 }
             }
             .alert("Delete Model?", isPresented: $showingDeleteConfirmation) {
-                Button("Cancel", role: .cancel) { }
+                Button("Cancel", role: .cancel) {
+                    isDeletingAllModels = false
+                }
                 Button("Delete", role: .destructive) {
                     if let (model, quantization) = modelToDelete {
                         deleteModel(model, quantization: quantization)
+                    } else if isDeletingAllModels {
+                        deleteAllModels()
                     }
+                    isDeletingAllModels = false
                 }
             } message: {
                 if let (model, quantization) = modelToDelete {
-                    Text("Delete \(model.displayName) (\(quantization.rawValue))? This will free up \(quantization.estimatedSizeGB, specifier: "%.1f") GB of storage.")
+                    Text("Delete \(model.displayName) (\(quantization.rawValue))? This will free up \(model.estimatedSizeGB, specifier: "%.1f") GB of storage.")
+                } else if isDeletingAllModels {
+                    Text("Delete all downloaded models? This will free up \(downloadManager.formatStorageSize(downloadManager.totalStorageUsed)).")
                 }
             }
             .alert("Cellular Download", isPresented: $showingCellularWarning) {
@@ -416,7 +424,7 @@ struct OnDeviceLLMSettingsView: View {
                 VStack(alignment: .leading) {
                     Text("Download \(model.displayName)")
                         .font(.body)
-                    Text("\(quantization.estimatedSizeGB, specifier: "%.1f") GB - \(quantization.displayName)")
+                    Text("\(model.estimatedSizeGB, specifier: "%.1f") GB - \(quantization.displayName)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -445,7 +453,7 @@ struct OnDeviceLLMSettingsView: View {
                 .progressViewStyle(LinearProgressViewStyle())
 
             HStack {
-                Text("\(quantization.estimatedSizeGB * progress, specifier: "%.1f") GB of \(quantization.estimatedSizeGB, specifier: "%.1f") GB")
+                Text("\(model.estimatedSizeGB * progress, specifier: "%.1f") GB of \(model.estimatedSizeGB, specifier: "%.1f") GB")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -570,6 +578,7 @@ struct OnDeviceLLMSettingsView: View {
                     // Show confirmation for deleting all
                     showingDeleteConfirmation = true
                     modelToDelete = nil
+                    isDeletingAllModels = true
                 } label: {
                     Label("Delete All Models", systemImage: "trash")
                 }
@@ -666,6 +675,16 @@ struct OnDeviceLLMSettingsView: View {
                 errorMessage = error.localizedDescription
                 showingErrorAlert = true
             }
+        }
+    }
+
+    private func deleteAllModels() {
+        do {
+            try downloadManager.deleteAllModels()
+            onConfigurationChanged?()
+        } catch {
+            errorMessage = "Failed to delete models: \(error.localizedDescription)"
+            showingErrorAlert = true
         }
     }
 

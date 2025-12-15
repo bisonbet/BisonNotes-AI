@@ -117,7 +117,7 @@ class ModelDownloadManager: NSObject, ObservableObject {
         }
 
         // Check if model size is compatible with device
-        let estimatedModelSize = Int64(quantization.estimatedSizeGB * 1_073_741_824)
+        let estimatedModelSize = Int64(model.estimatedSizeGB * 1_073_741_824)
         if !DeviceCapability.canSupportModel(sizeBytes: estimatedModelSize) {
             let availableRAM = Int64(DeviceCapability.physicalMemoryGB * 1_000_000_000)
             let requiredRAM = Int64(DeviceCapability.minimumRequiredRAMGB * 1_000_000_000)
@@ -141,7 +141,7 @@ class ModelDownloadManager: NSObject, ObservableObject {
         }
 
         // Check available storage
-        let requiredBytes = Int64(quantization.estimatedSizeGB * 1_073_741_824) // Convert GB to bytes
+        let requiredBytes = estimatedModelSize // Convert GB to bytes
         let availableBytes = availableStorageSpace()
 
         if availableBytes < requiredBytes {
