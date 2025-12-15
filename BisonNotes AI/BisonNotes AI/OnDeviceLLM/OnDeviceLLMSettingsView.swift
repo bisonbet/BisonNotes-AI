@@ -582,8 +582,8 @@ struct OnDeviceLLMSettingsView: View {
 
             if downloadManager.downloadedModels.count > 0 {
                 Button(role: .destructive) {
-                    // Show confirmation for deleting all
-                    modelToDelete = nil  // Clear first to prevent race condition
+                    // Clear single-model state and set delete-all state for correct alert message
+                    modelToDelete = nil
                     isDeletingAllModels = true
                     showingDeleteConfirmation = true
                 } label: {

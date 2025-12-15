@@ -191,9 +191,14 @@ class ModelDownloadManager: NSObject, ObservableObject {
 
         // Delete file
         let fileURL = URL(fileURLWithPath: downloadedModel.filePath)
-        if fileManager.fileExists(atPath: fileURL.path) {
+        do {
             try fileManager.removeItem(at: fileURL)
+            logger.info("Deleted model file: \(downloadedModel.filePath)")
+        } catch CocoaError.fileNoSuchFile {
+            // File already deleted externally, treat as success
+            logger.info("Model file already deleted: \(downloadedModel.filePath)")
         }
+        // Other errors propagate to caller
 
         // Update state
         downloadStates[key] = .notDownloaded
@@ -208,21 +213,35 @@ class ModelDownloadManager: NSObject, ObservableObject {
 
     /// Delete all downloaded models
     func deleteAllModels() throws {
-        var errors: [Error] = []
+        var errors: [(DownloadedModel, Error)] = []
+        var successfulDeletions: Set<String> = []
+
         for model in downloadedModels {
             let fileURL = URL(fileURLWithPath: model.filePath)
-            if fileManager.fileExists(atPath: fileURL.path) {
-                do {
-                    try fileManager.removeItem(at: fileURL)
-                } catch {
-                    errors.append(error)
-                    logger.error("Failed to delete model file: \(model.filePath), error: \(error.localizedDescription)")
-                }
+            do {
+                try fileManager.removeItem(at: fileURL)
+                successfulDeletions.insert(model.id)
+                logger.info("Deleted model file: \(model.filePath)")
+            } catch CocoaError.fileNoSuchFile {
+                // File already deleted externally, treat as success
+                successfulDeletions.insert(model.id)
+                logger.info("Model file already deleted: \(model.filePath)")
+            } catch {
+                errors.append((model, error))
+                logger.error("Failed to delete model file: \(model.filePath), error: \(error.localizedDescription)")
             }
         }
 
-        downloadedModels.removeAll()
-        downloadStates.removeAll()
+        // Only remove successfully deleted models from state
+        let modelsToKeep = downloadedModels.filter { !successfulDeletions.contains($0.id) }
+
+        // Update download states - remove only successfully deleted models
+        for model in downloadedModels where successfulDeletions.contains(model.id) {
+            let key = "\(model.modelID)-\(model.quantization.rawValue)"
+            downloadStates.removeValue(forKey: key)
+        }
+
+        downloadedModels = modelsToKeep
         saveDownloadedModels()
         updateTotalStorageUsed()
 
@@ -230,7 +249,7 @@ class ModelDownloadManager: NSObject, ObservableObject {
             throw OnDeviceLLMError.downloadFailed("Failed to delete \(errors.count) model file(s)")
         }
 
-        logger.info("Deleted all models")
+        logger.info("Deleted all models successfully")
     }
 
     /// Get available storage space
