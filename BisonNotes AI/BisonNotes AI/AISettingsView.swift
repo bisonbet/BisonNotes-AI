@@ -79,6 +79,9 @@ final class AISettingsViewModel: ObservableObject {
         case .localLLM:
             UserDefaults.standard.set(true, forKey: "enableOllama")
             print("🔧 Auto-enabled Ollama engine")
+        case .localMLX:
+            UserDefaults.standard.set(true, forKey: "enableMLX")
+            print("🔧 Auto-enabled MLX engine")
         case .googleAIStudio:
             UserDefaults.standard.set(true, forKey: "enableGoogleAIStudio")
             print("🔧 Auto-enabled Google AI Studio engine")
@@ -122,6 +125,10 @@ final class AISettingsViewModel: ObservableObject {
         case .localLLM:
             let isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.enableOllama)
             return isEnabled
+        case .localMLX:
+            let isEnabled = UserDefaults.standard.bool(forKey: "enableMLX")
+            let hasModel = UserDefaults.standard.string(forKey: "mlxModelName") != nil
+            return isEnabled && hasModel
         case .googleAIStudio:
             let apiKey = UserDefaults.standard.string(forKey: "googleAIStudioAPIKey") ?? ""
             let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
@@ -159,6 +166,7 @@ struct AISettingsView: View {
     @State private var showingMistralAISettings = false
     @State private var showingAWSBedrockSettings = false
     @State private var showingAppleIntelligenceSettings = false
+    @State private var showingMLXSettings = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     @State private var showingRegenerateConfirmation = false
@@ -226,6 +234,10 @@ struct AISettingsView: View {
         case .localLLM:
             let isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.enableOllama)
             return isEnabled
+        case .localMLX:
+            let isEnabled = UserDefaults.standard.bool(forKey: "enableMLX")
+            let hasModel = UserDefaults.standard.string(forKey: "mlxModelName") != nil
+            return isEnabled && hasModel
         case .googleAIStudio:
             let apiKey = UserDefaults.standard.string(forKey: "googleAIStudioAPIKey") ?? ""
             let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
@@ -259,6 +271,10 @@ struct AISettingsView: View {
         case .localLLM:
             let modelName = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaModelName) ?? AppSettingsKeys.Defaults.ollamaModelName
             return modelName
+        case .localMLX:
+            let modelString = UserDefaults.standard.string(forKey: "mlxModelName") ?? MLXModel.qwen34B4bit2507.rawValue
+            let model = MLXModel(rawValue: modelString) ?? .qwen34B4bit2507
+            return model.displayName
         case .googleAIStudio:
             let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-2.5-flash"
             return model
@@ -387,6 +403,11 @@ struct AISettingsView: View {
         .sheet(isPresented: $showingAppleIntelligenceSettings) {
             AppleIntelligenceSettingsView()
         }
+        .sheet(isPresented: $showingMLXSettings) {
+            MLXSettingsView(onConfigurationChanged: {
+                Task { refreshEngineStatuses() }
+            })
+        }
     }
 }
 
@@ -445,7 +466,7 @@ private extension AISettingsView {
                         }
                     }
                 )) {
-                    ForEach(AIEngineType.allCases.filter { !$0.isComingSoon }, id: \.self) { engineType in
+                    ForEach(AIEngineType.availableCases.filter { !$0.isComingSoon }, id: \.self) { engineType in
                         VStack(alignment: .leading) {
                             Text(engineType.rawValue)
                                 .font(.body)
@@ -477,9 +498,30 @@ private extension AISettingsView {
                     .fill(Color.blue.opacity(0.1))
             )
             .padding(.horizontal, 24)
+
+            // Show info message if Local MLX is hidden due to insufficient RAM
+            if !DeviceCapabilities.supportsMLX {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .foregroundColor(.orange)
+                            .font(.caption)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Local MLX Not Available")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.orange)
+                            Text("On-device LLM processing requires at least 6GB of RAM and Metal support. Your device has \(DeviceCapabilities.ramDescription) of RAM.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 24)
+            }
         }
     }
-    
+
     var selectedEngineConfigurationSection: some View {
         let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
 
@@ -494,6 +536,8 @@ private extension AISettingsView {
                     openAICompatibleConfigurationSection
                 case .localLLM:
                     ollamaConfigurationSection
+                case .localMLX:
+                    mlxConfigurationSection
                 case .googleAIStudio:
                     googleAIStudioConfigurationSection
                 case .mistralAI:
@@ -1027,6 +1071,98 @@ private extension AISettingsView {
         }
     }
     
+    var mlxConfigurationSection: some View {
+        let modelString = UserDefaults.standard.string(forKey: "mlxModelName") ?? MLXModel.qwen34B4bit2507.rawValue
+        let model = MLXModel(rawValue: modelString) ?? .qwen34B4bit2507
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableMLX")
+
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("Local MLX Configuration")
+                .font(.headline)
+                .padding(.horizontal, 24)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("On-Device LLM Settings")
+                            .font(.body)
+                        Text("Configure and download models for fully private, on-device AI processing")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { showingMLXSettings = true }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("Configure")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.purple)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Status:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(isEnabled ? Color.green : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text(isEnabled ? "Configured" : "Not Configured")
+                                .font(.caption)
+                                .foregroundColor(isEnabled ? .green : .red)
+                        }
+                    }
+
+                    HStack {
+                        Text("Model:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(model.displayName)
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+
+                    HStack {
+                        Text("Size:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(model.estimatedSize)
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+
+                    HStack {
+                        Text("Privacy:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("100% On-Device")
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(.green)
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.purple.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+
     var openAICompatibleConfigurationSection: some View {
         // FIX: Logic moved outside the ViewBuilder closure.
         let compatibleApiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""

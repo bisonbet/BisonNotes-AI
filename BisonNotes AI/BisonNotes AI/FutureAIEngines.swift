@@ -457,7 +457,423 @@ struct VoiceCharacteristics {
     let volume: Double
 }
 
-// MARK: - Local LLM Engine (Future Implementation)
+// MARK: - MLX Local Engine (On-Device LLM)
+
+class MLXLocalEngine: SummarizationEngine, ConnectionTestable {
+    let name: String = "Local MLX"
+    let description: String = "Privacy-focused on-device language model processing using MLX Swift"
+    let version: String = "1.0"
+
+    var isAvailable: Bool {
+        // Check if MLX is enabled in settings
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableMLX")
+        let keyExists = UserDefaults.standard.object(forKey: "enableMLX") != nil
+
+        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+            AppLogger.shared.verbose("Checking enableMLX setting - Value: \(isEnabled), Key exists: \(keyExists)", category: "MLXLocalEngine")
+        }
+
+        guard isEnabled else {
+            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                AppLogger.shared.verbose("MLX is not enabled in settings", category: "MLXLocalEngine")
+            }
+            return false
+        }
+
+        // Check if a model has been downloaded
+        let modelName = UserDefaults.standard.string(forKey: "mlxModelName")
+        guard modelName != nil else {
+            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+                AppLogger.shared.verbose("No MLX model selected", category: "MLXLocalEngine")
+            }
+            return false
+        }
+
+        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
+            AppLogger.shared.verbose("Basic availability checks passed", category: "MLXLocalEngine")
+        }
+        return true
+    }
+
+    private var mlxService: MLXService?
+    private var config: MLXConfig?
+
+    init() {
+        updateConfiguration()
+    }
+
+    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
+        print("🤖 MLXLocalEngine: Starting summary generation")
+
+        updateConfiguration()
+
+        guard let service = mlxService else {
+            print("❌ MLXLocalEngine: MLX service is nil")
+            throw SummarizationError.aiServiceUnavailable(service: "MLX service not properly configured")
+        }
+
+        guard isAvailable else {
+            print("❌ MLXLocalEngine: MLX is not enabled in settings")
+            throw SummarizationError.aiServiceUnavailable(service: "MLX is not enabled in settings")
+        }
+
+        print("✅ MLXLocalEngine: Calling MLX service for summary")
+
+        do {
+            return try await service.generateSummary(from: text)
+        } catch {
+            print("❌ MLXLocalEngine: Summary generation failed: \(error)")
+            throw handleMLXError(error)
+        }
+    }
+
+    func extractTasks(from text: String) async throws -> [TaskItem] {
+        print("🤖 MLXLocalEngine: Starting task extraction")
+
+        updateConfiguration()
+
+        guard let service = mlxService else {
+            throw SummarizationError.aiServiceUnavailable(service: "MLX service not properly configured")
+        }
+
+        guard isAvailable else {
+            throw SummarizationError.aiServiceUnavailable(service: "MLX is not enabled in settings")
+        }
+
+        do {
+            let result = try await service.extractTasksAndReminders(from: text)
+            return result.tasks
+        } catch {
+            print("❌ MLXLocalEngine: Task extraction failed: \(error)")
+            throw handleMLXError(error)
+        }
+    }
+
+    func extractReminders(from text: String) async throws -> [ReminderItem] {
+        print("🤖 MLXLocalEngine: Starting reminder extraction")
+
+        updateConfiguration()
+
+        guard let service = mlxService else {
+            throw SummarizationError.aiServiceUnavailable(service: "MLX service not properly configured")
+        }
+
+        guard isAvailable else {
+            throw SummarizationError.aiServiceUnavailable(service: "MLX is not enabled in settings")
+        }
+
+        do {
+            let result = try await service.extractTasksAndReminders(from: text)
+            return result.reminders
+        } catch {
+            print("❌ MLXLocalEngine: Reminder extraction failed: \(error)")
+            throw handleMLXError(error)
+        }
+    }
+
+    func extractTitles(from text: String) async throws -> [TitleItem] {
+        print("🤖 MLXLocalEngine: Starting title extraction")
+
+        updateConfiguration()
+
+        guard let service = mlxService else {
+            throw SummarizationError.aiServiceUnavailable(service: "MLX service not properly configured")
+        }
+
+        guard isAvailable else {
+            throw SummarizationError.aiServiceUnavailable(service: "MLX is not enabled in settings")
+        }
+
+        do {
+            return try await service.extractTitles(from: text)
+        } catch {
+            print("❌ MLXLocalEngine: Title extraction failed: \(error)")
+            throw handleMLXError(error)
+        }
+    }
+
+    func classifyContent(_ text: String) async throws -> ContentType {
+        print("🔍 MLXLocalEngine: Starting content classification")
+
+        // Use enhanced ContentAnalyzer for classification
+        let contentType = ContentAnalyzer.classifyContent(text)
+        print("✅ MLXLocalEngine: Content classified as \(contentType.rawValue)")
+
+        return contentType
+    }
+
+    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        updateConfiguration()
+
+        guard let service = mlxService else {
+            throw SummarizationError.aiServiceUnavailable(service: name)
+        }
+
+        guard isAvailable else {
+            throw SummarizationError.aiServiceUnavailable(service: "MLX is not enabled in settings")
+        }
+
+        // Check if text needs chunking based on token count
+        let tokenCount = TokenManager.getTokenCount(text)
+        print("📊 Text token count: \(tokenCount)")
+
+        let maxContext = config?.maxTokens ?? 2048
+        if TokenManager.needsChunking(text, maxTokens: maxContext) {
+            print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+            return try await processChunkedText(text, service: service, maxTokens: maxContext)
+        } else {
+            print("📝 Processing single chunk (\(tokenCount) tokens)")
+            do {
+                return try await service.processComplete(from: text)
+            } catch {
+                print("❌ MLXLocalEngine: Complete processing failed: \(error)")
+                throw handleMLXError(error)
+            }
+        }
+    }
+
+    // MARK: - Configuration Management
+
+    func updateConfiguration() {
+        let modelString = UserDefaults.standard.string(forKey: "mlxModelName") ?? MLXModel.qwen317B4bit.rawValue
+        let maxTokens = UserDefaults.standard.integer(forKey: "mlxMaxTokens")
+        let temperature = UserDefaults.standard.float(forKey: "mlxTemperature")
+
+        print("🔧 MLXLocalEngine: Updating configuration - Model: \(modelString)")
+
+        let model = MLXModel(rawValue: modelString) ?? .qwen317B4bit
+
+        let newConfig = MLXConfig(
+            modelName: model.rawValue,
+            huggingFaceRepoId: model.huggingFaceRepoId,
+            maxTokens: maxTokens > 0 ? maxTokens : 1024, // Reduced from 2048 for better memory efficiency
+            temperature: temperature > 0 ? temperature : 0.1,
+            topP: 0.9
+        )
+
+        // Only create new service if configuration changed or service doesn't exist
+        let configChanged = config?.modelName != newConfig.modelName ||
+                           config?.huggingFaceRepoId != newConfig.huggingFaceRepoId
+
+        if mlxService == nil || configChanged {
+            // Unload old model before creating new service
+            if let oldService = mlxService {
+                oldService.unloadModel()
+                print("🧹 MLXLocalEngine: Unloaded old model before configuration change")
+            }
+
+            self.config = newConfig
+            self.mlxService = MLXService(config: newConfig)
+            print("✅ MLXLocalEngine: Configuration updated successfully")
+        } else {
+            // Just update config without recreating service
+            self.config = newConfig
+            print("✅ MLXLocalEngine: Configuration parameters updated (model unchanged)")
+        }
+    }
+
+    // MARK: - Chunked Processing
+
+    private func processChunkedText(_ text: String, service: MLXService, maxTokens: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+        let startTime = Date()
+
+        // Split text into chunks
+        let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
+        print("📦 Split text into \(chunks.count) chunks")
+
+        // Process each chunk
+        var allSummaries: [String] = []
+        var allTasks: [TaskItem] = []
+        var allReminders: [ReminderItem] = []
+        var allTitles: [TitleItem] = []
+        var contentType: ContentType = .general
+
+        for (index, chunk) in chunks.enumerated() {
+            print("🔄 Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+
+            do {
+                let chunkResult = try await service.processComplete(from: chunk)
+                allSummaries.append(chunkResult.summary)
+                allTasks.append(contentsOf: chunkResult.tasks)
+                allReminders.append(contentsOf: chunkResult.reminders)
+                allTitles.append(contentsOf: chunkResult.titles)
+
+                // Use the first chunk's content type
+                if index == 0 {
+                    contentType = chunkResult.contentType
+                }
+
+                // Add delay between chunks to manage memory
+                if index < chunks.count - 1 {
+                    try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                }
+
+            } catch {
+                print("❌ Failed to process chunk \(index + 1): \(error)")
+                throw error
+            }
+        }
+
+        // Combine results using AI-generated meta-summary
+        let combinedSummary = try await combineSummaries(
+            allSummaries,
+            contentType: contentType,
+            service: service
+        )
+
+        // Deduplicate tasks, reminders, and titles
+        let uniqueTasks = deduplicateTasks(allTasks)
+        let uniqueReminders = deduplicateReminders(allReminders)
+        let uniqueTitles = deduplicateTitles(allTitles)
+
+        let processingTime = Date().timeIntervalSince(startTime)
+        print("✅ Chunked processing completed in \(String(format: "%.2f", processingTime))s")
+        print("📊 Final summary: \(combinedSummary.count) characters")
+        print("📋 Final tasks: \(uniqueTasks.count)")
+        print("🔔 Final reminders: \(uniqueReminders.count)")
+        print("📝 Final titles: \(uniqueTitles.count)")
+
+        return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
+    }
+
+    private func combineSummaries(
+        _ summaries: [String],
+        contentType: ContentType,
+        service: MLXService
+    ) async throws -> String {
+        guard !summaries.isEmpty else { return "" }
+
+        // If only one summary, return it directly
+        if summaries.count == 1 {
+            return summaries[0]
+        }
+
+        // Join all summaries into one text block
+        let combinedText = summaries.joined(separator: "\n\n")
+
+        // If the combined text is small enough, use MLX to generate a meta-summary
+        let tokenCount = TokenManager.getTokenCount(combinedText)
+        if tokenCount <= 2048 {
+            // Use MLX to generate a condensed summary of all chunks
+            let metaSummary = try await service.generateSummary(from: combinedText)
+            return metaSummary
+        } else {
+            // If still too large, just join with headers
+            return summaries.enumerated().map { index, summary in
+                "**Section \(index + 1)**\n\n\(summary)"
+            }.joined(separator: "\n\n---\n\n")
+        }
+    }
+
+    private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
+        var uniqueTasks: [TaskItem] = []
+
+        for task in tasks {
+            let isDuplicate = uniqueTasks.contains { existingTask in
+                let similarity = calculateTextSimilarity(task.text, existingTask.text)
+                return similarity > 0.8
+            }
+
+            if !isDuplicate {
+                uniqueTasks.append(task)
+            }
+        }
+
+        return Array(uniqueTasks.prefix(15))
+    }
+
+    private func deduplicateReminders(_ reminders: [ReminderItem]) -> [ReminderItem] {
+        var uniqueReminders: [ReminderItem] = []
+
+        for reminder in reminders {
+            let isDuplicate = uniqueReminders.contains { existingReminder in
+                let similarity = calculateTextSimilarity(reminder.text, existingReminder.text)
+                return similarity > 0.8
+            }
+
+            if !isDuplicate {
+                uniqueReminders.append(reminder)
+            }
+        }
+
+        return Array(uniqueReminders.prefix(15))
+    }
+
+    private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
+        var uniqueTitles: [TitleItem] = []
+
+        for title in titles {
+            let isDuplicate = uniqueTitles.contains { existingTitle in
+                let similarity = calculateTextSimilarity(title.text, existingTitle.text)
+                return similarity > 0.8
+            }
+
+            if !isDuplicate {
+                uniqueTitles.append(title)
+            }
+        }
+
+        return Array(uniqueTitles.prefix(5))
+    }
+
+    private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
+        let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
+        let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
+
+        let intersection = words1.intersection(words2)
+        let union = words1.union(words2)
+
+        return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
+    }
+
+    // MARK: - Connection Testing
+
+    func testConnection() async -> Bool {
+        print("🔧 MLXLocalEngine: Testing connection...")
+
+        updateConfiguration()
+
+        guard let service = mlxService else {
+            print("❌ MLXLocalEngine: Service is nil - configuration issue")
+            return false
+        }
+
+        let isConnected = await service.testConnection()
+        if isConnected {
+            print("✅ MLXLocalEngine: Connection test successful (model available)")
+        } else {
+            print("❌ MLXLocalEngine: Connection test failed (model not available)")
+        }
+        return isConnected
+    }
+
+    // MARK: - Enhanced Error Handling
+
+    private func handleMLXError(_ error: Error) -> SummarizationError {
+        if let summarizationError = error as? SummarizationError {
+            return summarizationError
+        }
+
+        if let mlxError = error as? MLXError {
+            switch mlxError {
+            case .modelNotLoaded:
+                return SummarizationError.aiServiceUnavailable(service: "MLX model is not loaded. Please download and load a model first.")
+            case .modelNotDownloaded:
+                return SummarizationError.aiServiceUnavailable(service: "MLX model is not downloaded. Please download a model from settings.")
+            case .downloadFailed(let message):
+                return SummarizationError.aiServiceUnavailable(service: "MLX model download failed: \(message)")
+            case .generationFailed(let message):
+                return SummarizationError.aiServiceUnavailable(service: "MLX text generation failed: \(message)")
+            case .transcriptionFailed(let message):
+                return SummarizationError.aiServiceUnavailable(service: "MLX transcription failed: \(message)")
+            }
+        }
+
+        return SummarizationError.aiServiceUnavailable(service: "MLX error: \(error.localizedDescription)")
+    }
+}
+
+// MARK: - Local LLM Engine (Ollama)
 
 class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     let name: String = "Local LLM (Ollama)"
@@ -1723,6 +2139,8 @@ class AIEngineFactory {
             return OpenAICompatibleEngine()
         case .localLLM:
             return LocalLLMEngine()
+        case .localMLX:
+            return MLXLocalEngine()
         case .googleAIStudio:
             return GoogleAIStudioEngine()
         }
@@ -1736,7 +2154,7 @@ class AIEngineFactory {
     }
     
     static func getAllEngines() -> [AIEngineType] {
-        return AIEngineType.allCases
+        return AIEngineType.availableCases
     }
 }
 
@@ -1747,7 +2165,23 @@ enum AIEngineType: String, CaseIterable {
     case awsBedrock = "AWS Bedrock"
     case openAICompatible = "OpenAI API Compatible"
     case localLLM = "Ollama"
+    case localMLX = "Local MLX"
     case googleAIStudio = "Google AI Studio"
+
+    /// Returns all available engine types based on device capabilities
+    static var availableCases: [AIEngineType] {
+        var cases = allCases
+
+        // Filter out Local MLX if device doesn't support it
+        if !DeviceCapabilities.supportsMLX {
+            cases = cases.filter { $0 != .localMLX }
+            print("🔒 Local MLX engine hidden - device does not meet requirements (6GB+ RAM, Metal support)")
+        } else {
+            print("✅ Local MLX engine available - device meets all requirements")
+        }
+
+        return cases
+    }
 
     var description: String {
         switch self {
@@ -1762,7 +2196,9 @@ enum AIEngineType: String, CaseIterable {
         case .openAICompatible:
             return "Advanced AI summaries using OpenAI API compatible models"
         case .localLLM:
-            return "Privacy-focused local language model processing"
+            return "Privacy-focused local language model processing with Ollama"
+        case .localMLX:
+            return "On-device AI using MLX Swift - fully private, no internet required"
         case .googleAIStudio:
             return "Advanced AI-powered summaries using Google's Gemini models"
         }
@@ -1770,7 +2206,7 @@ enum AIEngineType: String, CaseIterable {
 
     var isComingSoon: Bool {
         switch self {
-        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock:
+        case .enhancedAppleIntelligence, .localLLM, .localMLX, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock:
             return false
         }
     }
@@ -1789,6 +2225,8 @@ enum AIEngineType: String, CaseIterable {
             return ["OpenAI API Compatible Service", "Internet Connection"]
         case .localLLM:
             return ["Ollama Server", "Local Network", "Model Download"]
+        case .localMLX:
+            return ["iOS 18+", "Model Download from Hugging Face", "On-Device Processing"]
         case .googleAIStudio:
             return ["Google AI Studio API Key", "Internet Connection", "Usage Credits"]
         }

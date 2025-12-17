@@ -105,10 +105,20 @@ struct BisonNotesAIApp: App {
 #if DEBUG
         Self.configureCoverageOutputIfNeeded()
 #endif
+        // Log device capabilities for MLX support
+        logDeviceCapabilities()
+
         setupBackgroundTasks()
         setupAppShortcuts()
         migrateAWSBedrockSettings()
         migrateAIEngineSelection()
+    }
+
+    /// Logs device capabilities on app startup
+    private func logDeviceCapabilities() {
+        print(String(repeating: "=", count: 50))
+        print(DeviceCapabilities.getCapabilityReport())
+        print(String(repeating: "=", count: 50))
     }
     
     var body: some Scene {

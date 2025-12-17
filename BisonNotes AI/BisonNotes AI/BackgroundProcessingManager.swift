@@ -843,7 +843,11 @@ class BackgroundProcessingManager: ObservableObject {
             case .appleIntelligence:
                 let manager = EnhancedTranscriptionManager()
                 result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .appleIntelligence)
-                
+
+            case .mlxWhisper:
+                let manager = EnhancedTranscriptionManager()
+                result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .mlxWhisper)
+
             case .openAIAPICompatible:
                 throw BackgroundProcessingError.processingFailed("OpenAI API Compatible integration not yet implemented")
             }

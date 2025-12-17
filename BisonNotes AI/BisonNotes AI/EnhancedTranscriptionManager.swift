@@ -468,6 +468,12 @@ if let config = openAIConfig {
 // These are not implemented yet, fall back to Apple Intelligence
             switchToAppleTranscription()
             return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+
+        case .mlxWhisper:
+            switchToAppleTranscription() // MLX Whisper doesn't need background checking
+
+            // MLX Whisper transcription with 5-minute chunking
+            return try await transcribeWithMLXWhisper(url: url, duration: duration)
         }
     }
     
@@ -1395,7 +1401,212 @@ return transcriptionResult
             throw TranscriptionError.openAITranscriptionFailed(error)
         }
     }
-    
+
+    // MARK: - MLX Whisper Transcription
+
+    private func transcribeWithMLXWhisper(url: URL, duration: TimeInterval) async throws -> TranscriptionResult {
+        print("🎤 Starting MLX Whisper on-device transcription")
+        print("⏱️ Audio duration: \(duration/60) minutes")
+
+        isTranscribing = true
+        currentStatus = "Initializing MLX Whisper..."
+
+        // Get MLX Whisper configuration
+        guard let mlxConfig = mlxWhisperConfig else {
+            print("❌ MLX Whisper not configured")
+            isTranscribing = false
+            currentStatus = "MLX Whisper not configured"
+            throw TranscriptionError.mlxWhisperNotConfigured
+        }
+
+        let startTime = Date()
+
+        do {
+            // Create MLX Whisper service
+            let mlxService = MLXWhisperService(config: mlxConfig)
+
+            // Check if model is downloaded
+            guard mlxService.isModelDownloaded() else {
+                print("❌ MLX Whisper model not downloaded")
+                isTranscribing = false
+                currentStatus = "MLX Whisper model not downloaded"
+                throw TranscriptionError.mlxWhisperModelNotDownloaded
+            }
+
+            // MLX Whisper uses 1-minute chunks for memory efficiency
+            let chunkDuration: TimeInterval = 60 // 1 minute in seconds
+
+            if duration <= chunkDuration {
+                // Audio is short enough to transcribe in one go
+                print("📝 Audio is short (\(duration)s), processing without chunking")
+                currentStatus = "Transcribing with MLX Whisper..."
+
+                let result = try await mlxService.transcribeAudio(url)
+
+                isTranscribing = false
+                currentStatus = "Transcription complete"
+
+                return TranscriptionResult(
+                    fullText: result.text,
+                    segments: result.segments,
+                    processingTime: Date().timeIntervalSince(startTime),
+                    chunkCount: 1,
+                    success: true,
+                    error: nil
+                )
+            } else {
+                // Audio is longer than 1 minute, use chunking
+                print("📝 Audio is long (\(duration)s), using 1-minute chunks")
+                return try await transcribeMLXWhisperInChunks(
+                    url: url,
+                    duration: duration,
+                    chunkDuration: chunkDuration,
+                    mlxService: mlxService,
+                    startTime: startTime
+                )
+            }
+        } catch {
+            isTranscribing = false
+            currentStatus = "MLX Whisper transcription failed"
+            print("❌ MLX Whisper transcription failed: \(error)")
+            throw TranscriptionError.mlxWhisperTranscriptionFailed(error)
+        }
+    }
+
+    private func transcribeMLXWhisperInChunks(
+        url: URL,
+        duration: TimeInterval,
+        chunkDuration: TimeInterval,
+        mlxService: MLXWhisperService,
+        startTime: Date
+    ) async throws -> TranscriptionResult {
+        // Calculate chunks (1 minute each)
+        let chunks = calculateMLXWhisperChunks(duration: duration, chunkDuration: chunkDuration)
+        print("🔢 Processing \(chunks.count) chunks of \(chunkDuration) seconds each")
+
+        var allTranscripts: [String] = []
+        var allSegments: [TranscriptSegment] = []
+
+        for (index, chunk) in chunks.enumerated() {
+            // Wrap each chunk in autoreleasepool for aggressive memory cleanup
+            try await autoreleasepool {
+                print("🎵 Processing chunk \(index + 1)/\(chunks.count) (\(Int(chunk.start))s-\(Int(chunk.end))s)")
+
+                currentStatus = "Processing chunk \(index + 1) of \(chunks.count)..."
+                progress = TranscriptionProgress(
+                    currentChunk: index + 1,
+                    totalChunks: chunks.count,
+                    processedDuration: chunk.start,
+                    totalDuration: duration,
+                    currentText: allTranscripts.joined(separator: " "),
+                    isComplete: false,
+                    error: nil
+                )
+
+                do {
+                    // Extract audio chunk
+                    let chunkURL = try await extractAudioChunk(from: url, startTime: chunk.start, endTime: chunk.end)
+                    print("✅ Chunk extracted to: \(chunkURL.lastPathComponent)")
+
+                    defer {
+                        // Clean up temporary chunk file
+                        try? FileManager.default.removeItem(at: chunkURL)
+                        print("🗑️ Cleaned up chunk file")
+                    }
+
+                    // Transcribe this chunk
+                    let chunkResult = try await mlxService.transcribeAudio(chunkURL)
+
+                    // Add transcript text
+                    allTranscripts.append(chunkResult.text)
+
+                    // Adjust segment timestamps to account for chunk start time
+                    let adjustedSegments = chunkResult.segments.map { segment in
+                        TranscriptSegment(
+                            speaker: "Speaker",
+                            text: segment.text,
+                            startTime: segment.startTime + chunk.start,
+                            endTime: segment.endTime + chunk.start
+                        )
+                    }
+                    allSegments.append(contentsOf: adjustedSegments)
+
+                    print("✅ Chunk \(index + 1) transcribed: \(chunkResult.text.prefix(100))...")
+
+                } catch {
+                    print("❌ Failed to process chunk \(index + 1): \(error)")
+                    isTranscribing = false
+                    currentStatus = "Chunk \(index + 1) failed"
+
+                    throw TranscriptionError.chunkProcessingFailed(chunk: index + 1, error: error)
+                }
+            } // End autoreleasepool - aggressively frees memory from this chunk
+
+            // Add delay between chunks for memory cleanup and to prevent overwhelming the device
+            if index < chunks.count - 1 {
+                print("⏸️ Pausing 2 seconds for memory cleanup...")
+                try await Task.sleep(nanoseconds: UInt64(2.0 * 1_000_000_000)) // 2 second delay for memory cleanup
+            }
+        }
+
+        // Combine all transcripts
+        let fullText = allTranscripts.joined(separator: " ")
+        let processingTime = Date().timeIntervalSince(startTime)
+
+        isTranscribing = false
+        currentStatus = "Transcription complete"
+        progress = TranscriptionProgress(
+            currentChunk: chunks.count,
+            totalChunks: chunks.count,
+            processedDuration: duration,
+            totalDuration: duration,
+            currentText: fullText,
+            isComplete: true,
+            error: nil
+        )
+
+        print("🎉 MLX Whisper transcription completed in \(processingTime/60) minutes")
+        print("📝 Total transcript length: \(fullText.count) characters")
+
+        return TranscriptionResult(
+            fullText: fullText,
+            segments: allSegments,
+            processingTime: processingTime,
+            chunkCount: chunks.count,
+            success: true,
+            error: nil
+        )
+    }
+
+    private func calculateMLXWhisperChunks(duration: TimeInterval, chunkDuration: TimeInterval) -> [(start: TimeInterval, end: TimeInterval)] {
+        var chunks: [(start: TimeInterval, end: TimeInterval)] = []
+        var currentStart: TimeInterval = 0
+
+        while currentStart < duration {
+            let currentEnd = min(currentStart + chunkDuration, duration)
+            chunks.append((start: currentStart, end: currentEnd))
+            currentStart = currentEnd // No overlap for MLX Whisper chunks
+        }
+
+        return chunks
+    }
+
+    // MLX Whisper Configuration
+    private var mlxWhisperConfig: MLXWhisperConfig? {
+        let isEnabled = UserDefaults.standard.bool(forKey: "enableMLX")
+        let modelString = UserDefaults.standard.string(forKey: "mlxWhisperModelName") ?? MLXWhisperModel.whisperBase4bit.rawValue
+        let model = MLXWhisperModel(rawValue: modelString) ?? .whisperBase4bit
+
+        guard isEnabled else {
+            return nil
+        }
+
+        return MLXWhisperConfig(
+            modelName: model.rawValue,
+            huggingFaceRepoId: model.huggingFaceRepoId
+        )
+    }
+
     // MARK: - Job Tracking Helpers
     
 /// Update pending jobs when recording files are renamed
@@ -1545,7 +1756,7 @@ func switchToWhisperTranscription() {
             switchToAWSTranscription()
         case .whisper:
             switchToWhisperTranscription()
-        case .appleIntelligence, .openAI, .openAIAPICompatible:
+        case .appleIntelligence, .openAI, .openAIAPICompatible, .mlxWhisper:
             switchToAppleTranscription()
         }
     }
@@ -1689,6 +1900,9 @@ enum TranscriptionError: LocalizedError {
     case whisperTranscriptionFailed(Error)
     case openAITranscriptionFailed(Error)
     case engineNotConfigured
+    case mlxWhisperNotConfigured
+    case mlxWhisperModelNotDownloaded
+    case mlxWhisperTranscriptionFailed(Error)
     
     var errorDescription: String? {
         switch self {
@@ -1720,6 +1934,12 @@ enum TranscriptionError: LocalizedError {
             return "File too large for processing (\(Int(duration/60)) minutes, max \(Int(maxDuration/60)) minutes)"
         case .engineNotConfigured:
             return "Transcription engine not configured. Please configure a transcription engine in Settings."
+        case .mlxWhisperNotConfigured:
+            return "MLX Whisper is not configured. Please enable MLX and configure a Whisper model in Settings."
+        case .mlxWhisperModelNotDownloaded:
+            return "MLX Whisper model not downloaded. Please download the model in Settings > MLX Settings."
+        case .mlxWhisperTranscriptionFailed(let error):
+            return "MLX Whisper transcription failed: \(error.localizedDescription)"
         }
     }
 }
