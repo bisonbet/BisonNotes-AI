@@ -617,12 +617,15 @@ class MLXLocalEngine: SummarizationEngine, ConnectionTestable {
         let tokenCount = TokenManager.getTokenCount(text)
         print("📊 Text token count: \(tokenCount)")
 
-        let maxContext = config?.maxTokens ?? 2048
+        // Use maxContext (input context window) for chunking, not maxTokens (output generation)
+        let maxContextSize = UserDefaults.standard.integer(forKey: "mlxMaxContext")
+        let maxContext = maxContextSize > 0 ? maxContextSize : 8192 // Default to 8K if not set
+
         if TokenManager.needsChunking(text, maxTokens: maxContext) {
-            print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+            print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing (max context: \(maxContext))")
             return try await processChunkedText(text, service: service, maxTokens: maxContext)
         } else {
-            print("📝 Processing single chunk (\(tokenCount) tokens)")
+            print("📝 Processing single chunk (\(tokenCount) tokens, within \(maxContext) context window)")
             do {
                 return try await service.processComplete(from: text)
             } catch {
@@ -637,16 +640,17 @@ class MLXLocalEngine: SummarizationEngine, ConnectionTestable {
     func updateConfiguration() {
         let modelString = UserDefaults.standard.string(forKey: "mlxModelName") ?? MLXModel.qwen317B4bit.rawValue
         let maxTokens = UserDefaults.standard.integer(forKey: "mlxMaxTokens")
+        let maxContext = UserDefaults.standard.integer(forKey: "mlxMaxContext")
         let temperature = UserDefaults.standard.float(forKey: "mlxTemperature")
 
-        print("🔧 MLXLocalEngine: Updating configuration - Model: \(modelString)")
+        print("🔧 MLXLocalEngine: Updating configuration - Model: \(modelString), MaxContext: \(maxContext > 0 ? maxContext : 8192)")
 
         let model = MLXModel(rawValue: modelString) ?? .qwen317B4bit
 
         let newConfig = MLXConfig(
             modelName: model.rawValue,
             huggingFaceRepoId: model.huggingFaceRepoId,
-            maxTokens: maxTokens > 0 ? maxTokens : 1024, // Reduced from 2048 for better memory efficiency
+            maxTokens: maxTokens > 0 ? maxTokens : 1024, // Output generation size
             temperature: temperature > 0 ? temperature : 0.1,
             topP: 0.9
         )
