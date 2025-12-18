@@ -68,16 +68,16 @@ enum MLXModel: String, CaseIterable {
 // MARK: - Whisper Models for Transcription
 
 enum MLXWhisperModel: String, CaseIterable {
-    case whisperLargeV3Turbo4bit = "whisper-large-v3-turbo-4bit"
     case whisperMedium4bit = "whisper-medium-4bit"
+    case whisperSmall4bit = "whisper-small-4bit"
     case whisperBase4bit = "whisper-base-4bit"
 
     var huggingFaceRepoId: String {
         switch self {
-        case .whisperLargeV3Turbo4bit:
-            return "mlx-community/whisper-large-v3-turbo-4bit"
         case .whisperMedium4bit:
             return "mlx-community/whisper-medium-4bit"
+        case .whisperSmall4bit:
+            return "mlx-community/whisper-small-4bit"
         case .whisperBase4bit:
             return "mlx-community/whisper-base-4bit"
         }
@@ -85,21 +85,21 @@ enum MLXWhisperModel: String, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .whisperLargeV3Turbo4bit:
-            return "Whisper Large v3 Turbo (4-bit)"
         case .whisperMedium4bit:
-            return "Whisper Medium (4-bit)"
+            return "Whisper Medium"
+        case .whisperSmall4bit:
+            return "Whisper Small"
         case .whisperBase4bit:
-            return "Whisper Base (4-bit)"
+            return "Whisper Base"
         }
     }
 
     var description: String {
         switch self {
-        case .whisperLargeV3Turbo4bit:
-            return "Best quality, fastest large model - OpenAI's Whisper Large v3 Turbo optimized for speed (~1.6GB)"
         case .whisperMedium4bit:
-            return "Balanced quality and speed - Good for most recordings (~800MB)"
+            return "Best quality - Excellent for most recordings, higher accuracy (~800MB)"
+        case .whisperSmall4bit:
+            return "Balanced quality and speed - Good middle ground for most use cases (~350MB)"
         case .whisperBase4bit:
             return "Fast and compact - Quick transcription for shorter recordings (~150MB)"
         }
@@ -107,10 +107,10 @@ enum MLXWhisperModel: String, CaseIterable {
 
     var estimatedSize: String {
         switch self {
-        case .whisperLargeV3Turbo4bit:
-            return "~1.6 GB"
         case .whisperMedium4bit:
             return "~800 MB"
+        case .whisperSmall4bit:
+            return "~350 MB"
         case .whisperBase4bit:
             return "~150 MB"
         }
@@ -121,15 +121,15 @@ enum MLXWhisperModel: String, CaseIterable {
     }
 
     /// Returns available Whisper models based on device RAM
-    /// - 4GB-6GB RAM: Base and Medium models only
-    /// - 6GB+ RAM: All models including Large v3 Turbo
+    /// - 4GB-6GB RAM: Base and Small models only
+    /// - 6GB+ RAM: All models including Medium
     static var availableModels: [MLXWhisperModel] {
         if DeviceCapabilities.supportsWhisperLarge {
             // 6GB+ RAM: All models available
             return allCases
         } else if DeviceCapabilities.supportsWhisperBasic {
-            // 4GB-6GB RAM: Only base and medium
-            return [.whisperBase4bit, .whisperMedium4bit]
+            // 4GB-6GB RAM: Only base and small
+            return [.whisperBase4bit, .whisperSmall4bit]
         } else {
             // Less than 4GB RAM: No models available
             return []
@@ -221,6 +221,61 @@ class MLXService: ObservableObject {
     init(config: MLXConfig = .default) {
         self.config = config
         setupMemoryPressureMonitoring()
+
+        // CRITICAL: Set GPU memory limits for LLM inference
+        // LLMs require higher limits than Whisper due to:
+        // - Persistent model loading (stays in memory for interactive use)
+        // - Higher cache needs for better performance
+        // - Requires "Increased Memory Limit" entitlement for optimal performance
+
+        // Detect device memory and set appropriate limits
+        // Note: Devices report slightly under nominal values (e.g., 11.7GB for 12GB device)
+        let totalRAMBytes = ProcessInfo.processInfo.physicalMemory
+        let totalRAMGB = Double(totalRAMBytes) / (1024.0 * 1024.0 * 1024.0)
+
+        let gpuMemoryLimit: Int
+        let gpuCacheLimit: Int
+
+        // AGGRESSIVE LLM settings (requires "Increased Memory Limit" entitlement)
+        // These settings assume com.apple.developer.kernel.increased-memory-limit is enabled
+        // Without entitlement, iOS may kill app around 5-6GB total usage
+        if totalRAMGB > 11 {
+            // High-memory devices: iPhone 17 Pro (12GB), iPad Pro M4 1TB+ (16GB)
+            // Can support up to 8B parameter models
+            gpuMemoryLimit = 8192 * 1024 * 1024  // 8GB memory limit
+            gpuCacheLimit = 1024 * 1024 * 1024   // 1GB cache for best performance
+            // Model capacity: ~7B parameter 4-bit models
+            print("📱 High-memory device detected (\(String(format: "%.1f", totalRAMGB))GB RAM)")
+            print("   ✅ Can run up to 8B parameter models")
+        } else if totalRAMGB > 7 {
+            // Standard devices: iPhone 15/16 Pro (8GB), iPad Pro M4 base (8GB)
+            // Can support up to 4B parameter models
+            gpuMemoryLimit = 5120 * 1024 * 1024  // 5GB memory limit
+            gpuCacheLimit = 512 * 1024 * 1024    // 512MB cache
+            // Model capacity: ~4B parameter 4-bit models
+            print("📱 Standard device detected (\(String(format: "%.1f", totalRAMGB))GB RAM)")
+            print("   ✅ Can run up to 4B parameter models")
+        } else {
+            // Older/lower-memory devices: iPhone 14 and earlier (6GB or less)
+            // Limited to smallest models (1-2B)
+            gpuMemoryLimit = 2048 * 1024 * 1024  // 2GB memory limit
+            gpuCacheLimit = 128 * 1024 * 1024    // 128MB cache
+            // Model capacity: ~1.7B parameter 4-bit models only
+            print("📱 Lower-memory device detected (\(String(format: "%.1f", totalRAMGB))GB RAM)")
+            print("   ⚠️ Limited to 1.7B parameter models")
+        }
+
+        // Apply the GPU memory limits
+        // memoryLimit: Total GPU memory budget (must be > model size)
+        // cacheLimit: Buffer cache for reuse (affects speed, not capacity)
+        MLX.Memory.memoryLimit = gpuMemoryLimit
+        MLX.Memory.cacheLimit = gpuCacheLimit
+
+        print("🎯 MLX GPU Memory Limits Set (LLM Inference):")
+        print("   Memory Limit: \(gpuMemoryLimit / 1024 / 1024)MB")
+        print("   Cache Limit:  \(gpuCacheLimit / 1024 / 1024)MB")
+        print("   ⚡ Aggressive settings - Requires 'Increased Memory Limit' entitlement")
+        print("   📚 If app crashes, check entitlement or reduce to conservative settings")
     }
 
     deinit {
@@ -837,10 +892,65 @@ struct MLXWhisperResult {
 class MLXWhisperService {
     private var config: MLXWhisperConfig
     private var memoryPressureSource: DispatchSourceMemoryPressure?
+    private var whisperEngine: WhisperEngine?
+    private var isModelLoaded = false
 
     init(config: MLXWhisperConfig) {
         self.config = config
         setupMemoryPressureMonitoring()
+
+        // CRITICAL: Set GPU memory limits to prevent iOS from killing the app
+        // iOS uses unified memory architecture - CPU and GPU share the same RAM pool
+        // iOS jetsam will kill the app if total memory (CPU + GPU) exceeds device limits
+        // Standard memory APIs don't show GPU/Neural Engine memory, so we must cap it explicitly
+
+        // Detect device memory and set appropriate limits
+        // Note: Devices report slightly under nominal values (e.g., 11.7GB for 12GB device)
+        let totalRAMBytes = ProcessInfo.processInfo.physicalMemory
+        let totalRAMGB = Double(totalRAMBytes) / (1024.0 * 1024.0 * 1024.0)
+
+        let gpuMemoryLimit: Int
+        let gpuCacheLimit: Int
+
+        // Device-adaptive GPU memory limits for Whisper transcription
+        // These settings are optimized for audio transcription workloads
+        // LLM inference will require different settings (see future implementation)
+        if totalRAMGB > 11 {
+            // High-memory devices: iPhone 17 Pro (12GB), iPad Pro M4 1TB+ (16GB)
+            gpuMemoryLimit = 2048 * 1024 * 1024  // 2GB memory limit
+            gpuCacheLimit = 20 * 1024 * 1024     // 20MB cache (Apple's official recommendation)
+            // Alternative cache options for future testing:
+            // - 256MB: Higher performance, moderate memory usage
+            // - 512MB: Maximum performance, highest memory usage
+            print("📱 High-memory device detected (\(String(format: "%.1f", totalRAMGB))GB RAM)")
+        } else if totalRAMGB > 7 {
+            // Standard devices: iPhone 15/16 Pro (8GB), iPad Pro M4 base (8GB)
+            gpuMemoryLimit = 1024 * 1024 * 1024  // 1GB memory limit
+            gpuCacheLimit = 20 * 1024 * 1024     // 20MB cache (Apple's official recommendation)
+            // Alternative cache options for future testing:
+            // - 128MB: Good balance for 8GB devices
+            // - 256MB: Higher performance if memory allows
+            print("📱 Standard device detected (\(String(format: "%.1f", totalRAMGB))GB RAM)")
+        } else {
+            // Older/lower-memory devices: iPhone 14 and earlier (6GB or less)
+            gpuMemoryLimit = 768 * 1024 * 1024   // 768MB memory limit
+            gpuCacheLimit = 20 * 1024 * 1024     // 20MB cache (Apple's official recommendation)
+            // Alternative cache options for future testing:
+            // - 64MB: Moderate performance improvement
+            // - 128MB: Maximum safe cache for 6GB devices
+            print("📱 Lower-memory device detected (\(String(format: "%.1f", totalRAMGB))GB RAM)")
+        }
+
+        // Apply the GPU memory limits
+        // memoryLimit: Total GPU memory budget (must be > model size)
+        // cacheLimit: Buffer cache for reuse (affects performance, not capacity)
+        MLX.Memory.memoryLimit = gpuMemoryLimit
+        MLX.Memory.cacheLimit = gpuCacheLimit
+
+        print("🎯 MLX GPU Memory Limits Set (Whisper Transcription):")
+        print("   Memory Limit: \(gpuMemoryLimit / 1024 / 1024)MB")
+        print("   Cache Limit:  \(gpuCacheLimit / 1024 / 1024)MB")
+        print("   📚 Apple's official recommendation: 20MB cache for on-device inference")
     }
 
     deinit {
@@ -852,8 +962,7 @@ class MLXWhisperService {
     private func setupMemoryPressureMonitoring() {
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
 
-        source.setEventHandler { [weak self] in
-            guard let self = self else { return }
+        source.setEventHandler {
             let event = source.data
 
             if event.contains(.critical) {
@@ -958,12 +1067,12 @@ class MLXWhisperService {
             // Map model name to MLXAudio Whisper model type
             let whisperModel: WhisperEngine
             switch config.modelName {
-            case "whisper-large-v3-turbo-4bit":
-                whisperModel = STT.whisper(model: .largeTurbo)
-                print("📦 Downloading Whisper Large v3 Turbo (~1.6GB)")
             case "whisper-medium-4bit":
                 whisperModel = STT.whisper(model: .medium)
                 print("📦 Downloading Whisper Medium (~800MB)")
+            case "whisper-small-4bit":
+                whisperModel = STT.whisper(model: .small)
+                print("📦 Downloading Whisper Small (~350MB)")
             case "whisper-base-4bit":
                 whisperModel = STT.whisper(model: .base)
                 print("📦 Downloading Whisper Base (~150MB)")
@@ -986,6 +1095,88 @@ class MLXWhisperService {
         }
     }
 
+    func deleteModel() throws {
+        guard isModelDownloaded() else {
+            print("⚠️ MLXWhisperService: Whisper model not downloaded, nothing to delete")
+            return
+        }
+
+        print("🗑️ MLXWhisperService: Deleting Whisper model from cache")
+
+        do {
+            // Unload model first if it's loaded
+            if isModelLoaded {
+                unloadModel()
+            }
+
+            // Delete the model cache directory
+            try FileManager.default.removeItem(at: config.cacheDirectory)
+
+            // Clear the UserDefaults flag
+            UserDefaults.standard.removeObject(forKey: "mlx_whisper_downloaded_\(config.modelName)")
+
+            print("✅ MLXWhisperService: Whisper model deleted successfully")
+
+        } catch {
+            print("❌ MLXWhisperService: Model deletion failed: \(error)")
+            throw error
+        }
+    }
+
+    // MARK: - Model Lifecycle (for persistent loading across multiple chunks)
+
+    @MainActor
+    func loadModel() async throws {
+        guard !isModelLoaded else {
+            print("ℹ️ Whisper model already loaded, reusing existing instance")
+            return
+        }
+
+        print("🔽 MLXWhisperService: Loading Whisper model for persistent use")
+        logMemory(label: "Before model load")
+
+        // Create the WhisperEngine instance
+        let engine: WhisperEngine
+        switch config.modelName {
+        case "whisper-medium-4bit":
+            engine = STT.whisper(model: .medium)
+            print("📦 Using Whisper Medium (best quality)")
+        case "whisper-small-4bit":
+            engine = STT.whisper(model: .small)
+            print("📦 Using Whisper Small (balanced quality and speed)")
+        case "whisper-base-4bit":
+            engine = STT.whisper(model: .base)
+            print("📦 Using Whisper Base (fast and compact)")
+        default:
+            engine = STT.whisper(model: .base)
+            print("⚠️ Unknown model '\(config.modelName)', defaulting to Whisper Base")
+        }
+
+        // Load the model into memory
+        try await engine.load()
+        whisperEngine = engine
+        isModelLoaded = true
+
+        // Mark as downloaded since we successfully loaded it
+        UserDefaults.standard.set(true, forKey: "mlx_whisper_downloaded_\(config.modelName)")
+
+        logMemory(label: "After model load")
+        print("✅ Whisper model loaded and ready for reuse across multiple chunks")
+    }
+
+    func unloadModel() {
+        guard isModelLoaded else {
+            print("ℹ️ Whisper model not loaded, nothing to unload")
+            return
+        }
+
+        logMemory(label: "Before model unload")
+        whisperEngine = nil
+        isModelLoaded = false
+        logMemory(label: "After model unload")
+        print("🗑️ Whisper model unloaded from memory")
+    }
+
     func transcribeAudio(_ audioURL: URL) async throws -> MLXWhisperResult {
         let startTime = Date()
 
@@ -997,25 +1188,45 @@ class MLXWhisperService {
             print("⚠️ Low memory detected - transcription may fail")
             // Continue anyway but user has been warned
         }
-        // Map our model names to MLXAudio Whisper model types and create WhisperEngine instance
-        // Must be created on MainActor since STT.whisper() is MainActor-isolated
-        let whisper = await MainActor.run {
-            let engine: WhisperEngine
-            switch config.modelName {
-            case "whisper-large-v3-turbo-4bit":
-                engine = STT.whisper(model: .largeTurbo)
-                print("📦 Using Whisper Large v3 Turbo (best quality, fastest large model)")
-            case "whisper-medium-4bit":
-                engine = STT.whisper(model: .medium)
-                print("📦 Using Whisper Medium (balanced quality and speed)")
-            case "whisper-base-4bit":
-                engine = STT.whisper(model: .base)
-                print("📦 Using Whisper Base (fast and compact)")
-            default:
-                engine = STT.whisper(model: .base)
-                print("⚠️ Unknown model '\(config.modelName)', defaulting to Whisper Base")
+
+        // Use pre-loaded model if available, otherwise load it now
+        let whisper: WhisperEngine
+
+        if let loadedEngine = whisperEngine, isModelLoaded {
+            print("♻️ Reusing pre-loaded Whisper model (memory-efficient multi-chunk mode)")
+            whisper = loadedEngine
+        } else {
+            print("🔽 Loading Whisper model for single-use transcription...")
+            logMemory(label: "Before model load")
+
+            // Map our model names to MLXAudio Whisper model types and create WhisperEngine instance
+            // Must be created on MainActor since STT.whisper() is MainActor-isolated
+            whisper = await MainActor.run {
+                let engine: WhisperEngine
+                switch config.modelName {
+                case "whisper-medium-4bit":
+                    engine = STT.whisper(model: .medium)
+                    print("📦 Using Whisper Medium (best quality)")
+                case "whisper-small-4bit":
+                    engine = STT.whisper(model: .small)
+                    print("📦 Using Whisper Small (balanced quality and speed)")
+                case "whisper-base-4bit":
+                    engine = STT.whisper(model: .base)
+                    print("📦 Using Whisper Base (fast and compact)")
+                default:
+                    engine = STT.whisper(model: .base)
+                    print("⚠️ Unknown model '\(config.modelName)', defaulting to Whisper Base")
+                }
+                return engine
             }
-            return engine
+
+            try await whisper.load()
+            logMemory(label: "After model load")
+            print("✅ Whisper model loaded successfully")
+
+            // Mark as downloaded since we successfully loaded it
+            UserDefaults.standard.set(true, forKey: "mlx_whisper_downloaded_\(config.modelName)")
+            print("   Marked Whisper model as downloaded in UserDefaults")
         }
 
         // Start continuous memory monitoring during transcription
@@ -1039,17 +1250,6 @@ class MLXWhisperService {
         }
 
         do {
-            // Load the Whisper model
-            print("🔽 Loading Whisper model (will download from Hugging Face if needed)...")
-            logMemory(label: "Before model load")
-            try await whisper.load()
-            logMemory(label: "After model load")
-            print("✅ Whisper model loaded successfully")
-
-            // Mark as downloaded since we successfully loaded it
-            UserDefaults.standard.set(true, forKey: "mlx_whisper_downloaded_\(config.modelName)")
-            print("   Marked Whisper model as downloaded in UserDefaults")
-
             // Transcribe the audio file (language auto-detected)
             print("🎙️ Transcribing audio...")
             let result = try await whisper.transcribe(audioURL)

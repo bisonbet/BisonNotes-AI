@@ -213,15 +213,15 @@ struct MLXWhisperSettingsView: View {
                     .fontWeight(.medium)
                     .padding(.top, 4)
 
-                Text("• Base: Fast, good for short recordings and quick transcription")
+                Text("• Base: Fast and compact, good for short recordings and quick transcription")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                Text("• Medium: Best balance of speed and accuracy for general use")
+                Text("• Small: Balanced quality and speed, good middle ground for most use cases")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                Text("• Large v3 Turbo: Highest accuracy, optimized for speed, best for long or complex audio")
+                Text("• Medium: Best quality with excellent accuracy for most recordings")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -277,15 +277,16 @@ struct MLXWhisperSettingsView: View {
 
     private func deleteModel() {
         do {
-            let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            let modelPath = cachesDirectory
-                .appendingPathComponent("mlx-models")
-                .appendingPathComponent(selectedModel.rawValue)
+            // Create MLX Whisper service for deletion
+            let config = MLXWhisperConfig(
+                modelName: selectedModel.rawValue,
+                huggingFaceRepoId: selectedModel.huggingFaceRepoId
+            )
 
-            if FileManager.default.fileExists(atPath: modelPath.path) {
-                try FileManager.default.removeItem(at: modelPath)
-                print("✅ Whisper model deleted successfully")
-            }
+            let service = MLXWhisperService(config: config)
+            try service.deleteModel()
+
+            print("✅ Whisper model deleted successfully via service")
 
         } catch {
             errorMessage = "Failed to delete model: \(error.localizedDescription)"
