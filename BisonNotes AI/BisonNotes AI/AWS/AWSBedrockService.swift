@@ -318,7 +318,20 @@ class AWSBedrockService: ObservableObject {
                 modelId: config.model.rawValue
             )
             
-            let response = try await client.invokeModel(input: invokeRequest)
+            let response: InvokeModelOutput
+            do {
+                // Wrap SDK call to honor the user-configured timeout even if the SDK has its own limits.
+                response = try await withTimeout(seconds: config.timeout) {
+                    try await client.invokeModel(input: invokeRequest)
+                }
+            } catch let error as SummarizationError {
+                throw error
+            } catch {
+                if (error as? URLError)?.code == .timedOut {
+                    throw SummarizationError.processingTimeout
+                }
+                throw error
+            }
             
             guard let responseBody = response.body else {
                 throw SummarizationError.aiServiceUnavailable(service: "Empty response from AWS Bedrock")

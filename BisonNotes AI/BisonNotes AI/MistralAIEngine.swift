@@ -273,7 +273,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             baseURL: baseURL,
             temperature: temperature > 0 ? temperature : 0.1,
             maxTokens: maxTokens > 0 ? maxTokens : model.maxTokens,
-            timeout: 45.0,
+            timeout: SummarizationTimeouts.current(),
             supportsJsonResponseFormat: supportsJsonResponseFormat
         )
 

@@ -212,7 +212,7 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
             model: model,
             temperature: temperature > 0 ? temperature : 0.1,
             maxTokens: maxTokens > 0 ? maxTokens : 4096,
-            timeout: 60.0,
+            timeout: SummarizationTimeouts.current(),
             useProfile: useProfile,
             profileName: profileName
         )
@@ -947,7 +947,8 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             modelName: modelName,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
             temperature: temperature > 0 ? temperature : 0.1,
-            maxContextTokens: contextTokens > 0 ? contextTokens : 4096
+            maxContextTokens: contextTokens > 0 ? contextTokens : 4096,
+            timeoutInterval: SummarizationTimeouts.current()
         )
 
         self.config = config
@@ -1388,7 +1389,8 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             modelName: modelName,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
             temperature: temperature > 0 ? temperature : 0.1,
-            maxContextTokens: contextTokens > 0 ? contextTokens : 4096
+            maxContextTokens: contextTokens > 0 ? contextTokens : 4096,
+            timeoutInterval: SummarizationTimeouts.current()
         )
 
         self.config = config
@@ -1424,7 +1426,8 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
                     modelName: firstAvailableModel,
                     maxTokens: config?.maxTokens ?? 2048,
                     temperature: config?.temperature ?? 0.1,
-                    maxContextTokens: config?.maxContextTokens ?? 4096
+                    maxContextTokens: config?.maxContextTokens ?? 4096,
+                    timeoutInterval: SummarizationTimeouts.current()
                 )
                 
                 self.config = newConfig

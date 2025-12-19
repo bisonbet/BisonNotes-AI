@@ -44,7 +44,8 @@ struct OllamaSettingsView: View {
             modelName: modelName,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
             temperature: temperature > 0 ? temperature : 0.1,
-            maxContextTokens: contextTokens > 0 ? contextTokens : 4096
+            maxContextTokens: contextTokens > 0 ? contextTokens : 4096,
+            timeoutInterval: SummarizationTimeouts.current()
         )
         
         _ollamaService = State(initialValue: OllamaService(config: config))
@@ -404,7 +405,8 @@ struct OllamaSettingsView: View {
             modelName: selectedModel,
             maxTokens: maxTokens,
             temperature: temperature,
-            maxContextTokens: maxContextTokens
+            maxContextTokens: maxContextTokens,
+            timeoutInterval: SummarizationTimeouts.current()
         )
         
         // Create a new OllamaService instance with the updated configuration

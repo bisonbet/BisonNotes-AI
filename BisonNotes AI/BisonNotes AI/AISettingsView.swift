@@ -155,6 +155,7 @@ struct AISettingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var errorHandler = ErrorHandler()
+    @AppStorage(SummarizationTimeouts.storageKey) private var summarizationTimeout: Double = SummarizationTimeouts.defaultTimeout
 
     @Environment(\.dismiss) private var dismiss
     @State private var showingEngineChangePrompt = false
@@ -301,6 +302,7 @@ struct AISettingsView: View {
 
                     headerSection
                     engineSelectionSection
+                    timeoutConfigurationSection
                     selectedEngineConfigurationSection
                     summaryManagementSection
 
@@ -359,6 +361,9 @@ struct AISettingsView: View {
             Text("This will regenerate all summaries using the current AI engine. Only summaries with existing transcripts will be processed. This may take some time depending on how many recordings you have.")
         }
         .onAppear {
+            summarizationTimeout = SummarizationTimeouts.clamp(
+                summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
+            )
             // Align regeneration manager with the user's currently selected engine instead of forcing OpenAI
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ??
                 AIEngineType.enhancedAppleIntelligence.rawValue
@@ -437,6 +442,65 @@ private extension AISettingsView {
         }
     }
     
+    var timeoutConfigurationSection: some View {
+        let effectiveTimeout = SummarizationTimeouts.clamp(
+            summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
+        )
+        let isUnlimitedEngine = currentEngineType == .enhancedAppleIntelligence || currentEngineType == .localMLX
+        
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("Summary Request Timeout")
+                .font(.headline)
+                .padding(.horizontal, 24)
+            
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Set how long the app waits for AI models to respond when generating summaries and tasks.")
+                    .font(.body)
+                    .fontWeight(.medium)
+                
+                if isUnlimitedEngine {
+                    Text("Apple Intelligence and Local MLX run on-device with no timeout. They will continue processing until complete.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Slider(
+                        value: Binding(
+                            get: { effectiveTimeout },
+                            set: { summarizationTimeout = SummarizationTimeouts.clamp($0) }
+                        ),
+                        in: SummarizationTimeouts.minimumTimeout...SummarizationTimeouts.maximumTimeout,
+                        step: 10
+                    )
+                    
+                    HStack {
+                        Text("Timeout: \(Int(effectiveTimeout)) seconds")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Spacer()
+                        Text("\(String(format: "%.1f", effectiveTimeout / 60)) minutes")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Text("Range: 30-600 seconds.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Applies to OpenAI, OpenAI Compatible, Mistral AI, AWS Bedrock, Google AI Studio, and Ollama engines.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.orange.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+
     
     var engineSelectionSection: some View {
         VStack(alignment: .leading, spacing: 16) {
