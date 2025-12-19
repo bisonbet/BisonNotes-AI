@@ -112,7 +112,9 @@ func withTimeout<T>(
             throw timeoutError
         }
         
-        let result = try await group.next()!
+        guard let result = try await group.next() else {
+            throw SummarizationError.processingTimeout
+        }
         group.cancelAll()
         return result
     }

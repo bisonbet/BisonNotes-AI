@@ -320,6 +320,7 @@ class AWSBedrockService: ObservableObject {
             
             let response: InvokeModelOutput
             do {
+                // Wrap SDK call to honor the user-configured timeout even if the SDK has its own limits.
                 response = try await withTimeout(seconds: config.timeout) {
                     try await client.invokeModel(input: invokeRequest)
                 }
