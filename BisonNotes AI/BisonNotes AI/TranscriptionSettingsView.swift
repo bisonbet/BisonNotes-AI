@@ -16,6 +16,7 @@ struct TranscriptionSettingsView: View {
     @State private var showingWhisperSettings = false
     @State private var showingOpenAISettings = false
     @State private var showingAppleIntelligenceSettings = false
+    @State private var showingMLXWhisperSettings = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -48,6 +49,9 @@ struct TranscriptionSettingsView: View {
             .sheet(isPresented: $showingAppleIntelligenceSettings) {
                 AppleIntelligenceSettingsView()
             }
+            .sheet(isPresented: $showingMLXWhisperSettings) {
+                MLXWhisperSettingsView()
+            }
         }
     }
     
@@ -59,7 +63,7 @@ struct TranscriptionSettingsView: View {
                     .fontWeight(.medium)
                 
                 Picker("Transcription Engine", selection: $selectedTranscriptionEngine) {
-                    ForEach(TranscriptionEngine.allCases.filter { $0.isAvailable }, id: \.self) { engine in
+                    ForEach(TranscriptionEngine.availableCases.filter { $0.isAvailable }, id: \.self) { engine in
                         VStack(alignment: .leading) {
                             Text(engine.rawValue)
                                 .font(.body)
@@ -118,6 +122,8 @@ struct TranscriptionSettingsView: View {
                                     showingOpenAISettings = true
                                 case .appleIntelligence:
                                     showingAppleIntelligenceSettings = true
+                                case .mlxWhisper:
+                                    showingMLXWhisperSettings = true
                                 case .openAIAPICompatible:
                                     // Coming soon - no settings yet
                                     break
@@ -158,6 +164,8 @@ struct TranscriptionSettingsView: View {
             return .blue
         case .appleIntelligence:
             return .purple
+        case .mlxWhisper:
+            return .indigo
         case .openAIAPICompatible:
             return .gray
         }
@@ -222,6 +230,8 @@ struct TranscriptionSettingsView: View {
         case .openAI:
             return "Cloud AI"
         case .appleIntelligence:
+            return "On-Device"
+        case .mlxWhisper:
             return "On-Device"
         case .openAIAPICompatible:
             return "Coming Soon"

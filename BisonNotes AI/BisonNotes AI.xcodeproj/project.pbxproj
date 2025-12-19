@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		144129D72EF357E100FAD577 /* Kokoro in Frameworks */ = {isa = PBXBuildFile; productRef = 144129D62EF357E100FAD577 /* Kokoro */; };
+		144129D92EF357E100FAD577 /* MLXAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 144129D82EF357E100FAD577 /* MLXAudio */; };
 		1485FEC52E526FB30044121F /* BisonNotes AI Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED42E5271970044121F /* WatchConnectivity.framework */; };
 		1485FED72E5271AF0044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED62E5271AF0044121F /* WatchConnectivity.framework */; };
@@ -26,6 +28,7 @@
 		14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */; };
 		14FDF9102E3F8D5600BBD2FA /* AWSTranscribeStreaming in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */; };
 		14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */; };
+		14MLX0032E8000000003 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 14MLX0022E8000000002 /* MLXLMCommon */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -221,9 +224,12 @@
 				14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */,
 				148A7AC62E593E1D00666860 /* MarkdownUI in Frameworks */,
 				14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */,
+				144129D92EF357E100FAD577 /* MLXAudio in Frameworks */,
+				144129D72EF357E100FAD577 /* Kokoro in Frameworks */,
 				1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */,
 				14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */,
 				14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */,
+				14MLX0032E8000000003 /* MLXLMCommon in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -404,6 +410,9 @@
 				14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */,
 				14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */,
 				148A7AC52E593E1D00666860 /* MarkdownUI */,
+				14MLX0022E8000000002 /* MLXLMCommon */,
+				144129D62EF357E100FAD577 /* Kokoro */,
+				144129D82EF357E100FAD577 /* MLXAudio */,
 			);
 			productName = "BisonNotes AI";
 			productReference = 14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */;
@@ -526,7 +535,8 @@
 			packageReferences = (
 				14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
 				148A7AC42E593E1D00666860 /* XCRemoteSwiftPackageReference "MarkdownUI" */,
-				14ABC1232E5F4D8A00123456 /* XCRemoteSwiftPackageReference "LocalLLMClient-iOS" */,
+				14MLX0012E8000000001 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+				144129D52EF357E100FAD577 /* XCRemoteSwiftPackageReference "mlx-swift-audio" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 14DBC83E2E34F7B500DAD442 /* Products */;
@@ -1270,6 +1280,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		144129D52EF357E100FAD577 /* XCRemoteSwiftPackageReference "mlx-swift-audio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/bisonbet/mlx-swift-audio";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 		148A7AC42E593E1D00666860 /* XCRemoteSwiftPackageReference "MarkdownUI" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/gonzalezreal/MarkdownUI";
@@ -1286,17 +1304,27 @@
 				minimumVersion = 1.5.12;
 			};
 		};
-		14ABC1232E5F4D8A00123456 /* XCRemoteSwiftPackageReference "LocalLLMClient-iOS" */ = {
+		14MLX0012E8000000001 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/bisonbet/LocalLLMClient-iOS";
+			repositoryURL = "https://github.com/bisonbet/mlx-swift-lm";
 			requirement = {
-				kind = branch;
 				branch = main;
+				kind = branch;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		144129D62EF357E100FAD577 /* Kokoro */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 144129D52EF357E100FAD577 /* XCRemoteSwiftPackageReference "mlx-swift-audio" */;
+			productName = Kokoro;
+		};
+		144129D82EF357E100FAD577 /* MLXAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 144129D52EF357E100FAD577 /* XCRemoteSwiftPackageReference "mlx-swift-audio" */;
+			productName = MLXAudio;
+		};
 		148A7AC52E593E1D00666860 /* MarkdownUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 148A7AC42E593E1D00666860 /* XCRemoteSwiftPackageReference "MarkdownUI" */;
@@ -1331,6 +1359,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
 			productName = AWSBedrockRuntime;
+		};
+		14MLX0022E8000000002 /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 14MLX0012E8000000001 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

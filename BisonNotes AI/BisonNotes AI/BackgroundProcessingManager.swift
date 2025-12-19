@@ -210,8 +210,9 @@ class BackgroundProcessingManager: ObservableObject {
     var onTranscriptionCompleted: ((TranscriptData, ProcessingJob) -> Void)?
     
     // MARK: - Private Properties
-    
+
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundTaskStartTime: Date?
     private var backgroundTimeMonitor: Task<Void, Never>?
     private let chunkingService = AudioFileChunkingService()
     private let performanceOptimizer = PerformanceOptimizer.shared
@@ -257,12 +258,13 @@ class BackgroundProcessingManager: ObservableObject {
     private func startBackgroundTimeMonitoring() {
         // Cancel any existing monitoring
         backgroundTimeMonitor?.cancel()
-        
-        // Start periodic monitoring every 30 seconds
+
+        // Start periodic monitoring every 20 seconds to catch tasks that need refreshing
+        // We refresh at 25s, so checking every 20s ensures we catch them in time
         backgroundTimeMonitor = Task {
             while !Task.isCancelled && backgroundTaskID != .invalid {
-                try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds
-                
+                try? await Task.sleep(nanoseconds: 20_000_000_000) // 20 seconds
+
                 if !Task.isCancelled {
                     monitorBackgroundTime()
                 }
@@ -843,7 +845,11 @@ class BackgroundProcessingManager: ObservableObject {
             case .appleIntelligence:
                 let manager = EnhancedTranscriptionManager()
                 result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .appleIntelligence)
-                
+
+            case .mlxWhisper:
+                let manager = EnhancedTranscriptionManager()
+                result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .mlxWhisper)
+
             case .openAIAPICompatible:
                 throw BackgroundProcessingError.processingFailed("OpenAI API Compatible integration not yet implemented")
             }
@@ -1677,16 +1683,19 @@ class BackgroundProcessingManager: ObservableObject {
             print("   - 1. App doesn't have proper background modes configured")
             print("   - 2. Device is low on resources")
             print("   - 3. Background App Refresh is disabled")
+            backgroundTaskStartTime = nil
         } else {
+            // Record when this background task started
+            backgroundTaskStartTime = Date()
             print("🔄 Started background task: \(backgroundTaskID.rawValue)")
-            
+
             // Check remaining background time immediately
             let remainingTime = UIApplication.shared.backgroundTimeRemaining
             if remainingTime == Double.greatestFiniteMagnitude {
                 print("🕐 Background time: Unlimited (likely in foreground or audio session active)")
             } else {
                 print("🕐 Background time remaining: \(Int(remainingTime))s")
-                
+
                 // Diagnose potential issues
                 if remainingTime < 30 {
                     print("❌ CRITICAL: Very limited background time! Background task may fail immediately")
@@ -1699,7 +1708,7 @@ class BackgroundProcessingManager: ObservableObject {
                     print("   - Audio session may not be properly configured")
                 }
             }
-            
+
             // Start monitoring background time for long operations
             startBackgroundTimeMonitoring()
         }
@@ -1710,11 +1719,12 @@ class BackgroundProcessingManager: ObservableObject {
         // Cancel background time monitor first
         backgroundTimeMonitor?.cancel()
         backgroundTimeMonitor = nil
-        
+
         if backgroundTaskID != .invalid {
             print("⏹️ Ending background task: \(backgroundTaskID.rawValue)")
             UIApplication.shared.endBackgroundTask(backgroundTaskID)
             backgroundTaskID = .invalid
+            backgroundTaskStartTime = nil
             
             // Clean up audio session when background task ends
             Task {
@@ -1755,34 +1765,71 @@ class BackgroundProcessingManager: ObservableObject {
     
     private func monitorBackgroundTime() {
         guard backgroundTaskID != .invalid else { return }
-        
+
+        // Check if background task has been running too long (>25 seconds)
+        // iOS warns if tasks are open for >30 seconds, so we refresh at 25s
+        if let startTime = backgroundTaskStartTime {
+            let taskAge = Date().timeIntervalSince(startTime)
+            if taskAge > 25 {
+                print("🔄 Background task age: \(Int(taskAge))s - refreshing to avoid iOS warning")
+                Task { @MainActor in
+                    await self.refreshBackgroundTask()
+                }
+                return
+            }
+        }
+
         let remainingTime = UIApplication.shared.backgroundTimeRemaining
-        
+
         // Skip monitoring if we have unlimited time (app is likely in foreground or has special privileges)
         guard remainingTime != Double.greatestFiniteMagnitude else { return }
-        
+
         // For long-running audio processing, manage time intelligently
         if remainingTime < 600 { // Less than 10 minutes
             print("⚠️ Background time running low (\(Int(remainingTime))s remaining)")
-            
+
             // Notify current job about time constraints
             if let job = currentJob {
                 print("📊 Current job: \(job.type.displayName) for \(job.recordingName) - Progress: \(Int(job.progress * 100))%")
             }
         }
-        
+
         // Try to complete processing gracefully when very low on time
         if remainingTime < 120 { // Less than 2 minutes
             print("⚠️ Background time critically low (\(Int(remainingTime))s), will attempt graceful shutdown soon")
             // Allow the current processing chunk to complete if possible
         }
-        
+
         // Force shutdown when almost expired to prevent sudden termination
         if remainingTime < 30 {
             print("⚠️ Background time almost expired (\(Int(remainingTime))s), initiating graceful shutdown")
             Task { @MainActor in
                 await self.handleBackgroundTaskExpiration()
             }
+        }
+    }
+
+    /// Refresh the background task to avoid iOS warnings about long-running tasks
+    /// This ends the current task and immediately starts a new one
+    private func refreshBackgroundTask() async {
+        guard backgroundTaskID != .invalid else { return }
+
+        print("♻️ Refreshing background task to avoid iOS 30-second warning")
+
+        // Get the current task name before ending
+        let hasActiveJob = currentJob != nil
+
+        // End the current background task
+        let oldTaskID = backgroundTaskID
+        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        backgroundTaskID = .invalid
+        backgroundTaskStartTime = nil
+        print("   Ended old task: \(oldTaskID.rawValue)")
+
+        // Immediately start a new one if we still have an active job
+        if hasActiveJob {
+            // Don't cancel the monitor, we'll keep using it
+            await beginBackgroundTask()
         }
     }
     
