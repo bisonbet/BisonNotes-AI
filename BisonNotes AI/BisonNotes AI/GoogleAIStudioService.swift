@@ -141,8 +141,9 @@ class GoogleAIStudioService: ObservableObject {
         
         // Create a URLSession with timeout configuration
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 180.0
-        config.timeoutIntervalForResource = 360.0
+        let timeout = SummarizationTimeouts.current()
+        config.timeoutIntervalForRequest = timeout
+        config.timeoutIntervalForResource = timeout * 2
         let session = URLSession(configuration: config)
         
         let (data, response) = try await session.data(for: request)

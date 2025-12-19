@@ -318,7 +318,9 @@ class AWSBedrockService: ObservableObject {
                 modelId: config.model.rawValue
             )
             
-            let response = try await client.invokeModel(input: invokeRequest)
+            let response = try await withTimeout(seconds: config.timeout) {
+                try await client.invokeModel(input: invokeRequest)
+            }
             
             guard let responseBody = response.body else {
                 throw SummarizationError.aiServiceUnavailable(service: "Empty response from AWS Bedrock")

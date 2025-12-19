@@ -54,6 +54,35 @@ struct SummarizationConfig {
         timeoutInterval: 180.0,
         enableParallelProcessing: false
     )
+    
+    static let onDeviceUnlimited = SummarizationConfig(
+        maxSummaryLength: 500,
+        maxTasks: 5,
+        maxReminders: 5,
+        maxTokens: 8192,
+        minConfidenceThreshold: 0.8,
+        timeoutInterval: .infinity,
+        enableParallelProcessing: false
+    )
+}
+
+// MARK: - Global Timeout Configuration
+
+struct SummarizationTimeouts {
+    static let storageKey = "summarizationTimeout"
+    static let defaultTimeout: TimeInterval = 180.0
+    static let minimumTimeout: TimeInterval = 30.0
+    static let maximumTimeout: TimeInterval = 600.0
+    
+    static func current() -> TimeInterval {
+        let storedValue = UserDefaults.standard.double(forKey: storageKey)
+        guard storedValue > 0 else { return defaultTimeout }
+        return clamp(storedValue)
+    }
+    
+    static func clamp(_ value: TimeInterval) -> TimeInterval {
+        return min(max(value, minimumTimeout), maximumTimeout)
+    }
 }
 
 // MARK: - Placeholder Engine for Future Implementation

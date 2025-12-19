@@ -107,15 +107,17 @@ struct MistralAIConfig: Equatable {
     let timeout: TimeInterval
     let supportsJsonResponseFormat: Bool
 
-    static let `default` = MistralAIConfig(
-        apiKey: "",
-        model: .mistralMedium2508,
-        baseURL: "https://api.mistral.ai/v1",
-        temperature: 0.1,
-        maxTokens: 4096,
-        timeout: 180.0,
-        supportsJsonResponseFormat: true
-    )
+    static var `default`: MistralAIConfig {
+        return MistralAIConfig(
+            apiKey: "",
+            model: .mistralMedium2508,
+            baseURL: "https://api.mistral.ai/v1",
+            temperature: 0.1,
+            maxTokens: 4096,
+            timeout: SummarizationTimeouts.current(),
+            supportsJsonResponseFormat: true
+        )
+    }
 
     /// Check if the base URL is the official Mistral API
     var isOfficialMistralAPI: Bool {

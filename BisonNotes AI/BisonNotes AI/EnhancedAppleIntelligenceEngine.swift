@@ -23,7 +23,7 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     
     private let config: SummarizationConfig
     
-    init(config: SummarizationConfig = .default) {
+    init(config: SummarizationConfig = .onDeviceUnlimited) {
         self.config = config
     }
     

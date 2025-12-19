@@ -17,6 +17,7 @@ struct OllamaConfig {
     let temperature: Double
     /// Maximum number of tokens the model can accept in the prompt/context
     let maxContextTokens: Int
+    let timeoutInterval: TimeInterval
     
     var baseURL: String {
         return "\(serverURL):\(port)"
@@ -28,7 +29,8 @@ struct OllamaConfig {
         modelName: "llama2:7b",
         maxTokens: 2048,
         temperature: 0.1,
-        maxContextTokens: 4096
+        maxContextTokens: 4096,
+        timeoutInterval: SummarizationTimeouts.current()
     )
 }
 
@@ -323,11 +325,11 @@ class OllamaService: ObservableObject {
     init(config: OllamaConfig = .default) {
         self.config = config
         
-        // Create a custom URLSession with longer timeout for Ollama requests
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 1800.0  // 30 minutes
-        config.timeoutIntervalForResource = 1800.0 // 30 minutes
-        self.session = URLSession(configuration: config)
+        // Create a custom URLSession with configurable timeout for Ollama requests
+        let sessionConfig = URLSessionConfiguration.default
+        sessionConfig.timeoutIntervalForRequest = config.timeoutInterval
+        sessionConfig.timeoutIntervalForResource = config.timeoutInterval * 2
+        self.session = URLSession(configuration: sessionConfig)
     }
     
     // MARK: - Connection Management

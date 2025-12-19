@@ -200,7 +200,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
             baseURL: baseURL,
             temperature: temperature > 0 ? temperature : 0.1,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
-            timeout: OpenAISummarizationConfig.defaultTimeout,
+            timeout: SummarizationTimeouts.current(),
             dynamicModelId: modelString // Pass the actual model ID for dynamic models
         )
         
@@ -566,7 +566,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
             baseURL: baseURL,
             temperature: temperature > 0 ? temperature : 0.1,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
-            timeout: OpenAISummarizationConfig.defaultTimeout,
+            timeout: SummarizationTimeouts.current(),
             dynamicModelId: modelId // Pass the actual model ID for dynamic models
         )
         

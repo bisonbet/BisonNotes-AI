@@ -259,7 +259,7 @@ struct OpenAISummarizationSettingsView: View {
                 baseURL: baseURL,
                 temperature: temperature,
                 maxTokens: maxTokens == 0 ? 2048 : maxTokens,
-                timeout: OpenAISummarizationConfig.defaultTimeout,
+                timeout: SummarizationTimeouts.current(),
                 dynamicModelId: nil
             )
             
@@ -440,7 +440,7 @@ struct OpenAICompatibleSettingsView: View {
                 baseURL: baseURL,
                 temperature: temperature,
                 maxTokens: maxTokens,
-                timeout: OpenAISummarizationConfig.defaultTimeout,
+                timeout: SummarizationTimeouts.current(),
                 dynamicModelId: selectedModel
             )
             
