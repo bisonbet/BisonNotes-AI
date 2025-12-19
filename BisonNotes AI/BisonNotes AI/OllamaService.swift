@@ -328,6 +328,7 @@ class OllamaService: ObservableObject {
         // Create a custom URLSession with configurable timeout for Ollama requests
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.timeoutIntervalForRequest = config.timeoutInterval
+        // Provide additional time for streamed or larger local responses to finish after the request is accepted.
         sessionConfig.timeoutIntervalForResource = config.timeoutInterval * 2
         self.session = URLSession(configuration: sessionConfig)
     }

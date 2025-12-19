@@ -73,6 +73,8 @@ struct SummarizationTimeouts {
     static let defaultTimeout: TimeInterval = 180.0
     static let minimumTimeout: TimeInterval = 30.0
     static let maximumTimeout: TimeInterval = 600.0
+    // NOTE: The timeout value is read when configs are created. Updates apply to new requests,
+    // while in-flight operations continue with their originally captured timeout.
     
     static func current() -> TimeInterval {
         let storedValue = UserDefaults.standard.double(forKey: storageKey)
@@ -82,6 +84,37 @@ struct SummarizationTimeouts {
     
     static func clamp(_ value: TimeInterval) -> TimeInterval {
         return min(max(value, minimumTimeout), maximumTimeout)
+    }
+}
+
+// MARK: - Timeout Helpers
+
+/// Run an async operation with a timeout, cancelling all tasks when the first completes.
+///
+/// - Parameters:
+///   - seconds: Maximum duration to wait before throwing a timeout error.
+///   - timeoutError: Error to throw when the timeout elapses.
+///   - operation: Async work to perform.
+/// - Returns: The value produced by `operation` if it completes before the timeout.
+/// - Throws: `timeoutError` when the timeout elapses, or any error thrown by `operation`.
+func withTimeout<T>(
+    seconds: TimeInterval,
+    timeoutError: Error = SummarizationError.processingTimeout,
+    operation: @escaping () async throws -> T
+) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await operation()
+        }
+        
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw timeoutError
+        }
+        
+        let result = try await group.next()!
+        group.cancelAll()
+        return result
     }
 }
 

@@ -318,8 +318,18 @@ class AWSBedrockService: ObservableObject {
                 modelId: config.model.rawValue
             )
             
-            let response = try await withTimeout(seconds: config.timeout) {
-                try await client.invokeModel(input: invokeRequest)
+            let response: InvokeModelOutput
+            do {
+                response = try await withTimeout(seconds: config.timeout) {
+                    try await client.invokeModel(input: invokeRequest)
+                }
+            } catch let error as SummarizationError {
+                throw error
+            } catch {
+                if (error as? URLError)?.code == .timedOut {
+                    throw SummarizationError.processingTimeout
+                }
+                throw error
             }
             
             guard let responseBody = response.body else {

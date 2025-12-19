@@ -143,10 +143,19 @@ class GoogleAIStudioService: ObservableObject {
         let config = URLSessionConfiguration.default
         let timeout = SummarizationTimeouts.current()
         config.timeoutIntervalForRequest = timeout
+        // Allow extra time for larger responses to fully download when the request succeeds near the timeout threshold.
         config.timeoutIntervalForResource = timeout * 2
         let session = URLSession(configuration: config)
         
-        let (data, response) = try await session.data(for: request)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            if (error as? URLError)?.code == .timedOut {
+                throw SummarizationError.processingTimeout
+            }
+            throw error
+        }
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SummarizationError.networkError(underlying: NSError(domain: "GoogleAIStudio", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"]))
