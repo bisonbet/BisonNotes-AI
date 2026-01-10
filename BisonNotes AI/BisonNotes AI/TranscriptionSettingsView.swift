@@ -16,7 +16,6 @@ struct TranscriptionSettingsView: View {
     @State private var showingWhisperSettings = false
     @State private var showingOpenAISettings = false
     @State private var showingAppleIntelligenceSettings = false
-    @State private var showingMLXWhisperSettings = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -48,9 +47,6 @@ struct TranscriptionSettingsView: View {
             }
             .sheet(isPresented: $showingAppleIntelligenceSettings) {
                 AppleIntelligenceSettingsView()
-            }
-            .sheet(isPresented: $showingMLXWhisperSettings) {
-                MLXWhisperSettingsView()
             }
         }
     }
@@ -122,8 +118,6 @@ struct TranscriptionSettingsView: View {
                                     showingOpenAISettings = true
                                 case .appleIntelligence:
                                     showingAppleIntelligenceSettings = true
-                                case .mlxWhisper:
-                                    showingMLXWhisperSettings = true
                                 case .openAIAPICompatible:
                                     // Coming soon - no settings yet
                                     break
@@ -164,8 +158,6 @@ struct TranscriptionSettingsView: View {
             return .blue
         case .appleIntelligence:
             return .purple
-        case .mlxWhisper:
-            return .indigo
         case .openAIAPICompatible:
             return .gray
         }
@@ -230,8 +222,6 @@ struct TranscriptionSettingsView: View {
         case .openAI:
             return "Cloud AI"
         case .appleIntelligence:
-            return "On-Device"
-        case .mlxWhisper:
             return "On-Device"
         case .openAIAPICompatible:
             return "Coming Soon"
@@ -325,4 +315,3 @@ struct TranscriptionSettingsView_Previews: PreviewProvider {
             .environmentObject(AudioRecorderViewModel())
     }
 }
-

@@ -47,32 +47,6 @@
       }
     },
     {
-      "identity" : "mlx-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ml-explore/mlx-swift",
-      "state" : {
-        "revision" : "9594dbe2736a6ba03fe0f11514d7265fd2f7ba77"
-      }
-    },
-    {
-      "identity" : "mlx-swift-audio",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/bisonbet/mlx-swift-audio",
-      "state" : {
-        "branch" : "main",
-        "revision" : "c6d420d67a2b796619b7ba8aaaee374c930cbf19"
-      }
-    },
-    {
-      "identity" : "mlx-swift-lm",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/bisonbet/mlx-swift-lm",
-      "state" : {
-        "branch" : "main",
-        "revision" : "d9f46e3a1fe715d01304372089aba5f39c585327"
-      }
-    },
-    {
       "identity" : "networkimage",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/gonzalezreal/NetworkImage",
