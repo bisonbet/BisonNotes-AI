@@ -357,7 +357,7 @@ class DataMigrationManager: ObservableObject {
             summaryEntry.recordingId = recordingEntry.id
             summaryEntry.transcriptId = summary.transcriptId
             summaryEntry.generatedAt = summary.generatedAt
-            summaryEntry.aiMethod = summary.aiMethod
+            summaryEntry.aiMethod = summary.aiModel
             summaryEntry.processingTime = summary.processingTime
             summaryEntry.confidence = summary.confidence
             summaryEntry.summary = summary.summary
@@ -480,7 +480,7 @@ class DataMigrationManager: ObservableObject {
                                 }
                                 
                                 summaryEntry.contentType = summary.contentType.rawValue
-                                summaryEntry.aiMethod = summary.aiMethod
+                                summaryEntry.aiMethod = summary.aiModel
                                 summaryEntry.originalLength = Int32(summary.originalLength)
                                 summaryEntry.processingTime = summary.processingTime
                                 summaryEntry.recordingId = summary.recordingId

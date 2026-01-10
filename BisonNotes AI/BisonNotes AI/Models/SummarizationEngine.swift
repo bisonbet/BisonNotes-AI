@@ -10,9 +10,14 @@ protocol ConnectionTestable {
 
 protocol SummarizationEngine {
     var name: String { get }
+    var engineType: String { get }
     var description: String { get }
     var isAvailable: Bool { get }
     var version: String { get }
+    
+    /// The name to display in metadata (e.g., specific model name)
+    /// Defaults to `name` if not implemented
+    var metadataName: String { get }
     
     func generateSummary(from text: String, contentType: ContentType) async throws -> String
     func extractTasks(from text: String) async throws -> [TaskItem]
@@ -22,6 +27,16 @@ protocol SummarizationEngine {
     
     // Optional: Full processing in one call for efficiency
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
+}
+
+extension SummarizationEngine {
+    var metadataName: String {
+        return name
+    }
+    
+    var engineType: String {
+        return "AI Assistant"
+    }
 }
 
 // MARK: - Processing Configuration

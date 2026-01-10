@@ -68,7 +68,7 @@ class AppDataCoordinator: ObservableObject {
         )
     }
     
-    func addSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiMethod: String, originalLength: Int, processingTime: TimeInterval = 0) -> UUID? {
+    func addSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) -> UUID? {
         return workflowManager.createSummary(
             for: recordingId,
             transcriptId: transcriptId,
@@ -77,7 +77,8 @@ class AppDataCoordinator: ObservableObject {
             reminders: reminders,
             titles: titles,
             contentType: contentType,
-            aiMethod: aiMethod,
+            aiEngine: aiEngine,
+            aiModel: aiModel,
             originalLength: originalLength,
             processingTime: processingTime
         )

@@ -580,6 +580,23 @@ class CoreDataManager: ObservableObject {
         // Convert content type string to enum
         let contentType = summaryEntry.contentType.flatMap { ContentType(rawValue: $0) } ?? .general
         
+        let method = summaryEntry.aiMethod ?? ""
+        // Simple inference for engine until we have a proper field
+        let engine: String
+        if method.lowercased().contains("gpt") || method.lowercased().contains("openai") {
+            engine = "OpenAI"
+        } else if method.lowercased().contains("claude") || method.lowercased().contains("bedrock") {
+            engine = "AWS Bedrock"
+        } else if method.lowercased().contains("gemini") || method.lowercased().contains("google") {
+            engine = "Google AI"
+        } else if method.lowercased().contains("ollama") {
+            engine = "Ollama"
+        } else if method.lowercased().contains("llama") || method.lowercased().contains("mistral") || method.lowercased().contains("gemma") || method.lowercased().contains("phi") || method.lowercased().contains("qwen") || method.lowercased().contains("olmo") {
+            engine = "On Device LLM"
+        } else {
+            engine = "AI Assistant"
+        }
+        
         return EnhancedSummaryData(
             id: summaryEntry.id ?? UUID(),
             recordingId: recordingId,
@@ -592,7 +609,8 @@ class CoreDataManager: ObservableObject {
             reminders: reminders,
             titles: titles,
             contentType: contentType,
-            aiMethod: summaryEntry.aiMethod ?? "",
+            aiEngine: engine,
+            aiModel: method,
             originalLength: Int(summaryEntry.originalLength),
             processingTime: summaryEntry.processingTime,
             generatedAt: summaryEntry.generatedAt,

@@ -179,7 +179,7 @@ class RecordingWorkflowManager: ObservableObject {
     // MARK: - Summary Workflow
     
     /// Creates a summary linked to both recording and transcript with proper UUID relationships
-    func createSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiMethod: String, originalLength: Int, processingTime: TimeInterval = 0) -> UUID? {
+    func createSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) -> UUID? {
         
         // Get the recording from Core Data
         guard let recordingEntry = getRecordingEntry(id: recordingId) else {
@@ -213,7 +213,8 @@ class RecordingWorkflowManager: ObservableObject {
             reminders: reminders,
             titles: titles,
             contentType: contentType,
-            aiMethod: aiMethod,
+            aiEngine: aiEngine,
+            aiModel: aiModel,
             originalLength: originalLength,
             processingTime: processingTime
         )
@@ -225,7 +226,10 @@ class RecordingWorkflowManager: ObservableObject {
         summaryEntry.recordingId = recordingId
         summaryEntry.transcriptId = transcriptId
         summaryEntry.generatedAt = summaryData.generatedAt
-        summaryEntry.aiMethod = aiMethod
+        summaryEntry.aiMethod = aiModel // Store model in method field for now
+        // If we want to store engine, we might need a new field in Core Data
+        // For now, let's prefix it or just store model as before
+        
         summaryEntry.processingTime = processingTime
         summaryEntry.confidence = summaryData.confidence
         summaryEntry.summary = summary

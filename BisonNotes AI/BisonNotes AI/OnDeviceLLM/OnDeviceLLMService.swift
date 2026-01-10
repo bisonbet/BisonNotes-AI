@@ -75,6 +75,10 @@ public class OnDeviceLLMService: ObservableObject {
             systemPrompt: LLMTemplate.summarizationSystemPrompt
         )
 
+        // Use model's native context capability (capped at 16k for mobile safety) 
+        // regardless of user setting to prevent K-shifts and slowness
+        let contextSize = Int32(min(config.modelInfo.contextWindow, 16384))
+
         llm = OnDeviceLLM(
             from: modelURL,
             template: template,
@@ -83,7 +87,7 @@ public class OnDeviceLLMService: ObservableObject {
             minP: config.minP,
             temp: config.temperature,
             repeatPenalty: config.repeatPenalty,
-            maxTokenCount: Int32(config.maxTokens)
+            maxTokenCount: contextSize
         )
 
         isLoaded = true
@@ -252,19 +256,37 @@ public class OnDeviceLLMService: ObservableObject {
     // MARK: - Prompt Creation
 
     private func createSummarizationPrompt(text: String, contentType: ContentType) -> String {
-        """
-        Please create a comprehensive summary of the following \(contentType.rawValue) transcript using proper Markdown formatting:
+        // Calculate approx 15% target length in words (min 200 words) to encourage longer output
+        let wordCount = text.split(separator: " ").count
+        let targetWords = max(200, Int(Double(wordCount) * 0.15))
+        
+        return """
+        Please analyze the following \(contentType.rawValue) transcript and create a DETAILED STRUCTURED OUTLINE.
+        
+        CRITICAL REQUIREMENTS:
+        - The summary MUST be approximately \(targetWords) words long.
+        - Use a hierarchical outline format with clear sections.
+        - Do NOT be concise. Capture all important details, facts, and nuances.
 
-        - Use **bold** for key points and important information
-        - Use *italic* for emphasis
-        - Use ## headers for main sections
-        - Use bullet points for lists
-        - Be concise but thorough
+        REQUIRED SECTIONS:
+        ## 1. Overview
+        (A comprehensive high-level summary of the main topic)
+
+        ## 2. Key Facts & Details
+        (Detailed bullet points capturing specific facts, numbers, dates, and names)
+        - Point 1...
+        - Point 2...
+
+        ## 3. Important Notes
+        (Any specific context, observations, or important nuances mentioned)
+
+        ## 4. Action Items & Conclusions
+        (What needs to be done, decisions made, or final thoughts)
 
         Transcript:
         \(text)
 
-        Summary:
+        Structured Outline:
         """
     }
 
@@ -308,10 +330,17 @@ public class OnDeviceLLMService: ObservableObject {
     }
 
     private func createCompleteProcessingPrompt(text: String) -> String {
-        """
+        // Calculate approx 15% target length in words (min 200 words) to encourage longer output
+        let wordCount = text.split(separator: " ").count
+        let targetWords = max(200, Int(Double(wordCount) * 0.15))
+
+        return """
         Analyze the following transcript and provide:
 
-        1. A comprehensive summary using Markdown formatting
+        1. A STRUCTURED OUTLINE SUMMARY
+           - CRITICAL: The summary must be approximately \(targetWords) words long.
+           - Use sections: Overview, Key Facts, Important Notes, Conclusions.
+           - Expand on details using nested bullet points.
         2. A list of actionable tasks (personal items only)
         3. Time-sensitive reminders and deadlines
         4. 3-5 suggested titles
@@ -319,7 +348,15 @@ public class OnDeviceLLMService: ObservableObject {
         Format your response with clear sections:
 
         ## Summary
-        [Your summary here]
+        ### 1. Overview
+        [Detailed overview paragraph]
+        ### 2. Key Facts & Details
+        - [Fact 1]
+        - [Fact 2]
+        ### 3. Important Notes
+        - [Note 1]
+        ### 4. Conclusions
+        [Final thoughts]
 
         ## Tasks
         - [Task 1]
@@ -347,7 +384,7 @@ public class OnDeviceLLMService: ObservableObject {
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") || trimmed.hasPrefix("*") {
-                let taskText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText()
+                let taskText = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText())
                 if !taskText.isEmpty && taskText.count > 3 {
                     tasks.append(TaskItem(text: taskText, priority: .medium, confidence: 0.8))
                 }
@@ -364,7 +401,7 @@ public class OnDeviceLLMService: ObservableObject {
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") || trimmed.hasPrefix("*") {
-                let reminderText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText()
+                let reminderText = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText())
                 if !reminderText.isEmpty && reminderText.count > 3 {
                     let timeRef = ReminderItem.TimeReference.fromReminderText(reminderText)
                     reminders.append(ReminderItem(text: reminderText, timeReference: timeRef, urgency: .later, confidence: 0.8))
@@ -382,8 +419,8 @@ public class OnDeviceLLMService: ObservableObject {
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") || trimmed.hasPrefix("*") {
-                // Use sanitizedForTitle() to also strip wrapping quotes
-                let titleText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedForTitle()
+                // Use standardized cleaning
+                let titleText = RecordingNameGenerator.cleanStandardizedTitleResponse(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedForTitle())
                 if !titleText.isEmpty && titleText.count > 3 && titleText.count < 100 {
                     titles.append(TitleItem(text: titleText, confidence: 0.8))
                 }
@@ -431,14 +468,14 @@ public class OnDeviceLLMService: ObservableObject {
                 }
             case "tasks":
                 if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") {
-                    let text = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText()
+                    let text = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText())
                     if !text.isEmpty {
                         tasks.append(TaskItem(text: text, priority: .medium, confidence: 0.8))
                     }
                 }
             case "reminders":
                 if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") {
-                    let text = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText()
+                    let text = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText())
                     if !text.isEmpty {
                         let timeRef = ReminderItem.TimeReference.fromReminderText(text)
                         reminders.append(ReminderItem(text: text, timeReference: timeRef, urgency: .later, confidence: 0.8))
@@ -446,8 +483,8 @@ public class OnDeviceLLMService: ObservableObject {
                 }
             case "titles":
                 if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") {
-                    // Use sanitizedForTitle() to also strip wrapping quotes
-                    let text = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedForTitle()
+                    // Use standardized cleaning
+                    let text = RecordingNameGenerator.cleanStandardizedTitleResponse(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedForTitle())
                     if !text.isEmpty && text.count < 100 {
                         titles.append(TitleItem(text: text, confidence: 0.8))
                     }

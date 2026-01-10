@@ -9,8 +9,9 @@ import Foundation
 import os.log
 
 class MistralAIEngine: SummarizationEngine, ConnectionTestable {
-    let name: String = "Mistral AI"
-    let description: String = "Summaries powered by Mistral's latest chat and reasoning models"
+    var name: String { "Mistral AI" }
+    var engineType: String { "Mistral" }
+    var description: String { "Advanced summarization using Mistral AI's optimized models." }
     let version: String = "1.0"
 
     private var service: MistralAISummarizationService?

@@ -431,7 +431,7 @@ class PDFExportService {
             // Check if we need a new page
             currentY = checkAndStartNewPage(currentY: currentY, requiredHeight: 30, pageSize: pageSize, margins: margins, context: context)
 
-            let titleText = "\(index + 1). \(title.text) (Confidence: \(Int(title.confidence * 100))%)"
+            let titleText = "\(index + 1). \(title.text)"
 
             currentY = drawBulletPoint(
                 titleText,
@@ -463,12 +463,13 @@ class PDFExportService {
         currentY = drawSectionTitle("📊 Processing Details", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
 
         let metadataText = """
+        AI Engine: \(summaryData.aiEngine)
+        AI Model: \(summaryData.aiModel)
         Word Count: \(summaryData.wordCount) words
         Original Length: \(summaryData.originalLength) characters
         Compression Ratio: \(summaryData.formattedCompressionRatio)
         Processing Time: \(summaryData.formattedProcessingTime)
-        Quality Rating: \(summaryData.qualityDescription)
-        Confidence Score: \(Int(summaryData.confidence * 100))%
+        Quality: \(summaryData.qualityDescription)
         """
 
         currentY = drawMultilineText(

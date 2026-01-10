@@ -220,7 +220,7 @@ public class RecordingRegistryManager: ObservableObject {
     func addSummary(_ summary: EnhancedSummaryData) {
         print("🔧 RecordingRegistry: Adding summary for recording: \(summary.recordingName)")
         print("   - Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
-        print("   - AI Method: \(summary.aiMethod)")
+        print("   - AI Model: \(summary.aiModel)")
         print("   - Generated at: \(summary.generatedAt)")
         
         // Remove any existing summaries for the same recording to prevent duplicates
@@ -268,7 +268,7 @@ public class RecordingRegistryManager: ObservableObject {
         let summary = matchingSummaries.max { $0.generatedAt < $1.generatedAt }
         
         if let summary = summary {
-            print("✅ Found summary: \(summary.aiMethod) (generated at: \(summary.generatedAt))")
+            print("✅ Found summary: \(summary.aiModel) (generated at: \(summary.generatedAt))")
         } else {
             print("❌ No summary found for recording: \(recording.recordingName)")
         }
@@ -306,7 +306,7 @@ public class RecordingRegistryManager: ObservableObject {
         let summary = matchingSummaries.max { $0.generatedAt < $1.generatedAt }
         
         if let summary = summary {
-            print("✅ Using summary: \(summary.aiMethod) (generated at: \(summary.generatedAt))")
+            print("✅ Using summary: \(summary.aiModel) (generated at: \(summary.generatedAt))")
         }
         
         return (recording: recording, transcript: transcript, summary: summary)
@@ -421,8 +421,6 @@ public class RecordingRegistryManager: ObservableObject {
     func convertLegacyToEnhanced(_ summary: SummaryData) -> EnhancedSummaryData {
         // Convert legacy SummaryData to EnhancedSummaryData
         return EnhancedSummaryData(
-            recordingId: UUID(), // This should be the actual recording ID
-            transcriptId: nil,
             recordingURL: summary.recordingURL,
             recordingName: summary.recordingName,
             recordingDate: summary.recordingDate,
@@ -431,7 +429,8 @@ public class RecordingRegistryManager: ObservableObject {
             reminders: [],
             titles: [],
             contentType: .general,
-            aiMethod: "Legacy Conversion",
+            aiEngine: "Local Processing",
+            aiModel: "Legacy Conversion",
             originalLength: summary.summary.count,
             processingTime: 0
         )
@@ -477,7 +476,8 @@ public class RecordingRegistryManager: ObservableObject {
             reminders: result.reminders,
             titles: result.titles,
             contentType: result.contentType,
-            aiMethod: engine.name,
+            aiEngine: engine.engineType,
+            aiModel: engine.metadataName,
             originalLength: transcriptText.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count,
             processingTime: 0
         )
@@ -985,7 +985,8 @@ public class RecordingRegistryManager: ObservableObject {
                         reminders: summary.reminders,
                         titles: summary.titles,
                         contentType: summary.contentType,
-                        aiMethod: summary.aiMethod,
+                        aiEngine: summary.aiEngine,
+            aiModel: summary.aiModel,
                         originalLength: summary.originalLength,
                         processingTime: summary.processingTime
                     )
@@ -1030,7 +1031,8 @@ public class RecordingRegistryManager: ObservableObject {
                         reminders: summary.reminders,
                         titles: summary.titles,
                         contentType: summary.contentType,
-                        aiMethod: summary.aiMethod,
+                        aiEngine: summary.aiEngine,
+            aiModel: summary.aiModel,
                         originalLength: summary.originalLength,
                         processingTime: summary.processingTime
                     )
@@ -1056,7 +1058,8 @@ public class RecordingRegistryManager: ObservableObject {
                             reminders: summary.reminders,
                             titles: summary.titles,
                             contentType: summary.contentType,
-                            aiMethod: summary.aiMethod,
+                            aiEngine: summary.aiEngine,
+            aiModel: summary.aiModel,
                             originalLength: summary.originalLength,
                             processingTime: summary.processingTime
                         )
@@ -1111,7 +1114,8 @@ public class RecordingRegistryManager: ObservableObject {
                     reminders: summary.reminders,
                     titles: summary.titles,
                     contentType: summary.contentType,
-                    aiMethod: summary.aiMethod,
+                    aiEngine: summary.aiEngine,
+            aiModel: summary.aiModel,
                     originalLength: summary.originalLength,
                     processingTime: summary.processingTime
                 )
@@ -1197,7 +1201,8 @@ public class RecordingRegistryManager: ObservableObject {
                         reminders: summary.reminders,
                         titles: summary.titles,
                         contentType: summary.contentType,
-                        aiMethod: summary.aiMethod,
+                        aiEngine: summary.aiEngine,
+            aiModel: summary.aiModel,
                         originalLength: summary.originalLength,
                         processingTime: summary.processingTime
                     )
@@ -1406,7 +1411,8 @@ public class RecordingRegistryManager: ObservableObject {
                 reminders: [],
                 titles: [],
                 contentType: .general,
-                aiMethod: "Legacy Import",
+                aiEngine: "Local Processing",
+                aiModel: "Legacy Import",
                 originalLength: summaryText.count,
                 processingTime: 0
             )

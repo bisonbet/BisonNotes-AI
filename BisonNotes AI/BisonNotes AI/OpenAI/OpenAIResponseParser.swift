@@ -73,7 +73,7 @@ class OpenAIResponseParser {
             
             let tasks = response.tasks.map { taskResponse in
                 TaskItem(
-                    text: taskResponse.text,
+                    text: RecordingNameGenerator.cleanAIOutput(taskResponse.text),
                     priority: TaskItem.Priority(rawValue: taskResponse.priority?.lowercased() ?? "medium") ?? .medium,
                     timeReference: taskResponse.timeReference,
                     category: TaskItem.TaskCategory(rawValue: taskResponse.category?.lowercased() ?? "general") ?? .general,
@@ -83,17 +83,18 @@ class OpenAIResponseParser {
             
             let reminders = response.reminders.map { reminderResponse in
                 let urgency = ReminderItem.Urgency(rawValue: reminderResponse.urgency?.lowercased() ?? "later") ?? .later
+                let cleanedText = RecordingNameGenerator.cleanAIOutput(reminderResponse.text)
 
                 // Use smart fallback: if AI didn't provide time reference, extract from reminder text
                 let timeRef: ReminderItem.TimeReference
                 if let aiTimeRef = reminderResponse.timeReference, !aiTimeRef.isEmpty && aiTimeRef != "No time specified" {
                     timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
                 } else {
-                    timeRef = ReminderItem.TimeReference.fromReminderText(reminderResponse.text)
+                    timeRef = ReminderItem.TimeReference.fromReminderText(cleanedText)
                 }
 
                 return ReminderItem(
-                    text: reminderResponse.text,
+                    text: cleanedText,
                     timeReference: timeRef,
                     urgency: urgency,
                     confidence: reminderResponse.confidence ?? 0.8
@@ -188,7 +189,7 @@ class OpenAIResponseParser {
             let tasks = try JSONDecoder().decode([TaskResponse].self, from: data)
             return tasks.map { taskResponse in
                 TaskItem(
-                    text: taskResponse.text,
+                    text: RecordingNameGenerator.cleanAIOutput(taskResponse.text),
                     priority: TaskItem.Priority(rawValue: taskResponse.priority?.lowercased() ?? "medium") ?? .medium,
                     timeReference: taskResponse.timeReference,
                     category: TaskItem.TaskCategory(rawValue: taskResponse.category?.lowercased() ?? "general") ?? .general,
@@ -218,17 +219,18 @@ class OpenAIResponseParser {
             let reminders = try JSONDecoder().decode([ReminderResponse].self, from: data)
             return reminders.map { reminderResponse in
                 let urgency = ReminderItem.Urgency(rawValue: reminderResponse.urgency?.lowercased() ?? "later") ?? .later
+                let cleanedText = RecordingNameGenerator.cleanAIOutput(reminderResponse.text)
 
                 // Use smart fallback: if AI didn't provide time reference, extract from reminder text
                 let timeRef: ReminderItem.TimeReference
                 if let aiTimeRef = reminderResponse.timeReference, !aiTimeRef.isEmpty && aiTimeRef != "No time specified" {
                     timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
                 } else {
-                    timeRef = ReminderItem.TimeReference.fromReminderText(reminderResponse.text)
+                    timeRef = ReminderItem.TimeReference.fromReminderText(cleanedText)
                 }
 
                 return ReminderItem(
-                    text: reminderResponse.text,
+                    text: cleanedText,
                     timeReference: timeRef,
                     urgency: urgency,
                     confidence: reminderResponse.confidence ?? 0.8

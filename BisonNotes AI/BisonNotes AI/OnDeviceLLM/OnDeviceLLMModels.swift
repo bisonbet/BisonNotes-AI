@@ -96,6 +96,7 @@ public struct OnDeviceLLMModelInfo: Identifiable, Equatable, Codable {
     public let filename: String
     public let downloadURL: String
     public let downloadSizeBytes: Int64
+    public let requiredRAM: Double // Minimum RAM in GB required to run this model
     public let templateType: OnDeviceLLMTemplateType
     public let purpose: OnDeviceLLMModelPurpose
     public let contextWindow: Int
@@ -152,6 +153,7 @@ extension OnDeviceLLMModelInfo {
         filename: "gemma-3n-E4B-it-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 3_090_000_000, // ~3.09 GB for Q4_K_M
+        requiredRAM: 6.0,
         templateType: .gemma3,
         purpose: .summarization,
         contextWindow: 32768,
@@ -173,6 +175,7 @@ extension OnDeviceLLMModelInfo {
         filename: "Qwen3-4B-Instruct-2507-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 2_720_000_000, // ~2.72 GB for Q4_K_M
+        requiredRAM: 6.0,
         templateType: .qwen3,
         purpose: .summarization,
         contextWindow: 32768,
@@ -194,9 +197,32 @@ extension OnDeviceLLMModelInfo {
         filename: "Phi-4-mini-instruct-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 2_490_000_000, // ~2.49 GB for Q4_K_M
+        requiredRAM: 6.0,
         templateType: .phi3,
         purpose: .summarization,
         contextWindow: 16384,
+        defaultSettings: OnDeviceLLMDefaultSettings(
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            minP: 0.0,
+            repeatPenalty: 1.1
+        )
+    )
+
+    /// Ministral-3-3B-Instruct - Mistral AI's latest edge model
+    /// A highly capable 3B model optimized for on-device use
+    public static let ministral3B = OnDeviceLLMModelInfo(
+        id: "ministral-3b",
+        displayName: "Ministral 3B",
+        description: "Mistral AI's powerful 3B model optimized for edge devices. Superior summarization and task extraction performance.",
+        filename: "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",
+        downloadURL: "https://huggingface.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF/resolve/main/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf?download=true",
+        downloadSizeBytes: 2_146_497_824, // Exact size for Q4_K_M
+        requiredRAM: 6.0,
+        templateType: .mistral,
+        purpose: .summarization,
+        contextWindow: 32768,
         defaultSettings: OnDeviceLLMDefaultSettings(
             temperature: 0.7,
             topK: 40,
@@ -212,7 +238,8 @@ extension OnDeviceLLMModelInfo {
     public static let allModels: [OnDeviceLLMModelInfo] = [
         gemma3nE4B,
         qwen3_4B,
-        phi4Mini
+        phi4Mini,
+        ministral3B
     ]
 
     /// Models optimized for summarization

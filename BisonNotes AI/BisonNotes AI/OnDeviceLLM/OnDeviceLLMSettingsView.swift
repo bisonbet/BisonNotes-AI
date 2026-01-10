@@ -99,12 +99,15 @@ struct OnDeviceLLMSettingsView: View {
 
     @ViewBuilder
     private func modelRow(for model: OnDeviceLLMModelInfo) -> some View {
+        let isRamSufficient = DeviceCapabilities.totalRAMInGB >= model.requiredRAM
+        
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text(model.displayName)
                             .font(.headline)
+                            .foregroundColor(isRamSufficient ? .primary : .secondary)
 
                         if model.id == downloadManager.selectedModel.id && model.isDownloaded {
                             Image(systemName: "checkmark.circle.fill")
@@ -117,11 +120,17 @@ struct OnDeviceLLMSettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(2)
+                    
+                    if !isRamSufficient {
+                        Text("⚠️ Requires \(String(format: "%.0f", model.requiredRAM))GB RAM (Device: \(String(format: "%.1f", DeviceCapabilities.totalRAMInGB))GB)")
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                    }
                 }
 
                 Spacer()
 
-                modelActionButton(for: model)
+                modelActionButton(for: model, isRamSufficient: isRamSufficient)
             }
 
             // Model details
@@ -136,11 +145,21 @@ struct OnDeviceLLMSettingsView: View {
             }
         }
         .padding(.vertical, 4)
+        .opacity(isRamSufficient ? 1.0 : 0.6)
     }
 
     @ViewBuilder
-    private func modelActionButton(for model: OnDeviceLLMModelInfo) -> some View {
-        if model.isDownloaded {
+    private func modelActionButton(for model: OnDeviceLLMModelInfo, isRamSufficient: Bool) -> some View {
+        if !isRamSufficient {
+            Button {
+                // No action
+            } label: {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.title2)
+                    .foregroundColor(.red)
+            }
+            .disabled(true)
+        } else if model.isDownloaded {
             Menu {
                 if model.id != downloadManager.selectedModel.id {
                     Button {

@@ -219,6 +219,7 @@ class BackgroundProcessingManager: ObservableObject {
     private let enhancedFileManager = EnhancedFileManager.shared
     private let audioSessionManager = EnhancedAudioSessionManager()
     private let coreDataManager = CoreDataManager()
+    private var keepAlivePlayer: AVAudioPlayer?
     
     // MARK: - Singleton
     
@@ -1152,6 +1153,23 @@ class BackgroundProcessingManager: ObservableObject {
         
         let processingTime = Date().timeIntervalSince(startTime)
         
+        // Determine engine type for background processing
+        let engineType: String
+        let lowerEngine = engine.lowercased()
+        if lowerEngine.contains("openai") || lowerEngine.contains("gpt") {
+            engineType = "OpenAI"
+        } else if lowerEngine.contains("bedrock") || lowerEngine.contains("aws") {
+            engineType = "AWS Bedrock"
+        } else if lowerEngine.contains("google") || lowerEngine.contains("gemini") {
+            engineType = "Google AI"
+        } else if lowerEngine.contains("apple") {
+            engineType = "Apple Intelligence"
+        } else if lowerEngine.contains("ollama") {
+            engineType = "Ollama"
+        } else {
+            engineType = "Background Service"
+        }
+        
         return EnhancedSummaryData(
             recordingURL: recordingURL,
             recordingName: recordingName,
@@ -1161,7 +1179,8 @@ class BackgroundProcessingManager: ObservableObject {
             reminders: reminders,
             titles: titles,
             contentType: contentType,
-            aiMethod: engine,
+            aiEngine: engineType,
+            aiModel: engine,
             originalLength: transcriptText.count,
             processingTime: processingTime
         )
@@ -1423,8 +1442,6 @@ class BackgroundProcessingManager: ObservableObject {
     private func handleAppBackgrounding() async {
         print("🔄 Handling app backgrounding")
         
-        // Core Data automatically persists changes, no manual persistence needed
-        
         // If there's an active job, ensure background task is running
         if currentJob != nil && backgroundTaskID == .invalid {
             await beginBackgroundTask()
@@ -1627,6 +1644,63 @@ class BackgroundProcessingManager: ObservableObject {
         )
     }
     
+    // MARK: - Keep Alive Audio
+    
+    private func startKeepAliveAudio() {
+        guard keepAlivePlayer == nil else { return }
+        
+        print("🔈 Starting keep-alive silent audio")
+        do {
+            // Create a temporary silent WAV file
+            let tempDir = FileManager.default.temporaryDirectory
+            let fileURL = tempDir.appendingPathComponent("keep_alive_silence.wav")
+            
+            if !FileManager.default.fileExists(atPath: fileURL.path) {
+                // Create a 1-second silent buffer: 44.1kHz, 16-bit, mono
+                let sampleRate = 44100.0
+                let duration = 1.0
+                let frameCount = Int(sampleRate * duration)
+                
+                guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
+                      let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)) else {
+                    print("❌ Failed to create audio buffer for keep-alive")
+                    return
+                }
+                
+                buffer.frameLength = AVAudioFrameCount(frameCount)
+                // Buffer is initialized with zeros (silence) by default
+                
+                let audioFile = try AVAudioFile(forWriting: fileURL, settings: format.settings)
+                try audioFile.write(from: buffer)
+            }
+            
+            // Configure player
+            keepAlivePlayer = try AVAudioPlayer(contentsOf: fileURL)
+            keepAlivePlayer?.numberOfLoops = -1 // Infinite loop
+            keepAlivePlayer?.volume = 0.0 // Silence
+            keepAlivePlayer?.prepareToPlay()
+            
+            // Ensure audio session is active before playing
+            // (Handled by configureBackgroundRecording, but safe to verify/retry if needed? No, rely on existing flow)
+            
+            if keepAlivePlayer?.play() == true {
+                print("✅ Keep-alive audio started")
+            } else {
+                print("⚠️ Keep-alive audio failed to start playing")
+            }
+        } catch {
+            print("❌ Failed to start keep-alive audio: \(error)")
+        }
+    }
+    
+    private func stopKeepAliveAudio() {
+        if keepAlivePlayer != nil {
+            print("🔇 Stopping keep-alive silent audio")
+            keepAlivePlayer?.stop()
+            keepAlivePlayer = nil
+        }
+    }
+
     // MARK: - Background Task Management
     
     private func beginBackgroundTask() async {
@@ -1707,11 +1781,17 @@ class BackgroundProcessingManager: ObservableObject {
 
             // Start monitoring background time for long operations
             startBackgroundTimeMonitoring()
+            
+            // Start keep-alive audio to prevent app suspension during long tasks (like On-Device LLM)
+            startKeepAliveAudio()
         }
     }
     
     
     private func endBackgroundTask() async {
+        // Stop keep-alive audio
+        stopKeepAliveAudio()
+        
         // Cancel background time monitor first
         backgroundTimeMonitor?.cancel()
         backgroundTimeMonitor = nil

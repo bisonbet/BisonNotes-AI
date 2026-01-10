@@ -356,7 +356,7 @@ struct SummariesView: View {
             print("      - Recording.summaryId: \(recording.summaryId?.uuidString ?? "nil")")
 
             if let summary = summary {
-                print("      - Summary AI Method: \(summary.aiMethod)")
+                print("      - Summary AI Model: \(summary.aiModel)")
                 print("      - Summary Generated At: \(summary.generatedAt)")
             }
 
@@ -515,18 +515,19 @@ struct SummariesView: View {
                     print("📋 Titles: \(enhancedSummary.titles.count)")
                     
                     // Create summary entry in Core Data using the workflow manager
-                    let summaryId = appCoordinator.workflowManager.createSummary(
-                        for: recordingId,
-                        transcriptId: transcript.id,
-                        summary: enhancedSummary.summary,
-                        tasks: enhancedSummary.tasks,
-                        reminders: enhancedSummary.reminders,
-                        titles: enhancedSummary.titles,
-                        contentType: enhancedSummary.contentType,
-                        aiMethod: enhancedSummary.aiMethod,
-                        originalLength: enhancedSummary.originalLength,
-                        processingTime: enhancedSummary.processingTime
-                    )
+                let summaryId = self.appCoordinator.workflowManager.createSummary(
+                    for: recordingId,
+                    transcriptId: transcript.id,
+                    summary: enhancedSummary.summary,
+                    tasks: enhancedSummary.tasks,
+                    reminders: enhancedSummary.reminders,
+                    titles: enhancedSummary.titles,
+                    contentType: enhancedSummary.contentType,
+                    aiEngine: enhancedSummary.aiEngine,
+                    aiModel: enhancedSummary.aiModel,
+                    originalLength: enhancedSummary.originalLength,
+                    processingTime: enhancedSummary.processingTime
+                )
                     
                     if summaryId != nil {
                         print("✅ Summary created with ID: \(summaryId?.uuidString ?? "nil")")

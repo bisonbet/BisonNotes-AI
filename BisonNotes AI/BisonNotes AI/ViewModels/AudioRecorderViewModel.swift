@@ -53,6 +53,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
     // Timestamp to track when last recovery was attempted (to prevent rapid duplicates)
     private var lastRecoveryAttempt: Date = Date.distantPast
+    
+    // Background task identifier for recording continuity
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     override init() {
         // Initialize the managers first
@@ -491,6 +494,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		
 		// Clean up recorder
 		audioRecorder = nil
+        
+        // Ensure background task is ended
+        endBackgroundTask()
 	}
 	
 	private func recoverInterruptedRecording(url: URL, reason: String) async {
@@ -947,6 +953,22 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         }
     }
     
+    private func beginBackgroundTask() {
+        guard backgroundTask == .invalid else { return }
+        print("🔄 Starting background task for recording")
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Recording") { [weak self] in
+            print("⚠️ Recording background task expiring!")
+            self?.endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        print("⏹️ Ending recording background task")
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+    }
+
     private func setupRecording() {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let audioFilename = documentsPath.appendingPathComponent(generateAppRecordingFilename())
@@ -967,6 +989,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             print("🤖 Running on iOS Simulator - audio recording may have limitations")
             print("💡 For best results, test on a physical device or ensure simulator microphone is enabled")
             #endif
+            
+            // Start background task to ensure recording continues if app is backgrounded
+            beginBackgroundTask()
+            
             audioRecorder?.record()
             
             isRecording = true
@@ -1133,6 +1159,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         
         // Notify watch of recording state change
         notifyWatchOfRecordingStateChange()
+        
+        endBackgroundTask()
     }
     
     func playRecording(url: URL) {
@@ -1344,6 +1372,7 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                 if recordingBeingProcessed && !appIsBackgrounding {
                     print("⚠️ Recording already processed by interruption handler, skipping normal completion")
                     recordingBeingProcessed = false // Reset flag
+                    self.endBackgroundTask()
                     return
                 }
                 
@@ -1406,6 +1435,9 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                         try? await enhancedAudioSessionManager.deactivateSession()
                     }
                 }
+                
+                // End background task
+                self.endBackgroundTask()
             }
         }
     }

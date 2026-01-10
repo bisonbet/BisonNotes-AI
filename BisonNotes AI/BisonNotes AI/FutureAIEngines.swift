@@ -12,8 +12,9 @@ import SwiftUI
 // MARK: - AWS Bedrock Engine
 
 class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
-    let name: String = "AWS Bedrock"
-    let description: String = "Advanced AI-powered summaries using AWS Bedrock with Claude and other foundation models"
+    var name: String { "AWS Bedrock" }
+    var engineType: String { "AWS Bedrock" }
+    var description: String { "Enterprise-grade AI using Amazon Bedrock foundation models." }
     let version: String = "1.0"
     
     private var service: AWSBedrockService?
@@ -461,6 +462,7 @@ struct VoiceCharacteristics {
 
 class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     let name: String = "Local LLM (Ollama)"
+    var engineType: String { "Ollama" }
     let description: String = "Privacy-focused local language model processing using Ollama"
     let version: String = "1.0"
     
@@ -1133,8 +1135,9 @@ private struct SummaryResponse: Codable {
 }
 
 class GoogleAIStudioEngine: SummarizationEngine {
-    let name = "Google AI Studio"
-    let description = "Advanced AI-powered summaries using Google's Gemini models"
+    var name: String { "Google AI Studio" }
+    var engineType: String { "Google AI" }
+    var description: String { "Summarize using Google's Gemini models via AI Studio." }
     let isAvailable: Bool
     let version = "1.0"
     
@@ -1432,7 +1435,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty && (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
-                let taskText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                let taskText = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                 if !taskText.isEmpty {
                     tasks.append(TaskItem(text: taskText, priority: .medium, confidence: 0.8))
                 }
@@ -1449,7 +1452,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty && (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
-                let reminderText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                let reminderText = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                 if !reminderText.isEmpty {
                     let timeRef = ReminderItem.TimeReference.fromReminderText(reminderText)
                     reminders.append(ReminderItem(text: reminderText, timeReference: timeRef, urgency: .later, confidence: 0.8))
@@ -1467,7 +1470,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty && (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
-                let titleText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                let titleText = RecordingNameGenerator.cleanStandardizedTitleResponse(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                 if !titleText.isEmpty {
                     titles.append(TitleItem(text: titleText, confidence: 0.8))
                 }
@@ -1554,9 +1557,12 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 logger.info("Titles count: \(summaryResponse.titles.count)")
                 
                 // Convert string arrays to proper objects
-                let tasks = summaryResponse.tasks.map { TaskItem(text: $0, priority: .medium, confidence: 0.8) }
-                let reminders = summaryResponse.reminders.map { ReminderItem(text: $0, timeReference: ReminderItem.TimeReference.fromReminderText($0), urgency: .later, confidence: 0.8) }
-                let titles = summaryResponse.titles.map { TitleItem(text: $0, confidence: 0.8) }
+                let tasks = summaryResponse.tasks.map { TaskItem(text: RecordingNameGenerator.cleanAIOutput($0), priority: .medium, confidence: 0.8) }
+                let reminders = summaryResponse.reminders.map { 
+                    let cleaned = RecordingNameGenerator.cleanAIOutput($0)
+                    return ReminderItem(text: cleaned, timeReference: ReminderItem.TimeReference.fromReminderText(cleaned), urgency: .later, confidence: 0.8) 
+                }
+                let titles = summaryResponse.titles.map { TitleItem(text: RecordingNameGenerator.cleanStandardizedTitleResponse($0), confidence: 0.8) }
                 let contentType = ContentType(rawValue: summaryResponse.contentType) ?? .general
                 
                 return (
@@ -1609,14 +1615,14 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 }
             case "tasks":
                 if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") {
-                    let taskText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                    let taskText = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                     if !taskText.isEmpty {
                         tasks.append(TaskItem(text: taskText, priority: .medium, confidence: 0.8))
                     }
                 }
             case "reminders":
                 if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") {
-                    let reminderText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                    let reminderText = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                                             if !reminderText.isEmpty {
                             let timeRef = ReminderItem.TimeReference.fromReminderText(reminderText)
                             reminders.append(ReminderItem(text: reminderText, timeReference: timeRef, urgency: .later, confidence: 0.8))
@@ -1624,7 +1630,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 }
             case "titles":
                 if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") {
-                    let titleText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                    let titleText = RecordingNameGenerator.cleanStandardizedTitleResponse(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                     if !titleText.isEmpty {
                         titles.append(TitleItem(text: titleText, confidence: 0.8))
                     }

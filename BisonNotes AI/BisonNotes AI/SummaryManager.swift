@@ -365,11 +365,11 @@ class SummaryManager: ObservableObject {
     
     // MARK: - Migration Methods
     
-    func migrateLegacySummary(for recordingURL: URL, contentType: ContentType = .general, aiMethod: String = "Legacy", originalLength: Int = 0) {
+    func migrateLegacySummary(for recordingURL: URL, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String = "Legacy", originalLength: Int = 0) {
         guard let legacy = getSummary(for: recordingURL),
               !hasEnhancedSummary(for: recordingURL) else { return }
         
-        let enhanced = convertLegacyToEnhanced(legacy, contentType: contentType, aiMethod: aiMethod, originalLength: originalLength)
+        let enhanced = convertLegacyToEnhanced(legacy, contentType: contentType, aiEngine: aiEngine, aiModel: aiModel, originalLength: originalLength)
         DispatchQueue.main.async {
             // Only update UI state - migration should handle Core Data persistence elsewhere
             self.enhancedSummaries.append(enhanced)
@@ -381,7 +381,7 @@ class SummaryManager: ObservableObject {
     
     // MARK: - Legacy Conversion
     
-    func convertLegacyToEnhanced(_ legacy: SummaryData, contentType: ContentType = .general, aiMethod: String = "Legacy", originalLength: Int = 0) -> EnhancedSummaryData {
+    func convertLegacyToEnhanced(_ legacy: SummaryData, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String = "Legacy", originalLength: Int = 0) -> EnhancedSummaryData {
         let taskItems = legacy.tasks.map { TaskItem(text: $0) }
         let reminderItems = legacy.reminders.map {
             ReminderItem(text: $0, timeReference: ReminderItem.TimeReference.fromReminderText($0))
@@ -397,7 +397,8 @@ class SummaryManager: ObservableObject {
             reminders: reminderItems,
             titles: titleItems,
             contentType: contentType,
-            aiMethod: aiMethod,
+            aiEngine: aiEngine,
+            aiModel: aiModel,
             originalLength: originalLength > 0 ? originalLength : legacy.summary.components(separatedBy: .whitespacesAndNewlines).count * 5 // Estimate
         )
     }
@@ -1151,7 +1152,8 @@ class SummaryManager: ObservableObject {
                 reminders: [],
                 titles: [],
                 contentType: .general,
-                aiMethod: "Short Transcript (Displayed As-Is)",
+                aiEngine: "Local Processing",
+                aiModel: "Short Transcript (Displayed As-Is)",
                 originalLength: words.count,
                 processingTime: Date().timeIntervalSince(startTime)
             )
@@ -1255,7 +1257,8 @@ class SummaryManager: ObservableObject {
             reminders: result.reminders,
             titles: result.titles,
             contentType: result.contentType,
-            aiMethod: engine.name,
+            aiEngine: engine.engineType,
+            aiModel: engine.metadataName,
             originalLength: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count,
             processingTime: processingTime
         )
@@ -1329,7 +1332,8 @@ class SummaryManager: ObservableObject {
                 reminders: [],
                 titles: [],
                 contentType: .general,
-                aiMethod: "Short Transcript (Displayed As-Is)",
+                aiEngine: "Local Processing",
+            aiModel: "Short Transcript (Displayed As-Is)",
                 originalLength: words.count,
                 processingTime: Date().timeIntervalSince(startTime)
             )
@@ -1388,7 +1392,8 @@ class SummaryManager: ObservableObject {
             tasks: tasks,
             reminders: reminders,
             contentType: contentType,
-            aiMethod: "Basic Processing with Task/Reminder Extraction",
+            aiEngine: "Local Processing",
+            aiModel: "Basic Extraction",
             originalLength: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count,
             processingTime: processingTime
         )
@@ -1934,7 +1939,8 @@ class SummaryManager: ObservableObject {
                 tasks: allTasks,
                 reminders: allReminders,
                 contentType: contentType,
-                aiMethod: "Chunked Processing",
+                aiEngine: "Local Processing",
+            aiModel: "Chunked Processing",
                 originalLength: transcript.fullText.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count,
                 processingTime: Date().timeIntervalSince(Date())
             )
@@ -2006,7 +2012,8 @@ class SummaryManager: ObservableObject {
             tasks: [],
             reminders: [],
             contentType: contentType,
-            aiMethod: "Manual Required",
+            aiEngine: "Local Processing",
+            aiModel: "Manual Required",
             originalLength: 0,
             processingTime: 0
         )
@@ -2081,7 +2088,8 @@ class SummaryManager: ObservableObject {
                     tasks: existingSummary.tasks,
                     reminders: existingSummary.reminders,
                     contentType: existingSummary.contentType,
-                    aiMethod: existingSummary.aiMethod,
+                    aiEngine: existingSummary.aiEngine,
+            aiModel: existingSummary.aiModel,
                     originalLength: existingSummary.originalLength,
                     processingTime: existingSummary.processingTime
                 )
@@ -2129,7 +2137,8 @@ class SummaryManager: ObservableObject {
                 tasks: existingSummary.tasks,
                 reminders: existingSummary.reminders,
                 contentType: existingSummary.contentType,
-                aiMethod: existingSummary.aiMethod,
+                aiEngine: existingSummary.aiEngine,
+            aiModel: existingSummary.aiModel,
                 originalLength: existingSummary.originalLength,
                 processingTime: existingSummary.processingTime
             )
@@ -2205,7 +2214,7 @@ class SummaryManager: ObservableObject {
         let totalTasks = enhancedSummaries.reduce(0) { $0 + $1.tasks.count }
         let totalReminders = enhancedSummaries.reduce(0) { $0 + $1.reminders.count }
         
-        let engineUsage = Dictionary(grouping: enhancedSummaries, by: { $0.aiMethod })
+        let engineUsage = Dictionary(grouping: enhancedSummaries, by: { $0.aiModel })
             .mapValues { $0.count }
         
         return SummaryStatistics(

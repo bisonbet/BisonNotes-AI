@@ -57,3 +57,4 @@ gha-creds-*.json
 
 # Local AI model packages
 OLMoE.swift/
+.gemini-clipboard/

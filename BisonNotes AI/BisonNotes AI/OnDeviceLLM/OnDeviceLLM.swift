@@ -357,6 +357,12 @@ open class OnDeviceLLM: ObservableObject {
                 print("[OnDeviceLLM] Batch decode failed at token \(tokenIndex)")
                 return false
             }
+            
+            // Check for cancellation after each batch decode
+            if Task.isCancelled {
+                print("[OnDeviceLLM] Task cancelled during prefill, aborting")
+                return false
+            }
 
             tokenIndex += currentBatchSize
 
@@ -457,6 +463,10 @@ open class OnDeviceLLM: ObservableObject {
                 metrics.start()
                 var token = await self.predictNextToken()
                 while self.emitDecoded(token: token, to: output) {
+                    if Task.isCancelled {
+                        print("[OnDeviceLLM] Task cancelled during generation, stopping")
+                        break
+                    }
                     if self.nPast >= self.maxTokenCount {
                         self.trimKvCache()
                     }

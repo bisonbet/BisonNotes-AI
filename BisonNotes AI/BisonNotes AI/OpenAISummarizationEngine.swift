@@ -8,8 +8,9 @@
 import Foundation
 
 class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
-    let name: String = "OpenAI"
-    let description: String = "Advanced AI-powered summaries using OpenAI's GPT models"
+    var name: String { "OpenAI" }
+    var engineType: String { "OpenAI" }
+    var description: String { "Advanced summarization using OpenAI's latest models." }
     let version: String = "1.0"
     
     private var service: OpenAISummarizationService?
@@ -394,8 +395,9 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
 // MARK: - OpenAI Compatible Engine
 
 class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
-    let name: String = "OpenAI API Compatible"
-    let description: String = "Advanced AI summaries using OpenAI API compatible models"
+    var name: String { "OpenAI-Compatible" }
+    var engineType: String { "Custom API" }
+    var description: String { "Connect to any OpenAI-compatible API endpoint (e.g., local server or custom provider)." }
     let version: String = "1.0"
     
     private var service: OpenAISummarizationService?

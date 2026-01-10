@@ -8,6 +8,7 @@
 
 import Foundation
 import os.log
+import UIKit
 
 // MARK: - On-Device LLM Engine
 
@@ -16,8 +17,9 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
     // MARK: - SummarizationEngine Properties
 
-    let name: String = "On-Device LLM"
-    let description: String = "Privacy-focused on-device AI processing using local LLM models"
+    var name: String { "On-Device LLM" }
+    var engineType: String { "On Device LLM" }
+    var description: String { "Private, local summarization using models like Llama, Phi, or Mistral running entirely on your device." }
     let version: String = "1.0"
 
     var isAvailable: Bool {
@@ -41,6 +43,10 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         }
 
         return true
+    }
+    
+    var metadataName: String {
+        return OnDeviceLLMModelInfo.selectedModel.displayName
     }
 
     // MARK: - Private Properties
@@ -173,10 +179,11 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         }
 
         // Check if text needs chunking
-        // Use configured maxTokens (not model's full contextWindow) for chunking decisions
-        // This ensures chunks fit within our actual configured context limit
+        // Use model's actual context capability (capped at 16k for mobile safety) rather than potentially small user setting
         let tokenCount = TokenManager.getTokenCount(text)
-        let maxContextTokens = currentConfig?.maxTokens ?? 16384
+        let selectedModel = OnDeviceLLMModelInfo.selectedModel
+        let maxContextTokens = min(selectedModel.contextWindow, 16384)
+        
         // Reserve ~20% of context for output when deciding chunk size
         let effectiveInputLimit = Int(Double(maxContextTokens) * 0.8)
         print("[OnDeviceLLMEngine] Text token count: \(tokenCount), max context: \(maxContextTokens), effective input limit: \(effectiveInputLimit)")
@@ -228,6 +235,23 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         for (index, chunk) in chunks.enumerated() {
             print("[OnDeviceLLMEngine] Processing chunk \(index + 1)/\(chunks.count)")
 
+            // Check if we are running in background and task is about to expire
+            // Must access UIApplication.shared on MainActor
+            let isBackground = await MainActor.run {
+                UIApplication.shared.applicationState == .background
+            }
+            
+            if isBackground {
+                let remaining = await MainActor.run {
+                    UIApplication.shared.backgroundTimeRemaining
+                }
+                
+                if remaining < 10 { // Less than 10 seconds remaining
+                    print("[OnDeviceLLMEngine] Background time critical (\(remaining)s), aborting to prevent crash")
+                    throw OnDeviceLLMError.inferenceFailed("Insufficient background time remaining")
+                }
+            }
+
             do {
                 let chunkResult = try await service.processComplete(text: chunk)
                 allSummaries.append(chunkResult.summary)
@@ -238,6 +262,11 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 if index == 0 {
                     contentType = chunkResult.contentType
                 }
+                
+                // Add a small delay between chunks to let the GPU cool down/prevent TDR
+                if index < chunks.count - 1 {
+                    try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                }
             } catch {
                 print("[OnDeviceLLMEngine] Chunk \(index + 1) failed: \(error)")
                 throw error
@@ -247,11 +276,21 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         // Combine summaries
         let combinedSummary: String
         if allSummaries.count > 1 {
-            // Create a meta-summary using the LLM
+            // Create a meta-summary using the LLM with a structured outline requirement
             let metaPrompt = """
-            Combine these section summaries into one cohesive summary using Markdown:
+            Here are summaries from different parts of a recording. Consolidate them into a SINGLE, COHERENT Structured Outline.
 
-            \(allSummaries.joined(separator: "\n\n---\n\n"))
+            CRITICAL INSTRUCTIONS:
+            1. Create ONE unified "Overview" section that covers the entire recording.
+            2. Merge all "Key Facts & Details" into a single comprehensive list.
+            3. Combine "Important Notes" and "Conclusions".
+            4. Resolve any redundancies between sections.
+            5. Maintain the 15% detail level - do not over-condense.
+
+            INPUT SUMMARIES:
+            \(allSummaries.joined(separator: "\n\n=== SECTION ===\n\n"))
+
+            FINAL CONSOLIDATED OUTLINE:
             """
             combinedSummary = try await service.generateSummary(from: metaPrompt, contentType: contentType)
         } else {

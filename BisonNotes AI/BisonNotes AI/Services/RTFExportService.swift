@@ -142,7 +142,8 @@ final class RTFExportService {
 
         let items = [
             ("Recording Date: ", dateFormatter.string(from: summaryData.recordingDate)),
-            ("AI Engine: ", summaryData.aiMethod),
+            ("AI Engine: ", summaryData.aiEngine),
+            ("AI Model: ", summaryData.aiModel),
             ("Content Type: ", summaryData.contentType.rawValue),
             ("Generated: ", DateFormatter.localizedString(from: summaryData.generatedAt, dateStyle: .medium, timeStyle: .short))
         ]
@@ -365,9 +366,7 @@ final class RTFExportService {
         style.lineSpacing = 3
 
         for (index, title) in titles.enumerated() {
-            let confidencePercent = Int(title.confidence * 100)
-            let titleText = "\(index + 1). \(title.text) "
-            let confidenceText = "(Confidence: \(confidencePercent)%)\n"
+            let titleText = "\(index + 1). \(title.text)\n"
 
             // Title text in normal color
             let titleAttr = NSMutableAttributedString(
@@ -379,17 +378,6 @@ final class RTFExportService {
                 ]
             )
 
-            // Confidence in gray
-            let confidenceAttr = NSAttributedString(
-                string: confidenceText,
-                attributes: [
-                    .font: UIFont.systemFont(ofSize: 11),
-                    .foregroundColor: UIColor.secondaryLabel,
-                    .paragraphStyle: style
-                ]
-            )
-
-            titleAttr.append(confidenceAttr)
             document.append(titleAttr)
         }
 
@@ -407,9 +395,7 @@ final class RTFExportService {
             ("Word Count:", "\(summaryData.wordCount) words"),
             ("Original Length:", "\(summaryData.originalLength) characters"),
             ("Compression Ratio:", summaryData.formattedCompressionRatio),
-            ("Processing Time:", summaryData.formattedProcessingTime),
-            ("Quality Rating:", summaryData.qualityDescription),
-            ("Confidence Score:", "\(Int(summaryData.confidence * 100))%")
+            ("Processing Time:", summaryData.formattedProcessingTime)
         ]
 
         for (label, value) in details {

@@ -248,7 +248,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         if config.category == .playAndRecord {
             // These are best-effort; if they fail it's okay to continue
             try? session.setPreferredSampleRate(16000)
-            try? session.setPreferredIOBufferDuration(0.02)
+            try? session.setPreferredIOBufferDuration(0.1)
         }
 
         try session.setActive(true, options: [])

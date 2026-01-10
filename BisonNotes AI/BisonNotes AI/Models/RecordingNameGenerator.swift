@@ -200,25 +200,8 @@ class RecordingNameGenerator {
     }
     
     static func cleanStandardizedTitleResponse(_ response: String) -> String {
-        // Remove <think> tags and their content
-        let thinkPattern = #"<think>[\s\S]*?</think>"#
-        var cleanedTitle = response.replacingOccurrences(
-            of: thinkPattern,
-            with: "",
-            options: .regularExpression
-        )
-        
-        // Remove quotes if present
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: "\"", with: "")
-        cleanedTitle = cleanedTitle.replacingOccurrences(of: "'", with: "")
-        
-        // Remove common prefixes/suffixes that might be added
-        let unwantedPrefixes = ["Title:", "Name:", "Generated Title:", "Conversation Title:", "The title is:", "Here's the title:", "Title is:", "AI Title:", "Suggested Title:"]
-        for prefix in unwantedPrefixes {
-            if cleanedTitle.lowercased().hasPrefix(prefix.lowercased()) {
-                cleanedTitle = String(cleanedTitle.dropFirst(prefix.count))
-            }
-        }
+        // Apply general AI output cleaning first
+        var cleanedTitle = cleanAIOutput(response)
         
         // Remove word count patterns (including character count patterns)
         let wordCountPattern = #"\s*\(\d+[\s-]*(words?|characters?)\)\s*$"#
@@ -295,6 +278,49 @@ class RecordingNameGenerator {
         }
         
         return cleanedTitle
+    }
+
+    /// Cleans AI-generated output by removing common prefixes, <think> tags, and unwanted "Tag: " labels.
+    static func cleanAIOutput(_ text: String) -> String {
+        // 1. Remove <think> tags and their content
+        let thinkPattern = #"<think>[\s\S]*?</think>"#
+        var cleaned = text.replacingOccurrences(
+            of: thinkPattern,
+            with: "",
+            options: .regularExpression
+        )
+        
+        // 2. Remove markdown quotes and formatting from start/end
+        cleaned = cleaned.replacingOccurrences(of: "\"", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "'", with: "")
+        
+        // 3. Remove common hardcoded prefixes
+        let unwantedPrefixes = [
+            "Title:", "Name:", "Generated Title:", "Conversation Title:", 
+            "The title is:", "Here's the title:", "Title is:", "AI Title:", 
+            "Suggested Title:", "Task:", "Reminder:", "Note:", "Action Item:",
+            "TODO:", "Personal:", "Topic:", "Subject:", "Headline:"
+        ]
+        
+        for prefix in unwantedPrefixes {
+            if cleaned.lowercased().hasPrefix(prefix.lowercased()) {
+                cleaned = String(cleaned.dropFirst(prefix.count))
+                cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        
+        // 4. Remove dynamic "Tag: " or "Tag/Subtag: " prefixes (e.g., "Personal:", "Hulu/Alien Earth:")
+        // Matches 1-4 words or path-like tags at start followed by a colon and space
+        let dynamicTagPattern = #"^([A-Z][a-zA-Z0-9\s/]{1,30}):\s+"#
+        if let range = cleaned.range(of: dynamicTagPattern, options: .regularExpression) {
+            // Only strip if the remaining part is substantive
+            let remaining = String(cleaned[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if remaining.count > 5 {
+                cleaned = remaining
+            }
+        }
+        
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
     // MARK: - Private Helper Methods

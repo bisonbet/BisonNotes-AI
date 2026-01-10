@@ -300,8 +300,8 @@ struct AISettingsView: View {
 
                     headerSection
                     engineSelectionSection
-                    timeoutConfigurationSection
                     selectedEngineConfigurationSection
+                    timeoutConfigurationSection
                     summaryManagementSection
 
                     Spacer(minLength: 40)

@@ -213,7 +213,7 @@ class UnifiediCloudSyncManager: ObservableObject {
         record["transcriptId"] = summary.transcriptId?.uuidString
         record["summary"] = summary.summary
         record["contentType"] = summary.contentType.rawValue
-        record["aiMethod"] = summary.aiMethod
+        record["aiMethod"] = summary.aiModel
         record["generatedAt"] = summary.generatedAt
         record["version"] = summary.version
         record["wordCount"] = summary.wordCount
@@ -459,6 +459,25 @@ class UnifiediCloudSyncManager: ObservableObject {
             titles = (try? JSONDecoder().decode([TitleItem].self, from: titlesData)) ?? []
         }
         
+        // Infer engine from method until we have a proper field in CloudKit
+        let engine: String
+        let methodLower = aiMethod.lowercased()
+        if methodLower.contains("google") || methodLower.contains("gemini") {
+            engine = "Google AI"
+        } else if methodLower.contains("openai") || methodLower.contains("gpt") {
+            engine = "OpenAI"
+        } else if methodLower.contains("bedrock") || methodLower.contains("claude") || methodLower.contains("aws") {
+            engine = "AWS Bedrock"
+        } else if methodLower.contains("ollama") {
+            engine = "Ollama"
+        } else if methodLower.contains("apple") || methodLower.contains("intelligence") {
+            engine = "Apple Intelligence"
+        } else if methodLower.contains("device") || methodLower.contains("gemma") || methodLower.contains("phi") || methodLower.contains("qwen") || methodLower.contains("llama") || methodLower.contains("mistral") || methodLower.contains("olmo") {
+            engine = "On Device LLM"
+        } else {
+            engine = "AI Assistant"
+        }
+        
         return EnhancedSummaryData(
             recordingId: recordingId,
             transcriptId: transcriptId,
@@ -470,7 +489,8 @@ class UnifiediCloudSyncManager: ObservableObject {
             reminders: reminders,
             titles: titles,
             contentType: contentType,
-            aiMethod: aiMethod,
+            aiEngine: engine,
+            aiModel: aiMethod,
             originalLength: originalLength,
             processingTime: processingTime
         )

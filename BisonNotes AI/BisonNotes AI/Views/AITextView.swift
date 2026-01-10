@@ -8,6 +8,7 @@ enum AIService {
     case ollama
     case appleIntelligence
     case whisper
+    case onDevice
     
     var description: String {
         switch self {
@@ -23,27 +24,32 @@ enum AIService {
             return "apple"
         case .whisper:
             return "whisper"
+        case .onDevice:
+            return "on-device"
         }
     }
     
-    /// Maps an AI method string to the appropriate AIService
-    static func from(aiMethod: String) -> AIService {
-        let lowercased = aiMethod.lowercased()
+    /// Maps AI engine and model strings to the appropriate AIService
+    static func from(aiEngine: String, aiModel: String) -> AIService {
+        let engineLower = aiEngine.lowercased()
+        let modelLower = aiModel.lowercased()
         
-        if lowercased.contains("google") || lowercased.contains("gemini") {
+        if engineLower.contains("google") || modelLower.contains("gemini") {
             return .googleAI
-        } else if lowercased.contains("openai") || lowercased.contains("gpt") {
+        } else if engineLower.contains("openai") || modelLower.contains("gpt") {
             return .openAI
-        } else if lowercased.contains("bedrock") || lowercased.contains("claude") {
+        } else if engineLower.contains("bedrock") || modelLower.contains("claude") || engineLower.contains("aws") {
             return .bedrock
-        } else if lowercased.contains("ollama") {
+        } else if engineLower.contains("ollama") {
             return .ollama
-        } else if lowercased.contains("apple") || lowercased.contains("intelligence") {
+        } else if engineLower.contains("apple") || modelLower.contains("intelligence") {
             return .appleIntelligence
-        } else if lowercased.contains("whisper") {
+        } else if engineLower.contains("whisper") {
             return .whisper
+        } else if engineLower.contains("device") || modelLower.contains("gemma") || modelLower.contains("phi") || modelLower.contains("qwen") || modelLower.contains("llama") || modelLower.contains("mistral") || modelLower.contains("olmo") || modelLower.contains("alpaca") {
+            return .onDevice
         } else {
-            // Default to standard processor for unknown services
+            // Default to bedrock for unknown services
             return .bedrock
         }
     }

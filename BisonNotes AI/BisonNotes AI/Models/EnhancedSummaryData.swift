@@ -299,7 +299,8 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     
     // Metadata
     let contentType: ContentType
-    let aiMethod: String
+    let aiEngine: String
+    let aiModel: String
     let generatedAt: Date
     let version: Int
     let wordCount: Int
@@ -310,8 +311,20 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     let confidence: Double
     let processingTime: TimeInterval
     
+    var qualityDescription: String {
+        if confidence >= 0.85 {
+            return "High"
+        } else if confidence >= 0.7 {
+            return "Good"
+        } else if confidence >= 0.5 {
+            return "Fair"
+        } else {
+            return "Needs Review"
+        }
+    }
+    
     // Legacy initializer for backward compatibility
-    init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiMethod: String, originalLength: Int, processingTime: TimeInterval = 0) {
+    init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
         self.recordingId = nil
         self.transcriptId = nil
@@ -323,7 +336,8 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         self.reminders = reminders.sorted { $0.urgency.sortOrder < $1.urgency.sortOrder }
         self.titles = titles.sorted { $0.confidence > $1.confidence }
         self.contentType = contentType
-        self.aiMethod = aiMethod
+        self.aiEngine = aiEngine
+        self.aiModel = aiModel
         self.generatedAt = Date()
         self.version = 1
         self.wordCount = summary.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
@@ -339,7 +353,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     }
     
     // New initializer for unified architecture
-    init(recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiMethod: String, originalLength: Int, processingTime: TimeInterval = 0) {
+    init(recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
         self.recordingId = recordingId
         self.transcriptId = transcriptId
@@ -351,7 +365,8 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         self.reminders = reminders.sorted { $0.urgency.sortOrder < $1.urgency.sortOrder }
         self.titles = titles.sorted { $0.confidence > $1.confidence }
         self.contentType = contentType
-        self.aiMethod = aiMethod
+        self.aiEngine = aiEngine
+        self.aiModel = aiModel
         self.generatedAt = Date()
         self.version = 1
         self.wordCount = summary.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
@@ -367,7 +382,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     }
     
     // Initializer for Core Data conversion that preserves the original ID
-    init(id: UUID, recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiMethod: String, originalLength: Int, processingTime: TimeInterval = 0, generatedAt: Date? = nil, version: Int = 1, wordCount: Int? = nil, compressionRatio: Double? = nil, confidence: Double? = nil) {
+    init(id: UUID, recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0, generatedAt: Date? = nil, version: Int = 1, wordCount: Int? = nil, compressionRatio: Double? = nil, confidence: Double? = nil) {
         self.id = id
         self.recordingId = recordingId
         self.transcriptId = transcriptId
@@ -379,7 +394,8 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         self.reminders = reminders.sorted { $0.urgency.sortOrder < $1.urgency.sortOrder }
         self.titles = titles.sorted { $0.confidence > $1.confidence }
         self.contentType = contentType
-        self.aiMethod = aiMethod
+        self.aiEngine = aiEngine
+        self.aiModel = aiModel
         self.generatedAt = generatedAt ?? Date()
         self.version = version
         self.wordCount = wordCount ?? summary.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
@@ -400,15 +416,6 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     
     var formattedProcessingTime: String {
         return String(format: "%.1fs", processingTime)
-    }
-    
-    var qualityDescription: String {
-        switch confidence {
-        case 0.8...1.0: return "High Quality"
-        case 0.6..<0.8: return "Good Quality"
-        case 0.4..<0.6: return "Fair Quality"
-        default: return "Low Quality"
-        }
     }
 }
 

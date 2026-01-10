@@ -15,7 +15,8 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     // MARK: - SummarizationEngine Protocol
     
     var name: String { "Enhanced Apple Intelligence" }
-    var description: String { "Advanced natural language processing using Apple's NLTagger with semantic analysis" }
+    var engineType: String { "Apple Intelligence" }
+    var description: String { "Leverages Apple Intelligence for private, on-device content analysis and summary extraction." }
     var isAvailable: Bool { true }
     var version: String { "2.0" }
     

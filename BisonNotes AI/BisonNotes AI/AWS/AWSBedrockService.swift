@@ -808,11 +808,13 @@ class AWSBedrockService: ObservableObject {
                trimmed.lowercased().contains("action") ||
                (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
                 
-                let cleanText = trimmed
+                let rawText = trimmed
                     .replacingOccurrences(of: "•", with: "")
                     .replacingOccurrences(of: "-", with: "")
                     .replacingOccurrences(of: "*", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                let cleanText = RecordingNameGenerator.cleanAIOutput(rawText)
                 
                 if !cleanText.isEmpty && cleanText.count > 5 {
                     tasks.append(TaskItem(
@@ -839,11 +841,13 @@ class AWSBedrockService: ObservableObject {
                trimmed.lowercased().contains("remember") ||
                (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
                 
-                let cleanText = trimmed
+                let rawText = trimmed
                     .replacingOccurrences(of: "•", with: "")
                     .replacingOccurrences(of: "-", with: "")
                     .replacingOccurrences(of: "*", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                let cleanText = RecordingNameGenerator.cleanAIOutput(rawText)
                 
                 if !cleanText.isEmpty && cleanText.count > 5 {
                     reminders.append(ReminderItem(
@@ -868,15 +872,15 @@ class AWSBedrockService: ObservableObject {
             if (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) && 
                trimmed.count > 10 && trimmed.count < 80 {
                 
-                let cleanText = trimmed
+                let rawText = trimmed
                     .replacingOccurrences(of: "•", with: "")
                     .replacingOccurrences(of: "-", with: "")
                     .replacingOccurrences(of: "*", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 
-                if !cleanText.isEmpty {
+                if !rawText.isEmpty {
                     // Apply standardized title cleaning
-                    let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(cleanText)
+                    let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(rawText)
                     if cleanedTitle != "Untitled Conversation" {
                         titles.append(TitleItem(
                             text: cleanedTitle,

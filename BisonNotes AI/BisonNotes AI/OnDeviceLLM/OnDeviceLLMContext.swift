@@ -46,8 +46,9 @@ public class LLMContext {
     @discardableResult
     func decode(_ batch: llama_batch) -> Bool {
         lastDecodeError = nil
-        let ret = llama_decode(pointer, batch)
 
+        let ret = llama_decode(pointer, batch)
+        
         if ret < 0 {
             lastDecodeError = .decodeFailed(code: ret)
             print("[LLMContext] llama_decode failed with code: \(ret)")
