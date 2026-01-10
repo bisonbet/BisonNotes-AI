@@ -105,7 +105,7 @@ struct BisonNotesAIApp: App {
 #if DEBUG
         Self.configureCoverageOutputIfNeeded()
 #endif
-        // Log device capabilities for MLX support
+        // Log device capabilities on startup
         logDeviceCapabilities()
 
         setupBackgroundTasks()

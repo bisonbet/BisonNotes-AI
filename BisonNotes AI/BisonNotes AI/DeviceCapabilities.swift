@@ -7,7 +7,6 @@
 
 import Foundation
 import UIKit
-import Metal
 
 struct DeviceCapabilities {
 
@@ -86,50 +85,6 @@ struct DeviceCapabilities {
         return identifier
     }
 
-    /// Check if device supports Metal Performance Shaders (required for MLX)
-    static var supportsMetalPerformanceShaders: Bool {
-        #if targetEnvironment(simulator)
-        // Simulators may not have full Metal support
-        return false
-        #else
-        // Check for Metal device availability
-        guard let device = MTLCreateSystemDefaultDevice() else {
-            return false
-        }
-
-        // Check if device supports iOS 16+ (MLX requirement)
-        if #available(iOS 16.0, *) {
-            return device.supportsFamily(.apple7) || device.supportsFamily(.apple8) || device.supportsFamily(.apple9)
-        }
-
-        return false
-        #endif
-    }
-
-    /// Comprehensive check for MLX support
-    static var supportsMLX: Bool {
-        // Check RAM requirement
-        guard supportsOnDeviceLLM else {
-            print("⚠️ DeviceCapabilities: Insufficient RAM for MLX")
-            return false
-        }
-
-        // Check Metal support
-        guard supportsMetalPerformanceShaders else {
-            print("⚠️ DeviceCapabilities: Metal Performance Shaders not supported")
-            return false
-        }
-
-        // Check iOS version
-        if #available(iOS 16.0, *) {
-            print("✅ DeviceCapabilities: Device supports MLX")
-            return true
-        } else {
-            print("⚠️ DeviceCapabilities: iOS version too old for MLX")
-            return false
-        }
-    }
-
     /// Get a detailed capability report
     static func getCapabilityReport() -> String {
         var report = "Device Capabilities Report\n"
@@ -137,8 +92,6 @@ struct DeviceCapabilities {
         report += "Model: \(modelName)\n"
         report += "RAM: \(ramDescription)\n"
         report += "On-Device LLM Support: \(supportsOnDeviceLLM ? "✅" : "❌")\n"
-        report += "Metal Performance Shaders: \(supportsMetalPerformanceShaders ? "✅" : "❌")\n"
-        report += "MLX Support: \(supportsMLX ? "✅" : "❌")\n"
 
         if #available(iOS 16.0, *) {
             report += "iOS Version: ✅ (16.0+)\n"

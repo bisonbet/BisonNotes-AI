@@ -110,8 +110,6 @@ struct ChunkingConfig {
             return ChunkingConfig(strategy: .appleIntelligence)
         case .openAIAPICompatible:
             return ChunkingConfig(strategy: .openAI) // Default to OpenAI limits
-        case .mlxWhisper:
-            return ChunkingConfig(strategy: .appleIntelligence) // MLX Whisper handles its own 5-minute chunking
         }
     }
 }

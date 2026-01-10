@@ -91,21 +91,10 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
     case whisper = "Whisper (Local Server)"
     case openAI = "OpenAI"
     case openAIAPICompatible = "OpenAI API Compatible"
-    case mlxWhisper = "MLX Whisper (On-Device)"
 
     /// Returns all available engine types based on device capabilities
     static var availableCases: [TranscriptionEngine] {
-        var cases = allCases
-
-        // Filter out MLX Whisper if device doesn't support it
-        if !DeviceCapabilities.supportsMLX {
-            cases = cases.filter { $0 != .mlxWhisper }
-            print("🔒 MLX Whisper transcription hidden - device does not meet requirements (6GB+ RAM, Metal support)")
-        } else {
-            print("✅ MLX Whisper transcription available - device meets all requirements")
-        }
-
-        return cases
+        return allCases
     }
 
     var description: String {
@@ -122,8 +111,6 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             return "High-quality transcription using OpenAI's GPT-4o models and Whisper via API"
         case .openAIAPICompatible:
             return "Connect to OpenAI-compatible API endpoints for flexible transcription options (Coming Soon)"
-        case .mlxWhisper:
-            return "On-device Whisper transcription using MLX Swift - fully private, no internet required"
         }
     }
 
@@ -131,7 +118,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
         switch self {
         case .notConfigured:
             return false
-        case .appleIntelligence, .awsTranscribe, .whisper, .openAI, .mlxWhisper:
+        case .appleIntelligence, .awsTranscribe, .whisper, .openAI:
             return true
         case .openAIAPICompatible:
             return false
@@ -144,7 +131,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             return true
         case .appleIntelligence:
             return false
-        case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible, .mlxWhisper:
+        case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible:
             return true
         }
     }
