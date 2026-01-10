@@ -70,27 +70,30 @@ struct AITextView: View {
     /// Clean text using simplified robust cleaning for MarkdownUI
     private func cleanTextForMarkdown(_ text: String) -> String {
         var cleaned = text
-        
-        // Step 1: Normalize line endings and escape sequences
+
+        // Step 1: Sanitize encoding issues (Unicode replacement chars, smart quotes, etc.)
+        cleaned = cleaned.sanitizedForDisplay()
+
+        // Step 2: Normalize line endings and escape sequences
         cleaned = cleaned.replacingOccurrences(of: "\\n", with: "\n")
         cleaned = cleaned.replacingOccurrences(of: "\\r", with: "\n")
-        
-        // Step 2: Remove JSON wrappers
+
+        // Step 3: Remove JSON wrappers
         cleaned = cleaned.replacingOccurrences(of: "^\"summary\"\\s*:\\s*\"", with: "", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(of: "^\"content\"\\s*:\\s*\"", with: "", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(of: "^\"text\"\\s*:\\s*\"", with: "", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(of: "\"\\s*$", with: "", options: .regularExpression)
-        
-        // Step 3: Basic spacing normalization
+
+        // Step 4: Basic spacing normalization
         cleaned = cleaned.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
-        
+
         #if DEBUG
         print("🔍 MarkdownUI Input Debug:")
-        print("Original length: \\(text.count)")
-        print("Cleaned length: \\(cleaned.count)")
-        print("First 200 chars: \\(cleaned.prefix(200))")
+        print("Original length: \(text.count)")
+        print("Cleaned length: \(cleaned.count)")
+        print("First 200 chars: \(cleaned.prefix(200))")
         #endif
-        
+
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     

@@ -1310,7 +1310,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         
         // Deduplicate and limit results
         let deduplicatedTasks = Array(Set(allTasks.map { $0.text })).prefix(15).map { TaskItem(text: $0, priority: .medium, confidence: 0.8) }
-        let deduplicatedReminders = Array(Set(allReminders.map { $0.text })).prefix(15).map { ReminderItem(text: $0, timeReference: ReminderItem.TimeReference(originalText: $0), urgency: .later, confidence: 0.8) }
+        let deduplicatedReminders = Array(Set(allReminders.map { $0.text })).prefix(15).map { ReminderItem(text: $0, timeReference: ReminderItem.TimeReference.fromReminderText($0), urgency: .later, confidence: 0.8) }
         let deduplicatedTitles = Array(Set(allTitles.map { $0.text })).prefix(5).map { TitleItem(text: $0, confidence: 0.8) }
         
         // Use the most common content type or default to general
@@ -1451,7 +1451,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
             if !trimmed.isEmpty && (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
                 let reminderText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
                 if !reminderText.isEmpty {
-                    let timeRef = ReminderItem.TimeReference(originalText: reminderText)
+                    let timeRef = ReminderItem.TimeReference.fromReminderText(reminderText)
                     reminders.append(ReminderItem(text: reminderText, timeReference: timeRef, urgency: .later, confidence: 0.8))
                 }
             }
@@ -1555,7 +1555,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 
                 // Convert string arrays to proper objects
                 let tasks = summaryResponse.tasks.map { TaskItem(text: $0, priority: .medium, confidence: 0.8) }
-                let reminders = summaryResponse.reminders.map { ReminderItem(text: $0, timeReference: ReminderItem.TimeReference(originalText: $0), urgency: .later, confidence: 0.8) }
+                let reminders = summaryResponse.reminders.map { ReminderItem(text: $0, timeReference: ReminderItem.TimeReference.fromReminderText($0), urgency: .later, confidence: 0.8) }
                 let titles = summaryResponse.titles.map { TitleItem(text: $0, confidence: 0.8) }
                 let contentType = ContentType(rawValue: summaryResponse.contentType) ?? .general
                 
@@ -1618,7 +1618,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") {
                     let reminderText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
                                             if !reminderText.isEmpty {
-                            let timeRef = ReminderItem.TimeReference(originalText: reminderText)
+                            let timeRef = ReminderItem.TimeReference.fromReminderText(reminderText)
                             reminders.append(ReminderItem(text: reminderText, timeReference: timeRef, urgency: .later, confidence: 0.8))
                         }
                 }
@@ -1728,6 +1728,8 @@ class AIEngineFactory {
             return LocalLLMEngine()
         case .googleAIStudio:
             return GoogleAIStudioEngine()
+        case .onDeviceLLM:
+            return OnDeviceLLMEngine()
         }
     }
     
@@ -1751,6 +1753,7 @@ enum AIEngineType: String, CaseIterable {
     case openAICompatible = "OpenAI API Compatible"
     case localLLM = "Ollama"
     case googleAIStudio = "Google AI Studio"
+    case onDeviceLLM = "On-Device LLM"
 
     /// Returns all available engine types based on device capabilities
     static var availableCases: [AIEngineType] {
@@ -1773,12 +1776,14 @@ enum AIEngineType: String, CaseIterable {
             return "Privacy-focused local language model processing with Ollama"
         case .googleAIStudio:
             return "Advanced AI-powered summaries using Google's Gemini models"
+        case .onDeviceLLM:
+            return "Privacy-focused on-device AI processing using local LLM models"
         }
     }
 
     var isComingSoon: Bool {
         switch self {
-        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock:
+        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM:
             return false
         }
     }
@@ -1799,6 +1804,8 @@ enum AIEngineType: String, CaseIterable {
             return ["Ollama Server", "Local Network", "Model Download"]
         case .googleAIStudio:
             return ["Google AI Studio API Key", "Internet Connection", "Usage Credits"]
+        case .onDeviceLLM:
+            return ["Downloaded LLM Model (~2 GB)", "No Internet Required", "A16+ Chip Recommended"]
         }
     }
 }

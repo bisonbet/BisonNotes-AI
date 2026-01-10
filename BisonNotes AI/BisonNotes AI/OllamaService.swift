@@ -725,9 +725,17 @@ class OllamaService: ObservableObject {
             }
             
             let reminders = rawResult.reminders.map { rawReminder in
-                ReminderItem(
+                // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                let timeRef: ReminderItem.TimeReference
+                if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                } else {
+                    timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                }
+
+                return ReminderItem(
                     text: rawReminder.text,
-                    timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                    timeReference: timeRef,
                     urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                     confidence: 0.8
                 )
@@ -776,9 +784,17 @@ class OllamaService: ObservableObject {
                     }
                     
                     let reminders = rawResult.reminders.map { rawReminder in
-                        ReminderItem(
+                        // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                        let timeRef: ReminderItem.TimeReference
+                        if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                            timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                        } else {
+                            timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                        }
+
+                        return ReminderItem(
                             text: rawReminder.text,
-                            timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                            timeReference: timeRef,
                             urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                             confidence: 0.8
                         )
@@ -1292,9 +1308,17 @@ class OllamaService: ObservableObject {
                     }
                     
                     let reminders = rawResult.reminders.map { rawReminder in
-                        ReminderItem(
+                        // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                        let timeRef: ReminderItem.TimeReference
+                        if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                            timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                        } else {
+                            timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                        }
+
+                        return ReminderItem(
                             text: rawReminder.text,
-                            timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                            timeReference: timeRef,
                             urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                             confidence: 0.8
                         )
@@ -1458,9 +1482,17 @@ class OllamaService: ObservableObject {
             }
             
             let reminders = rawResult.reminders.map { rawReminder in
-                ReminderItem(
+                // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                let timeRef: ReminderItem.TimeReference
+                if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                } else {
+                    timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                }
+
+                return ReminderItem(
                     text: rawReminder.text,
-                    timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                    timeReference: timeRef,
                     urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                     confidence: 0.9 // Higher confidence for tool calling results
                 )
@@ -1800,9 +1832,17 @@ class OllamaService: ObservableObject {
             let urgencyString = reminderData["urgency"] as? String ?? "Later"
             let timeReference = reminderData["timeReference"] as? String
             
+            // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+            let timeRef: ReminderItem.TimeReference
+            if let aiTimeRef = timeReference, !aiTimeRef.isEmpty {
+                timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+            } else {
+                timeRef = ReminderItem.TimeReference.fromReminderText(text)
+            }
+
             return ReminderItem(
                 text: text,
-                timeReference: ReminderItem.TimeReference(originalText: timeReference ?? ""),
+                timeReference: timeRef,
                 urgency: ReminderItem.Urgency(rawValue: urgencyString) ?? .later,
                 confidence: 0.95 // Very high confidence for Qwen tool calling results
             )
@@ -2054,9 +2094,17 @@ class OllamaService: ObservableObject {
             let urgencyString = reminderData["urgency"] as? String ?? "Later"
             let timeReference = reminderData["timeReference"] as? String
             
+            // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+            let timeRef: ReminderItem.TimeReference
+            if let aiTimeRef = timeReference, !aiTimeRef.isEmpty {
+                timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+            } else {
+                timeRef = ReminderItem.TimeReference.fromReminderText(text)
+            }
+
             return ReminderItem(
                 text: text,
-                timeReference: ReminderItem.TimeReference(originalText: timeReference ?? ""),
+                timeReference: timeRef,
                 urgency: ReminderItem.Urgency(rawValue: urgencyString) ?? .later,
                 confidence: 0.92 // High confidence for GPT-OSS tool calling results
             )
@@ -2324,9 +2372,17 @@ class OllamaService: ObservableObject {
             let urgencyString = reminderData["urgency"] as? String ?? "Later"
             let timeReference = reminderData["timeReference"] as? String
             
+            // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+            let timeRef: ReminderItem.TimeReference
+            if let aiTimeRef = timeReference, !aiTimeRef.isEmpty {
+                timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+            } else {
+                timeRef = ReminderItem.TimeReference.fromReminderText(text)
+            }
+
             return ReminderItem(
                 text: text,
-                timeReference: ReminderItem.TimeReference(originalText: timeReference ?? ""),
+                timeReference: timeRef,
                 urgency: ReminderItem.Urgency(rawValue: urgencyString) ?? .later,
                 confidence: 0.93 // Very high confidence for Magistral tool calling results
             )
@@ -2751,9 +2807,17 @@ class OllamaService: ObservableObject {
             }
 
             let reminders = validReminders.map { rawReminder in
-                ReminderItem(
+                // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                let timeRef: ReminderItem.TimeReference
+                if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                } else {
+                    timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                }
+
+                return ReminderItem(
                     text: rawReminder.text,
-                    timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                    timeReference: timeRef,
                     urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                     confidence: 0.95  // Higher confidence for structured outputs
                 )
@@ -2809,9 +2873,17 @@ class OllamaService: ObservableObject {
             }
             
             let reminders = rawResult.reminders.map { rawReminder in
-                ReminderItem(
+                // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                let timeRef: ReminderItem.TimeReference
+                if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                } else {
+                    timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                }
+
+                return ReminderItem(
                     text: rawReminder.text,
-                    timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                    timeReference: timeRef,
                     urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                     confidence: 0.95  // Higher confidence for structured outputs
                 )

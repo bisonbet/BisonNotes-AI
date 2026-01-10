@@ -83,8 +83,15 @@ class OpenAIResponseParser {
             
             let reminders = response.reminders.map { reminderResponse in
                 let urgency = ReminderItem.Urgency(rawValue: reminderResponse.urgency?.lowercased() ?? "later") ?? .later
-                let timeRef = ReminderItem.TimeReference(originalText: reminderResponse.timeReference ?? "No time specified")
-                
+
+                // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                let timeRef: ReminderItem.TimeReference
+                if let aiTimeRef = reminderResponse.timeReference, !aiTimeRef.isEmpty && aiTimeRef != "No time specified" {
+                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                } else {
+                    timeRef = ReminderItem.TimeReference.fromReminderText(reminderResponse.text)
+                }
+
                 return ReminderItem(
                     text: reminderResponse.text,
                     timeReference: timeRef,
@@ -211,8 +218,15 @@ class OpenAIResponseParser {
             let reminders = try JSONDecoder().decode([ReminderResponse].self, from: data)
             return reminders.map { reminderResponse in
                 let urgency = ReminderItem.Urgency(rawValue: reminderResponse.urgency?.lowercased() ?? "later") ?? .later
-                let timeRef = ReminderItem.TimeReference(originalText: reminderResponse.timeReference ?? "No time specified")
-                
+
+                // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                let timeRef: ReminderItem.TimeReference
+                if let aiTimeRef = reminderResponse.timeReference, !aiTimeRef.isEmpty && aiTimeRef != "No time specified" {
+                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                } else {
+                    timeRef = ReminderItem.TimeReference.fromReminderText(reminderResponse.text)
+                }
+
                 return ReminderItem(
                     text: reminderResponse.text,
                     timeReference: timeRef,
@@ -322,7 +336,7 @@ class OpenAIResponseParser {
                 if !cleanText.isEmpty && cleanText.count > 5 {
                     reminders.append(ReminderItem(
                         text: cleanText,
-                        timeReference: ReminderItem.TimeReference(originalText: "No time specified"),
+                        timeReference: ReminderItem.TimeReference.fromReminderText(cleanText),
                         urgency: .later,
                         confidence: 0.6
                     ))

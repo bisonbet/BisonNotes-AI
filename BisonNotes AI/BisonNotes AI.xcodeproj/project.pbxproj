@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		143196D12F128D16003BA61E /* llama.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 143196D02F128D16003BA61E /* llama.xcframework */; };
+		143196D22F128D16003BA61E /* llama.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 143196D02F128D16003BA61E /* llama.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		1485FEC52E526FB30044121F /* BisonNotes AI Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED42E5271970044121F /* WatchConnectivity.framework */; };
 		1485FED72E5271AF0044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED62E5271AF0044121F /* WatchConnectivity.framework */; };
@@ -67,6 +69,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		143196D32F128D16003BA61E /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				143196D22F128D16003BA61E /* llama.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		1485FEC62E526FB30044121F /* Embed Watch Content */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -102,6 +115,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		143196D02F128D16003BA61E /* llama.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = llama.xcframework; path = ../Frameworks/llama.xcframework; sourceTree = "<group>"; };
 		1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BisonNotes AI Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1485FEB12E526FB30044121F /* BisonNotes AI Watch AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AI Watch AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1485FEBB2E526FB30044121F /* BisonNotes AI Watch AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AI Watch AppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -221,6 +235,7 @@
 				14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */,
 				148A7AC62E593E1D00666860 /* MarkdownUI in Frameworks */,
 				14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */,
+				143196D12F128D16003BA61E /* llama.xcframework in Frameworks */,
 				1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */,
 				14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */,
 				14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */,
@@ -256,6 +271,7 @@
 		1485FED32E5271970044121F /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				143196D02F128D16003BA61E /* llama.xcframework */,
 				1485FED62E5271AF0044121F /* WatchConnectivity.framework */,
 				1485FED42E5271970044121F /* WatchConnectivity.framework */,
 				14EA428C2E7F5ECA0059271B /* WidgetKit.framework */,
@@ -386,6 +402,7 @@
 				14DBC83B2E34F7B500DAD442 /* Resources */,
 				1485FEC62E526FB30044121F /* Embed Watch Content */,
 				14EA42A72E7F65F30059271B /* Embed Controls Extension */,
+				143196D32F128D16003BA61E /* Embed Frameworks */,
 			);
 			buildRules = (
 			);

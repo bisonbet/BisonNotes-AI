@@ -69,18 +69,18 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         // Check location services availability on background queue
         DispatchQueue.global(qos: .utility).async {
             let servicesEnabled = CLLocationManager.locationServicesEnabled()
-            
+
             DispatchQueue.main.async {
                 guard servicesEnabled else {
                     self.locationError = "Location services are disabled on this device"
                     return
                 }
-                
+
                 switch self.locationStatus {
                 case .authorizedWhenInUse, .authorizedAlways:
-                    // Location manager methods must be called on main queue
+                    // Only request a one-time location update to avoid continuous battery drain
+                    // Do NOT use startUpdatingLocation() as it runs continuously
                     self.locationManager.requestLocation()
-                    self.locationManager.startUpdatingLocation()
                     self.isLocationEnabled = true
                     self.locationError = nil
                 case .denied, .restricted:

@@ -383,8 +383,8 @@ class SummaryManager: ObservableObject {
     
     func convertLegacyToEnhanced(_ legacy: SummaryData, contentType: ContentType = .general, aiMethod: String = "Legacy", originalLength: Int = 0) -> EnhancedSummaryData {
         let taskItems = legacy.tasks.map { TaskItem(text: $0) }
-        let reminderItems = legacy.reminders.map { 
-            ReminderItem(text: $0, timeReference: ReminderItem.TimeReference(originalText: "No time specified"))
+        let reminderItems = legacy.reminders.map {
+            ReminderItem(text: $0, timeReference: ReminderItem.TimeReference.fromReminderText($0))
         }
         let titleItems: [TitleItem] = [] // Legacy summaries don't have titles
         

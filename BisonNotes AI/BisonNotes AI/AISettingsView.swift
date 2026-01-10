@@ -91,6 +91,9 @@ final class AISettingsViewModel: ObservableObject {
         case .openAI:
             UserDefaults.standard.set(true, forKey: "enableOpenAI")
             print("🔧 Auto-enabled OpenAI engine")
+        case .onDeviceLLM:
+            UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+            print("🔧 Auto-enabled On-Device LLM engine")
         default:
             break
         }
@@ -138,6 +141,10 @@ final class AISettingsViewModel: ObservableObject {
                 let credentials = AWSCredentialsManager.shared.credentials
                 return credentials.isValid && isEnabled
             }
+        case .onDeviceLLM:
+            let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+            let selectedModel = OnDeviceLLMModelInfo.selectedModel
+            return isEnabled && selectedModel.isDownloaded
         }
     }
 }
@@ -160,6 +167,7 @@ struct AISettingsView: View {
     @State private var showingMistralAISettings = false
     @State private var showingAWSBedrockSettings = false
     @State private var showingAppleIntelligenceSettings = false
+    @State private var showingOnDeviceLLMSettings = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     @State private var showingRegenerateConfirmation = false
@@ -243,6 +251,10 @@ struct AISettingsView: View {
                 let credentials = AWSCredentialsManager.shared.credentials
                 return credentials.isValid && isEnabled
             }
+        case .onDeviceLLM:
+            let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+            let isModelReady = OnDeviceLLMDownloadManager.shared.isModelReady
+            return isEnabled && isModelReady
         }
     }
     
@@ -271,6 +283,8 @@ struct AISettingsView: View {
                 return model.displayName
             }
             return "Claude 4.5 Haiku"
+        case .onDeviceLLM:
+            return OnDeviceLLMModelInfo.selectedModel.displayName
         }
     }
     
@@ -391,6 +405,11 @@ struct AISettingsView: View {
         }
         .sheet(isPresented: $showingAppleIntelligenceSettings) {
             AppleIntelligenceSettingsView()
+        }
+        .sheet(isPresented: $showingOnDeviceLLMSettings) {
+            NavigationStack {
+                OnDeviceLLMSettingsView()
+            }
         }
     }
 }
@@ -565,6 +584,8 @@ private extension AISettingsView {
                     mistralConfigurationSection
                 case .awsBedrock:
                     awsBedrockConfigurationSection
+                case .onDeviceLLM:
+                    onDeviceLLMConfigurationSection
                 }
             }
         }
@@ -1091,7 +1112,91 @@ private extension AISettingsView {
             .padding(.horizontal, 24)
         }
     }
-    
+
+    var onDeviceLLMConfigurationSection: some View {
+        let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+        let selectedModel = OnDeviceLLMModelInfo.selectedModel
+        let isModelReady = selectedModel.isDownloaded
+
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("On-Device LLM Configuration")
+                .font(.headline)
+                .padding(.horizontal, 24)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("On-Device LLM Settings")
+                            .font(.body)
+                        Text("Privacy-focused local AI processing. No internet required after model download.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { self.showingOnDeviceLLMSettings = true }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("Configure")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.purple)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Status:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(isEnabled && isModelReady ? Color.green : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text(isEnabled && isModelReady ? "Ready" : (isModelReady ? "Disabled" : "Model Not Downloaded"))
+                                .font(.caption)
+                                .foregroundColor(isEnabled && isModelReady ? .green : .red)
+                        }
+                    }
+
+                    HStack {
+                        Text("Model:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(isModelReady ? selectedModel.displayName : "None")
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(isModelReady ? .primary : .secondary)
+                    }
+
+                    if isModelReady {
+                        HStack {
+                            Text("Size:")
+                                .font(.body)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(selectedModel.downloadSize)
+                                .font(.body)
+                                .fontWeight(.medium)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.purple.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+
     var openAICompatibleConfigurationSection: some View {
         // FIX: Logic moved outside the ViewBuilder closure.
         let compatibleApiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""

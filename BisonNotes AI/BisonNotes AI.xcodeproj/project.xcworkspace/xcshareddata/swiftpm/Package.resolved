@@ -1,5 +1,5 @@
 {
-  "originHash" : "a201ded6a08ee28869124f1ee49a951e081f3ff03bb8364e4fc3f5134d1144bb",
+  "originHash" : "c7b2d98a567e826d1d1d104d49ae258f8a3b2b52b57e85ebe45ea48c76876bb9",
   "pins" : [
     {
       "identity" : "aws-crt-swift",
@@ -17,15 +17,6 @@
       "state" : {
         "revision" : "2aa2c8c87775a8e0f53aeb28808f0d16704ac715",
         "version" : "1.5.87"
-      }
-    },
-    {
-      "identity" : "espeak-ng-spm",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/DePasqualeOrg/espeak-ng-spm.git",
-      "state" : {
-        "branch" : "fix-path-espeak-data-macro",
-        "revision" : "92ecb6a0b0f622fad8a8eb2afd29f75ebc0fe9d4"
       }
     },
     {
@@ -182,15 +173,6 @@
       }
     },
     {
-      "identity" : "swift-jinja",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/huggingface/swift-jinja.git",
-      "state" : {
-        "revision" : "06a511d5adab5a812852ff972e65702a24b8ce30",
-        "version" : "2.2.0"
-      }
-    },
-    {
       "identity" : "swift-log",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
@@ -287,24 +269,6 @@
       "state" : {
         "revision" : "395a77f0aa927f0ff73941d7ac35f2b46d47c9db",
         "version" : "1.6.3"
-      }
-    },
-    {
-      "identity" : "swift-tiktoken",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/DePasqualeOrg/swift-tiktoken",
-      "state" : {
-        "branch" : "main",
-        "revision" : "b4310ee520995ddff45b055de19e6605e0f8e5b6"
-      }
-    },
-    {
-      "identity" : "swift-transformers",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/huggingface/swift-transformers",
-      "state" : {
-        "branch" : "573e5c9",
-        "revision" : "573e5c9036c2f136b3a8a071da8e8907322403d0"
       }
     },
     {

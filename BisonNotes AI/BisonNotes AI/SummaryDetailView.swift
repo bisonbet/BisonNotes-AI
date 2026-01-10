@@ -1533,11 +1533,12 @@ struct EnhancedTaskRowView: View {
             
             // Task content
             VStack(alignment: .leading, spacing: 4) {
-                Text(task.text)
+                // Task text - sanitized for display
+                Text(task.text.sanitizedPlainText())
                     .font(.body)
                     .foregroundColor(.primary)
                     .lineLimit(nil)
-                
+
                 // Task metadata
                 HStack {
                     Image(systemName: task.category.icon)
@@ -1694,11 +1695,12 @@ struct EnhancedReminderRowView: View {
             
             // Reminder content
             VStack(alignment: .leading, spacing: 4) {
-                Text(reminder.text)
+                // Reminder text - sanitized for display
+                Text(reminder.text.sanitizedPlainText())
                     .font(.body)
                     .foregroundColor(.primary)
                     .lineLimit(nil)
-                
+
                 // Reminder metadata
                 HStack {
                     Text(reminder.urgency.rawValue)
@@ -1837,31 +1839,31 @@ struct SelectableTitleRowView: View {
             .disabled(isCurrentTitle)
             
             VStack(alignment: .leading, spacing: 4) {
-                // Title text
-                Text(title.text)
+                // Title text - sanitized for display (includes quote stripping)
+                Text(title.text.sanitizedForTitle())
                     .font(.body)
                     .foregroundColor(isCurrentTitle ? .green : .primary)
                     .fontWeight(isCurrentTitle ? .medium : .regular)
                     .multilineTextAlignment(.leading)
-                
+
                 // Title metadata
                 HStack {
                     // Category
                     Image(systemName: title.category.icon)
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    
+
                     Text(title.category.rawValue)
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    
+
                     Spacer()
-                    
+
                     // Confidence
                     Text("\(SafeConfidenceHelper.percent(title.confidence))%")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    
+
                     if isCurrentTitle {
                         Text("Current")
                             .font(.caption2)
@@ -2050,22 +2052,22 @@ struct TitleOptionRow: View {
                     .foregroundColor(isSelected ? .green : .gray)
                 
                 VStack(alignment: .leading, spacing: 4) {
-                    // Title text
-                    Text(title.text)
+                    // Title text - sanitized for display (includes quote stripping)
+                    Text(title.text.sanitizedForTitle())
                         .font(.body)
                         .foregroundColor(.primary)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    
+
                     // Metadata
                     HStack {
                         Image(systemName: title.category.icon)
                             .font(.caption2)
                         Text(title.category.rawValue)
                             .font(.caption2)
-                        
+
                         Spacer()
-                        
+
                         // Confidence indicator
                         HStack(spacing: 2) {
                             ForEach(0..<3, id: \.self) { index in
@@ -2074,7 +2076,7 @@ struct TitleOptionRow: View {
                                     .frame(width: 4, height: 4)
                             }
                         }
-                        
+
                         Text("\(SafeConfidenceHelper.percent(title.confidence))%")
                             .font(.caption2)
                     }

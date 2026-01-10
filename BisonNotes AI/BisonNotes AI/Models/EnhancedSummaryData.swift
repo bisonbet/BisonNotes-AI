@@ -117,14 +117,81 @@ struct ReminderItem: Codable, Identifiable, Equatable, Hashable, Sendable {
         let parsedDate: Date?
         let relativeTime: String?
         let isSpecific: Bool
-        
+
         init(originalText: String, parsedDate: Date? = nil, relativeTime: String? = nil) {
             self.originalText = originalText
             self.parsedDate = parsedDate
             self.relativeTime = relativeTime
             self.isSpecific = parsedDate != nil
         }
-        
+
+        /// Smart initializer that extracts time references from reminder text
+        /// If no time reference is found, defaults to "Later" instead of showing full text
+        static func fromReminderText(_ text: String) -> TimeReference {
+            let lowercased = text.lowercased()
+
+            // Check for common time patterns
+            let timePatterns: [(pattern: String, display: String)] = [
+                ("today", "Today"),
+                ("tomorrow", "Tomorrow"),
+                ("tonight", "Tonight"),
+                ("this morning", "This morning"),
+                ("this afternoon", "This afternoon"),
+                ("this evening", "This evening"),
+                ("tomorrow morning", "Tomorrow morning"),
+                ("tomorrow afternoon", "Tomorrow afternoon"),
+                ("tomorrow evening", "Tomorrow evening"),
+                ("next week", "Next week"),
+                ("this week", "This week"),
+                ("next month", "Next month"),
+                ("this month", "This month"),
+                ("monday", "Monday"),
+                ("tuesday", "Tuesday"),
+                ("wednesday", "Wednesday"),
+                ("thursday", "Thursday"),
+                ("friday", "Friday"),
+                ("saturday", "Saturday"),
+                ("sunday", "Sunday"),
+                ("later", "Later"),
+                ("soon", "Soon"),
+                ("asap", "ASAP"),
+                ("immediately", "Immediately"),
+                ("urgently", "Urgently")
+            ]
+
+            // Find the first matching time pattern
+            for (pattern, display) in timePatterns {
+                if lowercased.contains(pattern) {
+                    return TimeReference(
+                        originalText: pattern,
+                        parsedDate: nil,
+                        relativeTime: display
+                    )
+                }
+            }
+
+            // Check for time patterns like "3pm", "5:30", "at 2:00"
+            let timeRegex = try? NSRegularExpression(
+                pattern: "\\b(at |by )?\\d{1,2}(:\\d{2})?(am|pm|AM|PM)?\\b",
+                options: .caseInsensitive
+            )
+            if let match = timeRegex?.firstMatch(in: text, range: NSRange(location: 0, length: text.count)) {
+                let timeString = String(text[Range(match.range, in: text)!])
+                return TimeReference(
+                    originalText: timeString.trimmingCharacters(in: .whitespaces),
+                    parsedDate: nil,
+                    relativeTime: timeString.trimmingCharacters(in: .whitespaces)
+                )
+            }
+
+            // Default to "Later" if no time reference found
+            return TimeReference(
+                originalText: "later",
+                parsedDate: nil,
+                relativeTime: "Later"
+            )
+        }
+
         var displayText: String {
             if let relative = relativeTime {
                 return relative

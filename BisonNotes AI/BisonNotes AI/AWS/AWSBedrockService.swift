@@ -848,7 +848,7 @@ class AWSBedrockService: ObservableObject {
                 if !cleanText.isEmpty && cleanText.count > 5 {
                     reminders.append(ReminderItem(
                         text: cleanText,
-                        timeReference: ReminderItem.TimeReference(originalText: "No time specified"),
+                        timeReference: ReminderItem.TimeReference.fromReminderText(cleanText),
                         urgency: .later,
                         confidence: 0.6
                     ))
