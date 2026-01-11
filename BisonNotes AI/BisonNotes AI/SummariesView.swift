@@ -471,7 +471,7 @@ struct SummariesView: View {
                     print("🔧 Generating summary for recording: \(recording.recordingName ?? "Unknown")")
                     
                     // Get the selected AI engine
-                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Apple Intelligence"
                     print("🤖 Using AI engine: \(selectedEngine)")
 
                     // Prepare for background tracking
@@ -549,7 +549,7 @@ struct SummariesView: View {
                     }
                     
                     // Create a job for tracking even when there's no transcript
-                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Apple Intelligence"
                     let recordingURL = URL(string: recording.recordingURL ?? "") ?? URL(fileURLWithPath: "")
                     let recordingName = recording.recordingName ?? "Unknown Recording"
                     

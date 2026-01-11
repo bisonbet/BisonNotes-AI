@@ -1752,7 +1752,7 @@ class AIEngineFactory {
 }
 
 enum AIEngineType: String, CaseIterable {
-    case enhancedAppleIntelligence = "Enhanced Apple Intelligence"
+    case enhancedAppleIntelligence = "Apple Intelligence"
     case openAI = "OpenAI"
     case mistralAI = "Mistral AI"
     case awsBedrock = "AWS Bedrock"
@@ -1763,7 +1763,13 @@ enum AIEngineType: String, CaseIterable {
 
     /// Returns all available engine types based on device capabilities
     static var availableCases: [AIEngineType] {
-        return allCases
+        return allCases.filter { engineType in
+            // Hide on-device LLM if device doesn't have sufficient RAM
+            if engineType == .onDeviceLLM {
+                return DeviceCapabilities.supportsOnDeviceLLM
+            }
+            return true
+        }
     }
 
     var description: String {

@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SafariServices
 
 struct RecordingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
@@ -17,10 +18,34 @@ struct RecordingsView: View {
     @State private var recordings: [AudioRecordingFile] = []
     @State private var showingRecordingsList = false
     @State private var showingBackgroundProcessing = false
+    @State private var showingHelpDocumentation = false
     
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
+                // Help documentation link at the top
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        showingHelpDocumentation = true
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "questionmark.circle")
+                            Text("Help")
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.accentColor.opacity(0.1))
+                        )
+                    }
+                    .padding(.trailing)
+                    .padding(.top, 8)
+                }
+                
                 Spacer()
                 
                 VStack(spacing: 40) {
@@ -198,6 +223,11 @@ struct RecordingsView: View {
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()
             }
+            .sheet(isPresented: $showingHelpDocumentation) {
+                if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
+                    SafariView(url: url)
+                }
+            }
             .alert("Transcript Import Results", isPresented: $transcriptImportManager.showingImportAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
@@ -246,5 +276,22 @@ struct RecordingsView: View {
             .padding(.horizontal, 40)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Safari View Wrapper
+struct SafariView: UIViewControllerRepresentable {
+    let url: URL
+    
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        let safariVC = SFSafariViewController(url: url)
+        safariVC.preferredBarTintColor = UIColor.systemBackground
+        safariVC.preferredControlTintColor = UIColor.systemBlue
+        safariVC.dismissButtonStyle = .close
+        return safariVC
+    }
+    
+    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {
+        // No updates needed
     }
 }

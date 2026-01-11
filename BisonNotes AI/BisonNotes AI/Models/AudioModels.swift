@@ -86,7 +86,7 @@ public enum WhisperProtocol: String, CaseIterable, Codable {
 
 public enum TranscriptionEngine: String, CaseIterable, Codable {
     case notConfigured = "Not Configured"
-    case appleIntelligence = "Apple Intelligence (Limited)"
+    case appleIntelligence = "Apple Transcription"
     case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
     case openAI = "OpenAI"

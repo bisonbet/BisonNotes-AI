@@ -1127,7 +1127,7 @@ class BackgroundProcessingManager: ObservableObject {
             reminders = try await service.extractReminders(from: transcriptText)
             titles = try await service.extractTitles(from: transcriptText)
             
-        case "Enhanced Apple Intelligence", "apple intelligence", "apple":
+        case "Apple Intelligence", "apple intelligence", "apple":
             let appleEngine = EnhancedAppleIntelligenceEngine()
             
             // Generate summary
@@ -1612,7 +1612,7 @@ class BackgroundProcessingManager: ObservableObject {
             let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? "appleIntelligence") ?? .appleIntelligence
             type = .transcription(engine: engine)
         } else {
-            type = .summarization(engine: jobEntry.engine ?? "Enhanced Apple Intelligence")
+            type = .summarization(engine: jobEntry.engine ?? "Apple Intelligence")
         }
         
         // Convert status string back to JobProcessingStatus enum

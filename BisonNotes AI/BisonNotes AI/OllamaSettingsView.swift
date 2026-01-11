@@ -10,7 +10,7 @@ import SwiftUI
 struct OllamaSettingsView: View {
     @AppStorage("ollamaServerURL") private var serverURL: String = "http://localhost"
     @AppStorage("ollamaPort") private var port: Int = 11434
-    @AppStorage("ollamaModelName") private var selectedModel: String = "llama2:7b"
+    @AppStorage("ollamaModelName") private var selectedModel: String = "gpt-oss:20b"
     @AppStorage("ollamaMaxTokens") private var maxTokens: Int = 2048
     @AppStorage("ollamaTemperature") private var temperature: Double = 0.1
     /// Maximum context window the selected model supports
@@ -33,7 +33,7 @@ struct OllamaSettingsView: View {
         // Initialize with current settings
         let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
         let port = UserDefaults.standard.integer(forKey: "ollamaPort")
-        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "gpt-oss:20b"
         let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
         let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
         let contextTokens = UserDefaults.standard.integer(forKey: "ollamaContextTokens")
@@ -233,7 +233,7 @@ struct OllamaSettingsView: View {
                     Text("No models found on server")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("Install a model using: ollama pull llama3.2")
+                    Text("Install a model using: ollama pull gpt-oss:20b")
                         .font(.caption.monospaced())
                         .foregroundColor(.orange)
                 }
@@ -329,7 +329,7 @@ struct OllamaSettingsView: View {
                 
                 Text("1. Install Ollama from https://ollama.ai")
                     .font(.caption)
-                Text("2. Pull a model: ollama pull llama3.2")
+                Text("2. Pull a model: ollama pull gpt-oss:20b")
                     .font(.caption.monospaced())
                 Text("3. Start the server: ollama serve")
                     .font(.caption)

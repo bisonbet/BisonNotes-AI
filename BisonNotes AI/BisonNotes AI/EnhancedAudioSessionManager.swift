@@ -203,6 +203,18 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
     }
     
+    /// Clear the preferred input to let iOS use its default microphone
+    func clearPreferredInput() async throws {
+        do {
+            try session.setPreferredInput(nil)
+            print("✅ Preferred input cleared, iOS will use default microphone")
+        } catch {
+            let audioError = AudioProcessingError.audioSessionConfigurationFailed("Failed to clear preferred input: \(error.localizedDescription)")
+            lastError = audioError
+            throw audioError
+        }
+    }
+    
     /// Get available audio inputs
     func getAvailableInputs() -> [AVAudioSessionPortDescription] {
         return session.availableInputs ?? []

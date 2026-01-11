@@ -64,8 +64,8 @@ struct BisonNotesAIApp: App {
         // Migrate AI engine if not configured
         if currentAIEngine == "None" || currentAIEngine == "Not Configured" || currentAIEngine == nil {
             if isAppleIntelligenceSupported {
-                UserDefaults.standard.set("Enhanced Apple Intelligence", forKey: aiEngineKey)
-                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'Enhanced Apple Intelligence' (device supported)")
+                UserDefaults.standard.set("Apple Intelligence", forKey: aiEngineKey)
+                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'Apple Intelligence' (device supported)")
             } else {
                 // Set OpenAI as default for older devices
                 UserDefaults.standard.set("OpenAI", forKey: aiEngineKey)
@@ -81,9 +81,10 @@ struct BisonNotesAIApp: App {
 
         // Migrate transcription engine if not configured
         if currentTranscriptionEngine == "Not Configured" || currentTranscriptionEngine == nil {
-            if isAppleIntelligenceSupported {
-                UserDefaults.standard.set("Apple Intelligence (Limited)", forKey: transcriptionEngineKey)
-                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'Apple Intelligence (Limited)' (device supported)")
+            let isTranscriptionSupported = DeviceCompatibility.isAppleIntelligenceTranscriptionSupported
+            if isTranscriptionSupported {
+                UserDefaults.standard.set("Apple Transcription", forKey: transcriptionEngineKey)
+                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'Apple Transcription' (device supported)")
             } else {
                 // Set OpenAI as default for older devices
                 UserDefaults.standard.set("OpenAI", forKey: transcriptionEngineKey)
@@ -100,6 +101,48 @@ struct BisonNotesAIApp: App {
         // Mark migration as complete
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
+    
+    /// Migrates users from Apple Intelligence to On-Device LLM
+    /// Shows an alert and opens the On-Device LLM settings page
+    private func migrateAppleIntelligenceToOnDeviceLLM() {
+        let aiEngineKey = "SelectedAIEngine"
+        let migrationKey = "appleIntelligenceToOnDeviceLLMMigrated_v1.4"
+        
+        // Check if migration has already been performed
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+        
+        let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
+        
+        // Check if user was using Apple Intelligence (check all possible variations)
+        let appleIntelligenceVariants = [
+            "Apple Intelligence",
+            "Enhanced Apple Intelligence",
+            "enhancedAppleIntelligence"
+        ]
+        
+        if let engine = currentAIEngine, appleIntelligenceVariants.contains(engine) {
+            // Mark that we need to show the migration alert
+            UserDefaults.standard.set(true, forKey: "showAppleIntelligenceMigrationAlert")
+            
+            // Migrate to On-Device LLM
+            UserDefaults.standard.set("On-Device LLM", forKey: aiEngineKey)
+            UserDefaults.standard.set(true, forKey: "enableOnDeviceLLM")
+            
+            // Also update transcription if it was using Apple Intelligence
+            let transcriptionEngineKey = "selectedTranscriptionEngine"
+            let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
+            if let transcription = currentTranscription, appleIntelligenceVariants.contains(transcription) {
+                UserDefaults.standard.set("Apple Transcription", forKey: transcriptionEngineKey)
+            }
+            
+            NSLog("✅ Migrated from Apple Intelligence (\(engine)) to On-Device LLM")
+        }
+        
+        // Mark migration as complete
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
 
     init() {
 #if DEBUG
@@ -112,6 +155,7 @@ struct BisonNotesAIApp: App {
         setupAppShortcuts()
         migrateAWSBedrockSettings()
         migrateAIEngineSelection()
+        migrateAppleIntelligenceToOnDeviceLLM()
     }
 
     /// Logs device capabilities on app startup

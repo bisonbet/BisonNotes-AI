@@ -14,7 +14,7 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     
     // MARK: - SummarizationEngine Protocol
     
-    var name: String { "Enhanced Apple Intelligence" }
+    var name: String { "Apple Intelligence" }
     var engineType: String { "Apple Intelligence" }
     var description: String { "Leverages Apple Intelligence for private, on-device content analysis and summary extraction." }
     var isAvailable: Bool { true }

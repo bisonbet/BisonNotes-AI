@@ -58,7 +58,7 @@ final class AISettingsViewModel: ObservableObject {
 
     /// Moves the engine selection logic into the view model.
     func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) -> (shouldPrompt: Bool, oldEngine: String, error: String?) {
-        let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+        let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"
         let newEngine = engineType.rawValue
 
         guard oldEngine != newEngine else {
@@ -180,7 +180,7 @@ struct AISettingsView: View {
     private var currentEngineType: AIEngineType? {
         // Note: AudioRecorderViewModel doesn't have selectedAIEngine property
         // Use the actual current engine from UserDefaults
-        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"
         return AIEngineType.allCases.first { $0.rawValue == currentEngineName }
     }
     
@@ -191,7 +191,7 @@ struct AISettingsView: View {
             }
             
             var statuses: [String: EngineAvailabilityStatus] = [:]
-            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"
             
             // Check each engine type
             for engineType in AIEngineType.allCases {
@@ -325,7 +325,7 @@ struct AISettingsView: View {
                 Task { await viewModel.regenerationManager.regenerateAllSummaries() }
             }
         } message: {
-            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"). Would you like to regenerate your existing summaries with the new AI engine?")
+            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"). Would you like to regenerate your existing summaries with the new AI engine?")
                 .font(.headline)
                 .padding()
             
@@ -336,7 +336,7 @@ struct AISettingsView: View {
                 .buttonStyle(.bordered)
                 
                 Button("Regenerate") {
-                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"
                     // TODO: Implement setEngine with new Core Data system
                     viewModel.regenerationManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
                     showingEngineChangePrompt = false
@@ -512,7 +512,7 @@ private extension AISettingsView {
                     .fontWeight(.medium)
                 
                 Picker("AI Engine", selection: Binding(
-                    get: { UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence" },
+                    get: { UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM" },
                     set: { newValue in
                         if let engineType = AIEngineType.allCases.first(where: { $0.rawValue == newValue }) {
                             let result = self.viewModel.selectEngine(engineType, recorderVM: self.recorderVM)
@@ -528,7 +528,7 @@ private extension AISettingsView {
                         }
                     }
                 )) {
-                    ForEach(AIEngineType.availableCases.filter { !$0.isComingSoon }, id: \.self) { engineType in
+                    ForEach(AIEngineType.availableCases.filter { !$0.isComingSoon && $0 != .enhancedAppleIntelligence }, id: \.self) { engineType in
                         VStack(alignment: .leading) {
                             Text(engineType.rawValue)
                                 .font(.body)
@@ -565,7 +565,7 @@ private extension AISettingsView {
     }
 
     var selectedEngineConfigurationSection: some View {
-        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"
 
         return Group {
             if let currentEngine = AIEngineType.allCases.first(where: { $0.rawValue == currentEngineName }) {
@@ -585,7 +585,11 @@ private extension AISettingsView {
                 case .awsBedrock:
                     awsBedrockConfigurationSection
                 case .onDeviceLLM:
-                    onDeviceLLMConfigurationSection
+                    if DeviceCapabilities.supportsOnDeviceLLM {
+                        onDeviceLLMConfigurationSection
+                    } else {
+                        EmptyView()
+                    }
                 }
             }
         }
@@ -1133,7 +1137,10 @@ private extension AISettingsView {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
-                    Button(action: { self.showingOnDeviceLLMSettings = true }) {
+                    Button(action: { 
+                        guard DeviceCapabilities.supportsOnDeviceLLM else { return }
+                        self.showingOnDeviceLLMSettings = true 
+                    }) {
                         HStack {
                             Image(systemName: "gear")
                             Text("Configure")

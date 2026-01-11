@@ -3,7 +3,7 @@ import CoreLocation
 
 // MARK: - Recording File Structure
 
-struct RecordingFile: Identifiable {
+struct RecordingFile: Identifiable, Equatable {
     let id = UUID()
     let url: URL
     let name: String
@@ -25,5 +25,10 @@ struct RecordingFile: Identifiable {
         } else {
             return String(format: "%d:%02d", minutes, seconds)
         }
+    }
+    
+    // Equatable conformance - compare by URL since it's unique
+    static func == (lhs: RecordingFile, rhs: RecordingFile) -> Bool {
+        return lhs.url == rhs.url
     }
 }

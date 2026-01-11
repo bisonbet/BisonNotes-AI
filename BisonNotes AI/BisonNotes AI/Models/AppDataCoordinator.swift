@@ -169,7 +169,13 @@ class AppDataCoordinator: ObservableObject {
     }
     
     /// Loads location data for a recording using proper URL resolution
+    /// First tries Core Data fields, then falls back to file-based storage
     func loadLocationData(for recording: RecordingEntry) -> LocationData? {
+        // First try Core Data fields (preferred method)
+        if let location = coreDataManager.getLocationData(for: recording) {
+            return location
+        }
+        // Fallback to file-based location
         return coreDataManager.loadLocationData(for: recording)
     }
     

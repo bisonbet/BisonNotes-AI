@@ -23,13 +23,13 @@ class ConfigurationWarningHelper {
 
     /// Check if transcription engine is configured
     static func isTranscriptionEngineConfigured() -> Bool {
-        let engine = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? "Apple Intelligence (Limited)"
+        let engine = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? "Apple Transcription"
         return engine != "Not Configured"
     }
 
     /// Check if AI engine is configured
     static func isAIEngineConfigured() -> Bool {
-        let engine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+        let engine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Apple Intelligence"
         return engine != "Not Configured"
     }
 

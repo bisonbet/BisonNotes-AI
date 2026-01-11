@@ -12,6 +12,7 @@ import SwiftUI
 struct OnDeviceLLMSettingsView: View {
 
     // MARK: - State
+    @Environment(\.dismiss) private var dismiss
 
     @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM) private var isEnabled = false
     @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.temperature) private var temperature: Double = 0.7
@@ -78,6 +79,13 @@ struct OnDeviceLLMSettingsView: View {
         }
         .navigationTitle("On-Device LLM")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") {
+                    dismiss()
+                }
+            }
+        }
         .alert("Delete Model?", isPresented: $showingDeleteConfirmation, presenting: modelToDelete) { model in
             Button("Delete", role: .destructive) {
                 downloadManager.deleteModel(model)
@@ -100,49 +108,59 @@ struct OnDeviceLLMSettingsView: View {
     @ViewBuilder
     private func modelRow(for model: OnDeviceLLMModelInfo) -> some View {
         let isRamSufficient = DeviceCapabilities.totalRAMInGB >= model.requiredRAM
+        let canSelect = isRamSufficient && model.isDownloaded
         
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(model.displayName)
-                            .font(.headline)
-                            .foregroundColor(isRamSufficient ? .primary : .secondary)
+        Button {
+            if canSelect && model.id != downloadManager.selectedModel.id {
+                selectModelAndApplyDefaults(model)
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(model.displayName)
+                                .font(.headline)
+                                .foregroundColor(isRamSufficient ? .primary : .secondary)
 
-                        if model.id == downloadManager.selectedModel.id && model.isDownloaded {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                                .font(.caption)
+                            if model.id == downloadManager.selectedModel.id && model.isDownloaded {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.caption)
+                            }
+                        }
+
+                        Text(model.description)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                        
+                        if !isRamSufficient {
+                            Text("⚠️ Requires \(String(format: "%.0f", model.requiredRAM))GB RAM (Device: \(String(format: "%.1f", DeviceCapabilities.totalRAMInGB))GB)")
+                                .font(.caption2)
+                                .foregroundColor(.red)
                         }
                     }
 
-                    Text(model.description)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(2)
-                    
-                    if !isRamSufficient {
-                        Text("⚠️ Requires \(String(format: "%.0f", model.requiredRAM))GB RAM (Device: \(String(format: "%.1f", DeviceCapabilities.totalRAMInGB))GB)")
-                            .font(.caption2)
-                            .foregroundColor(.red)
-                    }
+                    Spacer()
                 }
 
-                Spacer()
+                // Model details
+                HStack(spacing: 16) {
+                    Label(model.downloadSize, systemImage: "arrow.down.circle")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
 
-                modelActionButton(for: model, isRamSufficient: isRamSufficient)
+                    Label("\(model.contextWindow) tokens", systemImage: "text.alignleft")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
             }
-
-            // Model details
-            HStack(spacing: 16) {
-                Label(model.downloadSize, systemImage: "arrow.down.circle")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-
-                Label("\(model.contextWindow) tokens", systemImage: "text.alignleft")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
+            .padding(.trailing, 36)
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .trailing) {
+            modelActionButton(for: model, isRamSufficient: isRamSufficient)
         }
         .padding(.vertical, 4)
         .opacity(isRamSufficient ? 1.0 : 0.6)
@@ -161,14 +179,6 @@ struct OnDeviceLLMSettingsView: View {
             .disabled(true)
         } else if model.isDownloaded {
             Menu {
-                if model.id != downloadManager.selectedModel.id {
-                    Button {
-                        selectModelAndApplyDefaults(model)
-                    } label: {
-                        Label("Select", systemImage: "checkmark")
-                    }
-                }
-
                 Button(role: .destructive) {
                     modelToDelete = model
                     showingDeleteConfirmation = true

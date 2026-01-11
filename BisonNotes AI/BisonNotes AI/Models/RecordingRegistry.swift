@@ -665,7 +665,7 @@ public class RecordingRegistryManager: ObservableObject {
         print("🔧 Initializing AI engines...")
         
         // Initialize available engines
-        availableEngines["Enhanced Apple Intelligence"] = EnhancedAppleIntelligenceEngine()
+        availableEngines["Apple Intelligence"] = EnhancedAppleIntelligenceEngine()
         availableEngines["OpenAI"] = OpenAISummarizationEngine()
         availableEngines["Local LLM (Ollama)"] = LocalLLMEngine()
         availableEngines["OpenAI API Compatible"] = OpenAICompatibleEngine()
@@ -677,7 +677,7 @@ public class RecordingRegistryManager: ObservableObject {
         print("✅ Available engines: \(availableEngines.keys.joined(separator: ", "))")
         
         // Set default engine
-        currentEngine = availableEngines["Enhanced Apple Intelligence"]
+        currentEngine = availableEngines["Apple Intelligence"]
         
         if let engine = currentEngine {
             print("✅ Current engine set to: \(engine.name)")

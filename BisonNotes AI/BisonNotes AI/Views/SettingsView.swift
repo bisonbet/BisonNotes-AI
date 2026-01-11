@@ -26,7 +26,7 @@ struct SettingsView: View {
     @State private var showingPreferences = false
     @State private var showingTroubleshootingWarning = false
 
-    @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "Enhanced Apple Intelligence"
+    @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "Apple Intelligence"
     @AppStorage("WatchIntegrationEnabled") private var watchIntegrationEnabled: Bool = true
     @AppStorage("WatchAutoSync") private var watchAutoSync: Bool = true
     @AppStorage("WatchBatteryAware") private var watchBatteryAware: Bool = true
@@ -46,9 +46,9 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     headerSection
                     preferencesSection
-                    microphoneSection
                     aiEngineSection
                     transcriptionSection
+                    microphoneSection
                     advancedSection
                     debugSection
                     databaseMaintenanceSection

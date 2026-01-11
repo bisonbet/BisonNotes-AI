@@ -43,7 +43,7 @@ The project uses Swift Package Manager for dependency management. Major dependen
   - GitHub: https://github.com/bisonbet/LocalLLMClient-iOS
   - Supports GGUF model format with Q4_K_M quantization (optimal for mobile)
   - Built-in download management for Hugging Face models
-  - Available models: Ministral 3B Reasoning, Granite 4.0 Micro, Qwen3 1.7B
+  - Available models: Gemma 3n E4B, Qwen3 4B, Phi-4 Mini, Ministral 3B
 
 ### **UI & Formatting**
 - **MarkdownUI**: Professional markdown rendering for AI-generated summaries, headers, lists, and formatted text
@@ -77,31 +77,30 @@ The app supports multiple AI engines for summarization and content analysis:
 
 | Engine | Description | Requirements |
 |--------|-------------|--------------|
-| **Apple Intelligence** | On-device NLP using Apple frameworks | iOS 15.0+ |
 | **OpenAI** | GPT-4.1 models (GPT-4.1, Mini, Nano) | API key, internet |
-| **OpenAI Compatible** | Any OpenAI-compatible API (Nebius, Groq, etc.) | API key, internet |
+| **OpenAI Compatible** | Any OpenAI-compatible API (Nebius, Groq, LiteLLM, llama.cpp, etc.) | API key, internet |
 | **Mistral AI** | Mistral Large/Medium, Magistral (25.08-25.12) | API key, internet |
 | **Google AI Studio** | Gemini models | API key, internet |
 | **AWS Bedrock** | Claude 4.5 Haiku, Sonnet 4/4.5, Llama 4 Maverick | AWS credentials |
-| **Ollama** | Local LLM server | Ollama server running |
-| **On-Device LLM** | Fully offline, privacy-focused | 6GB+ RAM device, model (~1-2 GB) |
+| **Ollama** | Local LLM server (recommended: qwen3:30b, gpt-oss:20b, mistral-small3.2) | Ollama server running |
+| **On-Device LLM** | Fully offline, privacy-focused | iPhone 15 Pro+, model (2-3 GB) |
 
 ### On-Device LLM
 
 The on-device LLM feature enables completely private, offline AI processing:
 
 - **Models**:
-  - Ministral 3B Reasoning (Mistral) - ~2GB, 256K context
-  - Granite 4.0 Micro (IBM) - ~2GB, 128K context
-  - Qwen3 1.7B (Alibaba) - ~1GB, 32K context (smallest, fastest)
+  - Gemma 3n E4B (Default) - 3.09 GB, 32K context
+  - Qwen3 4B - 2.72 GB, 32K context
+  - Phi-4 Mini - 2.49 GB, 16K context
+  - Ministral 3B - ~2.15 GB, 32K context
 - **Quantization**: Q4_K_M only (optimal balance of quality and memory usage)
-- **Storage**: Models stored in Application Support (~1-2 GB each)
+- **Storage**: Models stored in Application Support (2-3 GB each)
 - **Requirements**:
-  - **6GB+ RAM required** (iPhone 14 Pro or newer, iPhone 15+, iPad Pro M1+)
+  - **Transcription**: iPhone 12+, iPads with M1+ or A17 Pro chips
+  - **AI Summary**: iPhone 15 Pro, iPhone 16 or newer (requires more processing power)
   - Device capability check prevents downloads on unsupported devices
-  - The `increased-memory-limit` entitlement has been removed (not needed with 6GB+ requirement)
 - **Downloads**: WiFi by default with optional cellular download support
-- **Why 6GB RAM?**: Models need ~2-3GB when loaded (file + overhead). iOS limits app memory based on device RAM, so 6GB+ ensures stable operation.
 
 **Adding LocalLLMClient to the project:**
 1. In Xcode, go to File → Add Package Dependencies
@@ -112,7 +111,7 @@ The on-device LLM feature enables completely private, offline AI processing:
 ## Configuration
 - Secrets are entered in‑app via settings views (OpenAI, Mistral AI, Google, AWS, Ollama, Whisper). Do not commit API keys.
 - Enable required capabilities in Xcode (Microphone, Background Modes, iCloud if used). Keep `Info.plist` and `.entitlements` aligned with features.
-- For on-device LLM, device capability checks ensure your device has sufficient RAM (6GB+) before allowing downloads.
+- For on-device LLM, device capability checks ensure your device meets requirements (iPhone 15 Pro+ for AI summaries) before allowing downloads.
 
 ## Contributing
 See AGENTS.md for repository guidelines (style, structure, commands, testing, PRs). Follow the Local Dev Setup above to run and validate changes before opening a PR.

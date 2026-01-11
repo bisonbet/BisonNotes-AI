@@ -53,11 +53,15 @@ class RecordingWorkflowManager: ObservableObject {
         
         // Store location data if available
         if let locationData = locationData {
+            print("📍 RecordingWorkflowManager: Saving location data - lat: \(locationData.latitude), lon: \(locationData.longitude), address: \(locationData.address ?? "none")")
             recordingEntry.locationLatitude = locationData.latitude
             recordingEntry.locationLongitude = locationData.longitude
             recordingEntry.locationTimestamp = locationData.timestamp
             recordingEntry.locationAccuracy = locationData.accuracy ?? 0.0
             recordingEntry.locationAddress = locationData.address
+            print("📍 RecordingWorkflowManager: Location saved to Core Data entry")
+        } else {
+            print("📍 RecordingWorkflowManager: No location data provided")
         }
         
         // Save to Core Data
