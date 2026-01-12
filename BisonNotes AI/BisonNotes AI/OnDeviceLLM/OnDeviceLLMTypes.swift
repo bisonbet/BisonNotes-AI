@@ -99,7 +99,7 @@ public enum OnDeviceLLMError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .modelNotLoaded:
-            return "On-device LLM model is not loaded"
+            return "On-Device AI model is not loaded"
         case .modelNotDownloaded:
             return "Model file has not been downloaded yet"
         case .downloadFailed(let message):

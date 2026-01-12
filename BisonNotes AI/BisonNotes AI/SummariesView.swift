@@ -42,7 +42,7 @@ struct SummariesView: View {
                     }
                     
                     // Configure the transcription manager with the selected engine
-                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
                     enhancedTranscriptionManager.updateTranscriptionEngine(selectedEngine)
                     
                     // Show first-time iCloud prompt if not seen before and there are summaries
@@ -334,38 +334,9 @@ struct SummariesView: View {
     // MARK: - Helper Methods
     
     private func loadRecordings() {
-        print("🔄 loadRecordings() called in SummariesView")
-        
         // URL sync is now only needed on app startup - getAbsoluteURL() handles runtime resolution
         
         let recordingsWithData = appCoordinator.getAllRecordingsWithData()
-        print("📊 Total recordings from coordinator: \(recordingsWithData.count)")
-        
-        // Debug: Print each recording and its transcript/summary status
-        for (index, recordingData) in recordingsWithData.enumerated() {
-            let recording = recordingData.recording
-            let transcript = recordingData.transcript
-            let summary = recordingData.summary
-
-            print("   📝 Recording \(index): \(recording.recordingName ?? "Unknown")")
-            print("      - Recording ID: \(recording.id?.uuidString ?? "nil")")
-            print("      - Has transcript data: \(transcript != nil)")
-            print("      - Has summary data: \(summary != nil)")
-            print("      - Recording.transcript relationship: \(recording.transcript != nil)")
-            print("      - Recording.summary relationship: \(recording.summary != nil)")
-            print("      - Recording.summaryId: \(recording.summaryId?.uuidString ?? "nil")")
-
-            if let summary = summary {
-                print("      - Summary AI Model: \(summary.aiModel)")
-                print("      - Summary Generated At: \(summary.generatedAt)")
-            }
-
-            // Show why this recording might be excluded
-            let hasTranscript = transcript != nil
-            let hasSummary = summary != nil || recording.summary != nil
-            let willBeIncluded = hasTranscript || hasSummary
-            print("      - Will be included: \(willBeIncluded) (transcript: \(hasTranscript), summary: \(hasSummary))")
-        }
         
         // Show recordings that either have a transcript (can generate) OR already have a summary
         recordings = recordingsWithData.compactMap { recordingData in
@@ -374,53 +345,20 @@ struct SummariesView: View {
             let summary = recordingData.summary
             
             if transcript != nil || summary != nil || recording.summary != nil {
-                if transcript != nil {
-                    print("✅ Including recording with transcript: \(recording.recordingName ?? "Unknown")")
-                } else {
-                    print("✅ Including recording with preserved summary (no transcript): \(recording.recordingName ?? "Unknown")")
-                }
                 return (recording: recording, transcript: transcript, summary: summary)
             } else {
-                print("❌ Excluding recording without transcript or summary: \(recording.recordingName ?? "Unknown")")
                 return nil
             }
         }
         
-        print("📊 Final result: \(recordings.count) recordings shown (has transcript or summary) out of \(recordingsWithData.count) total recordings")
-
-        // Debug Core Data state to understand what's happening
+        // Debug Core Data state check (logging removed)
         Task { @MainActor in
             // Check what's actually in Core Data
             let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
             let allSummaries = appCoordinator.coreDataManager.getAllSummaries()
-            print("🔍 DIRECT CORE DATA CHECK:")
-            print("📊 Direct recordings count: \(allRecordings.count)")
-            print("📊 Direct summaries count: \(allSummaries.count)")
-
-            // Debug the actual relationships
-            print("🔍 RELATIONSHIP DEBUG:")
-            for (index, recording) in allRecordings.enumerated() {
-                print("   Recording \(index): \(recording.recordingName ?? "Unknown")")
-                print("      - ID: \(recording.id?.uuidString ?? "nil")")
-                print("      - Summary ID: \(recording.summaryId?.uuidString ?? "nil")")
-                print("      - Has summary relationship: \(recording.summary != nil)")
-                if let summary = recording.summary {
-                    print("      - Summary title: \(summary.recording?.recordingName ?? "No title")")
-                }
-            }
-
-            for (index, summary) in allSummaries.prefix(5).enumerated() {
-                print("   Summary \(index): ID \(summary.id?.uuidString ?? "nil")")
-                print("      - Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
-                print("      - Has recording relationship: \(summary.recording != nil)")
-                if let recording = summary.recording {
-                    print("      - Recording name: \(recording.recordingName ?? "No name")")
-                }
-            }
 
             if allSummaries.count > 0 && allRecordings.count < allSummaries.count {
-                print("⚠️ ISSUE FOUND: We have \(allSummaries.count) summaries but only \(allRecordings.count) recordings!")
-                print("🔧 Attempting to repair orphaned summaries...")
+                // Attempt to repair orphaned summaries if needed
 
                 // Try to repair the orphaned summaries using CoreDataManager
                 let repairedCount = appCoordinator.coreDataManager.repairOrphanedSummaries()
@@ -541,12 +479,6 @@ struct SummariesView: View {
                     }
                 } else {
                     print("❌ No transcript found for recording: \(recording.recordingName ?? "Unknown")")
-                    print("🔍 Checking if recording exists in coordinator...")
-                    let allRecordings = appCoordinator.getAllRecordingsWithData()
-                    print("📊 Total recordings in coordinator: \(allRecordings.count)")
-                    for (index, recData) in allRecordings.enumerated() {
-                        print("   \(index): \(recData.recording.recordingName ?? "Unknown") - has transcript: \(recData.transcript != nil)")
-                    }
                     
                     // Create a job for tracking even when there's no transcript
                     let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Apple Intelligence"

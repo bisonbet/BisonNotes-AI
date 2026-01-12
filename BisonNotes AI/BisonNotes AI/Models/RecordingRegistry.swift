@@ -218,24 +218,13 @@ public class RecordingRegistryManager: ObservableObject {
     // MARK: - Summary Management
     
     func addSummary(_ summary: EnhancedSummaryData) {
-        print("🔧 RecordingRegistry: Adding summary for recording: \(summary.recordingName)")
-        print("   - Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
-        print("   - AI Model: \(summary.aiModel)")
-        print("   - Generated at: \(summary.generatedAt)")
-        
         // Remove any existing summaries for the same recording to prevent duplicates
         if let recordingId = summary.recordingId {
-            let existingCount = enhancedSummaries.filter { $0.recordingId == recordingId }.count
-            if existingCount > 0 {
-                print("🗑️ Removing \(existingCount) existing summaries for recording ID: \(recordingId)")
-            }
             enhancedSummaries.removeAll { $0.recordingId == recordingId }
         }
         
         enhancedSummaries.append(summary)
         saveEnhancedSummaries()
-        
-        print("✅ Summary added. Total summaries: \(enhancedSummaries.count)")
         
         // Update recording status
         if let recordingId = summary.recordingId,
@@ -243,35 +232,18 @@ public class RecordingRegistryManager: ObservableObject {
             var updatedRecording = recording
             updatedRecording.updateSummary(id: summary.id)
             updateRecording(updatedRecording)
-            print("✅ Updated recording status for: \(recording.recordingName)")
         }
     }
     
     func getSummary(for url: URL) -> EnhancedSummaryData? {
         guard let recording = getRecording(url: url) else { 
-            print("❌ RecordingRegistry: No recording found for URL: \(url.lastPathComponent)")
             return nil 
         }
         
         let matchingSummaries = enhancedSummaries.filter { $0.recordingId == recording.id }
-        print("🔍 RecordingRegistry: Looking for summary for recording: \(recording.recordingName)")
-        print("   - Recording ID: \(recording.id)")
-        print("   - Found \(matchingSummaries.count) matching summaries")
-        
-        // Debug: Show all summaries and their recording IDs
-        print("   - All summaries in registry:")
-        for (index, summary) in enhancedSummaries.enumerated() {
-            print("     \(index): \(summary.recordingName) - recordingId: \(summary.recordingId?.uuidString ?? "nil")")
-        }
         
         // Get the most recent summary for this recording (by generatedAt date)
         let summary = matchingSummaries.max { $0.generatedAt < $1.generatedAt }
-        
-        if let summary = summary {
-            print("✅ Found summary: \(summary.aiModel) (generated at: \(summary.generatedAt))")
-        } else {
-            print("❌ No summary found for recording: \(recording.recordingName)")
-        }
         
         return summary
     }
@@ -290,40 +262,19 @@ public class RecordingRegistryManager: ObservableObject {
     
     func getCompleteRecordingData(id: UUID) -> (recording: RegistryRecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)? {
         guard let recording = getRecording(id: id) else { 
-            print("❌ RecordingRegistry: No recording found for ID: \(id)")
             return nil 
         }
         
         let transcript = transcripts.first { $0.recordingId == id }
         let matchingSummaries = enhancedSummaries.filter { $0.recordingId == id }
         
-        print("🔍 RecordingRegistry: Getting complete data for recording: \(recording.recordingName)")
-        print("   - Recording ID: \(id)")
-        print("   - Has transcript: \(transcript != nil)")
-        print("   - Found \(matchingSummaries.count) summaries")
-        
         // Get the most recent summary for this recording (by generatedAt date)
         let summary = matchingSummaries.max { $0.generatedAt < $1.generatedAt }
-        
-        if let summary = summary {
-            print("✅ Using summary: \(summary.aiModel) (generated at: \(summary.generatedAt))")
-        }
         
         return (recording: recording, transcript: transcript, summary: summary)
     }
     
     func getAllRecordingsWithData() -> [(recording: RegistryRecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
-        print("🔄 getAllRecordingsWithData() called")
-        print("📊 Total recordings: \(recordings.count)")
-        print("📊 Total transcripts: \(transcripts.count)")
-        print("📊 Total summaries: \(enhancedSummaries.count)")
-        
-        // Debug: Print all transcripts
-        print("🔍 All transcripts:")
-        for (index, transcript) in transcripts.enumerated() {
-            print("   \(index): \(transcript.recordingName) - ID: \(transcript.recordingId?.uuidString ?? "nil")")
-        }
-        
         let result = recordings.map { recording in
             let transcript = transcripts.first { $0.recordingId == recording.id }
             // Get the most recent summary for this recording (by generatedAt date)
@@ -331,21 +282,9 @@ public class RecordingRegistryManager: ObservableObject {
                 .filter { $0.recordingId == recording.id }
                 .max { $0.generatedAt < $1.generatedAt }
             
-            print("🔍 Recording: \(recording.recordingName)")
-            print("   - Recording ID: \(recording.id)")
-            print("   - Has transcript: \(transcript != nil)")
-            print("   - Has summary: \(summary != nil)")
-            
-            if transcript != nil {
-                print("   ✅ Found transcript: \(transcript!.recordingName)")
-            } else {
-                print("   ❌ No transcript found for recording ID: \(recording.id)")
-            }
-            
             return (recording: recording, transcript: transcript, summary: summary)
         }
         
-        print("📊 Returning \(result.count) recordings with data")
         return result
     }
     
@@ -437,32 +376,14 @@ public class RecordingRegistryManager: ObservableObject {
     }
     
     func generateEnhancedSummary(from transcriptText: String, for url: URL, recordingName: String, recordingDate: Date) async throws -> EnhancedSummaryData {
-        print("🔍 RecordingRegistryManager.generateEnhancedSummary called")
-        print("📝 Transcript length: \(transcriptText.count) characters")
-        print("📁 URL: \(url.lastPathComponent)")
-        print("📝 Recording name: \(recordingName)")
-        print("📅 Recording date: \(recordingDate)")
-        
         guard let engine = currentEngine else {
-            print("❌ No current engine available")
-            print("🔧 Available engines: \(availableEngines.keys.joined(separator: ", "))")
             throw SummarizationError.aiServiceUnavailable(service: "No engine available")
         }
         
-        print("✅ Using engine: \(engine.name)")
-        print("🔧 Engine type: \(type(of: engine))")
-        
         let recordingId = getRecording(url: url)?.id ?? UUID()
-        print("📋 Recording ID: \(recordingId)")
         
         // Use the engine's processComplete method
-        print("🔧 Calling engine.processComplete...")
         let result = try await engine.processComplete(text: transcriptText)
-        
-        print("✅ Engine processed successfully")
-        print("📄 Summary length: \(result.summary.count) characters")
-        print("📋 Tasks: \(result.tasks.count)")
-        print("📋 Reminders: \(result.reminders.count)")
         print("📋 Titles: \(result.titles.count)")
         
         return EnhancedSummaryData(

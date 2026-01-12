@@ -284,6 +284,7 @@
                 <li><a href="#getting-started">📱 Getting Started</a></li>
                 <li><a href="#recording-features">🎙️ Recording Features</a>
                     <ul style="margin-left: 1.5em; margin-top: 0.5em;">
+                        <li><a href="#action-button">iPhone Action Button Integration</a></li>
                         <li><a href="#combining-recordings">Combining Recordings</a></li>
                     </ul>
                 </li>
@@ -326,10 +327,15 @@
                                 <li>Private, on-device AI processing</li>
                                 <li>No data leaves your device</li>
                                 <li>Best for recordings under 60 minutes</li>
-                                <li>Requires download of AI and Transcription models (5GB)</li>
+                                <li>Requires download of AI summary models (2-3GB each) and On Device transcription model (150-520MB)</li>
                                 <li>May be less accurate than cloud services</li>
-                                <li>After selecting, you'll be taken to download AI models</li>
-                                <li>Device requirements: Transcription requires iPhone 12+; AI Summary requires iPhone 15 Pro or iPhone 16+</li>
+                                <li>After selecting, you'll configure On Device transcription and download AI models</li>
+                                <li>Device requirements: 
+                                    <ul>
+                                        <li>Transcription: iOS 17.0+, 4GB+ RAM (most modern devices)</li>
+                                        <li>AI Summary: iPhone 15 Pro or iPhone 16+, iOS 18.1+</li>
+                                    </ul>
+                                </li>
                             </ul>
                         </li>
                         <li><strong>Advanced & Other Options</strong>:
@@ -501,6 +507,39 @@
 
         <h2 id="recording-features">🎙️ Recording Features</h2>
 
+        <h3 id="action-button">iPhone Action Button Integration</h3>
+        <div class="info-box">
+            <p><strong>📱 Available On</strong>: iPhone 15 Pro, iPhone 15 Pro Max, iPhone 16 Pro, iPhone 16 Pro Max, and future iPhone Pro models with Action Button</p>
+        </div>
+        <p>BisonNotes AI supports the iPhone Action Button, allowing you to quickly start recording without opening the app first. This is perfect for capturing thoughts, meetings, or voice notes instantly.</p>
+        
+        <h4>How to Configure the Action Button</h4>
+        <ol class="step-list">
+            <li><strong>Open Settings</strong>: On your iPhone, open the Settings app</li>
+            <li><strong>Navigate to Action Button</strong>: Scroll down and tap "Action Button"</li>
+            <li><strong>Select Shortcut</strong>: Choose "Shortcut" as the Action Button function</li>
+            <li><strong>Choose BisonNotes AI</strong>: 
+                <ul>
+                    <li>Tap "Choose a Shortcut"</li>
+                    <li>Search for "Start Recording" or "BisonNotes AI"</li>
+                    <li>Select "Start Recording" from BisonNotes AI</li>
+                </ul>
+            </li>
+            <li><strong>Done</strong>: Press the Action Button to test - it should launch BisonNotes AI and start recording automatically!</li>
+        </ol>
+
+        <h4>What Happens When You Press the Action Button</h4>
+        <ul>
+            <li><strong>App Opens</strong>: BisonNotes AI launches automatically (even if the app was closed)</li>
+            <li><strong>Switches to Recordings Tab</strong>: The app automatically navigates to the main recording screen</li>
+            <li><strong>Recording Starts Immediately</strong>: Recording begins automatically without needing to tap the microphone button</li>
+            <li><strong>Background Recording</strong>: Once started, recording continues even if you switch to another app or lock your phone</li>
+        </ul>
+
+        <div class="success-box">
+            <p><strong>💡 Pro Tip</strong>: The Action Button works even when your phone is locked! Press the Action Button, and BisonNotes AI will launch and start recording. This makes it perfect for quick voice notes without unlocking your phone.</p>
+        </div>
+
         <h3>Location Tracking</h3>
         <ul>
             <li><strong>Automatic</strong>: GPS location is captured with each recording</li>
@@ -598,7 +637,7 @@
 
         <div class="engine-grid">
             <div class="engine-card">
-                <h4>1. On-Device LLM</h4>
+                <h4>1. On-Device AI</h4>
                 <span class="engine-type type-local">On-device</span>
                 <span class="engine-type type-free">Free</span>
                 <p><strong>Type</strong>: On-device AI processing using local LLM models<br>
@@ -607,16 +646,17 @@
                 <strong>Internet</strong>: Required only for initial model download<br>
                 <strong>Requirements</strong>:
                     <ul>
-                        <li><strong>Transcription</strong>: iPhone 12 or newer, or iPads with M1+ or A17 Pro chips</li>
-                        <li><strong>AI Summary</strong>: iPhone 15 Pro, iPhone 16 or newer</li>
-                        <li>iOS 18.1+</li>
+                        <li><strong>Transcription</strong>: iOS 17.0+, 4GB+ RAM (most modern iPhones and iPads)</li>
+                        <li><strong>AI Summary</strong>: iPhone 15 Pro, iPhone 16 or newer, iOS 18.1+</li>
+                        <li><strong>Storage</strong>: 2-3GB for AI models, 150-520MB for transcription model</li>
                     </ul>
                 </p>
                 <p><strong>Setup</strong>:
                     <ul>
                         <li>Select "On-Device AI" in simple settings</li>
+                        <li>Download On Device transcription model (Higher Quality or Faster Processing)</li>
                         <li>Download one or more AI summary models</li>
-                        <li>Uses Apple Transcription for transcription</li>
+                        <li>Uses On Device transcription for transcription (requires model download)</li>
                         <li>Uses downloaded LLM models for AI summaries</li>
                     </ul>
                 </p>
@@ -1013,10 +1053,18 @@ docker run -d -p 9000:9000 \
             </ul>
         </div>
 
-        <h4>On-Device LLM Setup</h4>
+        <h4>On-Device AI Setup</h4>
         <ol class="step-list">
             <li><strong>Select On-Device AI</strong>: Choose "On-Device AI" in the simple settings page</li>
-            <li><strong>Download Models</strong>: After saving, you'll be taken to the On-Device LLM settings page:
+            <li><strong>Download Transcription Model</strong>: 
+                <ul>
+                    <li>You'll be prompted to configure On Device transcription</li>
+                    <li>Go to Settings → Transcription Settings → On Device</li>
+                    <li>Download either "Higher Quality" (~520MB) or "Faster Processing" (~150MB) model</li>
+                    <li>See <a href="#on-device-transcription-setup">On Device Transcription Setup</a> section above for detailed model selection guide</li>
+                </ul>
+            </li>
+            <li><strong>Download AI Summary Models</strong>: After saving, you'll be taken to the On-Device AI settings page:
                 <ul>
                     <li>Select one or more AI summary models to download</li>
                     <li>Available models:
@@ -1032,19 +1080,24 @@ docker run -d -p 9000:9000 \
             </li>
             <li><strong>Model Selection</strong>: Choose which model to use for summaries</li>
             <li><strong>Configuration</strong>: Adjust generation settings (temperature, max tokens, etc.)</li>
-            <li><strong>Transcription</strong>: Uses Apple Transcription automatically (no separate configuration needed)</li>
+            <li><strong>Transcription</strong>: Uses On Device transcription (requires model download as described above)</li>
         </ol>
         <div class="info-box">
             <h4>💾 Storage Requirements</h4>
-            <p>On-Device LLM requires 2-3GB of storage per model. Make sure you have sufficient free space before downloading models.</p>
+            <p>On-Device AI requires 2-3GB of storage per AI summary model, plus 150-520MB for the On Device transcription model. Make sure you have sufficient free space before downloading models.</p>
             <h4>📱 Device Requirements</h4>
             <ul>
-                <li><strong>Transcription</strong>: iPhone 12 or newer, or iPads with M1+ or A17 Pro chips</li>
-                <li><strong>AI Summary</strong>: iPhone 15 Pro, iPhone 16 or newer (requires more processing power)</li>
+                <li><strong>Transcription</strong>: iOS 17.0+, 4GB+ RAM (most modern iPhones and iPads)</li>
+                <li><strong>AI Summary</strong>: iPhone 15 Pro, iPhone 16 or newer, iOS 18.1+ (requires more processing power)</li>
             </ul>
         </div>
 
         <h2 id="transcription-configuration">📝 Transcription Configuration</h2>
+        
+        <div class="info-box">
+            <h3>🔒 On Device Transcription</h3>
+            <p>For complete privacy, use On Device transcription. Your audio is processed entirely on your device and never leaves your iPhone or iPad. See the <a href="#on-device-transcription-setup">On Device Transcription Setup</a> section below for complete setup instructions.</p>
+        </div>
 
         <h3>Engine Selection</h3>
         <ol class="step-list">
@@ -1056,11 +1109,133 @@ docker run -d -p 9000:9000 \
 
         <h3>Available Transcription Engines</h3>
         <ul>
-            <li><strong>Apple Transcription</strong>: On-device, no setup required, best for recordings under 60 minutes</li>
+            <li><strong>On Device</strong>: High-quality on-device transcription. Your audio never leaves your device, ensuring complete privacy. Requires model download (~150-520MB). Best for privacy-conscious users.</li>
             <li><strong>OpenAI</strong>: Cloud-based, requires API key, high-quality transcription</li>
             <li><strong>Whisper (Local Server)</strong>: High-quality transcription using OpenAI's Whisper model on your local server (REST API or Wyoming protocol)</li>
             <li><strong>AWS Transcribe</strong>: Cloud-based transcription service with support for long audio files</li>
         </ul>
+
+        <h3 id="on-device-transcription-setup">On Device Transcription Setup</h3>
+        <div class="info-box">
+            <h4>🔒 Privacy-First Transcription</h4>
+            <p>On Device transcription processes your audio entirely on your device. Your audio files never leave your iPhone or iPad, ensuring complete privacy and security.</p>
+        </div>
+        
+        <h4>Initial Setup</h4>
+        <ol class="step-list">
+            <li><strong>Enable On Device</strong>:
+                <ul>
+                    <li>Go to Settings → Transcription Settings</li>
+                    <li>Select "On Device" as your transcription engine</li>
+                    <li>Tap "Configure" to open On Device settings</li>
+                </ul>
+            </li>
+            <li><strong>Download a Model</strong>:
+                <ul>
+                    <li>In On Device settings, you'll see two model options:
+                        <ul>
+                            <li><strong>Higher Quality</strong> (~520MB): Best accuracy and quality. Takes longer to process but produces more accurate transcriptions.</li>
+                            <li><strong>Faster Processing</strong> (~150MB): Faster transcription with good quality. Ideal for quick transcriptions with slightly lower accuracy.</li>
+                        </ul>
+                    </li>
+                    <li>Tap the download button next to your preferred model</li>
+                    <li>Wait for download to complete (progress is shown with speed and time remaining)</li>
+                    <li>Model download requires internet connection, but transcription works offline after download</li>
+                </ul>
+            </li>
+            <li><strong>Device Requirements</strong>:
+                <ul>
+                    <li><strong>RAM</strong>: Requires 4GB+ RAM (most modern iPhones and iPads)</li>
+                    <li><strong>iOS</strong>: iOS 17.0 or later</li>
+                    <li><strong>Storage</strong>: 150-520MB free space depending on model selected</li>
+                </ul>
+            </li>
+            <li><strong>Test the Model</strong>:
+                <ul>
+                    <li>Once downloaded, tap "Test Model Loading" to verify it works</li>
+                    <li>First load may take 30-60 seconds as the model compiles</li>
+                    <li>If you see errors, try deleting and re-downloading the model</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h4>Model Selection Guide</h4>
+        <div class="info-box">
+            <h4>📋 Which Model Should I Use?</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Use Case</th>
+                        <th>Recommended Model</th>
+                        <th>Why?</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Voice Notes / Journaling</strong></td>
+                        <td>Faster Processing</td>
+                        <td>You are close to the mic; audio is clear. Speed is better.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Meeting / Interview</strong></td>
+                        <td>Higher Quality</td>
+                        <td>Handling multiple voices and distance from the mic requires the extra accuracy.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Noisy Environment</strong></td>
+                        <td>Higher Quality</td>
+                        <td>Faster Processing will fail to separate voice from noise.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Long Battery Life Needed</strong></td>
+                        <td>Faster Processing</td>
+                        <td>Higher Quality uses significantly more power per second of audio.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h4>Using On Device Transcription</h4>
+        <ol class="step-list">
+            <li><strong>Record Audio</strong>: Create a recording as usual</li>
+            <li><strong>Generate Transcript</strong>: 
+                <ul>
+                    <li>Open your recording</li>
+                    <li>Tap "Generate Transcript"</li>
+                    <li>On Device transcription will process your audio locally</li>
+                </ul>
+            </li>
+            <li><strong>Processing Time</strong>:
+                <ul>
+                    <li><strong>Faster Processing</strong>: Approximately 3x faster than Higher Quality</li>
+                    <li><strong>Higher Quality</strong>: Takes longer but produces more accurate results</li>
+                    <li>Processing time depends on audio length and device performance</li>
+                </ul>
+            </li>
+            <li><strong>View Results</strong>: Once complete, your transcript appears with full text and timestamps</li>
+        </ol>
+
+        <div class="success-box">
+            <h4>✅ Benefits of On Device Transcription</h4>
+            <ul>
+                <li><strong>Complete Privacy</strong>: Your audio never leaves your device</li>
+                <li><strong>Works Offline</strong>: No internet required after model download</li>
+                <li><strong>No API Costs</strong>: Free to use after initial model download</li>
+                <li><strong>Fast Processing</strong>: Especially with "Faster Processing" model</li>
+                <li><strong>High Quality</strong>: Excellent accuracy with "Higher Quality" model</li>
+            </ul>
+        </div>
+
+        <div class="warning-box">
+            <h4>⚠️ Important Notes</h4>
+            <ul>
+                <li><strong>Model Download</strong>: Requires internet connection and sufficient storage space</li>
+                <li><strong>First Load</strong>: First transcription after download may take 30-60 seconds as the model compiles</li>
+                <li><strong>Device Compatibility</strong>: Some older devices may not support On Device transcription</li>
+                <li><strong>Battery Usage</strong>: Higher Quality model uses more battery than Faster Processing</li>
+                <li><strong>Storage</strong>: Models take 150-520MB of storage space</li>
+            </ul>
+        </div>
 
         <h3>Large File Processing</h3>
         <ul>
@@ -1158,7 +1333,7 @@ docker run -d -p 9000:9000 \
             <li><strong>Automatic Detection</strong>: The page automatically detects your current configuration:
                 <ul>
                     <li>If both AI engine and transcription are set to "OpenAI" → Shows "OpenAI" option</li>
-                    <li>If AI engine is "On-Device LLM" and transcription is "Apple Transcription" → Shows "On-Device AI" option</li>
+                    <li>If AI engine is "On-Device AI" and transcription is "On Device" → Shows "On-Device AI" option</li>
                     <li>Any other configuration → Automatically shows "Advanced & Other Options"</li>
                 </ul>
             </li>
@@ -1167,7 +1342,7 @@ docker run -d -p 9000:9000 \
             <li><strong>Immediate Action</strong>: 
                 <ul>
                     <li>Selecting "OpenAI" → Enter API key and save</li>
-                    <li>Selecting "On-Device AI" → Saves and immediately opens On-Device LLM settings to download models</li>
+                    <li>Selecting "On-Device AI" → Saves and immediately opens On-Device AI settings to download models</li>
                     <li>Selecting "Advanced & Other Options" → Saves and immediately opens advanced settings page</li>
                 </ul>
             </li>
@@ -1178,7 +1353,7 @@ docker run -d -p 9000:9000 \
         <ul>
                     <li><strong>AI Processing</strong>: Configure AI summarization engines
                 <ul>
-                    <li>On-Device LLM</li>
+                    <li>On-Device AI</li>
                     <li>OpenAI</li>
                     <li>Google AI Studio</li>
                     <li>AWS Bedrock</li>
@@ -1189,7 +1364,7 @@ docker run -d -p 9000:9000 \
             </li>
             <li><strong>Transcription Engine</strong>: Configure transcription engines
                 <ul>
-                    <li>Apple Transcription</li>
+                    <li>On Device</li>
                     <li>OpenAI</li>
                     <li>Whisper (Local Server)</li>
                     <li>AWS Transcribe</li>
@@ -1229,7 +1404,7 @@ docker run -d -p 9000:9000 \
         <ul>
             <li><strong>Engine Selection</strong>: Choose your preferred AI engine for summaries:
                 <ul>
-                    <li><strong>On-Device LLM</strong>: Privacy-focused local AI processing</li>
+                    <li><strong>On-Device AI</strong>: Privacy-focused local AI processing</li>
                     <li><strong>OpenAI</strong>: Cloud-based AI with GPT models</li>
                     <li><strong>Google AI Studio</strong>: Gemini AI processing</li>
                     <li><strong>AWS Bedrock</strong>: Enterprise-grade Claude AI</li>
@@ -1241,7 +1416,7 @@ docker run -d -p 9000:9000 \
             <li><strong>Model Configuration</strong>: Adjust settings for selected engine (temperature, max tokens, etc.)</li>
             <li><strong>Connection Testing</strong>: Verify API connectivity</li>
             <li><strong>Batch Regeneration</strong>: Update all summaries with new engine</li>
-            <li><strong>Note</strong>: Apple Intelligence is no longer available as an AI engine option. Use On-Device LLM for local processing.</li>
+            <li><strong>Note</strong>: Apple Intelligence is no longer available as an AI engine option. Use On-Device AI for local processing.</li>
         </ul>
 
         <h3>Background Processing</h3>

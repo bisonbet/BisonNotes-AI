@@ -33,51 +33,57 @@ struct OnDeviceLLMSettingsView: View {
     // MARK: - Body
 
     var body: some View {
-        Form {
-            // Enable Section
+        let isSupported = DeviceCapabilities.supportsOnDeviceLLM
+        
+        return Form {
+            // Info Section
             Section {
-                Toggle("Enable On-Device LLM", isOn: $isEnabled)
-            } footer: {
-                Text("Process transcripts locally on your device using a downloaded AI model. No internet connection required after model download.")
+                if isSupported {
+                    Text("Process transcripts locally on your device using a downloaded AI model. No internet connection required after model download.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("On-Device AI requires 6GB+ RAM. Your device does not meet this requirement.")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
             }
 
-            if isEnabled {
-                // Model Selection Section
-                Section("Model") {
-                    modelSelectionView
-                }
+            // Model Selection Section
+            Section("Model") {
+                modelSelectionView
+            }
 
-                // Download Progress (if downloading)
-                if downloadManager.isDownloading {
-                    Section("Download Progress") {
-                        downloadProgressView
-                    }
+            // Download Progress (if downloading)
+            if downloadManager.isDownloading {
+                Section("Download Progress") {
+                    downloadProgressView
                 }
+            }
 
-                // Model Status Section
-                Section("Model Status") {
-                    modelStatusView
-                }
+            // Model Status Section
+            Section("Model Status") {
+                modelStatusView
+            }
 
-                // Settings Section
-                Section("Generation Settings") {
-                    temperatureSlider
-                }
+            // Settings Section
+            Section("Generation Settings") {
+                temperatureSlider
+            }
 
-                // Advanced Settings
-                Section {
-                    DisclosureGroup("Advanced Settings", isExpanded: $showingAdvancedSettings) {
-                        advancedSettingsView
-                    }
+            // Advanced Settings
+            Section {
+                DisclosureGroup("Advanced Settings", isExpanded: $showingAdvancedSettings) {
+                    advancedSettingsView
                 }
+            }
 
-                // Connection Test
-                Section {
-                    connectionTestButton
-                }
+            // Connection Test
+            Section {
+                connectionTestButton
             }
         }
-        .navigationTitle("On-Device LLM")
+        .navigationTitle("On-Device AI")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

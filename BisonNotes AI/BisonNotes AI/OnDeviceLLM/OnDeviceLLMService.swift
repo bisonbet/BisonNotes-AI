@@ -200,6 +200,10 @@ public class OnDeviceLLMService: ObservableObject {
         try ensureModelLoaded()
         guard let llm = llm else { throw OnDeviceLLMError.modelNotLoaded }
 
+        // Clear model history before processing to ensure clean state
+        // This is especially important when re-running on transcripts
+        await llm.clearHistory()
+
         // First, classify the content
         let contentType = classifyContent(text)
 
@@ -242,7 +246,13 @@ public class OnDeviceLLMService: ObservableObject {
         var cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Remove any remaining template tokens that might have leaked
-        let tokensToRemove = ["<|im_end|>", "<|im_start|>", "<|end|>", "<|assistant|>", "<|user|>", "<|system|>"]
+        // Include Gemma3-specific tokens
+        let tokensToRemove = [
+            "<|im_end|>", "<|im_start|>", "<|end|>", 
+            "<|assistant|>", "<|user|>", "<|system|>",
+            "<end_of_turn>", "<start_of_turn>", "<eos>",
+            "<start_of_turn>user", "<start_of_turn>model"
+        ]
         for token in tokensToRemove {
             cleaned = cleaned.replacingOccurrences(of: token, with: "")
         }
@@ -437,25 +447,37 @@ public class OnDeviceLLMService: ObservableObject {
         var titles: [TitleItem] = []
 
         var currentSection = ""
-        // Sanitize the entire response first
-        let sanitizedResponse = response.sanitizedForDisplay()
+        // Sanitize the entire response first, including Gemma3 tokens
+        var sanitizedResponse = response.sanitizedForDisplay()
+        
+        // Remove Gemma3-specific tokens that might interfere with parsing
+        let gemmaTokens = ["<end_of_turn>", "<start_of_turn>", "<eos>"]
+        for token in gemmaTokens {
+            sanitizedResponse = sanitizedResponse.replacingOccurrences(of: token, with: "")
+        }
+        
         let lines = sanitizedResponse.components(separatedBy: .newlines)
 
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             let lowercased = trimmed.lowercased()
 
-            // Detect section headers
-            if lowercased.contains("## summary") || lowercased.hasPrefix("summary:") {
+            // Detect section headers - be more flexible with variations
+            if lowercased.contains("## summary") || lowercased.hasPrefix("summary:") || 
+               (lowercased.contains("summary") && lowercased.contains("##")) {
                 currentSection = "summary"
                 continue
-            } else if lowercased.contains("## tasks") || lowercased.hasPrefix("tasks:") {
+            } else if lowercased.contains("## tasks") || lowercased.hasPrefix("tasks:") ||
+                      (lowercased.contains("task") && (lowercased.contains("##") || lowercased.hasPrefix("task"))) {
                 currentSection = "tasks"
                 continue
-            } else if lowercased.contains("## reminders") || lowercased.hasPrefix("reminders:") {
+            } else if lowercased.contains("## reminders") || lowercased.hasPrefix("reminders:") ||
+                      (lowercased.contains("reminder") && (lowercased.contains("##") || lowercased.hasPrefix("reminder"))) {
                 currentSection = "reminders"
                 continue
-            } else if lowercased.contains("## suggested titles") || lowercased.contains("## titles") || lowercased.hasPrefix("titles:") {
+            } else if lowercased.contains("## suggested titles") || lowercased.contains("## titles") || 
+                      lowercased.hasPrefix("titles:") || lowercased.hasPrefix("suggested titles:") ||
+                      (lowercased.contains("title") && (lowercased.contains("##") || lowercased.hasPrefix("title"))) {
                 currentSection = "titles"
                 continue
             }
@@ -463,35 +485,68 @@ public class OnDeviceLLMService: ObservableObject {
             // Process based on current section
             switch currentSection {
             case "summary":
-                if !trimmed.isEmpty && !trimmed.hasPrefix("##") {
+                if !trimmed.isEmpty && !trimmed.hasPrefix("##") && !lowercased.contains("task") && 
+                   !lowercased.contains("reminder") && !lowercased.contains("title") {
                     summary += (summary.isEmpty ? "" : "\n") + trimmed
                 }
             case "tasks":
-                if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") {
+                // More flexible parsing - accept lines starting with bullet points or numbers
+                if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") || trimmed.hasPrefix("*") {
                     let text = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText())
-                    if !text.isEmpty {
+                    if !text.isEmpty && text.count > 3 {
                         tasks.append(TaskItem(text: text, priority: .medium, confidence: 0.8))
+                    }
+                } else if trimmed.first?.isNumber == true && trimmed.contains(".") {
+                    // Handle numbered lists (e.g., "1. Task description")
+                    let parts = trimmed.components(separatedBy: ".")
+                    if parts.count > 1 {
+                        let text = RecordingNameGenerator.cleanAIOutput(parts.dropFirst().joined(separator: ".").trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText())
+                        if !text.isEmpty && text.count > 3 {
+                            tasks.append(TaskItem(text: text, priority: .medium, confidence: 0.8))
+                        }
                     }
                 }
             case "reminders":
-                if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") {
+                // More flexible parsing - accept lines starting with bullet points or numbers
+                if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") || trimmed.hasPrefix("*") {
                     let text = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText())
-                    if !text.isEmpty {
+                    if !text.isEmpty && text.count > 3 {
                         let timeRef = ReminderItem.TimeReference.fromReminderText(text)
                         reminders.append(ReminderItem(text: text, timeReference: timeRef, urgency: .later, confidence: 0.8))
                     }
+                } else if trimmed.first?.isNumber == true && trimmed.contains(".") {
+                    // Handle numbered lists (e.g., "1. Reminder description")
+                    let parts = trimmed.components(separatedBy: ".")
+                    if parts.count > 1 {
+                        let text = RecordingNameGenerator.cleanAIOutput(parts.dropFirst().joined(separator: ".").trimmingCharacters(in: .whitespacesAndNewlines).sanitizedPlainText())
+                        if !text.isEmpty && text.count > 3 {
+                            let timeRef = ReminderItem.TimeReference.fromReminderText(text)
+                            reminders.append(ReminderItem(text: text, timeReference: timeRef, urgency: .later, confidence: 0.8))
+                        }
+                    }
                 }
             case "titles":
-                if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") {
+                // More flexible parsing - accept lines starting with bullet points or numbers
+                if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") || trimmed.hasPrefix("*") {
                     // Use standardized cleaning
                     let text = RecordingNameGenerator.cleanStandardizedTitleResponse(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).sanitizedForTitle())
-                    if !text.isEmpty && text.count < 100 {
+                    if !text.isEmpty && text.count > 3 && text.count < 100 {
                         titles.append(TitleItem(text: text, confidence: 0.8))
+                    }
+                } else if trimmed.first?.isNumber == true && trimmed.contains(".") {
+                    // Handle numbered lists (e.g., "1. Title suggestion")
+                    let parts = trimmed.components(separatedBy: ".")
+                    if parts.count > 1 {
+                        let text = RecordingNameGenerator.cleanStandardizedTitleResponse(parts.dropFirst().joined(separator: ".").trimmingCharacters(in: .whitespacesAndNewlines).sanitizedForTitle())
+                        if !text.isEmpty && text.count > 3 && text.count < 100 {
+                            titles.append(TitleItem(text: text, confidence: 0.8))
+                        }
                     }
                 }
             default:
                 // If no section detected yet, assume it's summary
-                if !trimmed.isEmpty && !trimmed.hasPrefix("##") {
+                if !trimmed.isEmpty && !trimmed.hasPrefix("##") && !lowercased.contains("task") && 
+                   !lowercased.contains("reminder") && !lowercased.contains("title") {
                     summary += (summary.isEmpty ? "" : "\n") + trimmed
                 }
             }

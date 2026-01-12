@@ -28,8 +28,6 @@ struct DeviceCapabilities {
         let minimumRAM: Double = 6.0 // 6GB minimum
         let deviceRAM = totalRAMInGB
 
-        print("🔍 DeviceCapabilities: Device has \(String(format: "%.2f", deviceRAM))GB RAM")
-        print("🔍 DeviceCapabilities: On-device LLM support: \(deviceRAM >= minimumRAM)")
 
         return deviceRAM >= minimumRAM
     }
@@ -40,7 +38,6 @@ struct DeviceCapabilities {
         let minimumRAM: Double = 4.0 // 4GB minimum for small models
         let deviceRAM = totalRAMInGB
 
-        print("🔍 DeviceCapabilities: Whisper basic support (4GB+): \(deviceRAM >= minimumRAM)")
 
         return deviceRAM >= minimumRAM
     }
@@ -51,7 +48,6 @@ struct DeviceCapabilities {
         let minimumRAM: Double = 6.0 // 6GB minimum for large models
         let deviceRAM = totalRAMInGB
 
-        print("🔍 DeviceCapabilities: Whisper large support (6GB+): \(deviceRAM >= minimumRAM)")
 
         return deviceRAM >= minimumRAM
     }
@@ -62,7 +58,6 @@ struct DeviceCapabilities {
         let minimumRAM: Double = 8.0 // 8GB minimum for larger models
         let deviceRAM = totalRAMInGB
 
-        print("🔍 DeviceCapabilities: 8GB model support (8GB+): \(deviceRAM >= minimumRAM)")
 
         return deviceRAM >= minimumRAM
     }

@@ -843,9 +843,13 @@ class BackgroundProcessingManager: ObservableObject {
                 let manager = EnhancedTranscriptionManager()
                 result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .awsTranscribe)
 
-            case .appleIntelligence:
-                let manager = EnhancedTranscriptionManager()
-                result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .appleIntelligence)
+            case .whisperKit:
+                print("🤖 Using WhisperKit for transcription")
+                let whisperKitManager = WhisperKitManager.shared
+                guard whisperKitManager.isModelReady else {
+                    throw BackgroundProcessingError.processingFailed("WhisperKit model not downloaded. Please download the model in Settings.")
+                }
+                result = try await whisperKitManager.transcribe(audioURL: chunk.chunkURL)
 
             case .openAIAPICompatible:
                 throw BackgroundProcessingError.processingFailed("OpenAI API Compatible integration not yet implemented")
@@ -1609,7 +1613,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Convert job type string back to JobType enum
         let type: JobType
         if jobType.contains("Transcription") {
-            let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? "appleIntelligence") ?? .appleIntelligence
+            let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
             type = .transcription(engine: engine)
         } else {
             type = .summarization(engine: jobEntry.engine ?? "Apple Intelligence")
@@ -1842,6 +1846,11 @@ class BackgroundProcessingManager: ObservableObject {
     private func monitorBackgroundTime() {
         guard backgroundTaskID != .invalid else { return }
 
+        let remainingTime = UIApplication.shared.backgroundTimeRemaining
+
+        // Skip monitoring and refreshing if we have unlimited time (app is likely in foreground or has special privileges/audio session active)
+        guard remainingTime != Double.greatestFiniteMagnitude else { return }
+
         // Check if background task has been running too long (>25 seconds)
         // iOS warns if tasks are open for >30 seconds, so we refresh at 25s
         if let startTime = backgroundTaskStartTime {
@@ -1854,11 +1863,6 @@ class BackgroundProcessingManager: ObservableObject {
                 return
             }
         }
-
-        let remainingTime = UIApplication.shared.backgroundTimeRemaining
-
-        // Skip monitoring if we have unlimited time (app is likely in foreground or has special privileges)
-        guard remainingTime != Double.greatestFiniteMagnitude else { return }
 
         // For long-running audio processing, manage time intelligently
         if remainingTime < 600 { // Less than 10 minutes

@@ -33,20 +33,15 @@ struct AWSSettingsView: View {
         NavigationView {
             Form {
                 Section(header: Text("AWS Transcribe")) {
-                    Toggle("Enable AWS Transcribe", isOn: $enableAWSTranscribe)
-                    
-                    if enableAWSTranscribe {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("AWS Transcribe provides high-quality transcription for large audio files with better accuracy than local transcription.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.vertical, 4)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("AWS Transcribe provides high-quality transcription for large audio files with better accuracy than local transcription.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
+                    .padding(.vertical, 4)
                 }
                 
-                if enableAWSTranscribe {
-                    Section(header: 
+                Section(header: 
                         VStack(alignment: .leading, spacing: 4) {
                             Text("AWS Credentials")
                             Text("These credentials are shared with AWS Bedrock")
@@ -114,92 +109,91 @@ struct AWSSettingsView: View {
                         }
                         .padding(.vertical, 4)
                     }
+                
+                Section(header: Text("AWS Configuration")) {
+                    Picker("Region", selection: $editingRegion) {
+                        ForEach(Array(regions.keys.sorted()), id: \.self) { key in
+                            Text("\(key) - \(regions[key] ?? "")")
+                                .tag(key)
+                        }
+                    }
+                    .onChange(of: editingRegion) { _, newValue in
+                        credentialsManager.updateRegion(newValue)
+                    }
                     
-                    Section(header: Text("AWS Configuration")) {
-                        Picker("Region", selection: $editingRegion) {
-                            ForEach(Array(regions.keys.sorted()), id: \.self) { key in
-                                Text("\(key) - \(regions[key] ?? "")")
-                                    .tag(key)
-                            }
-                        }
-                        .onChange(of: editingRegion) { _, newValue in
-                            credentialsManager.updateRegion(newValue)
-                        }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("S3 Bucket Name")
+                            .font(.headline)
                         
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("S3 Bucket Name")
-                                .font(.headline)
-                            
-                            TextField("Enter S3 bucket name", text: $bucketName)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                            
-                            Text("This bucket will store your audio files temporarily during transcription. Make sure it exists and your credentials have access to it.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+                        TextField("Enter S3 bucket name", text: $bucketName)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                        
+                        Text("This bucket will store your audio files temporarily during transcription. Make sure it exists and your credentials have access to it.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                    
-                    Section(header: Text("Test Connection")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Button(action: testConnection) {
-                                HStack {
-                                    if isTesting {
-                                        ProgressView()
-                                            .scaleEffect(0.8)
-                                    } else {
-                                        Image(systemName: "network")
-                                    }
-                                    Text(isTesting ? "Testing..." : "Test AWS Connection")
+                }
+                
+                Section(header: Text("Test Connection")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Button(action: testConnection) {
+                            HStack {
+                                if isTesting {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Image(systemName: "network")
                                 }
-                            }
-                            .disabled(isTesting || !isConfigurationValid)
-                            
-                            if let testResult = testResult {
-                                Text(testResult)
-                                    .font(.caption)
-                                    .foregroundColor(testResult.contains("✅") ? .green : .red)
+                                Text(isTesting ? "Testing..." : "Test AWS Connection")
                             }
                         }
-                    }
-                    
-                    Section(header: Text("Setup Instructions")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            InstructionRow(
-                                number: "1",
-                                title: "Create AWS Account",
-                                description: "Sign up for AWS if you don't have an account"
-                            )
-                            
-                            InstructionRow(
-                                number: "2",
-                                title: "Create IAM User",
-                                description: "Create an IAM user with Transcribe and S3 permissions"
-                            )
-                            
-                            InstructionRow(
-                                number: "3",
-                                title: "Create S3 Bucket",
-                                description: "Create an S3 bucket for storing audio files"
-                            )
-                            
-                            InstructionRow(
-                                number: "4",
-                                title: "Get Credentials",
-                                description: "Generate Access Key ID and Secret Access Key"
-                            )
-                            
-                            InstructionRow(
-                                number: "5",
-                                title: "Configure App",
-                                description: "Enter your credentials and bucket name above"
-                            )
+                        .disabled(isTesting || !isConfigurationValid)
+                        
+                        if let testResult = testResult {
+                            Text(testResult)
+                                .font(.caption)
+                                .foregroundColor(testResult.contains("✅") ? .green : .red)
                         }
                     }
-                    
-                    Section {
-                        Link("AWS Transcribe Documentation", destination: URL(string: "https://docs.aws.amazon.com/transcribe/")!)
-                        Link("AWS IAM Setup Guide", destination: URL(string: "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html")!)
+                }
+                
+                Section(header: Text("Setup Instructions")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        InstructionRow(
+                            number: "1",
+                            title: "Create AWS Account",
+                            description: "Sign up for AWS if you don't have an account"
+                        )
+                        
+                        InstructionRow(
+                            number: "2",
+                            title: "Create IAM User",
+                            description: "Create an IAM user with Transcribe and S3 permissions"
+                        )
+                        
+                        InstructionRow(
+                            number: "3",
+                            title: "Create S3 Bucket",
+                            description: "Create an S3 bucket for storing audio files"
+                        )
+                        
+                        InstructionRow(
+                            number: "4",
+                            title: "Get Credentials",
+                            description: "Generate Access Key ID and Secret Access Key"
+                        )
+                        
+                        InstructionRow(
+                            number: "5",
+                            title: "Configure App",
+                            description: "Enter your credentials and bucket name above"
+                        )
                     }
+                }
+                
+                Section {
+                    Link("AWS Transcribe Documentation", destination: URL(string: "https://docs.aws.amazon.com/transcribe/")!)
+                    Link("AWS IAM Setup Guide", destination: URL(string: "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html")!)
                 }
             }
             .navigationTitle("AWS Settings")
@@ -211,12 +205,12 @@ struct AWSSettingsView: View {
                     }
                 }
             }
-        }
-        .onAppear {
-            // Initialize editing states with current credentials
-            editingAccessKey = credentialsManager.credentials.accessKeyId
-            editingSecretKey = credentialsManager.credentials.secretAccessKey
-            editingRegion = credentialsManager.credentials.region
+            .onAppear {
+                // Initialize editing states with current credentials
+                editingAccessKey = credentialsManager.credentials.accessKeyId
+                editingSecretKey = credentialsManager.credentials.secretAccessKey
+                editingRegion = credentialsManager.credentials.region
+            }
         }
     }
     

@@ -473,7 +473,7 @@ class UnifiediCloudSyncManager: ObservableObject {
         } else if methodLower.contains("apple") || methodLower.contains("intelligence") {
             engine = "Apple Intelligence"
         } else if methodLower.contains("device") || methodLower.contains("gemma") || methodLower.contains("phi") || methodLower.contains("qwen") || methodLower.contains("llama") || methodLower.contains("mistral") || methodLower.contains("olmo") {
-            engine = "On Device LLM"
+            engine = "On Device AI"
         } else {
             engine = "AI Assistant"
         }

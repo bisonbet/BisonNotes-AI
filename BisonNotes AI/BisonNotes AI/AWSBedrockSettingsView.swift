@@ -80,54 +80,50 @@ struct AWSBedrockSettingsView: View {
     
     private var headerSection: some View {
         Section(header: Text("AWS Bedrock AI")) {
-            Toggle("Enable AWS Bedrock", isOn: $enableAWSBedrock)
-            
-            if enableAWSBedrock {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("AWS Bedrock provides access to foundation models from Anthropic, Amazon, Meta, and other providers for high-quality AI summaries and content analysis.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Context Window")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text("\(selectedModelEnum.contextWindow/1000)K tokens")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Provider")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text(selectedModelEnum.provider)
-                                .font(.caption)
-                                .fontWeight(.medium)
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Cost Tier")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text(selectedModelEnum.costTier)
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundColor(costTierColor(selectedModelEnum.costTier))
-                        }
-                        
-                        Spacer()
+            VStack(alignment: .leading, spacing: 8) {
+                Text("AWS Bedrock provides access to foundation models from Anthropic, Amazon, Meta, and other providers for high-quality AI summaries and content analysis.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Context Window")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text("\(selectedModelEnum.contextWindow/1000)K tokens")
+                            .font(.caption)
+                            .fontWeight(.medium)
                     }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(.systemGray6))
-                    )
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Provider")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(selectedModelEnum.provider)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Cost Tier")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(selectedModelEnum.costTier)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(costTierColor(selectedModelEnum.costTier))
+                    }
+                    
+                    Spacer()
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(.systemGray6))
+                )
             }
+            .padding(.vertical, 4)
         }
     }
     

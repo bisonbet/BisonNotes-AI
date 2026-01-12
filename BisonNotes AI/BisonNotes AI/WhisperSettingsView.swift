@@ -52,282 +52,276 @@ struct WhisperSettingsView: View {
         NavigationView {
             Form {
                 Section(header: Text("Whisper Service")) {
-                    Toggle("Enable Whisper Transcription", isOn: $enableWhisper)
-                    
-                    if enableWhisper {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Whisper provides high-quality transcription using OpenAI's Whisper model via REST API. This service runs on your local server for privacy and performance.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.vertical, 4)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Whisper provides high-quality transcription using OpenAI's Whisper model via REST API. This service runs on your local server for privacy and performance.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
+                    .padding(.vertical, 4)
                 }
                 
-                if enableWhisper {
-                    Section(header: Text("Protocol Selection")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Image(systemName: "arrow.left.arrow.right")
-                                    .foregroundColor(.blue)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Communication Protocol")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                    Text("Choose how to connect to your Whisper server")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
+                Section(header: Text("Protocol Selection")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Image(systemName: "arrow.left.arrow.right")
+                                .foregroundColor(.blue)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Communication Protocol")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                Text("Choose how to connect to your Whisper server")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
                             }
-                            
-                            Picker("Protocol", selection: Binding(
-                                get: { selectedProtocol },
-                                set: { newValue in 
-                                    let oldProtocol = selectedProtocol
-                                    protocolString = newValue.rawValue
-                                    
-                                    // Update default port when protocol changes
-                                    if port == 9000 || port == 10300 {
-                                        port = newValue == .wyoming ? 10300 : 9000
-                                    }
-                                    
-                                    // Update URL format based on protocol
-                                    if oldProtocol != newValue {
-                                        if newValue == .wyoming {
-                                            // When switching to Wyoming, remove protocol schemes and use plain hostname
-                                            if serverURL.hasPrefix("http://") {
-                                                serverURL = String(serverURL.dropFirst(7)) // Remove "http://"
-                                            } else if serverURL.hasPrefix("https://") {
-                                                serverURL = String(serverURL.dropFirst(8)) // Remove "https://"
-                                            } else if serverURL.hasPrefix("ws://") {
-                                                serverURL = String(serverURL.dropFirst(5)) // Remove "ws://"
-                                            } else if serverURL.hasPrefix("wss://") {
-                                                serverURL = String(serverURL.dropFirst(6)) // Remove "wss://"
-                                            }
-                                            
-                                            // If it was localhost, keep it as localhost
-                                            if serverURL == "localhost" {
-                                                serverURL = "localhost"
-                                            }
-                                        } else {
-                                            // When switching to REST, ensure http:// prefix
-                                            if !serverURL.hasPrefix("http://") && !serverURL.hasPrefix("https://") {
-                                                // If it was localhost or plain hostname, add http://
-                                                serverURL = "http://" + serverURL
-                                            }
+                        }
+                        
+                        Picker("Protocol", selection: Binding(
+                            get: { selectedProtocol },
+                            set: { newValue in 
+                                let oldProtocol = selectedProtocol
+                                protocolString = newValue.rawValue
+                                
+                                // Update default port when protocol changes
+                                if port == 9000 || port == 10300 {
+                                    port = newValue == .wyoming ? 10300 : 9000
+                                }
+                                
+                                // Update URL format based on protocol
+                                if oldProtocol != newValue {
+                                    if newValue == .wyoming {
+                                        // When switching to Wyoming, remove protocol schemes and use plain hostname
+                                        if serverURL.hasPrefix("http://") {
+                                            serverURL = String(serverURL.dropFirst(7)) // Remove "http://"
+                                        } else if serverURL.hasPrefix("https://") {
+                                            serverURL = String(serverURL.dropFirst(8)) // Remove "https://"
+                                        } else if serverURL.hasPrefix("ws://") {
+                                            serverURL = String(serverURL.dropFirst(5)) // Remove "ws://"
+                                        } else if serverURL.hasPrefix("wss://") {
+                                            serverURL = String(serverURL.dropFirst(6)) // Remove "wss://"
+                                        }
+                                        
+                                        // If it was localhost, keep it as localhost
+                                        if serverURL == "localhost" {
+                                            serverURL = "localhost"
+                                        }
+                                    } else {
+                                        // When switching to REST, ensure http:// prefix
+                                        if !serverURL.hasPrefix("http://") && !serverURL.hasPrefix("https://") {
+                                            // If it was localhost or plain hostname, add http://
+                                            serverURL = "http://" + serverURL
                                         }
                                     }
                                 }
-                            )) {
-                                ForEach(WhisperProtocol.allCases, id: \.self) { whisperProtocol in
-                                    Text(whisperProtocol.shortName)
-                                        .tag(whisperProtocol)
-                                }
                             }
-                            .pickerStyle(SegmentedPickerStyle())
+                        )) {
+                            ForEach(WhisperProtocol.allCases, id: \.self) { whisperProtocol in
+                                Text(whisperProtocol.shortName)
+                                    .tag(whisperProtocol)
+                            }
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                        
+                        // Show description for selected protocol
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Protocol Details")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.secondary)
                             
-                            // Show description for selected protocol
+                            Text(selectedProtocol.description)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color.blue.opacity(0.1))
+                                )
+                        }
+                    }
+                }
+                
+                Section(header: Text("Server Configuration")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Image(systemName: "server.rack")
+                                .foregroundColor(.green)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Protocol Details")
-                                    .font(.caption)
+                                Text("Local Whisper Server")
+                                    .font(.subheadline)
                                     .fontWeight(.medium)
-                                    .foregroundColor(.secondary)
-                                
-                                Text(selectedProtocol.description)
+                                Text(selectedProtocol == .wyoming ? 
+                                     "Connect to your Wyoming protocol Whisper service" :
+                                     "Connect to your REST API-based Whisper service")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Server URL")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                            
+                            TextField(selectedProtocol == .wyoming ? "localhost" : "http://localhost", text: $serverURL)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .keyboardType(.URL)
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+                            
+                            Text(selectedProtocol == .wyoming ? 
+                                 "The hostname or IP address of your Wyoming server (e.g., localhost, 192.168.1.100)" :
+                                 "The URL of your Whisper server (e.g., http://localhost, http://192.168.1.100)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Port")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                            
+                            HStack {
+                                TextField(selectedProtocol == .wyoming ? "10300" : "9000", value: $port, format: .number.grouping(.never))
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .keyboardType(.numberPad)
+                                
+                                Button("Default") {
+                                    port = selectedProtocol == .wyoming ? 10300 : 9000
+                                }
+                                .font(.caption)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.blue.opacity(0.1))
+                                .foregroundColor(.blue)
+                                .cornerRadius(6)
+                            }
+                            
+                            Text(selectedProtocol == .wyoming ? 
+                                 "The port number your Wyoming server is listening on (default: 10300)" :
+                                 "The port number your Whisper server is listening on (default: 9000)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
+                Section(header: Text("Connection Test")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Image(systemName: "network")
+                                .foregroundColor(.blue)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Test Connection")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                Text("Verify that your Whisper server is accessible")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        Button(action: testConnection) {
+                            HStack {
+                                if isTesting {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                                Text(isTesting ? "Testing..." : "Test Connection")
+                                Spacer()
+                            }
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 12)
+                            .background(isConfigurationValid ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
+                            .foregroundColor(isConfigurationValid ? .blue : .gray)
+                            .cornerRadius(8)
+                        }
+                        .disabled(!isConfigurationValid || isTesting)
+                        
+                        if let testResult = testResult {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Test Result")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                
+                                Text(testResult)
+                                    .font(.caption)
+                                    .foregroundColor(testResult.hasPrefix("✅") ? .green : .red)
                                     .padding(.vertical, 4)
                                     .padding(.horizontal, 8)
                                     .background(
                                         RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.blue.opacity(0.1))
+                                            .fill(testResult.hasPrefix("✅") ? Color.green.opacity(0.1) : Color.red.opacity(0.1))
                                     )
                             }
                         }
                     }
-                    
-                    Section(header: Text("Server Configuration")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Image(systemName: "server.rack")
-                                    .foregroundColor(.green)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Local Whisper Server")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                    Text(selectedProtocol == .wyoming ? 
-                                         "Connect to your Wyoming protocol Whisper service" :
-                                         "Connect to your REST API-based Whisper service")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Server URL")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                
-                                TextField(selectedProtocol == .wyoming ? "localhost" : "http://localhost", text: $serverURL)
-                                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                                    .keyboardType(.URL)
-                                    .autocapitalization(.none)
-                                    .disableAutocorrection(true)
-                                
-                                Text(selectedProtocol == .wyoming ? 
-                                     "The hostname or IP address of your Wyoming server (e.g., localhost, 192.168.1.100)" :
-                                     "The URL of your Whisper server (e.g., http://localhost, http://192.168.1.100)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Port")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                
-                                HStack {
-                                    TextField(selectedProtocol == .wyoming ? "10300" : "9000", value: $port, format: .number.grouping(.never))
-                                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                                        .keyboardType(.numberPad)
-                                    
-                                    Button("Default") {
-                                        port = selectedProtocol == .wyoming ? 10300 : 9000
-                                    }
-                                    .font(.caption)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.blue.opacity(0.1))
-                                    .foregroundColor(.blue)
-                                    .cornerRadius(6)
-                                }
-                                
-                                Text(selectedProtocol == .wyoming ? 
-                                     "The port number your Wyoming server is listening on (default: 10300)" :
-                                     "The port number your Whisper server is listening on (default: 9000)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                    
-                    Section(header: Text("Connection Test")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Image(systemName: "network")
-                                    .foregroundColor(.blue)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Test Connection")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                    Text("Verify that your Whisper server is accessible")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            
-                            Button(action: testConnection) {
-                                HStack {
-                                    if isTesting {
-                                        ProgressView()
-                                            .scaleEffect(0.8)
-                                    } else {
-                                        Image(systemName: "arrow.clockwise")
-                                    }
-                                    Text(isTesting ? "Testing..." : "Test Connection")
-                                    Spacer()
-                                }
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 12)
-                                .background(isConfigurationValid ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
-                                .foregroundColor(isConfigurationValid ? .blue : .gray)
-                                .cornerRadius(8)
-                            }
-                            .disabled(!isConfigurationValid || isTesting)
-                            
-                            if let testResult = testResult {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Test Result")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                    
-                                    Text(testResult)
-                                        .font(.caption)
-                                        .foregroundColor(testResult.hasPrefix("✅") ? .green : .red)
-                                        .padding(.vertical, 4)
-                                        .padding(.horizontal, 8)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 6)
-                                                .fill(testResult.hasPrefix("✅") ? Color.green.opacity(0.1) : Color.red.opacity(0.1))
-                                        )
-                                }
-                            }
-                        }
-                    }
-                    
-                    Section(header: Text("Setup Instructions")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            if selectedProtocol == .wyoming {
-                                WhisperInstructionRow(
-                                    number: "1",
-                                    title: "Install Wyoming Whisper",
-                                    description: "Install the Wyoming protocol-based Whisper service on your server"
-                                )
-                                
-                                WhisperInstructionRow(
-                                    number: "2",
-                                    title: "Start Wyoming Service",
-                                    description: "Run the Wyoming Whisper service on port 10300 (or your preferred port)"
-                                )
-                                
-                                WhisperInstructionRow(
-                                    number: "3",
-                                    title: "Test WebSocket Connection",
-                                    description: "Use the test button above to verify your Wyoming server is accessible"
-                                )
-                                
-                                WhisperInstructionRow(
-                                    number: "4",
-                                    title: "Start Streaming Transcription",
-                                    description: "Your Wyoming Whisper service is ready for real-time transcription"
-                                )
-                            } else {
-                                WhisperInstructionRow(
-                                    number: "1",
-                                    title: "Install Whisper Service",
-                                    description: "Install the REST API-based Whisper service on your server"
-                                )
-                                
-                                WhisperInstructionRow(
-                                    number: "2",
-                                    title: "Start the Service",
-                                    description: "Run the Whisper service on port 9000 (or your preferred port)"
-                                )
-                                
-                                WhisperInstructionRow(
-                                    number: "3",
-                                    title: "Test Connection",
-                                    description: "Use the test button above to verify your server is accessible"
-                                )
-                                
-                                WhisperInstructionRow(
-                                    number: "4",
-                                    title: "Start Transcribing",
-                                    description: "Your Whisper service is ready for transcription"
-                                )
-                            }
-                        }
-                    }
-                    
-                    Section {
+                }
+                
+                Section(header: Text("Setup Instructions")) {
+                    VStack(alignment: .leading, spacing: 12) {
                         if selectedProtocol == .wyoming {
-                            Link("Wyoming Protocol Documentation", destination: URL(string: "https://github.com/rhasspy/wyoming-whisper")!)
-                            Link("Wyoming Protocol Specification", destination: URL(string: "https://github.com/rhasspy/wyoming")!)
+                            WhisperInstructionRow(
+                                number: "1",
+                                title: "Install Wyoming Whisper",
+                                description: "Install the Wyoming protocol-based Whisper service on your server"
+                            )
+                            
+                            WhisperInstructionRow(
+                                number: "2",
+                                title: "Start Wyoming Service",
+                                description: "Run the Wyoming Whisper service on port 10300 (or your preferred port)"
+                            )
+                            
+                            WhisperInstructionRow(
+                                number: "3",
+                                title: "Test WebSocket Connection",
+                                description: "Use the test button above to verify your Wyoming server is accessible"
+                            )
+                            
+                            WhisperInstructionRow(
+                                number: "4",
+                                title: "Start Streaming Transcription",
+                                description: "Your Wyoming Whisper service is ready for real-time transcription"
+                            )
                         } else {
-                            Link("Whisper REST API Documentation", destination: URL(string: "https://github.com/guillaumekln/faster-whisper")!)
+                            WhisperInstructionRow(
+                                number: "1",
+                                title: "Install Whisper Service",
+                                description: "Install the REST API-based Whisper service on your server"
+                            )
+                            
+                            WhisperInstructionRow(
+                                number: "2",
+                                title: "Start the Service",
+                                description: "Run the Whisper service on port 9000 (or your preferred port)"
+                            )
+                            
+                            WhisperInstructionRow(
+                                number: "3",
+                                title: "Test Connection",
+                                description: "Use the test button above to verify your server is accessible"
+                            )
+                            
+                            WhisperInstructionRow(
+                                number: "4",
+                                title: "Start Transcribing",
+                                description: "Your Whisper service is ready for transcription"
+                            )
                         }
-                        Link("Whisper Model Information", destination: URL(string: "https://openai.com/research/whisper")!)
                     }
+                }
+                
+                Section {
+                    if selectedProtocol == .wyoming {
+                        Link("Wyoming Protocol Documentation", destination: URL(string: "https://github.com/rhasspy/wyoming-whisper")!)
+                        Link("Wyoming Protocol Specification", destination: URL(string: "https://github.com/rhasspy/wyoming")!)
+                    } else {
+                        Link("Whisper REST API Documentation", destination: URL(string: "https://github.com/guillaumekln/faster-whisper")!)
+                    }
+                    Link("Whisper Model Information", destination: URL(string: "https://openai.com/research/whisper")!)
                 }
             }
             .navigationTitle("Whisper Settings")

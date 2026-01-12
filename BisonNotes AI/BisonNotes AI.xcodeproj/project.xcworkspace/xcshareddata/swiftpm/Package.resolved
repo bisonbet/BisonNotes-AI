@@ -1,5 +1,5 @@
 {
-  "originHash" : "c7b2d98a567e826d1d1d104d49ae258f8a3b2b52b57e85ebe45ea48c76876bb9",
+  "originHash" : "f41283a145fd59df5c3e7ab22d9f3dfe62c9e83e3bf5294b3607b7110da3a0a5",
   "pins" : [
     {
       "identity" : "aws-crt-swift",
@@ -173,6 +173,15 @@
       }
     },
     {
+      "identity" : "swift-jinja",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/huggingface/swift-jinja.git",
+      "state" : {
+        "revision" : "ba2364165002abe8f4f3992d74a7b547c635638e",
+        "version" : "2.2.1"
+      }
+    },
+    {
       "identity" : "swift-log",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
@@ -272,12 +281,30 @@
       }
     },
     {
+      "identity" : "swift-transformers",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/huggingface/swift-transformers.git",
+      "state" : {
+        "revision" : "573e5c9036c2f136b3a8a071da8e8907322403d0",
+        "version" : "1.1.6"
+      }
+    },
+    {
       "identity" : "thrift-swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/undefinedlabs/Thrift-Swift",
       "state" : {
         "revision" : "18ff09e6b30e589ed38f90a1af23e193b8ecef8e",
         "version" : "1.1.2"
+      }
+    },
+    {
+      "identity" : "whisperkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/bisonbet/WhisperKit.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "9c673e35193fe4e67593dd2973c157ebe666e598"
       }
     }
   ],

@@ -2134,9 +2134,6 @@ class DataMigrationManager: ObservableObject {
                     }
                     
                     // Keep summary - it's valuable without audio/transcript
-                    if recording.summary != nil {
-                        print("✅ Preserving summary (valuable without audio): \(recording.recordingName ?? "unknown")")
-                    }
                     
                     cleanedCount += 1
                 }

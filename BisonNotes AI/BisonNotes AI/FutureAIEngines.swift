@@ -1759,7 +1759,7 @@ enum AIEngineType: String, CaseIterable {
     case openAICompatible = "OpenAI API Compatible"
     case localLLM = "Ollama"
     case googleAIStudio = "Google AI Studio"
-    case onDeviceLLM = "On-Device LLM"
+    case onDeviceLLM = "On-Device AI"
 
     /// Returns all available engine types based on device capabilities
     static var availableCases: [AIEngineType] {
@@ -1789,7 +1789,7 @@ enum AIEngineType: String, CaseIterable {
         case .googleAIStudio:
             return "Advanced AI-powered summaries using Google's Gemini models"
         case .onDeviceLLM:
-            return "Privacy-focused on-device AI processing using local LLM models"
+            return "Privacy-focused on-device AI processing using local AI models"
         }
     }
 

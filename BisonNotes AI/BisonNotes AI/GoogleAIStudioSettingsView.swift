@@ -83,13 +83,6 @@ struct GoogleAIStudioSettingsView: View {
                 }
                 
                 Section(header: Text("Status")) {
-                    HStack {
-                        Text("Enabled")
-                        Spacer()
-                        Toggle("", isOn: $isEnabled)
-                            .labelsHidden()
-                    }
-                    
                     if !apiKey.isEmpty {
                         HStack {
                             Text("API Key")

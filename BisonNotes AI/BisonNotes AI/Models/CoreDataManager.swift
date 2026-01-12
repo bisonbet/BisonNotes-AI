@@ -592,7 +592,7 @@ class CoreDataManager: ObservableObject {
         } else if method.lowercased().contains("ollama") {
             engine = "Ollama"
         } else if method.lowercased().contains("llama") || method.lowercased().contains("mistral") || method.lowercased().contains("gemma") || method.lowercased().contains("phi") || method.lowercased().contains("qwen") || method.lowercased().contains("olmo") {
-            engine = "On Device LLM"
+            engine = "On Device AI"
         } else {
             engine = "AI Assistant"
         }
@@ -739,11 +739,8 @@ class CoreDataManager: ObservableObject {
                 context.delete(recording)
                 cleanedCount += 1
             }
-            // For recordings with summaries but no audio, just mark them properly
-            else if hasNoURL && recording.summary != nil {
-                print("📝 Preserving summary-only recording: \(recording.recordingName ?? "unknown")")
-                // These are intentionally preserved summaries
-            }
+            // For recordings with summaries but no audio, preserve them silently
+            // (These are intentionally preserved summaries)
         }
         
         if cleanedCount > 0 {
@@ -760,7 +757,6 @@ class CoreDataManager: ObservableObject {
     
     /// Fixes recordings that should have been deleted completely but still exist as orphans
     func fixIncompletelyDeletedRecordings() -> Int {
-        print("🔍 Checking for incompletely deleted recordings...")
         let allRecordings = getAllRecordings()
         var fixedCount = 0
         
@@ -771,10 +767,6 @@ class CoreDataManager: ObservableObject {
             let hasNoSummary = recording.summary == nil
             
             if hasNoURL && hasNoTranscript && hasNoSummary {
-                let recordingName = recording.recordingName ?? "unknown"
-                print("🗑️ Found incompletely deleted recording: \(recordingName)")
-                print("   - This appears to be leftover from a partial deletion")
-                
                 // Delete this orphaned record
                 context.delete(recording)
                 fixedCount += 1
@@ -788,8 +780,6 @@ class CoreDataManager: ObservableObject {
             } catch {
                 print("❌ Failed to save fixes: \(error)")
             }
-        } else {
-            print("ℹ️ No incompletely deleted recordings found")
         }
         
         return fixedCount

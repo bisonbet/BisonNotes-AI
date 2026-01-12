@@ -333,32 +333,8 @@ struct TranscriptsView: View {
         isGeneratingTranscript = true
         generatingTranscriptRecording = recording // Track which recording is being generated
 
-        // Get the selected transcription engine
-        let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
-        
-        // Only request Apple Speech recognition permission for Apple Intelligence engine
-        if selectedEngine == .appleIntelligence {
-            SFSpeechRecognizer.requestAuthorization { authStatus in
-                DispatchQueue.main.async {
-                    switch authStatus {
-                    case .authorized:
-                        self.performEnhancedTranscription(for: recording)
-                    case .denied, .restricted:
-                        self.isGeneratingTranscript = false
-                        self.generatingTranscriptRecording = nil
-                    case .notDetermined:
-                        self.isGeneratingTranscript = false
-                        self.generatingTranscriptRecording = nil
-                    @unknown default:
-                        self.isGeneratingTranscript = false
-                        self.generatingTranscriptRecording = nil
-                    }
-                }
-            }
-        } else {
-            // For non-Apple engines (OpenAI, AWS, Whisper), skip Apple Speech permission
-            self.performEnhancedTranscription(for: recording)
-        }
+        // Proceed directly with transcription - each engine handles its own permissions
+        self.performEnhancedTranscription(for: recording)
     }
     
     private func performEnhancedTranscription(for recording: RecordingEntry) {
@@ -366,7 +342,7 @@ struct TranscriptsView: View {
         
         Task {
             // Use the selected transcription engine
-            let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+            let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
             
             do {
                 // Get the absolute URL using the coordinator
@@ -796,7 +772,7 @@ struct EditableTranscriptView: View {
         Task {
             do {
                 // Get the currently configured transcription engine
-                let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+                let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
                 
                 print("🔧 Using transcription engine: \(selectedEngine.rawValue)")
                 
@@ -850,7 +826,7 @@ struct EditableTranscriptView: View {
                     }
                     
                     // Get the currently configured transcription engine
-                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
                     
                     let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recordingURL, using: selectedEngine)
                     
@@ -936,8 +912,8 @@ struct EditableTranscriptView: View {
             print("🔄 Replacing transcript for recording ID: \(recordingId)")
             
             // Get the selected transcription engine
-            let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? "appleIntelligence"
-            let engine = TranscriptionEngine(rawValue: engineString) ?? .appleIntelligence
+            let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue
+            let engine = TranscriptionEngine(rawValue: engineString) ?? .whisperKit
             
             
             // Add the new transcript

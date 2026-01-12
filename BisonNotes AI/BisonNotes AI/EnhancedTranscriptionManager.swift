@@ -250,11 +250,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         
         if let recognizer = speechRecognizer {
             print("✅ Speech recognizer created with locale: \(recognizer.locale.identifier)")
-            print("🔧 Speech recognizer availability: \(recognizer.isAvailable)")
-            
-            // Check current authorization status (but don't request it yet)
-            let authStatus = SFSpeechRecognizer.authorizationStatus()
-            print("🔧 Speech recognition authorization status: \(authStatus.rawValue)")
             // Note: Speech authorization will be requested when user actually tries to use Apple Intelligence transcription
         } else {
             print("❌ Failed to create speech recognizer with any locale")
@@ -429,20 +424,18 @@ if durationMinutes > 120 { // 2 hours max
         let duration = try await getAudioDuration(url: url)
         
 // Determine transcription engine to use
-        let selectedEngine = engine ?? .appleIntelligence // Default fallback
-        
-        // Check if Apple Intelligence is available for fallback
-        if selectedEngine != .appleIntelligence {
-            guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-return try await transcribeWithAppleIntelligence(url: url, duration: duration)
-            }
-        }
+        let selectedEngine = engine ?? .whisperKit // Default fallback
         
         // Manage background checking based on selected engine
         switch selectedEngine {
         case .notConfigured:
             print("❌ Transcription engine not configured")
             throw TranscriptionError.engineNotConfigured
+
+        case .whisperKit:
+            switchToWhisperKitTranscription()
+            return try await transcribeWithWhisperKit(url: url)
+
         case .awsTranscribe:
             switchToAWSTranscription()
             
@@ -460,46 +453,7 @@ return try await transcribeWithAppleIntelligence(url: url, duration: duration)
             }
             
 return try await transcribeWithAWS(url: url, config: config)
-            
-        case .appleIntelligence:
-            switchToAppleTranscription()
 
-            // Ensure speech recognizer is available
-            if speechRecognizer == nil {
-                print("❌ Apple Intelligence speech recognizer is nil - attempting to recreate")
-                setupSpeechRecognizer()
-                guard speechRecognizer != nil else {
-                    print("❌ Failed to recreate speech recognizer")
-                    throw TranscriptionError.speechRecognizerUnavailable
-                }
-                print("✅ Successfully recreated speech recognizer")
-            }
-
-            // Request speech recognition authorization
-            let authStatus = await withCheckedContinuation { continuation in
-                SFSpeechRecognizer.requestAuthorization { status in
-                    continuation.resume(returning: status)
-                }
-            }
-
-            guard authStatus == .authorized else {
-                print("❌ Speech recognition not authorized: \(authStatus.rawValue)")
-                throw TranscriptionError.speechRecognitionNotAuthorized
-            }
-
-            guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-                print("❌ Apple Intelligence speech recognizer is not available")
-                if let recognizer = speechRecognizer {
-                    print("🔧 Recognizer locale: \(recognizer.locale.identifier)")
-                }
-                print("🔧 Authorization status: \(SFSpeechRecognizer.authorizationStatus().rawValue)")
-                print("🔧 This may be due to simulator limitations or missing permissions")
-                throw TranscriptionError.speechRecognizerUnavailable
-            }
-
-            print("✅ Speech recognizer is available, starting transcription")
-            return try await transcribeWithAppleIntelligence(url: url, duration: duration)
-            
         case .whisper:
             switchToWhisperTranscription()
             
@@ -1519,9 +1473,45 @@ return result
             throw TranscriptionError.whisperTranscriptionFailed(error)
         }
     }
-    
+
+    // MARK: - WhisperKit Transcription
+
+    private func transcribeWithWhisperKit(url: URL) async throws -> TranscriptionResult {
+        beginBackgroundTask()
+        defer { endBackgroundTask() }
+
+        let manager = WhisperKitManager.shared
+
+        // Check if model is ready
+        guard manager.isModelReady else {
+            throw TranscriptionError.whisperKitNotReady
+        }
+
+        await MainActor.run {
+            isTranscribing = true
+            currentStatus = "Preparing WhisperKit transcription..."
+        }
+
+        do {
+            let result = try await manager.transcribe(audioURL: url)
+
+            await MainActor.run {
+                isTranscribing = false
+                currentStatus = "Transcription complete"
+            }
+
+            return result
+        } catch {
+            await MainActor.run {
+                isTranscribing = false
+                currentStatus = "WhisperKit transcription failed"
+            }
+            throw TranscriptionError.whisperKitTranscriptionFailed(error)
+        }
+    }
+
     // MARK: - OpenAI Transcription
-    
+
 private func transcribeWithOpenAI(url: URL, config: OpenAITranscribeConfig) async throws -> TranscriptionResult {
         
         let openAIService = OpenAITranscribeService(config: config, chunkingService: chunkingService)
@@ -1740,13 +1730,13 @@ func switchToAWSTranscription() {
 func switchToWhisperTranscription() {
         // Whisper doesn't use background checking like AWS, so we stop any existing background processes
         stopBackgroundChecking()
-        
+
         // Clear any pending AWS jobs since we're switching to Whisper
         let pendingCount = getPendingJobNames().count
         if pendingCount > 0 {
             clearAllPendingJobs()
         }
-        
+
         if whisperConfig != nil {
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
@@ -1756,23 +1746,41 @@ func switchToWhisperTranscription() {
             AppLogger.shared.warning("Whisper transcription selected but not configured", category: "EnhancedTranscriptionManager")
         }
     }
-    
+
+    func switchToWhisperKitTranscription() {
+        // WhisperKit doesn't use background checking like AWS, so we stop any existing background processes
+        stopBackgroundChecking()
+
+        // Clear any pending AWS jobs since we're switching to WhisperKit
+        let pendingCount = getPendingJobNames().count
+        if pendingCount > 0 {
+            clearAllPendingJobs()
+        }
+
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("WhisperKit transcription selected", category: "EnhancedTranscriptionManager")
+        }
+    }
+
     /// Public method to update transcription engine and manage background processes
     func updateTranscriptionEngine(_ engine: TranscriptionEngine) {
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
             AppLogger.shared.verbose("Updating transcription engine to: \(engine.rawValue)", category: "EnhancedTranscriptionManager")
         }
-        
+
         switch engine {
         case .notConfigured:
             // For unconfigured state, default to Apple Transcription which is always available
             switchToAppleTranscription()
+        case .whisperKit:
+            switchToWhisperKitTranscription()
         case .awsTranscribe:
             switchToAWSTranscription()
         case .whisper:
             switchToWhisperTranscription()
-        case .appleIntelligence, .openAI, .openAIAPICompatible:
+        case .openAI, .openAIAPICompatible:
             switchToAppleTranscription()
         }
     }
@@ -1916,8 +1924,10 @@ enum TranscriptionError: LocalizedError {
     case whisperConnectionFailed
     case whisperTranscriptionFailed(Error)
     case openAITranscriptionFailed(Error)
+    case whisperKitNotReady
+    case whisperKitTranscriptionFailed(Error)
     case engineNotConfigured
-    
+
     var errorDescription: String? {
         switch self {
         case .fileNotFound:
@@ -1946,6 +1956,10 @@ enum TranscriptionError: LocalizedError {
             return "Whisper transcription failed: \(error.localizedDescription)"
         case .openAITranscriptionFailed(let error):
             return "OpenAI transcription failed: \(error.localizedDescription)"
+        case .whisperKitNotReady:
+            return "WhisperKit model is not downloaded. Please download the model in Settings > Transcription > WhisperKit."
+        case .whisperKitTranscriptionFailed(let error):
+            return "WhisperKit transcription failed: \(error.localizedDescription)"
         case .fileTooLarge(let duration, let maxDuration):
             return "File too large for processing (\(Int(duration/60)) minutes, max \(Int(maxDuration/60)) minutes)"
         case .engineNotConfigured:

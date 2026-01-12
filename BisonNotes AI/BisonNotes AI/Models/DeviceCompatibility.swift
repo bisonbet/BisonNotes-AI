@@ -4,6 +4,51 @@ import UIKit
 
 struct DeviceCompatibility {
 
+    // MARK: - WhisperKit Support
+
+    /// Cached result for WhisperKit support check
+    private static var _cachedWhisperKitSupport: Bool?
+    private static var _hasLoggedWhisperKitSupport = false
+
+    /// Check if device supports WhisperKit on-device transcription
+    /// Requires iOS 17+ and 4GB+ RAM for the large-v3-turbo model
+    static var isWhisperKitSupported: Bool {
+        // Return cached value if available
+        if let cached = _cachedWhisperKitSupport {
+            return cached
+        }
+
+        // Check iOS version (iOS 17+)
+        guard #available(iOS 17.0, *) else {
+            if !_hasLoggedWhisperKitSupport {
+                print("❌ DeviceCompatibility: iOS 17+ required for WhisperKit")
+                _hasLoggedWhisperKitSupport = true
+            }
+            _cachedWhisperKitSupport = false
+            return false
+        }
+
+        // Check RAM (4GB minimum)
+        let totalMemory = ProcessInfo.processInfo.physicalMemory
+        let totalMemoryGB = Double(totalMemory) / 1_073_741_824.0
+        let hasEnoughRAM = totalMemoryGB >= 4.0
+
+        // Only log once
+        if !_hasLoggedWhisperKitSupport {
+            if hasEnoughRAM {
+                print("✅ DeviceCompatibility: WhisperKit supported (RAM: \(String(format: "%.1f", totalMemoryGB))GB)")
+            } else {
+                print("❌ DeviceCompatibility: WhisperKit requires 4GB+ RAM (Device has \(String(format: "%.1f", totalMemoryGB))GB)")
+            }
+            _hasLoggedWhisperKitSupport = true
+        }
+
+        _cachedWhisperKitSupport = hasEnoughRAM
+        return hasEnoughRAM
+    }
+
+    // MARK: - Apple Intelligence Support
+
     /// Check if device supports Apple Intelligence transcription (iPhone 12 or newer, iOS 18.1+)
     static var isAppleIntelligenceTranscriptionSupported: Bool {
         guard isCorrectOSVersionForTranscription else {

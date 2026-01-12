@@ -17,8 +17,8 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
     // MARK: - SummarizationEngine Properties
 
-    var name: String { "On-Device LLM" }
-    var engineType: String { "On Device LLM" }
+    var name: String { "On-Device AI" }
+    var engineType: String { "On Device AI" }
     var description: String { "Private, local summarization using models like Llama, Phi, or Mistral running entirely on your device." }
     let version: String = "1.0"
 
@@ -88,7 +88,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         updateConfiguration()
 
         guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "On-device LLM service not configured")
+            throw SummarizationError.aiServiceUnavailable(service: "On-Device AI service not configured")
         }
 
         do {
@@ -107,7 +107,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         updateConfiguration()
 
         guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "On-device LLM service not configured")
+            throw SummarizationError.aiServiceUnavailable(service: "On-Device AI service not configured")
         }
 
         do {
@@ -126,7 +126,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         updateConfiguration()
 
         guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "On-device LLM service not configured")
+            throw SummarizationError.aiServiceUnavailable(service: "On-Device AI service not configured")
         }
 
         do {
@@ -145,7 +145,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         updateConfiguration()
 
         guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "On-device LLM service not configured")
+            throw SummarizationError.aiServiceUnavailable(service: "On-Device AI service not configured")
         }
 
         do {
@@ -175,7 +175,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         updateConfiguration()
 
         guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "On-device LLM service not configured")
+            throw SummarizationError.aiServiceUnavailable(service: "On-Device AI service not configured")
         }
 
         // Check if text needs chunking
@@ -350,7 +350,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         if let llmError = error as? OnDeviceLLMError {
             switch llmError {
             case .modelNotLoaded, .modelNotDownloaded:
-                return SummarizationError.aiServiceUnavailable(service: "On-device LLM model not ready. Please download a model in Settings.")
+                return SummarizationError.aiServiceUnavailable(service: "On-Device AI model not ready. Please download a model in Settings.")
             case .downloadFailed(let message):
                 return SummarizationError.aiServiceUnavailable(service: "Model download failed: \(message)")
             case .inferenceFailed(let message):
@@ -364,7 +364,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             }
         }
 
-        return SummarizationError.aiServiceUnavailable(service: "On-device LLM error: \(error.localizedDescription)")
+        return SummarizationError.aiServiceUnavailable(service: "On-Device AI error: \(error.localizedDescription)")
     }
 
     private func formatSize(_ size: Int64) -> String {

@@ -102,8 +102,68 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
     
-    /// Migrates users from Apple Intelligence to On-Device LLM
-    /// Shows an alert and opens the On-Device LLM settings page
+    /// Migrates users from Apple Transcription to WhisperKit (On-Device)
+    /// Sets a flag to show WhisperKit settings for model download
+    private func migrateAppleTranscriptionToWhisperKit() {
+        let transcriptionEngineKey = "selectedTranscriptionEngine"
+        let migrationKey = "appleTranscriptionToWhisperKitMigrated_v1.4"
+
+        // Check if migration has already been performed
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+
+        let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
+
+        // Check if user was using Apple Transcription
+        if currentTranscription == "Apple Transcription" {
+            // Migrate to WhisperKit
+            UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
+            UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
+
+            // Set flag to show WhisperKit settings on first launch
+            UserDefaults.standard.set(true, forKey: "showWhisperKitMigrationSettings")
+
+            NSLog("✅ Migrated transcription from Apple Transcription to WhisperKit (On-Device)")
+        }
+
+        // Mark migration as complete
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+    
+    /// Ensures users with old WhisperKit values still work if the enum rawValue changes
+    /// This handles backward compatibility for any future renames of the WhisperKit engine
+    private func migrateWhisperKitNameIfNeeded() {
+        let transcriptionEngineKey = "selectedTranscriptionEngine"
+        let migrationKey = "whisperKitNameMigration_v1.5"
+        
+        // Check if migration has already been performed
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+        
+        let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
+        let currentWhisperKitRawValue = TranscriptionEngine.whisperKit.rawValue
+        
+        // If the stored value is an old WhisperKit name but doesn't match current rawValue, update it
+        // This handles cases where "On Device" might be renamed to something else (e.g., "WhisperKit")
+        if let storedValue = currentTranscription,
+           storedValue != currentWhisperKitRawValue {
+            // Check if it's an old WhisperKit value that needs updating
+            let oldWhisperKitNames = ["On Device", "WhisperKit", "On-Device"]
+            if oldWhisperKitNames.contains(storedValue) {
+                // Update to current WhisperKit rawValue
+                UserDefaults.standard.set(currentWhisperKitRawValue, forKey: transcriptionEngineKey)
+                NSLog("✅ Migrated transcription engine from '\(storedValue)' to '\(currentWhisperKitRawValue)'")
+            }
+        }
+        
+        // Mark migration as complete
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
+    /// Migrates users from Apple Intelligence to On-Device AI
+    /// Shows an alert and opens the On-Device AI settings page
     private func migrateAppleIntelligenceToOnDeviceLLM() {
         let aiEngineKey = "SelectedAIEngine"
         let migrationKey = "appleIntelligenceToOnDeviceLLMMigrated_v1.4"
@@ -126,18 +186,43 @@ struct BisonNotesAIApp: App {
             // Mark that we need to show the migration alert
             UserDefaults.standard.set(true, forKey: "showAppleIntelligenceMigrationAlert")
             
-            // Migrate to On-Device LLM
-            UserDefaults.standard.set("On-Device LLM", forKey: aiEngineKey)
+            // Migrate to On-Device AI
+            UserDefaults.standard.set("On-Device AI", forKey: aiEngineKey)
             UserDefaults.standard.set(true, forKey: "enableOnDeviceLLM")
             
             // Also update transcription if it was using Apple Intelligence
             let transcriptionEngineKey = "selectedTranscriptionEngine"
             let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
             if let transcription = currentTranscription, appleIntelligenceVariants.contains(transcription) {
-                UserDefaults.standard.set("Apple Transcription", forKey: transcriptionEngineKey)
+                UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
+                UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
+                UserDefaults.standard.set(true, forKey: "showWhisperKitMigrationSettings")
             }
             
-            NSLog("✅ Migrated from Apple Intelligence (\(engine)) to On-Device LLM")
+            NSLog("✅ Migrated from Apple Intelligence (\(engine)) to On-Device AI")
+        }
+        
+        // Mark migration as complete
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+    
+    /// Migrates users from old "On-Device LLM" name to "On-Device AI"
+    /// Handles backward compatibility for users who have the old name saved
+    private func migrateOnDeviceLLMNameToOnDeviceAI() {
+        let aiEngineKey = "SelectedAIEngine"
+        let migrationKey = "onDeviceLLMNameMigration_v1.5"
+        
+        // Check if migration has already been performed
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+        
+        let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
+        
+        // If the stored value is the old name, update it to the new name
+        if currentAIEngine == "On-Device LLM" {
+            UserDefaults.standard.set("On-Device AI", forKey: aiEngineKey)
+            NSLog("✅ Migrated AI engine name from 'On-Device LLM' to 'On-Device AI'")
         }
         
         // Mark migration as complete
@@ -156,6 +241,9 @@ struct BisonNotesAIApp: App {
         migrateAWSBedrockSettings()
         migrateAIEngineSelection()
         migrateAppleIntelligenceToOnDeviceLLM()
+        migrateAppleTranscriptionToWhisperKit()
+        migrateWhisperKitNameIfNeeded()
+        migrateOnDeviceLLMNameToOnDeviceAI()
     }
 
     /// Logs device capabilities on app startup
@@ -297,24 +385,20 @@ struct BisonNotesAIApp: App {
         Task {
             AppShortcuts.updateAppShortcutParameters()
         }
-        EnhancedLogger.shared.logDebug("App shortcuts configured for Action Button support")
 
         if #available(iOS 18.0, *) {
             if let plugInsURL = Bundle.main.builtInPlugInsURL,
-               let items = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {
-                EnhancedLogger.shared.logDebug("Built-in PlugIns: \(items.map { $0.lastPathComponent })")
+               let _ = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {
             } else {
                 print("⚠️ Unable to enumerate built-in PlugIns")
             }
-            EnhancedLogger.shared.logDebug("Asking WidgetKit to reload control configurations")
             ControlCenter.shared.reloadAllControls()
             ControlCenter.shared.reloadControls(ofKind: "com.bisonnotesai.controls.recording")
 
             Task {
                 do {
                     let controls = try await ControlCenter.shared.currentControls()
-                    let kinds = controls.map { $0.kind }
-                    EnhancedLogger.shared.logDebug("ControlCenter reports controls: \(kinds)")
+                    let _ = controls.map { $0.kind }
                 } catch {
                     print("❌ Failed to fetch current controls: \(error)")
                 }

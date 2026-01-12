@@ -11,7 +11,7 @@ import SafariServices
 
 enum ProcessingOption: String, CaseIterable {
     case openai = "OpenAI"
-    case onDeviceLLM = "On-Device LLM"
+    case onDeviceLLM = "On-Device AI"
     case chooseLater = "Choose Later"
 
     var displayName: String {
@@ -51,7 +51,9 @@ struct SimpleSettingsView: View {
     @State private var isFirstLaunch = false
     @State private var deviceSupported = false
     @State private var showingOnDeviceLLMSettings = false
+    @State private var showingWhisperKitSettings = false
     @State private var showingHelpDocumentation = false
+    @StateObject private var whisperKitManager = WhisperKitManager.shared
     
     var body: some View {
         NavigationView {
@@ -80,7 +82,8 @@ struct SimpleSettingsView: View {
         }
         .onAppear {
             loadCurrentSettings()
-            deviceSupported = DeviceCompatibility.isAppleIntelligenceTranscriptionSupported
+            // Check if device supports On-Device LLM (requires 6GB+ RAM)
+            deviceSupported = DeviceCapabilities.supportsOnDeviceLLM
             // Check if this is first launch
             isFirstLaunch = !UserDefaults.standard.bool(forKey: "hasCompletedFirstSetup")
         }
@@ -88,6 +91,18 @@ struct SimpleSettingsView: View {
             // When advanced settings sheet is dismissed, reload settings to check if we need to switch options
             if oldValue == true && newValue == false {
                 loadCurrentSettings()
+            }
+        }
+        .onChange(of: showingWhisperKitSettings) { oldValue, newValue in
+            // When WhisperKit settings is dismissed, check if model is ready and proceed to On-Device AI settings
+            if oldValue == true && newValue == false {
+                whisperKitManager.refreshModelStatus()
+                // If WhisperKit is now ready, show On-Device AI settings
+                if whisperKitManager.isModelReady && selectedOption == .onDeviceLLM {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        showingOnDeviceLLMSettings = true
+                    }
+                }
             }
         }
         .sheet(isPresented: $showingAdvancedSettings) {
@@ -106,8 +121,13 @@ struct SimpleSettingsView: View {
             }
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
-            NavigationView {
+            NavigationStack {
                 OnDeviceLLMSettingsView()
+            }
+        }
+        .sheet(isPresented: $showingWhisperKitSettings) {
+            NavigationStack {
+                WhisperKitSettingsView()
             }
         }
         .sheet(isPresented: $showingHelpDocumentation) {
@@ -203,7 +223,7 @@ struct SimpleSettingsView: View {
                             .foregroundColor(.blue)
                     }
                     
-                    Text("On-Device AI requires iPhone 12 or newer, or newer iPads with M1+ or A17 Pro chips.")
+                    Text("On-Device AI requires 6GB+ RAM. Your device has \(String(format: "%.1f", DeviceCapabilities.totalRAMInGB))GB RAM.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -239,14 +259,31 @@ struct SimpleSettingsView: View {
             }
             
             VStack(alignment: .leading, spacing: 8) {
-                Text("Important Limitations:")
+                Text("Setup Process:")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.blue)
+                
+                VStack(alignment: .leading, spacing: 6) {
+                    FeatureBullet(text: "Step 1: Download transcription model (150-520MB)")
+                    FeatureBullet(text: "Step 2: Download AI summary model (2-3GB)")
+                    FeatureBullet(text: "Total storage needed: ~3.5GB")
+                }
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.05))
+            )
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Important Notes:")
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .foregroundColor(.orange)
                 
                 VStack(alignment: .leading, spacing: 6) {
                     LimitationBullet(text: "Best for recordings under 60 minutes")
-                    LimitationBullet(text: "Requires download of AI and Transcription models (5GB)")
                     LimitationBullet(text: "May be less accurate than cloud services")
                 }
             }
@@ -431,22 +468,25 @@ struct SimpleSettingsView: View {
                 )
             }
             
-            VStack(alignment: .leading, spacing: 8) {
-                Text("💡 Need an API key?")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.secondary)
-                
-                Text("Visit platform.openai.com, go to API Keys, and create a new secret key. Make sure your account has credits for usage.")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            // Only show API key help when OpenAI is selected
+            if selectedOption == .openai {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("💡 Need an API key?")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Visit platform.openai.com, go to API Keys, and create a new secret key. Make sure your account has credits for usage.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(.systemGray6))
+                )
             }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(.systemGray6))
-            )
         }
     }
     
@@ -510,8 +550,8 @@ struct SimpleSettingsView: View {
         if transcriptionEngine == "OpenAI" && aiEngine == "OpenAI" {
             selectedOption = .openai
         }
-        // Check if On-Device LLM is selected for AI and Apple Transcription for Transcription
-        else if transcriptionEngine == "Apple Transcription" && aiEngine == "On-Device LLM" {
+        // Check if On-Device AI is selected for AI and WhisperKit (On Device) for Transcription
+        else if transcriptionEngine == TranscriptionEngine.whisperKit.rawValue && aiEngine == "On-Device AI" {
             selectedOption = .onDeviceLLM
         }
         // Any other permutation should show Advanced & Other Options
@@ -597,11 +637,12 @@ struct SimpleSettingsView: View {
                     try await service.testConnection()
                     
                 } else {
-                    // Set transcription engine to Apple Transcription (still used for transcription)
-                    UserDefaults.standard.set("Apple Transcription", forKey: "selectedTranscriptionEngine")
+                    // Set transcription engine to WhisperKit (On Device) for transcription
+                    UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: "selectedTranscriptionEngine")
+                    UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
                     
-                    // Set AI engine to On-Device LLM for summaries
-                    UserDefaults.standard.set("On-Device LLM", forKey: "SelectedAIEngine")
+                    // Set AI engine to On-Device AI for summaries
+                    UserDefaults.standard.set("On-Device AI", forKey: "SelectedAIEngine")
                     
                     // Enable On-Device LLM
                     UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
@@ -617,11 +658,22 @@ struct SimpleSettingsView: View {
                 // Mark first setup as complete
                 UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
                 
-                // If On-Device LLM was selected, show the settings page to download models
+                // If On-Device AI was selected, guide through model downloads
                 if selectedOption == .onDeviceLLM {
                     try await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second to show success message
+                    
+                    // Check if WhisperKit transcription model is downloaded
+                    whisperKitManager.refreshModelStatus()
+                    let whisperKitReady = whisperKitManager.isModelReady
+                    
                     await MainActor.run {
-                        showingOnDeviceLLMSettings = true
+                        if !whisperKitReady {
+                            // First, guide user to download WhisperKit transcription model
+                            showingWhisperKitSettings = true
+                        } else {
+                            // WhisperKit is ready, now guide to download On-Device AI models
+                            showingOnDeviceLLMSettings = true
+                        }
                     }
                 } else {
                     try await Task.sleep(nanoseconds: 2_000_000_000)

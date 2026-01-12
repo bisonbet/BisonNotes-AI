@@ -58,7 +58,7 @@ final class AISettingsViewModel: ObservableObject {
 
     /// Moves the engine selection logic into the view model.
     func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) -> (shouldPrompt: Bool, oldEngine: String, error: String?) {
-        let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"
+        let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
         let newEngine = engineType.rawValue
 
         guard oldEngine != newEngine else {
@@ -93,7 +93,7 @@ final class AISettingsViewModel: ObservableObject {
             print("🔧 Auto-enabled OpenAI engine")
         case .onDeviceLLM:
             UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
-            print("🔧 Auto-enabled On-Device LLM engine")
+            print("🔧 Auto-enabled On-Device AI engine")
         default:
             break
         }
@@ -180,7 +180,7 @@ struct AISettingsView: View {
     private var currentEngineType: AIEngineType? {
         // Note: AudioRecorderViewModel doesn't have selectedAIEngine property
         // Use the actual current engine from UserDefaults
-        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"
+        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
         return AIEngineType.allCases.first { $0.rawValue == currentEngineName }
     }
     
@@ -191,7 +191,7 @@ struct AISettingsView: View {
             }
             
             var statuses: [String: EngineAvailabilityStatus] = [:]
-            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"
+            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
             
             // Check each engine type
             for engineType in AIEngineType.allCases {
@@ -325,7 +325,7 @@ struct AISettingsView: View {
                 Task { await viewModel.regenerationManager.regenerateAllSummaries() }
             }
         } message: {
-            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"). Would you like to regenerate your existing summaries with the new AI engine?")
+            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"). Would you like to regenerate your existing summaries with the new AI engine?")
                 .font(.headline)
                 .padding()
             
@@ -336,7 +336,7 @@ struct AISettingsView: View {
                 .buttonStyle(.bordered)
                 
                 Button("Regenerate") {
-                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"
+                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
                     // TODO: Implement setEngine with new Core Data system
                     viewModel.regenerationManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
                     showingEngineChangePrompt = false
@@ -512,7 +512,7 @@ private extension AISettingsView {
                     .fontWeight(.medium)
                 
                 Picker("AI Engine", selection: Binding(
-                    get: { UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM" },
+                    get: { UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI" },
                     set: { newValue in
                         if let engineType = AIEngineType.allCases.first(where: { $0.rawValue == newValue }) {
                             let result = self.viewModel.selectEngine(engineType, recorderVM: self.recorderVM)
@@ -565,7 +565,7 @@ private extension AISettingsView {
     }
 
     var selectedEngineConfigurationSection: some View {
-        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device LLM"
+        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
 
         return Group {
             if let currentEngine = AIEngineType.allCases.first(where: { $0.rawValue == currentEngineName }) {
@@ -1123,14 +1123,14 @@ private extension AISettingsView {
         let isModelReady = selectedModel.isDownloaded
 
         return VStack(alignment: .leading, spacing: 16) {
-            Text("On-Device LLM Configuration")
+            Text("On-Device AI Configuration")
                 .font(.headline)
                 .padding(.horizontal, 24)
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("On-Device LLM Settings")
+                        Text("On-Device AI Settings")
                             .font(.body)
                         Text("Privacy-focused local AI processing. No internet required after model download.")
                             .font(.caption)

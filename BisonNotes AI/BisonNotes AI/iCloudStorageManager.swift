@@ -255,7 +255,6 @@ class iCloudStorageManager: ObservableObject {
     private func initializeCloudKit() async {
         guard !isInitialized else { return }
         
-        EnhancedLogger.shared.startPerformanceTracking("CloudKit Initialization", context: "iCloud Setup")
         
         // Skip CloudKit initialization in preview environments
         let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
@@ -288,9 +287,6 @@ class iCloudStorageManager: ObservableObject {
         
         isInitialized = true
         
-        if let result = EnhancedLogger.shared.endPerformanceTracking("CloudKit Initialization") {
-            EnhancedLogger.shared.logPerformance("CloudKit initialization completed in \(String(format: "%.2f", result.duration))s", level: .debug)
-        }
     }
     
     // MARK: - Public Interface
@@ -341,7 +337,6 @@ class iCloudStorageManager: ObservableObject {
                     // Don't fail the entire enablement process
                 }
             } else {
-                print("⏭️ Skipping initial full sync - will sync changes as they occur")
             }
             
             await updateSyncStatus(.completed)
@@ -1574,7 +1569,6 @@ class iCloudStorageManager: ObservableObject {
             }
         }
         
-        print("🔄 Set up periodic sync with \(syncInterval)s interval")
     }
     
     private func calculateAdaptiveSyncInterval() -> TimeInterval {
@@ -1609,14 +1603,12 @@ class iCloudStorageManager: ObservableObject {
         
         // Check if we should skip sync based on current conditions
         if shouldSkipSync() {
-            print("⏭️ Skipping periodic sync due to current conditions")
             return
         }
         
         // Check auto-sync mode
         switch autoSyncMode {
         case .disabled:
-            print("⏭️ Skipping periodic sync - auto-sync disabled")
             return
         case .changesOnly:
             // Use verbose logging instead of regular print to reduce console noise
@@ -1687,7 +1679,6 @@ class iCloudStorageManager: ObservableObject {
     
 
     private func setupCloudKitSchema() async {
-        print("🔧 Setting up CloudKit schema...")
     
         guard let database = database else { return }
     
@@ -1720,7 +1711,6 @@ class iCloudStorageManager: ObservableObject {
         do {
             _ = try await database.save(tempRecord)
             try await database.deleteRecord(withID: tempID)
-            print("✅ CloudKit schema ensured")
         } catch {
             print("⚠️ Failed to set up CloudKit schema: \(error)")
         }
@@ -1867,7 +1857,7 @@ class iCloudStorageManager: ObservableObject {
         } else if methodLower.contains("apple") || methodLower.contains("intelligence") {
             engine = "Apple Intelligence"
         } else if methodLower.contains("device") || methodLower.contains("gemma") || methodLower.contains("phi") || methodLower.contains("qwen") || methodLower.contains("llama") || methodLower.contains("mistral") || methodLower.contains("olmo") {
-            engine = "On Device LLM"
+            engine = "On Device AI"
         } else {
             engine = "AI Assistant"
         }
@@ -2241,7 +2231,7 @@ class iCloudStorageManager: ObservableObject {
         } else if methodLower.contains("apple") || methodLower.contains("intelligence") {
             engine = "Apple Intelligence"
         } else if methodLower.contains("device") || methodLower.contains("gemma") || methodLower.contains("phi") || methodLower.contains("qwen") || methodLower.contains("llama") || methodLower.contains("mistral") || methodLower.contains("olmo") {
-            engine = "On Device LLM"
+            engine = "On Device AI"
         } else {
             engine = "AI Assistant"
         }
@@ -2309,24 +2299,9 @@ extension CKError {
     /// Debug method to check current Core Data state
     @MainActor
     func debugCoreDataState(appCoordinator: AppDataCoordinator) {
-        let recordings = appCoordinator.coreDataManager.getAllRecordings()
-        let summaries = appCoordinator.coreDataManager.getAllSummaries()
-
-        print("🔍 DEBUG: Core Data State")
-        print("📊 Total recordings: \(recordings.count)")
-        print("📊 Total summaries: \(summaries.count)")
-
-        for (index, recording) in recordings.enumerated() {
-            print("   Recording \(index): \(recording.recordingName ?? "Unknown") (ID: \(recording.id?.uuidString ?? "nil"))")
-            print("      - Has summary: \(recording.summary != nil)")
-            print("      - Summary ID: \(recording.summaryId?.uuidString ?? "nil")")
-        }
-
-        for (index, summary) in summaries.enumerated() {
-            print("   Summary \(index): \(summary.recording?.recordingName ?? "Unknown") (ID: \(summary.id?.uuidString ?? "nil"))")
-            print("      - Has recording: \(summary.recording != nil)")
-            print("      - Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
-        }
+        // Debug logging removed - function kept for potential future use
+        let _ = appCoordinator.coreDataManager.getAllRecordings()
+        let _ = appCoordinator.coreDataManager.getAllSummaries()
     }
 
 }
