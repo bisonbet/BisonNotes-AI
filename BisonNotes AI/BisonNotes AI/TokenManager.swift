@@ -67,6 +67,25 @@ class TokenManager {
     
     /// Split text into chunks based on token count
     static func chunkText(_ text: String, maxTokens: Int = maxTokensPerChunk) -> [String] {
+        return chunkTextWithOverlap(text, maxTokens: maxTokens, overlapTokens: 0, tokenizer: nil)
+    }
+    
+    /// Split text into chunks with optional overlap and accurate tokenization
+    /// - Parameters:
+    ///   - text: The text to chunk
+    ///   - maxTokens: Maximum tokens per chunk (excluding overlap)
+    ///   - overlapTokens: Number of tokens to overlap between chunks (default: 100)
+    ///   - tokenizer: Optional function to get accurate token count. If nil, uses estimation.
+    /// - Returns: Array of text chunks with overlap preserved
+    static func chunkTextWithOverlap(
+        _ text: String,
+        maxTokens: Int,
+        overlapTokens: Int = 100,
+        tokenizer: ((String) -> Int)? = nil
+    ) -> [String] {
+        // Use provided tokenizer or fall back to estimation
+        let getTokenCount: (String) -> Int = tokenizer ?? { estimateTokenCount(for: $0) }
+        
         let sentences = text.components(separatedBy: CharacterSet(charactersIn: ".!?"))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -74,23 +93,42 @@ class TokenManager {
         var chunks: [String] = []
         var currentChunk: [String] = []
         var currentTokenCount = 0
+        var overlapBuffer: [String] = [] // Sentences to include in overlap
+        var overlapTokenCount = 0
         
         for sentence in sentences {
-            let sentenceTokenCount = estimateTokenCount(for: sentence)
+            let sentenceTokenCount = getTokenCount(sentence)
             
             // If adding this sentence would exceed the limit, start a new chunk
             if currentTokenCount + sentenceTokenCount > maxTokens && !currentChunk.isEmpty {
-                // Finalize current chunk
+                // Finalize current chunk (including overlap from previous chunk)
                 let chunkText = currentChunk.joined(separator: ". ") + "."
                 chunks.append(chunkText)
                 
-                // Start new chunk
-                currentChunk = [sentence]
-                currentTokenCount = sentenceTokenCount
-            } else {
-                // Add sentence to current chunk
-                currentChunk.append(sentence)
-                currentTokenCount += sentenceTokenCount
+                // Start new chunk with overlap from previous chunk
+                // The overlap buffer contains the last N sentences that fit within overlapTokens
+                currentChunk = overlapBuffer
+                currentTokenCount = overlapTokenCount
+                
+                // Reset overlap buffer and start building new one
+                overlapBuffer = []
+                overlapTokenCount = 0
+            }
+            
+            // Add sentence to current chunk
+            currentChunk.append(sentence)
+            currentTokenCount += sentenceTokenCount
+            
+            // Build overlap buffer: keep last sentences that fit within overlapTokens
+            if overlapTokens > 0 {
+                overlapBuffer.append(sentence)
+                overlapTokenCount += sentenceTokenCount
+                
+                // Trim overlap buffer if it exceeds overlapTokens
+                while overlapTokenCount > overlapTokens && overlapBuffer.count > 1 {
+                    let removed = overlapBuffer.removeFirst()
+                    overlapTokenCount -= getTokenCount(removed)
+                }
             }
         }
         

@@ -75,9 +75,10 @@ public class OnDeviceLLMService: ObservableObject {
             systemPrompt: LLMTemplate.summarizationSystemPrompt
         )
 
-        // Use model's native context capability (capped at 16k for mobile safety) 
-        // regardless of user setting to prevent K-shifts and slowness
-        let contextSize = Int32(min(config.modelInfo.contextWindow, 16384))
+        // Use device-appropriate context size based on RAM
+        // 8k for devices with <8GB RAM, 16k for devices with >=8GB RAM
+        let deviceContextSize = DeviceCapabilities.onDeviceLLMContextSize
+        let contextSize = Int32(min(config.modelInfo.contextWindow, deviceContextSize))
 
         llm = OnDeviceLLM(
             from: modelURL,
@@ -104,6 +105,18 @@ public class OnDeviceLLMService: ObservableObject {
     /// Check if a model is loaded
     public var isModelLoaded: Bool {
         isLoaded && llm != nil
+    }
+
+    // MARK: - Token Counting
+
+    /// Get accurate token count using the actual model tokenizer
+    /// Requires model to be loaded
+    public func getAccurateTokenCount(_ text: String) throws -> Int {
+        guard let llm = llm else {
+            throw OnDeviceLLMError.modelNotLoaded
+        }
+        let tokens = llm.encode(text)
+        return tokens.count
     }
 
     // MARK: - Summarization
@@ -231,7 +244,8 @@ public class OnDeviceLLMService: ObservableObject {
 
     // MARK: - Private Helpers
 
-    private func ensureModelLoaded() throws {
+    /// Ensure the model is loaded. Public for use in chunking operations.
+    public func ensureModelLoaded() throws {
         if !isModelLoaded {
             try loadModel()
         }

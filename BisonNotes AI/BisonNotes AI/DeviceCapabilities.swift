@@ -62,6 +62,13 @@ struct DeviceCapabilities {
         return deviceRAM >= minimumRAM
     }
 
+    /// Get the appropriate context size for on-device LLM based on device RAM
+    /// - Returns: 8192 tokens for devices with <8GB RAM, 16384 tokens for devices with >=8GB RAM
+    static var onDeviceLLMContextSize: Int {
+        let deviceRAM = totalRAMInGB
+        return deviceRAM < 8.0 ? 8192 : 16384
+    }
+
     /// Get a human-readable RAM description
     static var ramDescription: String {
         let ram = totalRAMInGB

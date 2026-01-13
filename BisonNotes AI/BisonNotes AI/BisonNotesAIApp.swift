@@ -47,7 +47,7 @@ struct BisonNotesAIApp: App {
     /// Defaults to Apple Intelligence on supported devices, OpenAI with dummy key on older devices
     private func migrateAIEngineSelection() {
         let aiEngineKey = "SelectedAIEngine"
-        let transcriptionEngineKey = "SelectedTranscriptionEngine"
+        let transcriptionEngineKey = "selectedTranscriptionEngine"
         let migrationKey = "aiEngineSelectionMigrated_v1.3"
 
         // Check if migration has already been performed
@@ -59,15 +59,17 @@ struct BisonNotesAIApp: App {
         let currentTranscriptionEngine = UserDefaults.standard.string(forKey: transcriptionEngineKey)
 
         // Determine the appropriate default based on device capabilities
-        let isAppleIntelligenceSupported = DeviceCompatibility.isAppleIntelligenceSupported
+        // Check if device has 6GB+ RAM for on-device AI support
+        let hasOnDeviceAISupport = DeviceCapabilities.supportsOnDeviceLLM
 
         // Migrate AI engine if not configured
         if currentAIEngine == "None" || currentAIEngine == "Not Configured" || currentAIEngine == nil {
-            if isAppleIntelligenceSupported {
-                UserDefaults.standard.set("Apple Intelligence", forKey: aiEngineKey)
-                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'Apple Intelligence' (device supported)")
+            if hasOnDeviceAISupport {
+                UserDefaults.standard.set("On-Device AI", forKey: aiEngineKey)
+                UserDefaults.standard.set(true, forKey: "enableOnDeviceLLM")
+                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'On-Device AI' (device has 6GB+ RAM)")
             } else {
-                // Set OpenAI as default for older devices
+                // Set OpenAI as default for devices with less than 6GB RAM
                 UserDefaults.standard.set("OpenAI", forKey: aiEngineKey)
                 // Set dummy API key if none exists
                 if UserDefaults.standard.string(forKey: "openAIAPIKey") == nil {
@@ -75,18 +77,19 @@ struct BisonNotesAIApp: App {
                     NSLog("✅ Set dummy OpenAI API key for older device")
                 }
                 UserDefaults.standard.set(true, forKey: "enableOpenAI")
-                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'OpenAI' (device not supported for Apple Intelligence)")
+                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'OpenAI' (device has <6GB RAM)")
             }
         }
 
         // Migrate transcription engine if not configured
         if currentTranscriptionEngine == "Not Configured" || currentTranscriptionEngine == nil {
-            let isTranscriptionSupported = DeviceCompatibility.isAppleIntelligenceTranscriptionSupported
-            if isTranscriptionSupported {
-                UserDefaults.standard.set("Apple Transcription", forKey: transcriptionEngineKey)
-                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'Apple Transcription' (device supported)")
+            if hasOnDeviceAISupport {
+                // Use WhisperKit (On Device) for devices with 6GB+ RAM
+                UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
+                UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
+                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'On Device' (device has 6GB+ RAM)")
             } else {
-                // Set OpenAI as default for older devices
+                // Set OpenAI as default for devices with less than 6GB RAM
                 UserDefaults.standard.set("OpenAI", forKey: transcriptionEngineKey)
                 // Set dummy API key if none exists
                 if UserDefaults.standard.string(forKey: "openAIAPIKey") == nil {
@@ -94,7 +97,7 @@ struct BisonNotesAIApp: App {
                     NSLog("✅ Set dummy OpenAI API key for older device")
                 }
                 UserDefaults.standard.set(true, forKey: "enableOpenAI")
-                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'OpenAI' (device not supported for Apple Intelligence)")
+                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'OpenAI' (device has <6GB RAM)")
             }
         }
 

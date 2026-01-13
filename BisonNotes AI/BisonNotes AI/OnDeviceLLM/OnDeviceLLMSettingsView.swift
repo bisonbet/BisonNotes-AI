@@ -106,7 +106,7 @@ struct OnDeviceLLMSettingsView: View {
 
     @ViewBuilder
     private var modelSelectionView: some View {
-        ForEach(OnDeviceLLMModelInfo.allModels) { model in
+        ForEach(OnDeviceLLMModelInfo.availableModels) { model in
             modelRow(for: model)
         }
     }
@@ -331,15 +331,16 @@ struct OnDeviceLLMSettingsView: View {
 
     @ViewBuilder
     private var advancedSettingsView: some View {
-        // Max Tokens
-        Stepper(value: $maxTokens, in: 512...4096, step: 256) {
-            HStack {
-                Text("Max Tokens")
-                Spacer()
-                Text("\(maxTokens)")
-                    .foregroundColor(.secondary)
-            }
+        // Context Size (automatically determined by device RAM)
+        HStack {
+            Text("Context Size")
+            Spacer()
+            Text("\(DeviceCapabilities.onDeviceLLMContextSize) tokens")
+                .foregroundColor(.secondary)
         }
+        Text("Automatically set based on device RAM: \(DeviceCapabilities.onDeviceLLMContextSize == 8192 ? "8k" : "16k") for devices with \(DeviceCapabilities.onDeviceLLMContextSize == 8192 ? "<8GB" : "≥8GB") RAM")
+            .font(.caption2)
+            .foregroundColor(.secondary)
 
         // Top-K
         Stepper(value: $topK, in: 1...100, step: 5) {
@@ -395,7 +396,6 @@ struct OnDeviceLLMSettingsView: View {
             topP = Double(defaults.topP)
             minP = Double(defaults.minP)
             repeatPenalty = Double(defaults.repeatPenalty)
-            maxTokens = 2048
         }
         .foregroundColor(.blue)
     }

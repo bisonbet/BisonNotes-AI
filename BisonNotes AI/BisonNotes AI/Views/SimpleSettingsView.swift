@@ -105,6 +105,28 @@ struct SimpleSettingsView: View {
                 }
             }
         }
+        .onChange(of: showingOnDeviceLLMSettings) { oldValue, newValue in
+            // When On-Device AI settings is dismissed, check if both models are ready and complete setup
+            if oldValue == true && newValue == false {
+                Task { @MainActor in
+                    whisperKitManager.refreshModelStatus()
+                    OnDeviceLLMDownloadManager.shared.refreshModelStatus()
+                    
+                    let whisperKitReady = whisperKitManager.isModelReady
+                    let onDeviceAIReady = OnDeviceLLMDownloadManager.shared.isModelReady
+                    
+                    // If both models are ready and this is first launch, complete the setup
+                    if whisperKitReady && onDeviceAIReady && isFirstLaunch && selectedOption == .onDeviceLLM {
+                        // Post notification to complete first setup and navigate to recording page
+                        try? await Task.sleep(nanoseconds: 500_000_000) // Wait 0.5 seconds
+                        NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
+                        // Also request location permission after setup
+                        try? await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second
+                        NotificationCenter.default.post(name: NSNotification.Name("RequestLocationPermission"), object: nil)
+                    }
+                }
+            }
+        }
         .sheet(isPresented: $showingAdvancedSettings) {
             NavigationView {
                 SettingsView()

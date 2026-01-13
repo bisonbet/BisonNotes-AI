@@ -152,11 +152,33 @@ extension OnDeviceLLMModelInfo {
         description: "from Google • Balanced quality and speed",
         filename: "gemma-3n-E4B-it-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf?download=true",
-        downloadSizeBytes: 3_090_000_000, // ~3.09 GB for Q4_K_M
+        downloadSizeBytes: 4_540_000_000, // ~4.54 GB for Q4_K_M
+        requiredRAM: 8.0,
+        templateType: .gemma3,
+        purpose: .summarization,
+        contextWindow: 16384,
+        defaultSettings: OnDeviceLLMDefaultSettings(
+            temperature: 1.0,
+            topK: 64,
+            topP: 0.95,
+            minP: 0.0,
+            repeatPenalty: 1.1
+        )
+    )
+
+    /// Gemma 3n E2B - Google's smaller efficient on-device model
+    /// A compact 4-bit model optimized for devices with limited storage
+    public static let gemma3nE2B = OnDeviceLLMModelInfo(
+        id: "gemma-3n-e2b",
+        displayName: "Gemma (Small)",
+        description: "from Google • Smaller size, faster download",
+        filename: "gemma-3n-E2B-it-Q4_K_M",
+        downloadURL: "https://huggingface.co/unsloth/gemma-3n-E2B-it-GGUF/resolve/main/gemma-3n-E2B-it-Q4_K_M.gguf?download=true",
+        downloadSizeBytes: 3_030_000_000, // ~3.03 GB for Q4_K_M
         requiredRAM: 6.0,
         templateType: .gemma3,
         purpose: .summarization,
-        contextWindow: 32768,
+        contextWindow: 16384,
         defaultSettings: OnDeviceLLMDefaultSettings(
             temperature: 1.0,
             topK: 64,
@@ -175,10 +197,10 @@ extension OnDeviceLLMModelInfo {
         filename: "Qwen3-4B-Instruct-2507-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 2_720_000_000, // ~2.72 GB for Q4_K_M
-        requiredRAM: 6.0,
+        requiredRAM: 8.0,
         templateType: .qwen3,
         purpose: .summarization,
-        contextWindow: 32768,
+        contextWindow: 16384,
         defaultSettings: OnDeviceLLMDefaultSettings(
             temperature: 0.7,
             topK: 20,
@@ -200,7 +222,29 @@ extension OnDeviceLLMModelInfo {
         requiredRAM: 6.0,
         templateType: .mistral,
         purpose: .summarization,
-        contextWindow: 32768,
+        contextWindow: 16384,
+        defaultSettings: OnDeviceLLMDefaultSettings(
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            minP: 0.0,
+            repeatPenalty: 1.1
+        )
+    )
+
+    /// Granite 4.0 H Tiny - IBM's efficient on-device model
+    /// A compact model optimized for edge devices with strong instruction following
+    public static let granite4H = OnDeviceLLMModelInfo(
+        id: "granite-4.0-h-tiny",
+        displayName: "Granite",
+        description: "from IBM • Strong instruction following",
+        filename: "granite-4.0-h-tiny-Q4_K_M",
+        downloadURL: "https://huggingface.co/unsloth/granite-4.0-h-tiny-GGUF/resolve/main/granite-4.0-h-tiny-Q4_K_M.gguf?download=true",
+        downloadSizeBytes: 4_250_000_000, // ~4.25 GB for Q4_K_M
+        requiredRAM: 8.0,
+        templateType: .chatML,
+        purpose: .summarization,
+        contextWindow: 16384,
         defaultSettings: OnDeviceLLMDefaultSettings(
             temperature: 0.7,
             topK: 40,
@@ -215,17 +259,46 @@ extension OnDeviceLLMModelInfo {
     /// All models available for download
     public static let allModels: [OnDeviceLLMModelInfo] = [
         gemma3nE4B,
+        gemma3nE2B,
         qwen3_4B,
+        granite4H,
         ministral3B
     ]
+
+    /// Models available for the current device based on RAM requirements
+    /// Only shows models that the device has sufficient RAM to run
+    public static var availableModels: [OnDeviceLLMModelInfo] {
+        let deviceRAM = DeviceCapabilities.totalRAMInGB
+        return allModels.filter { model in
+            deviceRAM >= model.requiredRAM
+        }
+    }
 
     /// Models optimized for summarization
     public static var summarizationModels: [OnDeviceLLMModelInfo] {
         allModels.filter { $0.purpose == .summarization }
     }
 
+    /// Available summarization models for the current device
+    public static var availableSummarizationModels: [OnDeviceLLMModelInfo] {
+        availableModels.filter { $0.purpose == .summarization }
+    }
+
     /// Default model for summarization tasks
-    public static let defaultSummarizationModel = gemma3nE4B
+    /// Returns the first available model, preferring E4B if available, otherwise E2B or Ministral
+    public static var defaultSummarizationModel: OnDeviceLLMModelInfo {
+        // Prefer E4B if available, otherwise use first available model
+        if DeviceCapabilities.totalRAMInGB >= gemma3nE4B.requiredRAM {
+            return gemma3nE4B
+        } else if DeviceCapabilities.totalRAMInGB >= gemma3nE2B.requiredRAM {
+            return gemma3nE2B
+        } else if DeviceCapabilities.totalRAMInGB >= ministral3B.requiredRAM {
+            return ministral3B
+        } else {
+            // Fallback to first available model
+            return availableModels.first ?? gemma3nE2B
+        }
+    }
 
     /// Find a model by its ID
     public static func model(withId id: String) -> OnDeviceLLMModelInfo? {
@@ -266,7 +339,8 @@ extension OnDeviceLLMModelInfo {
     }
 
     /// Get the configured max tokens
-    /// Default to 16K to allow processing longer transcripts while reserving space for output
+    /// Note: Context size is automatically determined by device RAM (8k for <8GB, 16k for >=8GB)
+    /// This setting is kept for backward compatibility but is not used for context size configuration
     public static var configuredMaxTokens: Int {
         let tokens = UserDefaults.standard.integer(forKey: SettingsKeys.maxTokens)
         return tokens > 0 ? tokens : 16384
