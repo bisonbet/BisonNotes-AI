@@ -46,7 +46,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     }
     
     var metadataName: String {
-        return OnDeviceLLMModelInfo.selectedModel.displayName
+        return OnDeviceLLMModelInfo.selectedModel.id
     }
 
     // MARK: - Private Properties
