@@ -458,10 +458,12 @@ public class WhisperKitManager: NSObject, ObservableObject {
             print("[WhisperKit] Starting transcription for: \(audioURL.lastPathComponent)")
 
             // Configure decoding options to reduce artifacts
+            // Note: `language` is set to `nil` so WhisperKit can auto-detect
+            // the spoken language from audio instead of forcing a specific locale.
             let decodingOptions = DecodingOptions(
                 verbose: false,
                 task: .transcribe,
-                language: "en",
+                language: nil,
                 temperature: 0.0,  // Deterministic output
                 topK: 50,
                 usePrefillPrompt: false,
@@ -608,8 +610,13 @@ public class WhisperKitManager: NSObject, ObservableObject {
         return totalSize
     }
 
-    /// Clean WhisperKit-specific artifact markers from transcription text
-    /// Only removes known non-speech markers to avoid removing actual transcript content
+    /// Clean WhisperKit-specific artifact markers from transcription text.
+    ///
+    /// Notes on language handling:
+    /// - Language detection is handled upstream by Whisper/WhisperKit, which
+    ///   infer the spoken language directly from audio.
+    /// - This helper only strips non-speech control tokens (timestamps, noise
+    ///   markers, etc.) and never attempts to change or normalize language.
     private func cleanWhisperKitArtifacts(_ text: String) -> String {
         var cleaned = text
 
@@ -621,6 +628,17 @@ public class WhisperKitManager: NSObject, ObservableObject {
         cleaned = cleaned.replacingOccurrences(of: "[MUSIC]", with: "")
         cleaned = cleaned.replacingOccurrences(of: "[APPLAUSE]", with: "")
         cleaned = cleaned.replacingOccurrences(of: "[NOISE]", with: "")
+
+        let whisperKitTokens = [
+            "<|startoftranscript|>",
+            "<|nocaptions|>",
+            "<|endoftext|>",
+            "<|en|>",
+            "<|transcribe|>"
+        ]
+        for token in whisperKitTokens {
+            cleaned = cleaned.replacingOccurrences(of: token, with: "")
+        }
 
         // Remove timestamp tokens in format <|0.00|>, <|1.50|> etc.
         // Pattern: <| followed by numbers/decimals followed by |>
