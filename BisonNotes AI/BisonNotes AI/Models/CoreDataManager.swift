@@ -581,21 +581,8 @@ class CoreDataManager: ObservableObject {
         let contentType = summaryEntry.contentType.flatMap { ContentType(rawValue: $0) } ?? .general
         
         let method = summaryEntry.aiMethod ?? ""
-        // Simple inference for engine until we have a proper field
-        let engine: String
-        if method.lowercased().contains("gpt") || method.lowercased().contains("openai") {
-            engine = "OpenAI"
-        } else if method.lowercased().contains("claude") || method.lowercased().contains("bedrock") {
-            engine = "AWS Bedrock"
-        } else if method.lowercased().contains("gemini") || method.lowercased().contains("google") {
-            engine = "Google AI"
-        } else if method.lowercased().contains("ollama") {
-            engine = "Ollama"
-        } else if method.lowercased().contains("llama") || method.lowercased().contains("mistral") || method.lowercased().contains("gemma") || method.lowercased().contains("phi") || method.lowercased().contains("qwen") || method.lowercased().contains("olmo") {
-            engine = "On Device AI"
-        } else {
-            engine = "AI Assistant"
-        }
+        let decodedMetadata = SummaryMetadataCodec.decode(method)
+        let engine = decodedMetadata.engine ?? SummaryMetadataCodec.inferredEngine(from: decodedMetadata.model)
         
         return EnhancedSummaryData(
             id: summaryEntry.id ?? UUID(),
@@ -610,7 +597,7 @@ class CoreDataManager: ObservableObject {
             titles: titles,
             contentType: contentType,
             aiEngine: engine,
-            aiModel: method,
+            aiModel: decodedMetadata.model,
             originalLength: Int(summaryEntry.originalLength),
             processingTime: summaryEntry.processingTime,
             generatedAt: summaryEntry.generatedAt,

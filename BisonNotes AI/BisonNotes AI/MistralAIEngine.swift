@@ -10,9 +10,13 @@ import os.log
 
 class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     var name: String { "Mistral AI" }
-    var engineType: String { "Mistral" }
+    var engineType: String { "Mistral AI" }
     var description: String { "Advanced summarization using Mistral AI's optimized models." }
     let version: String = "1.0"
+    var metadataName: String {
+        let modelId = UserDefaults.standard.string(forKey: "mistralModel") ?? MistralAIModel.mistralMedium2508.rawValue
+        return MistralAIModel(rawValue: modelId)?.displayName ?? modelId
+    }
 
     private var service: MistralAISummarizationService?
     private var currentConfig: MistralAIConfig?

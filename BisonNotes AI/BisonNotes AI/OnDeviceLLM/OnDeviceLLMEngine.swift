@@ -18,7 +18,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     // MARK: - SummarizationEngine Properties
 
     var name: String { "On-Device AI" }
-    var engineType: String { "On Device AI" }
+    var engineType: String { "On-Device AI" }
     var description: String { "Private, local summarization using models like Llama, Phi, or Mistral running entirely on your device." }
     let version: String = "1.0"
 

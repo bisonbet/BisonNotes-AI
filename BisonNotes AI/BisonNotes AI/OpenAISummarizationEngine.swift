@@ -12,6 +12,10 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
     var engineType: String { "OpenAI" }
     var description: String { "Advanced summarization using OpenAI's latest models." }
     let version: String = "1.0"
+    var metadataName: String {
+        return UserDefaults.standard.string(forKey: "openAISummarizationModel")
+            ?? OpenAISummarizationModel.gpt41Mini.rawValue
+    }
     
     private var service: OpenAISummarizationService?
     private var currentConfig: OpenAISummarizationConfig?
@@ -396,9 +400,12 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
 
 class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
     var name: String { "OpenAI-Compatible" }
-    var engineType: String { "Custom API" }
+    var engineType: String { "OpenAI API Compatible" }
     var description: String { "Connect to any OpenAI-compatible API endpoint (e.g., local server or custom provider)." }
     let version: String = "1.0"
+    var metadataName: String {
+        return UserDefaults.standard.string(forKey: "openAICompatibleModel") ?? "gpt-3.5-turbo"
+    }
     
     private var service: OpenAISummarizationService?
     private var currentConfig: OpenAISummarizationConfig?
