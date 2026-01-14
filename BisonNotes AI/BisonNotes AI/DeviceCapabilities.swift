@@ -23,9 +23,9 @@ struct DeviceCapabilities {
     }
 
     /// Check if device has sufficient RAM for on-device LLM processing
-    /// Requires at least 6GB of RAM for full LLM models
+    /// Requires at least 4GB of RAM (allows testing with LFM 2.5 model on 4GB devices)
     static var supportsOnDeviceLLM: Bool {
-        let minimumRAM: Double = 6.0 // 6GB minimum
+        let minimumRAM: Double = 4.0 // 4GB minimum for testing
         let deviceRAM = totalRAMInGB
 
 

@@ -21,6 +21,7 @@ public enum OnDeviceLLMTemplateType: String, Codable, CaseIterable {
     case qwen
     case qwen3
     case gemma3
+    case lfm
     case simple
 
     /// Get the LLMTemplate for this type
@@ -46,6 +47,8 @@ public enum OnDeviceLLMTemplateType: String, Codable, CaseIterable {
             return .qwen3(systemPrompt)
         case .gemma3:
             return .gemma3(systemPrompt)
+        case .lfm:
+            return .lfm(systemPrompt)
         case .simple:
             return .simple(systemPrompt)
         }
@@ -254,6 +257,50 @@ extension OnDeviceLLMModelInfo {
         )
     )
 
+    /// LFM 2.5 1.2B Instruct - Liquid AI's ultra-compact edge model
+    /// A highly efficient 1.2B model optimized for agentic tasks and data extraction
+    public static let lfm25 = OnDeviceLLMModelInfo(
+        id: "lfm-2.5-1.2b",
+        displayName: "LFM 2.5",
+        description: "from Liquid AI • Ultra-compact for agentic tasks",
+        filename: "LFM2.5-1.2B-Instruct-Q4_K_M",
+        downloadURL: "https://huggingface.co/unsloth/LFM2.5-1.2B-Instruct-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Q4_K_M.gguf?download=true",
+        downloadSizeBytes: 731_000_000, // ~731 MB for Q4_K_M
+        requiredRAM: 4.0,
+        templateType: .lfm,
+        purpose: .summarization,
+        contextWindow: 16384,
+        defaultSettings: OnDeviceLLMDefaultSettings(
+            temperature: 0.1,
+            topK: 50,
+            topP: 0.1,
+            minP: 0.0,
+            repeatPenalty: 1.05
+        )
+    )
+
+    /// Granite 4.0 Micro - IBM's compact 3B model with extended context
+    /// A versatile 3B model with 128K context window for complex tasks
+    public static let granite4Micro = OnDeviceLLMModelInfo(
+        id: "granite-4.0-micro",
+        displayName: "Granite Micro",
+        description: "from IBM • 128K context for complex tasks",
+        filename: "granite-4.0-micro-Q4_K_M",
+        downloadURL: "https://huggingface.co/unsloth/granite-4.0-micro-GGUF/resolve/main/granite-4.0-micro-Q4_K_M.gguf?download=true",
+        downloadSizeBytes: 2_100_000_000, // ~2.1 GB for Q4_K_M
+        requiredRAM: 6.0,
+        templateType: .chatML,
+        purpose: .summarization,
+        contextWindow: 16384,
+        defaultSettings: OnDeviceLLMDefaultSettings(
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            minP: 0.0,
+            repeatPenalty: 1.1
+        )
+    )
+
     // MARK: - All Available Models
 
     /// All models available for download
@@ -262,7 +309,9 @@ extension OnDeviceLLMModelInfo {
         gemma3nE2B,
         qwen3_4B,
         granite4H,
-        ministral3B
+        granite4Micro,
+        ministral3B,
+        lfm25
     ]
 
     /// Models available for the current device based on RAM requirements

@@ -253,6 +253,31 @@ extension LLMTemplate {
             systemPrompt: systemPrompt
         )
     }
+
+    // MARK: - LFM Format (Liquid AI)
+
+    /// LFM 2.5 format with extended stop sequences for Liquid AI models
+    /// Includes tool-calling tokens and additional stop markers to prevent hallucinated tokens
+    public static func lfm(_ systemPrompt: String? = nil) -> LLMTemplate {
+        return LLMTemplate(
+            prefix: "<|startoftext|>",
+            system: ("<|im_start|>system\n", "<|im_end|>\n"),
+            user: ("<|im_start|>user\n", "<|im_end|>\n"),
+            bot: ("<|im_start|>assistant\n", "<|im_end|>\n"),
+            stopSequences: [
+                "<|im_end|>",
+                "<|endoftext|>",
+                "<|tool_call_start|>",
+                "<|tool_call_end|>",
+                "<|end",           // Catch hallucinated "<|end_of_*" patterns
+                "<| end",          // Catch malformed "<| end_of_*" patterns
+                "\n\nUser:",       // Prevent model from generating new turns
+                "\n\nuser:",
+                "\n\n<|im_start|>" // Prevent model from starting new message
+            ],
+            systemPrompt: systemPrompt
+        )
+    }
 }
 
 // MARK: - Summarization System Prompts
@@ -270,6 +295,20 @@ Guidelines:
 - Be concise but comprehensive
 - Preserve important names, dates, and specific details
 - Use **bold** for key terms and *italic* for emphasis
+"""
+
+    /// System prompt optimized for LFM models to prevent hallucinated tokens
+    public static let lfmSummarizationSystemPrompt = """
+You are a helpful assistant trained by Liquid AI. Your task is to create clear, well-structured summaries of transcribed audio content.
+
+Guidelines:
+- Use proper Markdown formatting with headers, bullet points, and emphasis
+- Focus on key points, decisions, and important information
+- Organize content logically with clear sections
+- Be concise but comprehensive
+- Preserve important names, dates, and specific details
+- Use **bold** for key terms and *italic* for emphasis
+- End your response naturally when finished - do not add closing markers or signatures
 """
 
     /// System prompt for extracting tasks from transcripts

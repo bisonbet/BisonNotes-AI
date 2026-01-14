@@ -92,6 +92,8 @@ open class OnDeviceLLM: ObservableObject {
     private var updateProgress: (Double) -> Void = { _ in }
     private var nPast: Int32 = 0
     private var inputTokenCount: Int32 = 0
+    private var outputTokenCount: Int32 = 0
+    private let maxOutputTokens: Int32 // Hard limit on output tokens to prevent infinite generation
 
     // MARK: - Logging Configuration
     
@@ -153,7 +155,8 @@ open class OnDeviceLLM: ObservableObject {
         minP: Float = 0.0,
         temp: Float = 0.7,  // Default 0.7 for summarization
         repeatPenalty: Float = 1.1,
-        maxTokenCount: Int32 = 2048
+        maxTokenCount: Int32 = 2048,
+        maxOutputTokens: Int32 = 2700  // Hard limit on output length (~2,000 words)
     ) {
         // Configure logging before any llama.cpp operations
         Self.configureLogging()
@@ -195,6 +198,7 @@ open class OnDeviceLLM: ObservableObject {
         self.minP = minP
         self.temp = temp
         self.repeatPenalty = repeatPenalty
+        self.maxOutputTokens = maxOutputTokens
         self.model = model
         self.history = history
         self.totalTokenCount = Int(llama_vocab_n_tokens(llama_model_get_vocab(model)))
@@ -238,7 +242,8 @@ open class OnDeviceLLM: ObservableObject {
         minP: Float = 0.0,
         temp: Float = 0.7,
         repeatPenalty: Float = 1.1,
-        maxTokenCount: Int32 = 2048
+        maxTokenCount: Int32 = 2048,
+        maxOutputTokens: Int32 = 2700
     ) {
         self.init(
             from: url.path,
@@ -250,7 +255,8 @@ open class OnDeviceLLM: ObservableObject {
             minP: minP,
             temp: temp,
             repeatPenalty: repeatPenalty,
-            maxTokenCount: maxTokenCount
+            maxTokenCount: maxTokenCount,
+            maxOutputTokens: maxOutputTokens
         )
         self.preprocess = template.preprocess
         self.template = template
@@ -276,6 +282,7 @@ open class OnDeviceLLM: ObservableObject {
     public func clearHistory() async {
         history.removeAll()
         nPast = 0
+        outputTokenCount = 0
         await setOutput(to: "")
         context = nil
         savedState = nil
@@ -514,8 +521,17 @@ open class OnDeviceLLM: ObservableObject {
                 }
 
                 metrics.start()
+                self.outputTokenCount = 0 // Reset output token counter
                 var token = await self.predictNextToken()
                 while self.emitDecoded(token: token, to: output) {
+                    self.outputTokenCount += 1
+
+                    // Check for max output tokens (safety limit to prevent infinite generation)
+                    if self.outputTokenCount >= self.maxOutputTokens {
+                        print("[OnDeviceLLM] Max output tokens (\(self.maxOutputTokens)) reached, stopping generation")
+                        break
+                    }
+
                     if Task.isCancelled {
                         print("[OnDeviceLLM] Task cancelled during generation, stopping")
                         break

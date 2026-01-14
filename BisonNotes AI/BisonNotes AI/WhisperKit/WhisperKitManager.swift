@@ -457,8 +457,19 @@ public class WhisperKitManager: NSObject, ObservableObject {
             currentStatus = "Transcribing audio..."
             print("[WhisperKit] Starting transcription for: \(audioURL.lastPathComponent)")
 
-            // Perform transcription
-            let results = try await pipe.transcribe(audioPath: audioURL.path)
+            // Configure decoding options to reduce artifacts
+            let decodingOptions = DecodingOptions(
+                verbose: false,
+                task: .transcribe,
+                language: "en",
+                temperature: 0.0,  // Deterministic output
+                topK: 50,
+                usePrefillPrompt: false,
+                withoutTimestamps: true  // Disable timestamp tokens to reduce artifacts
+            )
+
+            // Perform transcription with clean options
+            let results = try await pipe.transcribe(audioPath: audioURL.path, decodeOptions: decodingOptions)
 
             let processingTime = Date().timeIntervalSince(startTime)
 
@@ -467,17 +478,24 @@ public class WhisperKitManager: NSObject, ObservableObject {
             var segments: [TranscriptSegment] = []
 
             for result in results {
-                fullText += result.text
+                // Clean known WhisperKit artifact markers from result text
+                let cleanedText = self.cleanWhisperKitArtifacts(result.text)
+                fullText += cleanedText
 
-                // Convert segments
+                // Convert segments with cleaning
                 for segment in result.segments {
-                    let transcriptSegment = TranscriptSegment(
-                        speaker: "Speaker",
-                        text: segment.text.trimmingCharacters(in: .whitespaces),
-                        startTime: TimeInterval(segment.start),
-                        endTime: TimeInterval(segment.end)
-                    )
-                    segments.append(transcriptSegment)
+                    let segmentText = self.cleanWhisperKitArtifacts(segment.text)
+
+                    // Only add segments with actual content (skip empty or artifact-only segments)
+                    if !segmentText.isEmpty {
+                        let transcriptSegment = TranscriptSegment(
+                            speaker: "Speaker",
+                            text: segmentText,
+                            startTime: TimeInterval(segment.start),
+                            endTime: TimeInterval(segment.end)
+                        )
+                        segments.append(transcriptSegment)
+                    }
                 }
             }
 
@@ -571,10 +589,10 @@ public class WhisperKitManager: NSObject, ObservableObject {
         guard FileManager.default.fileExists(atPath: path) else {
             return 0
         }
-        
+
         var totalSize: Int64 = 0
         let fileManager = FileManager.default
-        
+
         if let enumerator = fileManager.enumerator(atPath: path) {
             for file in enumerator {
                 if let filePath = file as? String {
@@ -586,7 +604,40 @@ public class WhisperKitManager: NSObject, ObservableObject {
                 }
             }
         }
-        
+
         return totalSize
+    }
+
+    /// Clean WhisperKit-specific artifact markers from transcription text
+    /// Only removes known non-speech markers to avoid removing actual transcript content
+    private func cleanWhisperKitArtifacts(_ text: String) -> String {
+        var cleaned = text
+
+        // Remove specific WhisperKit markers that are definitely artifacts
+        // [BLANK_AUDIO] - silence markers
+        cleaned = cleaned.replacingOccurrences(of: "[BLANK_AUDIO]", with: "")
+
+        // [MUSIC], [APPLAUSE], [NOISE] - audio classification markers
+        cleaned = cleaned.replacingOccurrences(of: "[MUSIC]", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "[APPLAUSE]", with: "")
+        cleaned = cleaned.replacingOccurrences(of: "[NOISE]", with: "")
+
+        // Remove timestamp tokens in format <|0.00|>, <|1.50|> etc.
+        // Pattern: <| followed by numbers/decimals followed by |>
+        cleaned = cleaned.replacingOccurrences(
+            of: "<\\|[0-9]+\\.?[0-9]*\\|>",
+            with: "",
+            options: .regularExpression
+        )
+
+        // Trim whitespace and normalize multiple spaces to single space
+        cleaned = cleaned.trimmingCharacters(in: .whitespaces)
+        cleaned = cleaned.replacingOccurrences(
+            of: "  +",
+            with: " ",
+            options: .regularExpression
+        )
+
+        return cleaned
     }
 }

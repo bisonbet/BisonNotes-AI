@@ -71,9 +71,11 @@ public class OnDeviceLLMService: ObservableObject {
         }
 
         let modelURL = config.modelInfo.fileURL
-        let template = config.modelInfo.templateType.template(
-            systemPrompt: LLMTemplate.summarizationSystemPrompt
-        )
+        // Use LFM-specific system prompt for LFM models to prevent hallucinated tokens
+        let systemPrompt = config.modelInfo.templateType == .lfm ?
+            LLMTemplate.lfmSummarizationSystemPrompt :
+            LLMTemplate.summarizationSystemPrompt
+        let template = config.modelInfo.templateType.template(systemPrompt: systemPrompt)
 
         // Use device-appropriate context size based on RAM
         // 8k for devices with <8GB RAM, 16k for devices with >=8GB RAM
@@ -88,7 +90,8 @@ public class OnDeviceLLMService: ObservableObject {
             minP: config.minP,
             temp: config.temperature,
             repeatPenalty: config.repeatPenalty,
-            maxTokenCount: contextSize
+            maxTokenCount: contextSize,
+            maxOutputTokens: 2700  // Hard limit to prevent infinite generation (~2,000 words)
         )
 
         isLoaded = true
@@ -130,9 +133,11 @@ public class OnDeviceLLMService: ObservableObject {
         let prompt = createSummarizationPrompt(text: text, contentType: contentType)
 
         // Update template with summarization system prompt
-        llm.template = config.modelInfo.templateType.template(
-            systemPrompt: LLMTemplate.summarizationSystemPrompt
-        )
+        // Use LFM-specific system prompt for LFM models to prevent hallucinated tokens
+        let systemPrompt = config.modelInfo.templateType == .lfm ?
+            LLMTemplate.lfmSummarizationSystemPrompt :
+            LLMTemplate.summarizationSystemPrompt
+        llm.template = config.modelInfo.templateType.template(systemPrompt: systemPrompt)
 
         // Generate response
         let result = await llm.generate(from: prompt)

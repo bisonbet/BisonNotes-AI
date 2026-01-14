@@ -37,23 +37,6 @@
 		</dict>
 		<dict>
 			<key>BinaryPath</key>
-			<string>llama.framework/llama</string>
-			<key>LibraryIdentifier</key>
-			<string>ios-arm64_x86_64-maccatalyst</string>
-			<key>LibraryPath</key>
-			<string>llama.framework</string>
-			<key>SupportedArchitectures</key>
-			<array>
-				<string>arm64</string>
-				<string>x86_64</string>
-			</array>
-			<key>SupportedPlatform</key>
-			<string>ios</string>
-			<key>SupportedPlatformVariant</key>
-			<string>maccatalyst</string>
-		</dict>
-		<dict>
-			<key>BinaryPath</key>
 			<string>llama.framework/Versions/A/llama</string>
 			<key>LibraryIdentifier</key>
 			<string>macos-arm64_x86_64</string>
