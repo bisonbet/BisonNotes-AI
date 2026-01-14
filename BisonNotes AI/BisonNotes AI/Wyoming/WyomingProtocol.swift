@@ -243,7 +243,7 @@ struct WyomingMessageFactory {
         return WyomingMessage(type: .describe)
     }
     
-    static func createTranscribeMessage(language: String? = "en", model: String? = nil) -> WyomingMessage {
+    static func createTranscribeMessage(language: String? = nil, model: String? = nil) -> WyomingMessage {
         let data = WyomingTranscribeData(language: language, model: model)
         return WyomingMessage(type: .transcribe, data: data)
     }

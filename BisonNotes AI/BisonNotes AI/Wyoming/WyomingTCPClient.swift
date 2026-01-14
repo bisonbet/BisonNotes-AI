@@ -416,7 +416,7 @@ class WyomingTCPClient: ObservableObject {
         try await sendMessage(WyomingMessageFactory.createDescribeMessage())
     }
     
-    func sendTranscribe(language: String? = "en", model: String? = nil) async throws {
+    func sendTranscribe(language: String? = nil, model: String? = nil) async throws {
         try await sendMessage(WyomingMessageFactory.createTranscribeMessage(language: language, model: model))
     }
     

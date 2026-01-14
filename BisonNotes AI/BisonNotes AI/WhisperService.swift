@@ -546,7 +546,6 @@ class WhisperService: ObservableObject {
         urlComponents.queryItems = [
             URLQueryItem(name: "output", value: "json"),
             URLQueryItem(name: "task", value: "transcribe"),
-            URLQueryItem(name: "language", value: "en"),
             URLQueryItem(name: "word_timestamps", value: "false"),
             URLQueryItem(name: "vad_filter", value: "false"),
             URLQueryItem(name: "encode", value: "true"),

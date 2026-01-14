@@ -327,12 +327,6 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         body.append("json".data(using: .utf8)!)
         body.append("\r\n".data(using: .utf8)!)
         
-        // Add language (optional, helps with accuracy)
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"language\"\r\n\r\n".data(using: .utf8)!)
-        body.append("en".data(using: .utf8)!)
-        body.append("\r\n".data(using: .utf8)!)
-        
         // Add temperature (0 for most deterministic results)
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"temperature\"\r\n\r\n".data(using: .utf8)!)

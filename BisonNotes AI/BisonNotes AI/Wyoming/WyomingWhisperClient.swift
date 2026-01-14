@@ -370,7 +370,7 @@ class WyomingWhisperClient: ObservableObject {
             currentStatus = "Sending transcription request..."
             progress = 0.1
             
-            try await tcpClient.sendTranscribe(language: "en")
+            try await tcpClient.sendTranscribe(language: nil)
             
             // Step 2: Send audio start
             currentStatus = "Starting audio stream..."
