@@ -1408,7 +1408,10 @@ class iCloudStorageManager: ObservableObject {
         summaryEntry.recordingId = cloudSummary.recordingId
         summaryEntry.transcriptId = cloudSummary.transcriptId
         summaryEntry.generatedAt = cloudSummary.generatedAt
-        summaryEntry.aiMethod = cloudSummary.aiModel
+        summaryEntry.aiMethod = SummaryMetadataCodec.encode(
+            aiEngine: cloudSummary.aiEngine,
+            aiModel: cloudSummary.aiModel
+        )
         summaryEntry.processingTime = cloudSummary.processingTime
         summaryEntry.confidence = cloudSummary.confidence
         summaryEntry.summary = cloudSummary.summary
@@ -1730,7 +1733,10 @@ class iCloudStorageManager: ObservableObject {
         record[CloudKitSummaryRecord.recordingDateField] = summary.recordingDate
         record[CloudKitSummaryRecord.summaryField] = summary.summary
         record[CloudKitSummaryRecord.contentTypeField] = summary.contentType.rawValue
-        record[CloudKitSummaryRecord.aiMethodField] = summary.aiModel
+        record[CloudKitSummaryRecord.aiMethodField] = SummaryMetadataCodec.encode(
+            aiEngine: summary.aiEngine,
+            aiModel: summary.aiModel
+        )
         record[CloudKitSummaryRecord.generatedAtField] = summary.generatedAt
         record[CloudKitSummaryRecord.versionField] = summary.version
         record[CloudKitSummaryRecord.wordCountField] = summary.wordCount
@@ -1766,7 +1772,10 @@ class iCloudStorageManager: ObservableObject {
         record[CloudKitSummaryRecord.recordingDateField] = summary.recordingDate
         record[CloudKitSummaryRecord.summaryField] = summary.summary
         record[CloudKitSummaryRecord.contentTypeField] = summary.contentType.rawValue
-        record[CloudKitSummaryRecord.aiMethodField] = summary.aiModel
+        record[CloudKitSummaryRecord.aiMethodField] = SummaryMetadataCodec.encode(
+            aiEngine: summary.aiEngine,
+            aiModel: summary.aiModel
+        )
         record[CloudKitSummaryRecord.generatedAtField] = summary.generatedAt
         record[CloudKitSummaryRecord.versionField] = summary.version
         record[CloudKitSummaryRecord.wordCountField] = summary.wordCount
@@ -1843,24 +1852,8 @@ class iCloudStorageManager: ObservableObject {
         // Use the summary ID from the CloudKit record ID, or the recordingId if available
         let summaryId = UUID(uuidString: record.recordID.recordName) ?? UUID()
         
-        // Infer engine from method until we have a proper field in CloudKit
-        let engine: String
-        let methodLower = aiMethod.lowercased()
-        if methodLower.contains("google") || methodLower.contains("gemini") {
-            engine = "Google AI"
-        } else if methodLower.contains("openai") || methodLower.contains("gpt") {
-            engine = "OpenAI"
-        } else if methodLower.contains("bedrock") || methodLower.contains("claude") || methodLower.contains("aws") {
-            engine = "AWS Bedrock"
-        } else if methodLower.contains("ollama") {
-            engine = "Ollama"
-        } else if methodLower.contains("apple") || methodLower.contains("intelligence") {
-            engine = "Apple Intelligence"
-        } else if methodLower.contains("device") || methodLower.contains("gemma") || methodLower.contains("phi") || methodLower.contains("qwen") || methodLower.contains("llama") || methodLower.contains("mistral") || methodLower.contains("olmo") {
-            engine = "On Device AI"
-        } else {
-            engine = "AI Assistant"
-        }
+        let decodedMetadata = SummaryMetadataCodec.decode(aiMethod)
+        let engine = decodedMetadata.engine ?? SummaryMetadataCodec.inferredEngine(from: decodedMetadata.model)
         
         return EnhancedSummaryData(
             id: summaryId,
@@ -1875,7 +1868,7 @@ class iCloudStorageManager: ObservableObject {
             titles: titles,
             contentType: contentType,
             aiEngine: engine,
-            aiModel: aiMethod,
+            aiModel: decodedMetadata.model,
             originalLength: originalLength,
             processingTime: processingTime,
             generatedAt: generatedAt,
@@ -2217,24 +2210,8 @@ class iCloudStorageManager: ObservableObject {
         
         let contentType = ContentType(rawValue: summaryEntry.contentType ?? "general") ?? .general
         
-        // Infer engine from method until we have a proper field
-        let engine: String
-        let methodLower = aiMethod.lowercased()
-        if methodLower.contains("google") || methodLower.contains("gemini") {
-            engine = "Google AI"
-        } else if methodLower.contains("openai") || methodLower.contains("gpt") {
-            engine = "OpenAI"
-        } else if methodLower.contains("bedrock") || methodLower.contains("claude") || methodLower.contains("aws") {
-            engine = "AWS Bedrock"
-        } else if methodLower.contains("ollama") {
-            engine = "Ollama"
-        } else if methodLower.contains("apple") || methodLower.contains("intelligence") {
-            engine = "Apple Intelligence"
-        } else if methodLower.contains("device") || methodLower.contains("gemma") || methodLower.contains("phi") || methodLower.contains("qwen") || methodLower.contains("llama") || methodLower.contains("mistral") || methodLower.contains("olmo") {
-            engine = "On Device AI"
-        } else {
-            engine = "AI Assistant"
-        }
+        let decodedMetadata = SummaryMetadataCodec.decode(aiMethod)
+        let engine = decodedMetadata.engine ?? SummaryMetadataCodec.inferredEngine(from: decodedMetadata.model)
         
         return EnhancedSummaryData(
             id: summaryId,
@@ -2249,7 +2226,7 @@ class iCloudStorageManager: ObservableObject {
             titles: titles,
             contentType: contentType,
             aiEngine: engine,
-            aiModel: aiMethod,
+            aiModel: decodedMetadata.model,
             originalLength: Int(summaryEntry.originalLength),
             processingTime: summaryEntry.processingTime,
             generatedAt: summaryEntry.generatedAt ?? Date(),

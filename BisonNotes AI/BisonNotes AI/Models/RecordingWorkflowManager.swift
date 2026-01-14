@@ -230,9 +230,7 @@ class RecordingWorkflowManager: ObservableObject {
         summaryEntry.recordingId = recordingId
         summaryEntry.transcriptId = transcriptId
         summaryEntry.generatedAt = summaryData.generatedAt
-        summaryEntry.aiMethod = aiModel // Store model in method field for now
-        // If we want to store engine, we might need a new field in Core Data
-        // For now, let's prefix it or just store model as before
+        summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: aiEngine, aiModel: aiModel)
         
         summaryEntry.processingTime = processingTime
         summaryEntry.confidence = summaryData.confidence

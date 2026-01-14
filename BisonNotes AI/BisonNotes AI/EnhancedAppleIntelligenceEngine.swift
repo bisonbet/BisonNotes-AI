@@ -19,6 +19,7 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     var description: String { "Leverages Apple Intelligence for private, on-device content analysis and summary extraction." }
     var isAvailable: Bool { true }
     var version: String { "2.0" }
+    var metadataName: String { "Apple Intelligence (Enhanced)" }
     
     // MARK: - Configuration
     

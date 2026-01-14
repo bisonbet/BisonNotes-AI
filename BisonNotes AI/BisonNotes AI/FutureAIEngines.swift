@@ -16,6 +16,11 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
     var engineType: String { "AWS Bedrock" }
     var description: String { "Enterprise-grade AI using Amazon Bedrock foundation models." }
     let version: String = "1.0"
+    var metadataName: String {
+        let storedModelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
+        let modelString = AWSBedrockModel.migrate(rawValue: storedModelString)
+        return AWSBedrockModel(rawValue: modelString)?.displayName ?? modelString
+    }
     
     private var service: AWSBedrockService?
     private var currentConfig: AWSBedrockConfig?
@@ -465,6 +470,9 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     var engineType: String { "Ollama" }
     let description: String = "Privacy-focused local language model processing using Ollama"
     let version: String = "1.0"
+    var metadataName: String {
+        return UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+    }
     
     var isAvailable: Bool {
         // Check if Ollama is enabled in settings
@@ -1140,6 +1148,9 @@ class GoogleAIStudioEngine: SummarizationEngine {
     var description: String { "Summarize using Google's Gemini models via AI Studio." }
     let isAvailable: Bool
     let version = "1.0"
+    var metadataName: String {
+        return UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-2.5-flash"
+    }
     
     private let service = GoogleAIStudioService()
     private let logger = Logger(subsystem: "com.audiojournal.app", category: "GoogleAIStudioEngine")
