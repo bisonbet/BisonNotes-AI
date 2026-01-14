@@ -170,6 +170,12 @@ struct WyomingAttribution: Codable {
 
 // MARK: - Transcription Messages
 
+/// Transcription request payload for Wyoming-compatible ASR servers.
+///
+/// Notes on language handling:
+/// - `language == nil` means \"let the server auto-detect the language\".
+/// - Call sites in the app intentionally pass `nil` by default to support
+///   multilingual recordings without an extra setting.
 struct WyomingTranscribeData: WyomingMessageData {
     let language: String?
     let model: String?

@@ -543,6 +543,8 @@ class WhisperService: ObservableObject {
         
         // Add query parameters
         var urlComponents = URLComponents(string: "\(restBaseURL)/asr")!
+        // Query parameters intentionally omit an explicit `language` so that the
+        // Whisper REST server can auto-detect the spoken language from audio.
         urlComponents.queryItems = [
             URLQueryItem(name: "output", value: "json"),
             URLQueryItem(name: "task", value: "transcribe"),

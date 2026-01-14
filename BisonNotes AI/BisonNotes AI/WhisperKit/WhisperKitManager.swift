@@ -458,6 +458,8 @@ public class WhisperKitManager: NSObject, ObservableObject {
             print("[WhisperKit] Starting transcription for: \(audioURL.lastPathComponent)")
 
             // Configure decoding options to reduce artifacts
+            // Note: `language` is set to `nil` so WhisperKit can auto-detect
+            // the spoken language from audio instead of forcing a specific locale.
             let decodingOptions = DecodingOptions(
                 verbose: false,
                 task: .transcribe,
@@ -608,8 +610,13 @@ public class WhisperKitManager: NSObject, ObservableObject {
         return totalSize
     }
 
-    /// Clean WhisperKit-specific artifact markers from transcription text
-    /// Only removes known non-speech markers to avoid removing actual transcript content
+    /// Clean WhisperKit-specific artifact markers from transcription text.
+    ///
+    /// Notes on language handling:
+    /// - Language detection is handled upstream by Whisper/WhisperKit, which
+    ///   infer the spoken language directly from audio.
+    /// - This helper only strips non-speech control tokens (timestamps, noise
+    ///   markers, etc.) and never attempts to change or normalize language.
     private func cleanWhisperKitArtifacts(_ text: String) -> String {
         var cleaned = text
 

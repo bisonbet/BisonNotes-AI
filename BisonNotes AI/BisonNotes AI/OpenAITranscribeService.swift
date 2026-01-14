@@ -63,6 +63,13 @@ enum OpenAITranscribeModel: String, CaseIterable {
 
 // MARK: - OpenAI Request/Response Models
 
+/// Request parameters for an OpenAI transcription call.
+/// Language is optional; when `nil` we rely on OpenAI's auto-detection.
+/// Request parameters for an OpenAI transcription call.
+///
+/// Notes on language handling:
+/// - `language` is optional; when `nil` we rely on OpenAI's built-in
+///   auto-detection to infer the spoken language from audio.
 struct OpenAITranscribeRequest {
     let file: Data
     let fileName: String
@@ -326,6 +333,9 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         body.append("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n".data(using: .utf8)!)
         body.append("json".data(using: .utf8)!)
         body.append("\r\n".data(using: .utf8)!)
+        
+        // Note: we intentionally do NOT send a `language` field here so that
+        // OpenAI can auto-detect the spoken language from the audio input.
         
         // Add temperature (0 for most deterministic results)
         body.append("--\(boundary)\r\n".data(using: .utf8)!)

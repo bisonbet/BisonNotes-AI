@@ -416,6 +416,12 @@ class WyomingTCPClient: ObservableObject {
         try await sendMessage(WyomingMessageFactory.createDescribeMessage())
     }
     
+    /// Send a transcription request.
+    ///
+    /// - Parameters:
+    ///   - language: Optional BCP-47 language code. When `nil` (the default),
+    ///               the Wyoming server will auto-detect the spoken language.
+    ///   - model: Optional ASR model identifier.
     func sendTranscribe(language: String? = nil, model: String? = nil) async throws {
         try await sendMessage(WyomingMessageFactory.createTranscribeMessage(language: language, model: model))
     }
