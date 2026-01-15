@@ -122,12 +122,21 @@ struct TranscriptsView: View {
     }
     
     private var recordingsListView: some View {
-        List {
+        let recentRecordings = Array(recordings.prefix(3))
+        let recentImportedTranscripts = Array(importedTranscripts.prefix(3))
+
+        return List {
             // Audio Recordings with Transcripts
             if !recordings.isEmpty {
                 Section(header: Text("Audio Recordings")) {
-                    ForEach(recordings.indices, id: \.self) { index in
-                        recordingRowView(recordings[index])
+                    ForEach(recentRecordings.indices, id: \.self) { index in
+                        recordingRowView(recentRecordings[index])
+                    }
+
+                    if recordings.count > recentRecordings.count {
+                        NavigationLink(destination: audioRecordingsFullListView) {
+                            moreRowView(label: "More")
+                        }
                     }
                 }
             }
@@ -143,15 +152,52 @@ struct TranscriptsView: View {
                             .foregroundColor(.secondary)
                     }
                 ) {
-                    ForEach(importedTranscripts.indices, id: \.self) { index in
-                        importedTranscriptRowView(importedTranscripts[index])
+                    ForEach(recentImportedTranscripts.indices, id: \.self) { index in
+                        importedTranscriptRowView(recentImportedTranscripts[index])
                     }
                     .onDelete { indexSet in
-                        deleteImportedTranscripts(at: indexSet)
+                        deleteImportedTranscripts(at: indexSet, in: recentImportedTranscripts)
+                    }
+
+                    if importedTranscripts.count > recentImportedTranscripts.count {
+                        NavigationLink(destination: importedTranscriptsFullListView) {
+                            moreRowView(label: "More")
+                        }
                     }
                 }
             }
         }
+    }
+
+    private var audioRecordingsFullListView: some View {
+        List {
+            ForEach(recordings.indices, id: \.self) { index in
+                recordingRowView(recordings[index])
+            }
+        }
+        .navigationTitle("Audio Recordings")
+    }
+
+    private var importedTranscriptsFullListView: some View {
+        List {
+            ForEach(importedTranscripts.indices, id: \.self) { index in
+                importedTranscriptRowView(importedTranscripts[index])
+            }
+            .onDelete { indexSet in
+                deleteImportedTranscripts(at: indexSet, in: importedTranscripts)
+            }
+        }
+        .navigationTitle("Imported Transcripts")
+    }
+
+    private func moreRowView(label: String) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption)
+        }
+        .foregroundColor(.accentColor)
     }
     
     private func recordingRowView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
@@ -329,28 +375,36 @@ struct TranscriptsView: View {
 		loadLocationAddressesBatch(for: recordings.map { $0.recording })
     }
 
-    private func deleteImportedTranscripts(at offsets: IndexSet) {
-        for index in offsets {
-            let importedTranscript = importedTranscripts[index]
-
-            guard let recordingId = importedTranscript.recording.id else {
-                print("❌ Cannot delete imported transcript: missing recording ID")
-                continue
-            }
-
-            // Delete the associated dummy audio file if it exists
-            if let recordingURL = appCoordinator.getAbsoluteURL(for: importedTranscript.recording) {
-                try? FileManager.default.removeItem(at: recordingURL)
-                print("🗑️ Deleted dummy audio file: \(recordingURL.lastPathComponent)")
-            }
-
-            // Delete from Core Data (this will cascade delete the transcript and summary)
-            appCoordinator.coreDataManager.deleteRecording(id: recordingId)
-            print("✅ Deleted imported transcript: \(importedTranscript.recording.recordingName ?? "Unknown")")
+    private func deleteImportedTranscripts(
+        at offsets: IndexSet,
+        in list: [(recording: RecordingEntry, transcript: TranscriptData?)]
+    ) {
+        let itemsToDelete = offsets.map { list[$0] }
+        for importedTranscript in itemsToDelete {
+            deleteImportedTranscript(importedTranscript)
         }
 
         // Reload the list
         loadRecordings()
+    }
+
+    private func deleteImportedTranscript(
+        _ importedTranscript: (recording: RecordingEntry, transcript: TranscriptData?)
+    ) {
+        guard let recordingId = importedTranscript.recording.id else {
+            print("❌ Cannot delete imported transcript: missing recording ID")
+            return
+        }
+
+        // Delete the associated dummy audio file if it exists
+        if let recordingURL = appCoordinator.getAbsoluteURL(for: importedTranscript.recording) {
+            try? FileManager.default.removeItem(at: recordingURL)
+            print("🗑️ Deleted dummy audio file: \(recordingURL.lastPathComponent)")
+        }
+
+        // Delete from Core Data (this will cascade delete the transcript and summary)
+        appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+        print("✅ Deleted imported transcript: \(importedTranscript.recording.recordingName ?? "Unknown")")
     }
     
     func loadLocationDataForRecording(url: URL) -> LocationData? {
