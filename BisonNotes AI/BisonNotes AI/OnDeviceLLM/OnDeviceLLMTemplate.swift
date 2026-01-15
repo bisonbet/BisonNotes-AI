@@ -214,13 +214,23 @@ extension LLMTemplate {
 
     // MARK: - Qwen3 Format
 
-    /// Qwen3 format for Alibaba's Qwen3 models (similar to ChatML but with specific handling)
+    /// Qwen3 format for Alibaba's Qwen3 models
+    /// (similar to ChatML but with specific handling)
+    /// Includes stop sequences to prevent repetitive generation
+    /// Used by: Qwen3-1.7B, Qwen3-4B
+    /// Note: We don't use section headers or triple newlines as stop sequences because they're part of the expected format
+    /// and can cause premature stopping. Only use model-specific end tokens.
     public static func qwen3(_ systemPrompt: String? = nil) -> LLMTemplate {
         return LLMTemplate(
             system: ("<|im_start|>system\n", "<|im_end|>\n"),
             user: ("<|im_start|>user\n", "<|im_end|>\n"),
             bot: ("<|im_start|>assistant\n", "<|im_end|>\n"),
-            stopSequences: ["<|im_end|>", "<|endoftext|>"],
+            stopSequences: [
+                "<|im_end|>", 
+                "<|endoftext|>"
+                // Removed "\n\n\n" - too aggressive, causes premature stopping
+                // The model will naturally stop at <|im_end|> when done
+            ],
             systemPrompt: systemPrompt
         )
     }
@@ -297,18 +307,9 @@ Guidelines:
 - Use **bold** for key terms and *italic* for emphasis
 """
 
-    /// System prompt optimized for LFM models to prevent hallucinated tokens
+    /// System prompt optimized for LFM models with structured, explicit instructions
     public static let lfmSummarizationSystemPrompt = """
-You are a helpful assistant trained by Liquid AI. Your task is to create clear, well-structured summaries of transcribed audio content.
-
-Guidelines:
-- Use proper Markdown formatting with headers, bullet points, and emphasis
-- Focus on key points, decisions, and important information
-- Organize content logically with clear sections
-- Be concise but comprehensive
-- Preserve important names, dates, and specific details
-- Use **bold** for key terms and *italic* for emphasis
-- End your response naturally when finished - do not add closing markers or signatures
+You are an expert at summarizing transcripts and extracting tasks. Follow instructions precisely and use structured formats. Always generate complete summaries with actual content - never output just tags or markers.
 """
 
     /// System prompt for extracting tasks from transcripts
@@ -337,13 +338,22 @@ Guidelines:
 
     /// System prompt for complete transcript processing
     public static let completeProcessingSystemPrompt = """
-You are an AI assistant specialized in processing audio transcripts. Analyze the content and provide:
+You are an AI assistant specialized in processing audio transcripts. Analyze the ACTUAL CONTENT of the transcript and extract only what is explicitly mentioned.
 
-1. A comprehensive summary using Markdown formatting
-2. Actionable tasks (personal items only, not news or public events)
-3. Time-sensitive reminders (personal appointments and deadlines)
-4. Suggested titles for the recording
+CRITICAL: 
+- Extract ONLY information that appears in the transcript itself
+- Do NOT generate placeholder text, examples, or generic content
+- Do NOT include tasks, reminders, or titles unless they are actually mentioned
+- If no tasks are mentioned, return an empty tasks section
+- If no reminders are mentioned, return an empty reminders section
+- Base titles on the ACTUAL topics discussed, not generic examples
 
-Be thorough but concise. Focus on information that is personally relevant to the speaker.
+Provide:
+1. A comprehensive summary using Markdown formatting based on what was actually discussed
+2. Actionable tasks (personal items only) - ONLY if explicitly mentioned in the transcript
+3. Time-sensitive reminders (personal appointments and deadlines) - ONLY if explicitly mentioned
+4. Suggested titles based on the ACTUAL main topics discussed
+
+Be thorough but concise. Focus on information that is personally relevant to the speaker and actually appears in the transcript.
 """
 }

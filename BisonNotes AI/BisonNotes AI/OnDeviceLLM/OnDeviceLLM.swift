@@ -155,6 +155,9 @@ open class OnDeviceLLM: ObservableObject {
         minP: Float = 0.0,
         temp: Float = 0.7,  // Default 0.7 for summarization
         repeatPenalty: Float = 1.1,
+        penaltyLastN: Int32 = 64,  // How many tokens back to check for repetition
+        frequencyPenalty: Float = 0.0,  // Penalize frequently appearing tokens
+        presencePenalty: Float = 0.0,  // Penalize tokens that have appeared
         maxTokenCount: Int32 = 2048,
         maxOutputTokens: Int32 = 2700  // Hard limit on output length (~2,000 words)
     ) {
@@ -226,7 +229,9 @@ open class OnDeviceLLM: ObservableObject {
             if minP > 0 {
                 llama_sampler_chain_add(sampler, llama_sampler_init_min_p(minP, 1))
             }
-            llama_sampler_chain_add(sampler, llama_sampler_init_penalties(64, repeatPenalty, 0.0, 0.0))
+            // Penalty parameters: (penalty_last_n, penalty_repeat, penalty_freq, penalty_present)
+            // Use configurable values - aggressive for small models, standard for larger models
+            llama_sampler_chain_add(sampler, llama_sampler_init_penalties(penaltyLastN, repeatPenalty, frequencyPenalty, presencePenalty))
             llama_sampler_chain_add(sampler, llama_sampler_init_temp(temp))
             llama_sampler_chain_add(sampler, llama_sampler_init_dist(seed))
         }
@@ -242,6 +247,9 @@ open class OnDeviceLLM: ObservableObject {
         minP: Float = 0.0,
         temp: Float = 0.7,
         repeatPenalty: Float = 1.1,
+        penaltyLastN: Int32 = 64,
+        frequencyPenalty: Float = 0.0,
+        presencePenalty: Float = 0.0,
         maxTokenCount: Int32 = 2048,
         maxOutputTokens: Int32 = 2700
     ) {
@@ -255,6 +263,9 @@ open class OnDeviceLLM: ObservableObject {
             minP: minP,
             temp: temp,
             repeatPenalty: repeatPenalty,
+            penaltyLastN: penaltyLastN,
+            frequencyPenalty: frequencyPenalty,
+            presencePenalty: presencePenalty,
             maxTokenCount: maxTokenCount,
             maxOutputTokens: maxOutputTokens
         )
@@ -303,9 +314,7 @@ open class OnDeviceLLM: ObservableObject {
             }
             update(nil)
             let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            self.rollbackLastUserInputIfEmptyResponse(trimmedOutput)
-
+            // Note: Rollback is now handled in performInference before context is cleared
             await setOutput(to: trimmedOutput.isEmpty ? "..." : trimmedOutput)
             return output
         }
@@ -577,6 +586,9 @@ open class OnDeviceLLM: ObservableObject {
 
             let output = (await makeOutputFrom(responseStream)).trimmingCharacters(in: .whitespacesAndNewlines)
 
+            // Note: Rollback is now handled in generateResponseStream's defer block
+            // before context is cleared, so we don't need to do it here
+
             await MainActor.run {
                 if !output.isEmpty {
                     self.history.append(LLMChat(role: .bot, content: output))
@@ -597,12 +609,21 @@ open class OnDeviceLLM: ObservableObject {
         await inferenceTask?.value
     }
 
+    @InferenceActor
     private func rollbackLastUserInputIfEmptyResponse(_ response: String) {
+        // Guard against nil context - can happen if context was cleared in defer block
+        // This can occur when useLLMCaching is false and the defer block in generateResponseStream
+        // has already cleared the context before this function is called
+        guard let context = self.context else {
+            print("[OnDeviceLLM] Warning: Cannot rollback - context is nil (likely already cleared)")
+            return
+        }
+        
         if response.isEmpty && self.inputTokenCount > 0 {
             let seq_id = Int32(0)
             let startIndex = self.nPast - self.inputTokenCount
             let endIndex = self.nPast
-            let memory = llama_get_memory(self.context.pointer)
+            let memory = llama_get_memory(context.pointer)
             _ = llama_memory_seq_rm(memory, seq_id, startIndex, endIndex)
             self.nPast = startIndex
         }

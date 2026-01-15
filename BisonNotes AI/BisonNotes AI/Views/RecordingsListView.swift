@@ -336,6 +336,11 @@ struct RecordingsListView: View {
         }
 
         for entry in recordingsWithData {
+            // Skip imported transcripts - they appear in the Transcripts tab only
+            if entry.recording.audioQuality == "imported" {
+                continue
+            }
+
             guard let url = appCoordinator.getAbsoluteURL(for: entry.recording) else { continue }
             let key = url.lastPathComponent
             if let existing = bestByFilename[key] {

@@ -73,19 +73,28 @@ public struct OnDeviceLLMDefaultSettings: Equatable, Codable {
     public let topP: Float
     public let minP: Float
     public let repeatPenalty: Float
+    public let penaltyLastN: Int32
+    public let frequencyPenalty: Float
+    public let presencePenalty: Float
 
     public init(
         temperature: Float = 0.7,
         topK: Int32 = 40,
         topP: Float = 0.95,
         minP: Float = 0.0,
-        repeatPenalty: Float = 1.1
+        repeatPenalty: Float = 1.1,
+        penaltyLastN: Int32 = 64,
+        frequencyPenalty: Float = 0.0,
+        presencePenalty: Float = 0.0
     ) {
         self.temperature = temperature
         self.topK = topK
         self.topP = topP
         self.minP = minP
         self.repeatPenalty = repeatPenalty
+        self.penaltyLastN = penaltyLastN
+        self.frequencyPenalty = frequencyPenalty
+        self.presencePenalty = presencePenalty
     }
 }
 
@@ -152,7 +161,7 @@ extension OnDeviceLLMModelInfo {
     public static let gemma3nE4B = OnDeviceLLMModelInfo(
         id: "gemma-3n-e4b",
         displayName: "Gemma",
-        description: "from Google • Balanced quality and speed",
+        description: "Best overall quality • 4.5GB",
         filename: "gemma-3n-E4B-it-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 4_540_000_000, // ~4.54 GB for Q4_K_M
@@ -174,7 +183,7 @@ extension OnDeviceLLMModelInfo {
     public static let gemma3nE2B = OnDeviceLLMModelInfo(
         id: "gemma-3n-e2b",
         displayName: "Gemma (Small)",
-        description: "from Google • Smaller size, faster download",
+        description: "Good quality, smaller size • 3GB",
         filename: "gemma-3n-E2B-it-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/gemma-3n-E2B-it-GGUF/resolve/main/gemma-3n-E2B-it-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 3_030_000_000, // ~3.03 GB for Q4_K_M
@@ -196,7 +205,7 @@ extension OnDeviceLLMModelInfo {
     public static let qwen3_4B = OnDeviceLLMModelInfo(
         id: "qwen3-4b",
         displayName: "Qwen",
-        description: "from Alibaba • Excellent for detailed summaries",
+        description: "Excellent detail extraction • 2.7GB",
         filename: "Qwen3-4B-Instruct-2507-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 2_720_000_000, // ~2.72 GB for Q4_K_M
@@ -218,7 +227,7 @@ extension OnDeviceLLMModelInfo {
     public static let ministral3B = OnDeviceLLMModelInfo(
         id: "ministral-3b",
         displayName: "Ministral",
-        description: "from Mistral AI • Superior task extraction",
+        description: "Best for tasks and reminders • 2.1GB",
         filename: "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",
         downloadURL: "https://huggingface.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF/resolve/main/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 2_146_497_824, // Exact size for Q4_K_M
@@ -240,7 +249,7 @@ extension OnDeviceLLMModelInfo {
     public static let granite4H = OnDeviceLLMModelInfo(
         id: "granite-4.0-h-tiny",
         displayName: "Granite",
-        description: "from IBM • Strong instruction following",
+        description: "Reliable and accurate • 4.3GB",
         filename: "granite-4.0-h-tiny-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/granite-4.0-h-tiny-GGUF/resolve/main/granite-4.0-h-tiny-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 4_250_000_000, // ~4.25 GB for Q4_K_M
@@ -259,10 +268,11 @@ extension OnDeviceLLMModelInfo {
 
     /// LFM 2.5 1.2B Instruct - Liquid AI's ultra-compact edge model
     /// A highly efficient 1.2B model optimized for agentic tasks and data extraction
+    /// EXPERIMENTAL: Only available for devices with 4-6GB RAM
     public static let lfm25 = OnDeviceLLMModelInfo(
         id: "lfm-2.5-1.2b",
         displayName: "LFM 2.5",
-        description: "from Liquid AI • Ultra-compact for agentic tasks",
+        description: "Experimental • Fast, minimal summaries • 731MB • Summary only",
         filename: "LFM2.5-1.2B-Instruct-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/LFM2.5-1.2B-Instruct-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 731_000_000, // ~731 MB for Q4_K_M
@@ -271,11 +281,39 @@ extension OnDeviceLLMModelInfo {
         purpose: .summarization,
         contextWindow: 16384,
         defaultSettings: OnDeviceLLMDefaultSettings(
-            temperature: 0.1,
+            temperature: 0.5,
             topK: 50,
-            topP: 0.1,
+            topP: 0.85,
             minP: 0.0,
-            repeatPenalty: 1.05
+            repeatPenalty: 1.25,
+            penaltyLastN: 256,  // Aggressive: look back 256 tokens for repetition
+            frequencyPenalty: 0.15,  // Aggressive: penalize frequently appearing tokens
+            presencePenalty: 0.05  // Aggressive: penalize tokens that have appeared
+        )
+    )
+
+    /// Qwen3-1.7B - Alibaba's latest Qwen3 model with thinking capabilities
+    /// A 1.7B model with reasoning capabilities (thinking mode can be disabled)
+    public static let qwen3_1_7B = OnDeviceLLMModelInfo(
+        id: "qwen3-1.7b",
+        displayName: "Qwen3 1.7B",
+        description: "Experimental • Latest Qwen3 model • 1.1GB • Summary only",
+        filename: "Qwen3-1.7B-Q4_K_M",
+        downloadURL: "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf?download=true",
+        downloadSizeBytes: 1_110_000_000, // ~1.11 GB for Q4_K_M
+        requiredRAM: 4.0,
+        templateType: .qwen3,
+        purpose: .summarization,
+        contextWindow: 16384,
+        defaultSettings: OnDeviceLLMDefaultSettings(
+            temperature: 0.7,
+            topK: 50,
+            topP: 0.9,
+            minP: 0.0,
+            repeatPenalty: 1.25,
+            penaltyLastN: 256,  // Aggressive: look back 256 tokens for repetition
+            frequencyPenalty: 0.15,  // Aggressive: penalize frequently appearing tokens
+            presencePenalty: 0.05  // Aggressive: penalize tokens that have appeared
         )
     )
 
@@ -284,7 +322,7 @@ extension OnDeviceLLMModelInfo {
     public static let granite4Micro = OnDeviceLLMModelInfo(
         id: "granite-4.0-micro",
         displayName: "Granite Micro",
-        description: "from IBM • 128K context for complex tasks",
+        description: "Very fast processing speed • 2.1GB",
         filename: "granite-4.0-micro-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/granite-4.0-micro-GGUF/resolve/main/granite-4.0-micro-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 2_100_000_000, // ~2.1 GB for Q4_K_M
@@ -311,16 +349,41 @@ extension OnDeviceLLMModelInfo {
         granite4H,
         granite4Micro,
         ministral3B,
-        lfm25
+        lfm25,
+        qwen3_1_7B
     ]
 
     /// Models available for the current device based on RAM requirements
     /// Only shows models that the device has sufficient RAM to run
+    /// NOTE: Small experimental models (LFM 2.5, Qwen3-1.7B) are excluded unless explicitly enabled
+    /// For devices with <6GB RAM, only experimental models are shown if enabled
     public static var availableModels: [OnDeviceLLMModelInfo] {
         let deviceRAM = DeviceCapabilities.totalRAMInGB
+        let experimentalEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.enableExperimentalModels)
+        let experimentalModels = ["lfm-2.5-1.2b", "qwen3-1.7b"]
+        
         return allModels.filter { model in
-            deviceRAM >= model.requiredRAM
+            // Check basic RAM requirement
+            guard deviceRAM >= model.requiredRAM else { return false }
+            
+            // For devices with <6GB RAM, only show experimental models if enabled
+            if deviceRAM < 6.0 {
+                return experimentalModels.contains(model.id) && experimentalEnabled
+            }
+            
+            // For devices with 6GB+ RAM:
+            // Exclude small experimental models unless explicitly enabled
+            if experimentalModels.contains(model.id) {
+                return experimentalEnabled
+            }
+            
+            return true
         }
+    }
+    
+    /// Check if experimental models are enabled
+    public static var experimentalModelsEnabled: Bool {
+        UserDefaults.standard.bool(forKey: SettingsKeys.enableExperimentalModels)
     }
 
     /// Models optimized for summarization
@@ -335,6 +398,7 @@ extension OnDeviceLLMModelInfo {
 
     /// Default model for summarization tasks
     /// Returns the first available model, preferring E4B if available, otherwise E2B or Ministral
+    /// Never returns small experimental models (LFM 2.5, Qwen3-1.7B) due to reliability issues
     public static var defaultSummarizationModel: OnDeviceLLMModelInfo {
         // Prefer E4B if available, otherwise use first available model
         if DeviceCapabilities.totalRAMInGB >= gemma3nE4B.requiredRAM {
@@ -343,8 +407,12 @@ extension OnDeviceLLMModelInfo {
             return gemma3nE2B
         } else if DeviceCapabilities.totalRAMInGB >= ministral3B.requiredRAM {
             return ministral3B
+        } else if DeviceCapabilities.totalRAMInGB >= qwen3_4B.requiredRAM {
+            return qwen3_4B
+        } else if DeviceCapabilities.totalRAMInGB >= granite4Micro.requiredRAM {
+            return granite4Micro
         } else {
-            // Fallback to first available model
+            // Fallback to first available model (which excludes small experimental models)
             return availableModels.first ?? gemma3nE2B
         }
     }
@@ -368,12 +436,36 @@ extension OnDeviceLLMModelInfo {
         static let topP = "onDeviceLLMTopP"
         static let minP = "onDeviceLLMMinP"
         static let repeatPenalty = "onDeviceLLMRepeatPenalty"
+        static let enableExperimentalModels = "onDeviceLLMEnableExperimentalModels"
     }
 
     /// Get the currently selected model from UserDefaults
+    /// Automatically migrates users away from unreliable small experimental models
     public static var selectedModel: OnDeviceLLMModelInfo {
         let modelId = UserDefaults.standard.string(forKey: SettingsKeys.selectedModelId) ?? defaultSummarizationModel.id
-        return model(withId: modelId) ?? defaultSummarizationModel
+        
+        // Check if user has an unreliable small model selected
+        let unreliableModels = ["lfm-2.5-1.2b", "qwen3-1.7b"]
+        if unreliableModels.contains(modelId) {
+            // Migrate to a better default model
+            print("⚠️ [OnDeviceLLMModelInfo] Migrating from unreliable model '\(modelId)' to default model")
+            let betterModel = defaultSummarizationModel
+            UserDefaults.standard.set(betterModel.id, forKey: SettingsKeys.selectedModelId)
+            return betterModel
+        }
+        
+        // If the selected model is not in availableModels, migrate to default
+        if let selected = model(withId: modelId) {
+            if !availableModels.contains(where: { $0.id == selected.id }) {
+                print("⚠️ [OnDeviceLLMModelInfo] Selected model '\(modelId)' is not available, migrating to default")
+                let betterModel = defaultSummarizationModel
+                UserDefaults.standard.set(betterModel.id, forKey: SettingsKeys.selectedModelId)
+                return betterModel
+            }
+            return selected
+        }
+        
+        return defaultSummarizationModel
     }
 
     /// Check if on-device LLM is enabled

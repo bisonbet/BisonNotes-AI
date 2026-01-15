@@ -152,7 +152,7 @@ class PDFExportService {
         let rightWidth = contentWidth * 0.3
         let headerHeight: CGFloat = 180 // Height accommodates map and location details
 
-        // Left third: Date
+        // Left third: Date and AI Info
         let dateFormatter = DateFormatter()
         dateFormatter.dateStyle = .full
         dateFormatter.timeStyle = .short
@@ -160,12 +160,25 @@ class PDFExportService {
         let dateFont = UIFont.systemFont(ofSize: 12)
         let dateColor = UIColor.darkGray
 
-        let dateRect = CGRect(x: margins.left, y: y, width: leftWidth, height: 30)
+        var currentLeftY = y
+        let dateRect = CGRect(x: margins.left, y: currentLeftY, width: leftWidth, height: 30)
         let dateAttributes: [NSAttributedString.Key: Any] = [
             .font: dateFont,
             .foregroundColor: dateColor
         ]
         dateText.draw(in: dateRect, withAttributes: dateAttributes)
+        currentLeftY += 30
+
+        // AI Provider
+        let aiProviderText = "AI Provider: \(summaryData.aiEngine)"
+        let aiProviderRect = CGRect(x: margins.left, y: currentLeftY, width: leftWidth, height: 20)
+        aiProviderText.draw(in: aiProviderRect, withAttributes: dateAttributes)
+        currentLeftY += 20
+
+        // AI Model
+        let aiModelText = "AI Model: \(summaryData.aiModel)"
+        let aiModelRect = CGRect(x: margins.left, y: currentLeftY, width: leftWidth, height: 20)
+        aiModelText.draw(in: aiModelRect, withAttributes: dateAttributes)
 
         // Middle section: Map (fits better in rectangular area) or empty if no location
         if let locationData = locationData {

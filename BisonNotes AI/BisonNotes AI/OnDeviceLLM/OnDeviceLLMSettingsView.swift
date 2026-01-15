@@ -42,8 +42,28 @@ struct OnDeviceLLMSettingsView: View {
                     Text("Process transcripts locally on your device using a downloaded AI model. No internet connection required after model download.")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    
+                    // Warning for devices with 4-6GB RAM about experimental models
+                    let deviceRAM = DeviceCapabilities.totalRAMInGB
+                    if deviceRAM >= 4.0 && deviceRAM < 6.0 {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                                .font(.caption)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Experimental Models Notice")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.orange)
+                                Text("Models available for your device (4-6GB RAM) are experimental. They generate summaries and one title only (no tasks or reminders) and may produce lower quality results.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
                 } else {
-                    Text("On-Device AI requires 6GB+ RAM. Your device does not meet this requirement.")
+                    Text("On-Device AI requires 4GB+ RAM. Your device does not meet this requirement.")
                         .font(.caption)
                         .foregroundColor(.red)
                 }
@@ -377,6 +397,7 @@ struct OnDeviceLLMSettingsView: View {
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }
+        
 
         // Repeat Penalty
         VStack(alignment: .leading, spacing: 4) {
