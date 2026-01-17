@@ -129,13 +129,13 @@ struct TranscriptsView: View {
             // Audio Recordings with Transcripts
             if !recordings.isEmpty {
                 Section(header: Text("Audio Recordings")) {
-                    ForEach(recentRecordings.indices, id: \.self) { index in
-                        recordingRowView(recentRecordings[index])
+                    ForEach(recentRecordings, id: \.recording.id) { recordingData in
+                        recordingRowView(recordingData)
                     }
 
                     if recordings.count > recentRecordings.count {
                         NavigationLink(destination: audioRecordingsFullListView) {
-                            moreRowView(label: "More")
+                            moreRowView(remainingCount: recordings.count - recentRecordings.count)
                         }
                     }
                 }
@@ -152,8 +152,8 @@ struct TranscriptsView: View {
                             .foregroundColor(.secondary)
                     }
                 ) {
-                    ForEach(recentImportedTranscripts.indices, id: \.self) { index in
-                        importedTranscriptRowView(recentImportedTranscripts[index])
+                    ForEach(recentImportedTranscripts, id: \.recording.id) { recordingData in
+                        importedTranscriptRowView(recordingData)
                     }
                     .onDelete { indexSet in
                         deleteImportedTranscripts(at: indexSet, in: recentImportedTranscripts)
@@ -161,7 +161,7 @@ struct TranscriptsView: View {
 
                     if importedTranscripts.count > recentImportedTranscripts.count {
                         NavigationLink(destination: importedTranscriptsFullListView) {
-                            moreRowView(label: "More")
+                            moreRowView(remainingCount: importedTranscripts.count - recentImportedTranscripts.count)
                         }
                     }
                 }
@@ -171,8 +171,8 @@ struct TranscriptsView: View {
 
     private var audioRecordingsFullListView: some View {
         List {
-            ForEach(recordings.indices, id: \.self) { index in
-                recordingRowView(recordings[index])
+            ForEach(recordings, id: \.recording.id) { recordingData in
+                recordingRowView(recordingData)
             }
         }
         .navigationTitle("Audio Recordings")
@@ -180,8 +180,8 @@ struct TranscriptsView: View {
 
     private var importedTranscriptsFullListView: some View {
         List {
-            ForEach(importedTranscripts.indices, id: \.self) { index in
-                importedTranscriptRowView(importedTranscripts[index])
+            ForEach(importedTranscripts, id: \.recording.id) { recordingData in
+                importedTranscriptRowView(recordingData)
             }
             .onDelete { indexSet in
                 deleteImportedTranscripts(at: indexSet, in: importedTranscripts)
@@ -190,12 +190,12 @@ struct TranscriptsView: View {
         .navigationTitle("Imported Transcripts")
     }
 
-    private func moreRowView(label: String) -> some View {
+    private func moreRowView(remainingCount: Int) -> some View {
         HStack {
-            Text(label)
+            Text("More")
             Spacer()
-            Image(systemName: "chevron.right")
-                .font(.caption)
+            Text("\(remainingCount)")
+                .foregroundColor(.secondary)
         }
         .foregroundColor(.accentColor)
     }
