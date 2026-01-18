@@ -399,12 +399,33 @@ struct TranscriptsView: View {
         // Delete the associated dummy audio file if it exists
         if let recordingURL = appCoordinator.getAbsoluteURL(for: importedTranscript.recording) {
             try? FileManager.default.removeItem(at: recordingURL)
+            // Delete associated location file if present
+            let locationURL = recordingURL.deletingPathExtension().appendingPathExtension("location")
+            try? FileManager.default.removeItem(at: locationURL)
             print("🗑️ Deleted dummy audio file: \(recordingURL.lastPathComponent)")
         }
 
-        // Delete from Core Data (this will cascade delete the transcript and summary)
-        appCoordinator.coreDataManager.deleteRecording(id: recordingId)
-        print("✅ Deleted imported transcript: \(importedTranscript.recording.recordingName ?? "Unknown")")
+        // Check if there's an associated summary to preserve
+        let hasSummary = appCoordinator.coreDataManager.getSummary(for: recordingId) != nil
+
+        if hasSummary {
+            // Preserve the summary - only delete the transcript and clear the audio URL
+            if let transcript = appCoordinator.coreDataManager.getTranscript(for: recordingId) {
+                appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
+            }
+
+            // Clear the recording URL to mark as "summary only" mode
+            importedTranscript.recording.recordingURL = nil
+            importedTranscript.recording.lastModified = Date()
+
+            // Save the context
+            try? appCoordinator.coreDataManager.saveContext()
+            print("✅ Deleted imported transcript, preserved summary: \(importedTranscript.recording.recordingName ?? "Unknown")")
+        } else {
+            // No summary to preserve - delete everything
+            appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+            print("✅ Deleted imported transcript: \(importedTranscript.recording.recordingName ?? "Unknown")")
+        }
     }
     
     func loadLocationDataForRecording(url: URL) -> LocationData? {

@@ -113,6 +113,8 @@ public struct OnDeviceLLMModelInfo: Identifiable, Equatable, Codable {
     public let purpose: OnDeviceLLMModelPurpose
     public let contextWindow: Int
     public let defaultSettings: OnDeviceLLMDefaultSettings
+    public let isRecommended: Bool // Whether this model is recommended for its RAM tier
+    public let maker: String // The company/organization that created the model (e.g., "Google", "Mistral AI", "IBM")
 
     /// Human-readable download size
     public var downloadSize: String {
@@ -175,7 +177,9 @@ extension OnDeviceLLMModelInfo {
             topP: 0.95,
             minP: 0.0,
             repeatPenalty: 1.1
-        )
+        ),
+        isRecommended: false,
+        maker: "Google"
     )
 
     /// Gemma 3n E2B - Google's smaller efficient on-device model
@@ -197,11 +201,16 @@ extension OnDeviceLLMModelInfo {
             topP: 0.95,
             minP: 0.0,
             repeatPenalty: 1.1
-        )
+        ),
+        isRecommended: false,
+        maker: "Google"
     )
 
+    // MARK: - Experimental Models
+    
     /// Qwen3 4B Instruct - Alibaba's instruction-tuned model
     /// A capable 4B parameter model with strong summarization abilities
+    /// EXPERIMENTAL: Only available for 8GB+ devices when experimental models are enabled
     public static let qwen3_4B = OnDeviceLLMModelInfo(
         id: "qwen3-4b",
         displayName: "Qwen",
@@ -219,7 +228,9 @@ extension OnDeviceLLMModelInfo {
             topP: 0.80,
             minP: 0.0,
             repeatPenalty: 1.1
-        )
+        ),
+        isRecommended: false,
+        maker: "Alibaba"
     )
 
     /// Ministral-3-3B-Instruct - Mistral AI's latest edge model
@@ -241,11 +252,14 @@ extension OnDeviceLLMModelInfo {
             topP: 0.95,
             minP: 0.0,
             repeatPenalty: 1.1
-        )
+        ),
+        isRecommended: false,
+        maker: "Mistral AI"
     )
 
     /// Granite 4.0 H Tiny - IBM's efficient on-device model
     /// A compact model optimized for edge devices with strong instruction following
+    /// Recommended for 8GB+ devices
     public static let granite4H = OnDeviceLLMModelInfo(
         id: "granite-4.0-h-tiny",
         displayName: "Granite",
@@ -263,7 +277,9 @@ extension OnDeviceLLMModelInfo {
             topP: 0.95,
             minP: 0.0,
             repeatPenalty: 1.1
-        )
+        ),
+        isRecommended: true,
+        maker: "IBM"
     )
 
     /// LFM 2.5 1.2B Instruct - Liquid AI's ultra-compact edge model
@@ -289,7 +305,9 @@ extension OnDeviceLLMModelInfo {
             penaltyLastN: 256,  // Aggressive: look back 256 tokens for repetition
             frequencyPenalty: 0.15,  // Aggressive: penalize frequently appearing tokens
             presencePenalty: 0.05  // Aggressive: penalize tokens that have appeared
-        )
+        ),
+        isRecommended: false,
+        maker: "Liquid AI"
     )
 
     /// Qwen3-1.7B - Alibaba's latest Qwen3 model with thinking capabilities
@@ -314,11 +332,14 @@ extension OnDeviceLLMModelInfo {
             penaltyLastN: 256,  // Aggressive: look back 256 tokens for repetition
             frequencyPenalty: 0.15,  // Aggressive: penalize frequently appearing tokens
             presencePenalty: 0.05  // Aggressive: penalize tokens that have appeared
-        )
+        ),
+        isRecommended: false,
+        maker: "Alibaba"
     )
 
     /// Granite 4.0 Micro - IBM's compact 3B model with extended context
     /// A versatile 3B model with 128K context window for complex tasks
+    /// Recommended for 6GB+ devices
     public static let granite4Micro = OnDeviceLLMModelInfo(
         id: "granite-4.0-micro",
         displayName: "Granite Micro",
@@ -336,48 +357,89 @@ extension OnDeviceLLMModelInfo {
             topP: 0.95,
             minP: 0.0,
             repeatPenalty: 1.1
-        )
+        ),
+        isRecommended: true,
+        maker: "IBM"
     )
 
     // MARK: - All Available Models
 
     /// All models available for download
+    /// Note: Qwen 4B is now an experimental model for 8GB+ devices
     public static let allModels: [OnDeviceLLMModelInfo] = [
         gemma3nE4B,
         gemma3nE2B,
-        qwen3_4B,
         granite4H,
         granite4Micro,
         ministral3B,
         lfm25,
-        qwen3_1_7B
+        qwen3_1_7B,
+        qwen3_4B
     ]
 
     /// Models available for the current device based on RAM requirements
-    /// Only shows models that the device has sufficient RAM to run
-    /// NOTE: Small experimental models (LFM 2.5, Qwen3-1.7B) are excluded unless explicitly enabled
-    /// For devices with <6GB RAM, only experimental models are shown if enabled
+    /// RAM-based model availability:
+    /// - 6GB+ but <8GB: Gemma Small (E2B), Ministral, Granite Micro (recommended)
+    /// - 8GB+: Full Gemma (E4B), Granite (H Tiny, recommended), Granite Micro, Ministral
+    /// NOTE: Experimental models are excluded unless explicitly enabled:
+    ///   - Small experimental (LFM 2.5, Qwen3-1.7B): Available for all devices when enabled
+    ///   - Large experimental (Qwen 4B): Only available for 8GB+ devices when enabled
+    /// For devices with <6GB RAM, only small experimental models are shown if enabled
+    /// Models are sorted with recommended ones first
     public static var availableModels: [OnDeviceLLMModelInfo] {
         let deviceRAM = DeviceCapabilities.totalRAMInGB
         let experimentalEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.enableExperimentalModels)
-        let experimentalModels = ["lfm-2.5-1.2b", "qwen3-1.7b"]
+        let smallExperimentalModels = ["lfm-2.5-1.2b", "qwen3-1.7b"]
+        let largeExperimentalModels = ["qwen3-4b"] // 8GB+ only
         
-        return allModels.filter { model in
+        let filtered = allModels.filter { model in
             // Check basic RAM requirement
             guard deviceRAM >= model.requiredRAM else { return false }
             
-            // For devices with <6GB RAM, only show experimental models if enabled
+            // For devices with <6GB RAM, only show small experimental models if enabled
             if deviceRAM < 6.0 {
-                return experimentalModels.contains(model.id) && experimentalEnabled
+                return smallExperimentalModels.contains(model.id) && experimentalEnabled
             }
             
-            // For devices with 6GB+ RAM:
-            // Exclude small experimental models unless explicitly enabled
-            if experimentalModels.contains(model.id) {
-                return experimentalEnabled
+            // For devices with 6GB+ but <8GB RAM:
+            // Show: Gemma Small (E2B), Ministral, Granite Micro
+            if deviceRAM >= 6.0 && deviceRAM < 8.0 {
+                let allowedModels = ["gemma-3n-e2b", "ministral-3b", "granite-4.0-micro"]
+                // Exclude experimental models unless enabled
+                if smallExperimentalModels.contains(model.id) {
+                    return experimentalEnabled
+                }
+                // Large experimental models not available for <8GB
+                if largeExperimentalModels.contains(model.id) {
+                    return false
+                }
+                return allowedModels.contains(model.id)
             }
             
-            return true
+            // For devices with 8GB+ RAM:
+            // Show: Full Gemma (E4B), Granite (H Tiny), Granite Micro, Ministral
+            // Plus large experimental models (Qwen 4B) if enabled
+            if deviceRAM >= 8.0 {
+                let allowedModels = ["gemma-3n-e4b", "granite-4.0-h-tiny", "granite-4.0-micro", "ministral-3b"]
+                // Check experimental models
+                if smallExperimentalModels.contains(model.id) {
+                    return experimentalEnabled
+                }
+                if largeExperimentalModels.contains(model.id) {
+                    return experimentalEnabled
+                }
+                return allowedModels.contains(model.id)
+            }
+            
+            return false
+        }
+        
+        // Sort: recommended models first, then by display name
+        return filtered.sorted { first, second in
+            if first.isRecommended != second.isRecommended {
+                return first.isRecommended
+            }
+            return first.displayName < second.displayName
         }
     }
     
@@ -397,24 +459,29 @@ extension OnDeviceLLMModelInfo {
     }
 
     /// Default model for summarization tasks
-    /// Returns the first available model, preferring E4B if available, otherwise E2B or Ministral
+    /// Returns the recommended model based on RAM:
+    /// - 8GB+: Granite (H Tiny) - recommended
+    /// - 6GB+ but <8GB: Granite Micro - recommended
     /// Never returns small experimental models (LFM 2.5, Qwen3-1.7B) due to reliability issues
     public static var defaultSummarizationModel: OnDeviceLLMModelInfo {
-        // Prefer E4B if available, otherwise use first available model
-        if DeviceCapabilities.totalRAMInGB >= gemma3nE4B.requiredRAM {
-            return gemma3nE4B
-        } else if DeviceCapabilities.totalRAMInGB >= gemma3nE2B.requiredRAM {
-            return gemma3nE2B
-        } else if DeviceCapabilities.totalRAMInGB >= ministral3B.requiredRAM {
-            return ministral3B
-        } else if DeviceCapabilities.totalRAMInGB >= qwen3_4B.requiredRAM {
-            return qwen3_4B
-        } else if DeviceCapabilities.totalRAMInGB >= granite4Micro.requiredRAM {
-            return granite4Micro
-        } else {
-            // Fallback to first available model (which excludes small experimental models)
-            return availableModels.first ?? gemma3nE2B
+        let deviceRAM = DeviceCapabilities.totalRAMInGB
+        
+        // For devices with 8GB+ RAM: default to Granite H Tiny (recommended)
+        if deviceRAM >= 8.0 {
+            if deviceRAM >= granite4H.requiredRAM {
+                return granite4H
+            }
         }
+        
+        // For devices with 6GB+ but <8GB: default to Granite Micro (recommended)
+        if deviceRAM >= 6.0 {
+            if deviceRAM >= granite4Micro.requiredRAM {
+                return granite4Micro
+            }
+        }
+        
+        // Fallback to first available model (which excludes small experimental models)
+        return availableModels.first ?? granite4Micro
     }
 
     /// Find a model by its ID
@@ -440,24 +507,20 @@ extension OnDeviceLLMModelInfo {
     }
 
     /// Get the currently selected model from UserDefaults
-    /// Automatically migrates users away from unreliable small experimental models
+    /// Automatically migrates users away from unavailable models
+    /// Note: Qwen 4B is now an experimental model for 8GB+ devices
     public static var selectedModel: OnDeviceLLMModelInfo {
         let modelId = UserDefaults.standard.string(forKey: SettingsKeys.selectedModelId) ?? defaultSummarizationModel.id
-        
-        // Check if user has an unreliable small model selected
-        let unreliableModels = ["lfm-2.5-1.2b", "qwen3-1.7b"]
-        if unreliableModels.contains(modelId) {
-            // Migrate to a better default model
-            print("⚠️ [OnDeviceLLMModelInfo] Migrating from unreliable model '\(modelId)' to default model")
-            let betterModel = defaultSummarizationModel
-            UserDefaults.standard.set(betterModel.id, forKey: SettingsKeys.selectedModelId)
-            return betterModel
-        }
         
         // If the selected model is not in availableModels, migrate to default
         if let selected = model(withId: modelId) {
             if !availableModels.contains(where: { $0.id == selected.id }) {
-                print("⚠️ [OnDeviceLLMModelInfo] Selected model '\(modelId)' is not available, migrating to default")
+                // Only log migration once per model to prevent spam
+                let migrationKey = "migrated_unavailable_\(modelId)"
+                if !UserDefaults.standard.bool(forKey: migrationKey) {
+                    print("⚠️ [OnDeviceLLMModelInfo] Selected model '\(modelId)' is not available, migrating to default")
+                    UserDefaults.standard.set(true, forKey: migrationKey)
+                }
                 let betterModel = defaultSummarizationModel
                 UserDefaults.standard.set(betterModel.id, forKey: SettingsKeys.selectedModelId)
                 return betterModel

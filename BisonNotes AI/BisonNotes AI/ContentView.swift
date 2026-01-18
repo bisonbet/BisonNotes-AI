@@ -22,6 +22,7 @@ struct ContentView: View {
     @State private var showingOnDeviceLLMSettings = false
     @State private var showingWhisperKitMigrationAlert = false
     @State private var showingWhisperKitSettings = false
+    @StateObject private var downloadMonitor = OnDeviceAIDownloadMonitor.shared
     
     var body: some View {
         Group {
@@ -103,6 +104,13 @@ struct ContentView: View {
                     NavigationStack {
                         WhisperKitSettingsView()
                     }
+                }
+                .alert("Download Complete", isPresented: $downloadMonitor.showingCompletionAlert) {
+                    Button("OK") {
+                        downloadMonitor.reset()
+                    }
+                } message: {
+                    Text(downloadMonitor.completionMessage)
                 }
             }
         } else {

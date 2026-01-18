@@ -28,7 +28,7 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
     @Published public var isModelReady = false
     @Published public var downloadedSize: Int64 = 0
     @Published public var totalSize: Int64 = 0
-    @Published public var selectedModel: OnDeviceLLMModelInfo = OnDeviceLLMModelInfo.selectedModel
+    @Published public var selectedModel: OnDeviceLLMModelInfo = OnDeviceLLMModelInfo.granite4Micro // Default, will be updated in init
     @Published public var currentlyDownloadingModel: OnDeviceLLMModelInfo?
     @Published public var downloadSpeed: Double = 0 // bytes per second
 
@@ -56,7 +56,28 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
         downloadSession = URLSession(configuration: config, delegate: self, delegateQueue: nil)
 
         startNetworkMonitoring()
-        refreshModelStatus()
+        
+        // Initialize selectedModel from UserDefaults without triggering migration
+        // Check UserDefaults directly first to avoid accessing selectedModel computed property
+        if let savedModelId = UserDefaults.standard.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId),
+           let model = OnDeviceLLMModelInfo.model(withId: savedModelId) {
+            selectedModel = model
+            isModelReady = model.isDownloaded
+        } else {
+            // Use Granite Micro as default (recommended for 6GB+ devices)
+            // Don't use defaultSummarizationModel as it might access availableModels
+            let deviceRAM = DeviceCapabilities.totalRAMInGB
+            if deviceRAM >= 8.0 {
+                selectedModel = OnDeviceLLMModelInfo.granite4H
+            } else if deviceRAM >= 6.0 {
+                selectedModel = OnDeviceLLMModelInfo.granite4Micro
+            } else {
+                selectedModel = OnDeviceLLMModelInfo.granite4Micro // Fallback
+            }
+            isModelReady = selectedModel.isDownloaded
+        }
+        
+        // Don't call refreshModelStatus() here - it's safe to call explicitly when needed
     }
 
     // MARK: - Network Monitoring
@@ -165,28 +186,35 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
 
     /// Select a model (must be already downloaded)
     public func selectModel(_ model: OnDeviceLLMModelInfo) {
-        guard model.isDownloaded else { return }
+        // Always set the model, even if not downloaded yet (for download preparation)
         selectedModel = model
         UserDefaults.standard.set(model.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
-        isModelReady = true
+        // Only set isModelReady if the model is actually downloaded
+        isModelReady = model.isDownloaded
     }
 
     /// Refresh the status of all models
     public func refreshModelStatus() {
-        // First, check the user's saved preference from UserDefaults
-        let savedModel = OnDeviceLLMModelInfo.selectedModel
-
-        if savedModel.isDownloaded {
-            // User's saved preference is available - use it
-            selectedModel = savedModel
-            isModelReady = true
-        } else if let availableModel = OnDeviceLLMModelInfo.allModels.first(where: { $0.isDownloaded }) {
-            // Fallback to any available model if saved preference is not downloaded
+        // First, check UserDefaults directly to avoid triggering migration in selectedModel
+        let savedModelId = UserDefaults.standard.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+        
+        // If we have a saved model ID, check if that model is downloaded
+        if let modelId = savedModelId, let model = OnDeviceLLMModelInfo.model(withId: modelId) {
+            if model.isDownloaded {
+                selectedModel = model
+                isModelReady = true
+                return
+            }
+        }
+        
+        // If saved model is not downloaded, check if any model is downloaded
+        if let availableModel = OnDeviceLLMModelInfo.allModels.first(where: { $0.isDownloaded }) {
             selectedModel = availableModel
             UserDefaults.standard.set(availableModel.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
             isModelReady = true
         } else {
-            isModelReady = false
+            // No models downloaded - use the currently selected model's status
+            isModelReady = selectedModel.isDownloaded
         }
     }
 

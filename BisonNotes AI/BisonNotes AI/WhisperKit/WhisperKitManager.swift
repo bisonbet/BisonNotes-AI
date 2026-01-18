@@ -72,13 +72,41 @@ public class WhisperKitManager: NSObject, ObservableObject {
     private var downloadTask: Task<Void, Error>?
     private var lastUpdateTime: Date = Date()
     private var lastBytesWritten: Int64 = 0
+    private static var hasLoggedModelNotFound = false
 
     // MARK: - Initialization
 
     private override init() {
         super.init()
         startNetworkMonitoring()
-        refreshModelStatus()
+        // Initialize status silently without logging
+        // Check UserDefaults directly to avoid log spam
+        let isDownloaded = UserDefaults.standard.bool(forKey: WhisperKitModelInfo.SettingsKeys.modelDownloaded)
+        let modelPath = UserDefaults.standard.string(forKey: WhisperKitModelInfo.SettingsKeys.modelPath)
+        
+        if isDownloaded, let path = modelPath, FileManager.default.fileExists(atPath: path) {
+            isModelReady = true
+        } else {
+            // Check standard location silently
+            let model = WhisperKitModelInfo.selectedModel
+            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let modelFolderName = "openai_whisper-\(model.modelName)"
+            let standardModelPath = documentsPath
+                .appendingPathComponent("huggingface")
+                .appendingPathComponent("models")
+                .appendingPathComponent("argmaxinc")
+                .appendingPathComponent("whisperkit-coreml")
+                .appendingPathComponent(modelFolderName)
+                .path
+            
+            if FileManager.default.fileExists(atPath: standardModelPath) {
+                UserDefaults.standard.set(standardModelPath, forKey: WhisperKitModelInfo.SettingsKeys.modelPath)
+                UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.modelDownloaded)
+                isModelReady = true
+            } else {
+                isModelReady = false
+            }
+        }
     }
 
     // MARK: - Network Monitoring
@@ -344,6 +372,7 @@ public class WhisperKitManager: NSObject, ObservableObject {
             // Verify the model still exists
             if FileManager.default.fileExists(atPath: path) {
                 isModelReady = true
+                Self.hasLoggedModelNotFound = false // Reset when model is found
                 return
             }
         }
@@ -367,11 +396,16 @@ public class WhisperKitManager: NSObject, ObservableObject {
             UserDefaults.standard.set(standardModelPath, forKey: WhisperKitModelInfo.SettingsKeys.modelPath)
             UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.modelDownloaded)
             isModelReady = true
+            Self.hasLoggedModelNotFound = false // Reset when model is found
             return
         }
 
         // Model not found anywhere, reset state
-        print("[WhisperKit] Model not found - needs download")
+        // Only log once to prevent log spam
+        if !Self.hasLoggedModelNotFound {
+            print("[WhisperKit] Model not found - needs download")
+            Self.hasLoggedModelNotFound = true
+        }
         isModelReady = false
         UserDefaults.standard.set(false, forKey: WhisperKitModelInfo.SettingsKeys.modelDownloaded)
     }

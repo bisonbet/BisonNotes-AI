@@ -53,6 +53,7 @@ struct SimpleSettingsView: View {
     @State private var showingOnDeviceLLMSettings = false
     @State private var showingWhisperKitSettings = false
     @State private var showingHelpDocumentation = false
+    @State private var showingOnDeviceAIDownload = false
     @StateObject private var whisperKitManager = WhisperKitManager.shared
     
     var body: some View {
@@ -105,8 +106,8 @@ struct SimpleSettingsView: View {
                 }
             }
         }
-        .onChange(of: showingOnDeviceLLMSettings) { oldValue, newValue in
-            // When On-Device AI settings is dismissed, check if both models are ready and complete setup
+        .onChange(of: showingOnDeviceAIDownload) { oldValue, newValue in
+            // When download view is dismissed, check if both models are ready and complete setup
             if oldValue == true && newValue == false {
                 Task { @MainActor in
                     whisperKitManager.refreshModelStatus()
@@ -156,6 +157,15 @@ struct SimpleSettingsView: View {
             if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
                 SafariView(url: url)
             }
+        }
+        .sheet(isPresented: $showingOnDeviceAIDownload) {
+            OnDeviceAIDownloadView(
+                isPresented: $showingOnDeviceAIDownload,
+                onCancel: {
+                    // Cancel goes back to simple settings
+                    showingOnDeviceAIDownload = false
+                }
+            )
         }
     }
     
@@ -663,11 +673,23 @@ struct SimpleSettingsView: View {
                     UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: "selectedTranscriptionEngine")
                     UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
                     
+                    // Set WhisperKit to use small model (recommended for onboarding)
+                    UserDefaults.standard.set(WhisperKitModelInfo.small.id, forKey: WhisperKitModelInfo.SettingsKeys.selectedModelId)
+                    
                     // Set AI engine to On-Device AI for summaries
                     UserDefaults.standard.set("On-Device AI", forKey: "SelectedAIEngine")
                     
                     // Enable On-Device LLM
                     UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+                    
+                    // Set On-Device LLM to use Granite Micro (recommended for 6GB+ devices)
+                    // This prevents migration warnings when selectedModel is accessed
+                    let deviceRAM = DeviceCapabilities.totalRAMInGB
+                    if deviceRAM >= 6.0 {
+                        UserDefaults.standard.set(OnDeviceLLMModelInfo.granite4Micro.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+                    } else if deviceRAM >= 8.0 {
+                        UserDefaults.standard.set(OnDeviceLLMModelInfo.granite4H.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+                    }
                 }
                 
                 await MainActor.run {
@@ -680,21 +702,31 @@ struct SimpleSettingsView: View {
                 // Mark first setup as complete
                 UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
                 
-                // If On-Device AI was selected, guide through model downloads
+                // If On-Device AI was selected, show download confirmation dialog
                 if selectedOption == .onDeviceLLM {
                     try await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second to show success message
                     
-                    // Check if WhisperKit transcription model is downloaded
+                    // Check if models are already downloaded
                     whisperKitManager.refreshModelStatus()
+                    OnDeviceLLMDownloadManager.shared.refreshModelStatus()
+                    
                     let whisperKitReady = whisperKitManager.isModelReady
+                    let onDeviceAIReady = OnDeviceLLMDownloadManager.shared.isModelReady
                     
                     await MainActor.run {
-                        if !whisperKitReady {
-                            // First, guide user to download WhisperKit transcription model
-                            showingWhisperKitSettings = true
+                        if whisperKitReady && onDeviceAIReady {
+                            // Both models already downloaded, skip download view
+                            if isFirstLaunch {
+                                // Post notification to complete first setup
+                                NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
+                                // Also request location permission after setup
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                    NotificationCenter.default.post(name: NSNotification.Name("RequestLocationPermission"), object: nil)
+                                }
+                            }
                         } else {
-                            // WhisperKit is ready, now guide to download On-Device AI models
-                            showingOnDeviceLLMSettings = true
+                            // Show the download confirmation and progress view
+                            showingOnDeviceAIDownload = true
                         }
                     }
                 } else {

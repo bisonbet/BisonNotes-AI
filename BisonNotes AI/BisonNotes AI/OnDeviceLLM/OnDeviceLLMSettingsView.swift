@@ -148,6 +148,17 @@ struct OnDeviceLLMSettingsView: View {
                             Text(model.displayName)
                                 .font(.headline)
                                 .foregroundColor(isRamSufficient ? .primary : .secondary)
+                            
+                            if model.isRecommended {
+                                Text("Recommended")
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.blue)
+                                    .cornerRadius(4)
+                            }
 
                             if model.id == downloadManager.selectedModel.id && model.isDownloaded {
                                 Image(systemName: "checkmark.circle.fill")
@@ -174,6 +185,10 @@ struct OnDeviceLLMSettingsView: View {
                 // Model details
                 HStack(spacing: 16) {
                     Label(model.downloadSize, systemImage: "arrow.down.circle")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    Text("by \(model.maker)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
 

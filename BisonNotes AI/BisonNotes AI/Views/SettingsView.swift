@@ -668,7 +668,7 @@ struct SettingsView: View {
                             Text("Enable Experimental On-Device AI Models")
                                 .font(.body)
                                 .foregroundColor(.primary)
-                            Text("Allow use of small experimental models (LFM 2.5, Qwen3-1.7B). These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only experimental models available.")
+                            Text("Allow use of experimental models (LFM 2.5, Qwen3-1.7B, Qwen 4B for 8GB+). These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only small experimental models available.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }

@@ -265,6 +265,8 @@ struct BisonNotesAIApp: App {
                     requestBackgroundAppRefreshPermission()
                     setupWatchConnectivity()
                     // Note: Notification permission is now requested when first needed (in BackgroundProcessingManager)
+                    // Initialize download monitor for on-device AI models
+                    _ = OnDeviceAIDownloadMonitor.shared
                 }
         }
     }
