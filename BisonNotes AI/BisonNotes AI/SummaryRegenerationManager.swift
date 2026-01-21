@@ -108,7 +108,8 @@ class SummaryRegenerationManager: ObservableObject {
                     reminders: newEnhancedSummary.reminders,
                     titles: newEnhancedSummary.titles,
                     contentType: newEnhancedSummary.contentType,
-                    aiMethod: newEnhancedSummary.aiMethod,
+                    aiEngine: newEnhancedSummary.aiEngine,
+                    aiModel: newEnhancedSummary.aiModel,
                     originalLength: newEnhancedSummary.originalLength,
                     processingTime: newEnhancedSummary.processingTime
                 )
@@ -196,7 +197,8 @@ class SummaryRegenerationManager: ObservableObject {
                 reminders: newEnhancedSummary.reminders,
                 titles: newEnhancedSummary.titles,
                 contentType: newEnhancedSummary.contentType,
-                aiMethod: newEnhancedSummary.aiMethod,
+                aiEngine: newEnhancedSummary.aiEngine,
+                aiModel: newEnhancedSummary.aiModel,
                 originalLength: newEnhancedSummary.originalLength,
                 processingTime: newEnhancedSummary.processingTime
             )

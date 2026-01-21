@@ -210,14 +210,16 @@ class BackgroundProcessingManager: ObservableObject {
     var onTranscriptionCompleted: ((TranscriptData, ProcessingJob) -> Void)?
     
     // MARK: - Private Properties
-    
+
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundTaskStartTime: Date?
     private var backgroundTimeMonitor: Task<Void, Never>?
     private let chunkingService = AudioFileChunkingService()
     private let performanceOptimizer = PerformanceOptimizer.shared
     private let enhancedFileManager = EnhancedFileManager.shared
     private let audioSessionManager = EnhancedAudioSessionManager()
     private let coreDataManager = CoreDataManager()
+    private var keepAlivePlayer: AVAudioPlayer?
     
     // MARK: - Singleton
     
@@ -257,12 +259,13 @@ class BackgroundProcessingManager: ObservableObject {
     private func startBackgroundTimeMonitoring() {
         // Cancel any existing monitoring
         backgroundTimeMonitor?.cancel()
-        
-        // Start periodic monitoring every 30 seconds
+
+        // Start periodic monitoring every 20 seconds to catch tasks that need refreshing
+        // We refresh at 25s, so checking every 20s ensures we catch them in time
         backgroundTimeMonitor = Task {
             while !Task.isCancelled && backgroundTaskID != .invalid {
-                try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds
-                
+                try? await Task.sleep(nanoseconds: 20_000_000_000) // 20 seconds
+
                 if !Task.isCancelled {
                     monitorBackgroundTime()
                 }
@@ -840,10 +843,14 @@ class BackgroundProcessingManager: ObservableObject {
                 let manager = EnhancedTranscriptionManager()
                 result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .awsTranscribe)
 
-            case .appleIntelligence:
-                let manager = EnhancedTranscriptionManager()
-                result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .appleIntelligence)
-                
+            case .whisperKit:
+                print("🤖 Using WhisperKit for transcription")
+                let whisperKitManager = WhisperKitManager.shared
+                guard whisperKitManager.isModelReady else {
+                    throw BackgroundProcessingError.processingFailed("WhisperKit model not downloaded. Please download the model in Settings.")
+                }
+                result = try await whisperKitManager.transcribe(audioURL: chunk.chunkURL)
+
             case .openAIAPICompatible:
                 throw BackgroundProcessingError.processingFailed("OpenAI API Compatible integration not yet implemented")
             }
@@ -1124,7 +1131,7 @@ class BackgroundProcessingManager: ObservableObject {
             reminders = try await service.extractReminders(from: transcriptText)
             titles = try await service.extractTitles(from: transcriptText)
             
-        case "Enhanced Apple Intelligence", "apple intelligence", "apple":
+        case "Apple Intelligence", "apple intelligence", "apple":
             let appleEngine = EnhancedAppleIntelligenceEngine()
             
             // Generate summary
@@ -1150,6 +1157,23 @@ class BackgroundProcessingManager: ObservableObject {
         
         let processingTime = Date().timeIntervalSince(startTime)
         
+        // Determine engine type for background processing
+        let engineType: String
+        let lowerEngine = engine.lowercased()
+        if lowerEngine.contains("openai") || lowerEngine.contains("gpt") {
+            engineType = "OpenAI"
+        } else if lowerEngine.contains("bedrock") || lowerEngine.contains("aws") {
+            engineType = "AWS Bedrock"
+        } else if lowerEngine.contains("google") || lowerEngine.contains("gemini") {
+            engineType = "Google AI"
+        } else if lowerEngine.contains("apple") {
+            engineType = "Apple Intelligence"
+        } else if lowerEngine.contains("ollama") {
+            engineType = "Ollama"
+        } else {
+            engineType = "Background Service"
+        }
+        
         return EnhancedSummaryData(
             recordingURL: recordingURL,
             recordingName: recordingName,
@@ -1159,7 +1183,8 @@ class BackgroundProcessingManager: ObservableObject {
             reminders: reminders,
             titles: titles,
             contentType: contentType,
-            aiMethod: engine,
+            aiEngine: engineType,
+            aiModel: engine,
             originalLength: transcriptText.count,
             processingTime: processingTime
         )
@@ -1178,7 +1203,7 @@ class BackgroundProcessingManager: ObservableObject {
             baseURL: baseURL,
             temperature: 0.1,
             maxTokens: 2048,
-            timeout: 30.0,
+            timeout: SummarizationTimeouts.current(),
             dynamicModelId: nil
         )
     }
@@ -1421,8 +1446,6 @@ class BackgroundProcessingManager: ObservableObject {
     private func handleAppBackgrounding() async {
         print("🔄 Handling app backgrounding")
         
-        // Core Data automatically persists changes, no manual persistence needed
-        
         // If there's an active job, ensure background task is running
         if currentJob != nil && backgroundTaskID == .invalid {
             await beginBackgroundTask()
@@ -1590,10 +1613,10 @@ class BackgroundProcessingManager: ObservableObject {
         // Convert job type string back to JobType enum
         let type: JobType
         if jobType.contains("Transcription") {
-            let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? "appleIntelligence") ?? .appleIntelligence
+            let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
             type = .transcription(engine: engine)
         } else {
-            type = .summarization(engine: jobEntry.engine ?? "Enhanced Apple Intelligence")
+            type = .summarization(engine: jobEntry.engine ?? "Apple Intelligence")
         }
         
         // Convert status string back to JobProcessingStatus enum
@@ -1625,6 +1648,63 @@ class BackgroundProcessingManager: ObservableObject {
         )
     }
     
+    // MARK: - Keep Alive Audio
+    
+    private func startKeepAliveAudio() {
+        guard keepAlivePlayer == nil else { return }
+        
+        print("🔈 Starting keep-alive silent audio")
+        do {
+            // Create a temporary silent WAV file
+            let tempDir = FileManager.default.temporaryDirectory
+            let fileURL = tempDir.appendingPathComponent("keep_alive_silence.wav")
+            
+            if !FileManager.default.fileExists(atPath: fileURL.path) {
+                // Create a 1-second silent buffer: 44.1kHz, 16-bit, mono
+                let sampleRate = 44100.0
+                let duration = 1.0
+                let frameCount = Int(sampleRate * duration)
+                
+                guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
+                      let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)) else {
+                    print("❌ Failed to create audio buffer for keep-alive")
+                    return
+                }
+                
+                buffer.frameLength = AVAudioFrameCount(frameCount)
+                // Buffer is initialized with zeros (silence) by default
+                
+                let audioFile = try AVAudioFile(forWriting: fileURL, settings: format.settings)
+                try audioFile.write(from: buffer)
+            }
+            
+            // Configure player
+            keepAlivePlayer = try AVAudioPlayer(contentsOf: fileURL)
+            keepAlivePlayer?.numberOfLoops = -1 // Infinite loop
+            keepAlivePlayer?.volume = 0.0 // Silence
+            keepAlivePlayer?.prepareToPlay()
+            
+            // Ensure audio session is active before playing
+            // (Handled by configureBackgroundRecording, but safe to verify/retry if needed? No, rely on existing flow)
+            
+            if keepAlivePlayer?.play() == true {
+                print("✅ Keep-alive audio started")
+            } else {
+                print("⚠️ Keep-alive audio failed to start playing")
+            }
+        } catch {
+            print("❌ Failed to start keep-alive audio: \(error)")
+        }
+    }
+    
+    private func stopKeepAliveAudio() {
+        if keepAlivePlayer != nil {
+            print("🔇 Stopping keep-alive silent audio")
+            keepAlivePlayer?.stop()
+            keepAlivePlayer = nil
+        }
+    }
+
     // MARK: - Background Task Management
     
     private func beginBackgroundTask() async {
@@ -1677,16 +1757,19 @@ class BackgroundProcessingManager: ObservableObject {
             print("   - 1. App doesn't have proper background modes configured")
             print("   - 2. Device is low on resources")
             print("   - 3. Background App Refresh is disabled")
+            backgroundTaskStartTime = nil
         } else {
+            // Record when this background task started
+            backgroundTaskStartTime = Date()
             print("🔄 Started background task: \(backgroundTaskID.rawValue)")
-            
+
             // Check remaining background time immediately
             let remainingTime = UIApplication.shared.backgroundTimeRemaining
             if remainingTime == Double.greatestFiniteMagnitude {
                 print("🕐 Background time: Unlimited (likely in foreground or audio session active)")
             } else {
                 print("🕐 Background time remaining: \(Int(remainingTime))s")
-                
+
                 // Diagnose potential issues
                 if remainingTime < 30 {
                     print("❌ CRITICAL: Very limited background time! Background task may fail immediately")
@@ -1699,22 +1782,29 @@ class BackgroundProcessingManager: ObservableObject {
                     print("   - Audio session may not be properly configured")
                 }
             }
-            
+
             // Start monitoring background time for long operations
             startBackgroundTimeMonitoring()
+            
+            // Start keep-alive audio to prevent app suspension during long tasks (like On-Device LLM)
+            startKeepAliveAudio()
         }
     }
     
     
     private func endBackgroundTask() async {
+        // Stop keep-alive audio
+        stopKeepAliveAudio()
+        
         // Cancel background time monitor first
         backgroundTimeMonitor?.cancel()
         backgroundTimeMonitor = nil
-        
+
         if backgroundTaskID != .invalid {
             print("⏹️ Ending background task: \(backgroundTaskID.rawValue)")
             UIApplication.shared.endBackgroundTask(backgroundTaskID)
             backgroundTaskID = .invalid
+            backgroundTaskStartTime = nil
             
             // Clean up audio session when background task ends
             Task {
@@ -1755,34 +1845,71 @@ class BackgroundProcessingManager: ObservableObject {
     
     private func monitorBackgroundTime() {
         guard backgroundTaskID != .invalid else { return }
-        
+
         let remainingTime = UIApplication.shared.backgroundTimeRemaining
-        
-        // Skip monitoring if we have unlimited time (app is likely in foreground or has special privileges)
+
+        // Skip monitoring and refreshing if we have unlimited time (app is likely in foreground or has special privileges/audio session active)
         guard remainingTime != Double.greatestFiniteMagnitude else { return }
-        
+
+        // Check if background task has been running too long (>25 seconds)
+        // iOS warns if tasks are open for >30 seconds, so we refresh at 25s
+        if let startTime = backgroundTaskStartTime {
+            let taskAge = Date().timeIntervalSince(startTime)
+            if taskAge > 25 {
+                print("🔄 Background task age: \(Int(taskAge))s - refreshing to avoid iOS warning")
+                Task { @MainActor in
+                    await self.refreshBackgroundTask()
+                }
+                return
+            }
+        }
+
         // For long-running audio processing, manage time intelligently
         if remainingTime < 600 { // Less than 10 minutes
             print("⚠️ Background time running low (\(Int(remainingTime))s remaining)")
-            
+
             // Notify current job about time constraints
             if let job = currentJob {
                 print("📊 Current job: \(job.type.displayName) for \(job.recordingName) - Progress: \(Int(job.progress * 100))%")
             }
         }
-        
+
         // Try to complete processing gracefully when very low on time
         if remainingTime < 120 { // Less than 2 minutes
             print("⚠️ Background time critically low (\(Int(remainingTime))s), will attempt graceful shutdown soon")
             // Allow the current processing chunk to complete if possible
         }
-        
+
         // Force shutdown when almost expired to prevent sudden termination
         if remainingTime < 30 {
             print("⚠️ Background time almost expired (\(Int(remainingTime))s), initiating graceful shutdown")
             Task { @MainActor in
                 await self.handleBackgroundTaskExpiration()
             }
+        }
+    }
+
+    /// Refresh the background task to avoid iOS warnings about long-running tasks
+    /// This ends the current task and immediately starts a new one
+    private func refreshBackgroundTask() async {
+        guard backgroundTaskID != .invalid else { return }
+
+        print("♻️ Refreshing background task to avoid iOS 30-second warning")
+
+        // Get the current task name before ending
+        let hasActiveJob = currentJob != nil
+
+        // End the current background task
+        let oldTaskID = backgroundTaskID
+        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        backgroundTaskID = .invalid
+        backgroundTaskStartTime = nil
+        print("   Ended old task: \(oldTaskID.rawValue)")
+
+        // Immediately start a new one if we still have an active job
+        if hasActiveJob {
+            // Don't cancel the monitor, we'll keep using it
+            await beginBackgroundTask()
         }
     }
     

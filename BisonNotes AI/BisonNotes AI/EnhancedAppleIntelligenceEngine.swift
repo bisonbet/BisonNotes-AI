@@ -14,16 +14,18 @@ class EnhancedAppleIntelligenceEngine: SummarizationEngine {
     
     // MARK: - SummarizationEngine Protocol
     
-    var name: String { "Enhanced Apple Intelligence" }
-    var description: String { "Advanced natural language processing using Apple's NLTagger with semantic analysis" }
+    var name: String { "Apple Intelligence" }
+    var engineType: String { "Apple Intelligence" }
+    var description: String { "Leverages Apple Intelligence for private, on-device content analysis and summary extraction." }
     var isAvailable: Bool { true }
     var version: String { "2.0" }
+    var metadataName: String { "Apple Intelligence (Enhanced)" }
     
     // MARK: - Configuration
     
     private let config: SummarizationConfig
     
-    init(config: SummarizationConfig = .default) {
+    init(config: SummarizationConfig = .onDeviceUnlimited) {
         self.config = config
     }
     

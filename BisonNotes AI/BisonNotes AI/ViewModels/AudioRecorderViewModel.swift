@@ -53,6 +53,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
     // Timestamp to track when last recovery was attempted (to prevent rapid duplicates)
     private var lastRecoveryAttempt: Date = Date.distantPast
+    
+    // Background task identifier for recording continuity
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     override init() {
         // Initialize the managers first
@@ -443,14 +446,143 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 		
 		switch reason {
-		case .oldDeviceUnavailable, .categoryChange:
-			// Input likely lost (e.g., Bluetooth mic disconnected)
+		case .oldDeviceUnavailable:
+			// Input device became unavailable (e.g., Bluetooth mic disconnected)
 			if isRecording {
-				print("🎙️ Audio route changed - microphone unavailable, attempting recording recovery")
-				handleInterruptedRecording(reason: "Microphone became unavailable (device disconnected or changed)")
+				print("🎙️ Audio route changed - microphone unavailable, switching to default microphone")
+				Task { @MainActor in
+					await handleMicrophoneUnavailableDuringRecording()
+				}
+			} else {
+				// Not recording, just update the selected input
+				Task { @MainActor in
+					await applySelectedInputToSession()
+				}
+			}
+		case .categoryChange:
+			// Category changed, check if we need to recover
+			if isRecording {
+				print("🎙️ Audio route changed - category change detected during recording")
+				Task { @MainActor in
+					await handleMicrophoneUnavailableDuringRecording()
+				}
 			}
 		default:
 			break
+		}
+	}
+	
+	@MainActor
+	private func handleMicrophoneUnavailableDuringRecording() async {
+		guard isRecording, let currentURL = recordingURL else { return }
+		
+		// Check if the preferred input is still available
+		let availableInputs = enhancedAudioSessionManager.getAvailableInputs()
+		let preferredInputUID = UserDefaults.standard.string(forKey: preferredInputDefaultsKey)
+		
+		var preferredInputStillAvailable = false
+		if let storedUID = preferredInputUID {
+			preferredInputStillAvailable = availableInputs.contains(where: { $0.uid == storedUID })
+		}
+		
+		if !preferredInputStillAvailable {
+			print("⚠️ Preferred microphone is no longer available, switching to iOS default")
+			
+			// Switch to default microphone
+			do {
+				try await enhancedAudioSessionManager.clearPreferredInput()
+				UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
+				selectedInput = nil
+				
+				// Check if recording is still active
+				if let recorder = audioRecorder, recorder.isRecording {
+					// Recording is still active, it should automatically use the default mic
+					print("✅ Recording continues with default microphone")
+					errorMessage = "Microphone switched to default (previous device disconnected)"
+				} else {
+					// Recording stopped, need to restart
+					print("⚠️ Recording stopped, restarting with default microphone")
+					await restartRecordingWithDefaultMicrophone(currentURL: currentURL)
+				}
+			} catch {
+				print("❌ Failed to switch to default microphone: \(error.localizedDescription)")
+				// Try to continue anyway - iOS might have already switched
+				if let recorder = audioRecorder, !recorder.isRecording {
+					await restartRecordingWithDefaultMicrophone(currentURL: currentURL)
+				}
+			}
+		}
+	}
+	
+	@MainActor
+	private func restartRecordingWithDefaultMicrophone(currentURL: URL) async {
+		// Stop current recording
+		audioRecorder?.stop()
+		stopRecordingTimer()
+		
+		// Save the current recording segment
+		if FileManager.default.fileExists(atPath: currentURL.path) {
+			let fileSize = getFileSize(url: currentURL)
+			if fileSize > 1024 { // At least 1KB
+				print("💾 Saving current recording segment before switching microphones")
+				saveLocationData(for: currentURL)
+				
+				// Process the current segment
+				if let workflowManager = workflowManager {
+					let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+					let originalFilename = currentURL.deletingPathExtension().lastPathComponent
+					let duration = getRecordingDuration(url: currentURL)
+					
+					// Get file creation date, or use current date as fallback
+					let recordingDate: Date
+					do {
+						let attributes = try FileManager.default.attributesOfItem(atPath: currentURL.path)
+						if let creationDate = attributes[.creationDate] as? Date {
+							recordingDate = creationDate
+						} else {
+							recordingDate = Date()
+						}
+					} catch {
+						recordingDate = Date()
+					}
+					
+					_ = workflowManager.createRecording(
+						url: currentURL,
+						name: originalFilename,
+						date: recordingDate,
+						fileSize: fileSize,
+						duration: duration,
+						quality: quality,
+						locationData: recordingStartLocationData
+					)
+				}
+			}
+		}
+		
+		// Clear the recording URL so we can start fresh
+		recordingURL = nil
+		recordingTime = 0
+		
+		// Switch to default microphone
+		do {
+			try await enhancedAudioSessionManager.clearPreferredInput()
+			UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
+			selectedInput = nil
+			
+			// Ensure audio session is still configured
+			try await enhancedAudioSessionManager.configureMixedAudioSession()
+			
+			// Start new recording with default microphone
+			print("🎙️ Restarting recording with default microphone")
+			setupRecording()
+			
+			// Update error message to inform user
+			errorMessage = "Recording continued with default microphone (previous device disconnected)"
+		} catch {
+			print("❌ Failed to restart recording: \(error.localizedDescription)")
+			errorMessage = "Recording stopped: Failed to switch to default microphone"
+			isRecording = false
+			audioRecorder = nil
 		}
 	}
 	
@@ -491,6 +623,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		
 		// Clean up recorder
 		audioRecorder = nil
+        
+        // Ensure background task is ended
+        endBackgroundTask()
 	}
 	
 	private func recoverInterruptedRecording(url: URL, reason: String) async {
@@ -887,13 +1022,66 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
     @MainActor
     private func applySelectedInputToSession() async {
-        guard let input = selectedInput else { return }
-
-        do {
-            try await enhancedAudioSessionManager.setPreferredInput(input)
-            UserDefaults.standard.set(input.uid, forKey: preferredInputDefaultsKey)
-        } catch {
-            errorMessage = "Failed to set preferred input: \(error.localizedDescription)"
+        // Get all currently available inputs
+        let availableInputs = enhancedAudioSessionManager.getAvailableInputs()
+        
+        // First, try to use the currently selected input
+        var inputToUse = selectedInput
+        
+        // If no input is selected, try to load from UserDefaults
+        if inputToUse == nil {
+            let storedPreferredInputUID = UserDefaults.standard.string(forKey: preferredInputDefaultsKey)
+            if let storedUID = storedPreferredInputUID {
+                // Try to find the stored input in available inputs
+                inputToUse = availableInputs.first(where: { $0.uid == storedUID })
+                
+                // Update selectedInput if we found it
+                if let foundInput = inputToUse {
+                    selectedInput = foundInput
+                }
+            }
+        }
+        
+        // Check if the preferred input is still available
+        if let preferredInput = inputToUse {
+            let isStillAvailable = availableInputs.contains(where: { $0.uid == preferredInput.uid })
+            
+            if isStillAvailable {
+                // Preferred input is available, use it
+                do {
+                    try await enhancedAudioSessionManager.setPreferredInput(preferredInput)
+                    UserDefaults.standard.set(preferredInput.uid, forKey: preferredInputDefaultsKey)
+                    print("✅ Using preferred input: \(preferredInput.portName)")
+                } catch {
+                    print("⚠️ Failed to set preferred input, falling back to default: \(error.localizedDescription)")
+                    // Fall through to default behavior
+                    inputToUse = nil
+                }
+            } else {
+                // Preferred input is no longer available, fall back to default
+                print("⚠️ Preferred input '\(preferredInput.portName)' is no longer available, falling back to iOS default")
+                inputToUse = nil
+            }
+        }
+        
+        // If no preferred input or it's unavailable, let iOS use its default
+        // iOS will automatically use the built-in microphone when no preferred input is set
+        if inputToUse == nil {
+            do {
+                // Clear the preferred input to let iOS use its default
+                try await enhancedAudioSessionManager.clearPreferredInput()
+                // Clear the stored preference since the device is no longer available
+                UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
+                // Update selectedInput to nil so UI reflects the fallback
+                selectedInput = nil
+                print("✅ Using iOS default microphone (preferred input unavailable)")
+            } catch {
+                // If clearing fails, iOS will still use default, so just log it
+                print("⚠️ Could not clear preferred input, iOS will use default: \(error.localizedDescription)")
+                // Still clear the stored preference and update UI
+                UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
+                selectedInput = nil
+            }
         }
     }
 
@@ -947,6 +1135,22 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         }
     }
     
+    private func beginBackgroundTask() {
+        guard backgroundTask == .invalid else { return }
+        print("🔄 Starting background task for recording")
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Recording") { [weak self] in
+            print("⚠️ Recording background task expiring!")
+            self?.endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        print("⏹️ Ending recording background task")
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+    }
+
     private func setupRecording() {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let audioFilename = documentsPath.appendingPathComponent(generateAppRecordingFilename())
@@ -967,6 +1171,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             print("🤖 Running on iOS Simulator - audio recording may have limitations")
             print("💡 For best results, test on a physical device or ensure simulator microphone is enabled")
             #endif
+            
+            // Start background task to ensure recording continues if app is backgrounded
+            beginBackgroundTask()
+            
             audioRecorder?.record()
             
             isRecording = true
@@ -1133,6 +1341,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         
         // Notify watch of recording state change
         notifyWatchOfRecordingStateChange()
+        
+        endBackgroundTask()
     }
     
     func playRecording(url: URL) {
@@ -1344,6 +1554,7 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                 if recordingBeingProcessed && !appIsBackgrounding {
                     print("⚠️ Recording already processed by interruption handler, skipping normal completion")
                     recordingBeingProcessed = false // Reset flag
+                    self.endBackgroundTask()
                     return
                 }
                 
@@ -1406,6 +1617,9 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                         try? await enhancedAudioSessionManager.deactivateSession()
                     }
                 }
+                
+                // End background task
+                self.endBackgroundTask()
             }
         }
     }

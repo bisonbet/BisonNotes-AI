@@ -70,14 +70,16 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     private var currentTask: SFSpeechRecognitionTask?
     private let chunkingService = AudioFileChunkingService()
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
-    
+    private var backgroundTaskStartTime: Date?
+    private var backgroundTaskRefreshTimer: Task<Void, Never>?
+
     // Configuration - Always use enhanced transcription
     private var enableEnhancedTranscription: Bool {
         return true
     }
     
     private var maxChunkDuration: TimeInterval {
-        UserDefaults.standard.double(forKey: "maxChunkDuration").nonZero ?? 300 // 5 minutes per chunk
+        UserDefaults.standard.double(forKey: "maxChunkDuration").nonZero ?? 30 // 30 seconds per chunk
     }
     
     private var maxTranscriptionTime: TimeInterval {
@@ -248,11 +250,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         
         if let recognizer = speechRecognizer {
             print("✅ Speech recognizer created with locale: \(recognizer.locale.identifier)")
-            print("🔧 Speech recognizer availability: \(recognizer.isAvailable)")
-            
-            // Check current authorization status (but don't request it yet)
-            let authStatus = SFSpeechRecognizer.authorizationStatus()
-            print("🔧 Speech recognition authorization status: \(authStatus.rawValue)")
             // Note: Speech authorization will be requested when user actually tries to use Apple Intelligence transcription
         } else {
             print("❌ Failed to create speech recognizer with any locale")
@@ -276,12 +273,72 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
                 self?.endBackgroundTask()
             }
         }
+
+        if backgroundTaskID != .invalid {
+            backgroundTaskStartTime = Date()
+            print("🔄 Started background task for Whisper: \(backgroundTaskID.rawValue)")
+
+            // Start a timer to refresh the background task every 25 seconds
+            // to avoid iOS warnings about tasks running >30 seconds
+            startBackgroundTaskRefreshTimer()
+        }
     }
 
     private func endBackgroundTask() {
+        // Cancel refresh timer first
+        backgroundTaskRefreshTimer?.cancel()
+        backgroundTaskRefreshTimer = nil
+
         if backgroundTaskID != .invalid {
+            print("⏹️ Ending background task for Whisper: \(backgroundTaskID.rawValue)")
             UIApplication.shared.endBackgroundTask(backgroundTaskID)
             backgroundTaskID = .invalid
+            backgroundTaskStartTime = nil
+        }
+    }
+
+    private func startBackgroundTaskRefreshTimer() {
+        // Cancel any existing timer
+        backgroundTaskRefreshTimer?.cancel()
+
+        // Check every 20 seconds and refresh at 25 seconds to avoid iOS 30-second warning
+        backgroundTaskRefreshTimer = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 20_000_000_000) // 20 seconds
+
+                if !Task.isCancelled, let startTime = backgroundTaskStartTime {
+                    let taskAge = Date().timeIntervalSince(startTime)
+                    if taskAge > 25 {
+                        await refreshBackgroundTask()
+                    }
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func refreshBackgroundTask() async {
+        guard backgroundTaskID != .invalid else { return }
+
+        print("♻️ Refreshing Whisper background task to avoid iOS 30-second warning")
+
+        // End the current task
+        let oldTaskID = backgroundTaskID
+        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        backgroundTaskID = .invalid
+        backgroundTaskStartTime = nil
+        print("   Ended old task: \(oldTaskID.rawValue)")
+
+        // Immediately start a new one
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WhisperTranscription") { [weak self] in
+            Task { @MainActor in
+                self?.endBackgroundTask()
+            }
+        }
+
+        if backgroundTaskID != .invalid {
+            backgroundTaskStartTime = Date()
+            print("   Started new task: \(backgroundTaskID.rawValue)")
         }
     }
 
@@ -367,20 +424,18 @@ if durationMinutes > 120 { // 2 hours max
         let duration = try await getAudioDuration(url: url)
         
 // Determine transcription engine to use
-        let selectedEngine = engine ?? .appleIntelligence // Default fallback
-        
-        // Check if Apple Intelligence is available for fallback
-        if selectedEngine != .appleIntelligence {
-            guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-return try await transcribeWithAppleIntelligence(url: url, duration: duration)
-            }
-        }
+        let selectedEngine = engine ?? .whisperKit // Default fallback
         
         // Manage background checking based on selected engine
         switch selectedEngine {
         case .notConfigured:
             print("❌ Transcription engine not configured")
             throw TranscriptionError.engineNotConfigured
+
+        case .whisperKit:
+            switchToWhisperKitTranscription()
+            return try await transcribeWithWhisperKit(url: url)
+
         case .awsTranscribe:
             switchToAWSTranscription()
             
@@ -398,34 +453,7 @@ return try await transcribeWithAppleIntelligence(url: url, duration: duration)
             }
             
 return try await transcribeWithAWS(url: url, config: config)
-            
-        case .appleIntelligence:
-            switchToAppleTranscription()
-            
-            // Ensure speech recognizer is available
-            if speechRecognizer == nil {
-                print("❌ Apple Intelligence speech recognizer is nil - attempting to recreate")
-                setupSpeechRecognizer()
-                guard speechRecognizer != nil else {
-                    print("❌ Failed to recreate speech recognizer")
-                    throw TranscriptionError.speechRecognizerUnavailable
-                }
-                print("✅ Successfully recreated speech recognizer")
-            }
-            
-            guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-                print("❌ Apple Intelligence speech recognizer is not available")
-                if let recognizer = speechRecognizer {
-                    print("🔧 Recognizer locale: \(recognizer.locale.identifier)")
-                }
-                print("🔧 Authorization status: \(SFSpeechRecognizer.authorizationStatus().rawValue)")
-                print("🔧 This may be due to simulator limitations or missing permissions")
-                throw TranscriptionError.speechRecognizerUnavailable
-            }
-            
-            print("✅ Speech recognizer is available, starting transcription")
-            return try await transcribeWithAppleIntelligence(url: url, duration: duration)
-            
+
         case .whisper:
             switchToWhisperTranscription()
             
@@ -480,17 +508,22 @@ if let config = openAIConfig {
         
         print("🎤 Starting Apple Intelligence transcription for file: \(url.lastPathComponent)")
         print("⏱️ Duration: \(duration) seconds")
-        
-        // Check authorization status first
-        let authStatus = SFSpeechRecognizer.authorizationStatus()
+
+        // Request speech recognition authorization if needed
+        let authStatus = await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { status in
+                continuation.resume(returning: status)
+            }
+        }
+
         print("🔐 Speech recognition authorization status: \(authStatus.rawValue)")
-        
+
         guard authStatus == .authorized else {
             await MainActor.run {
                 isTranscribing = false
                 currentStatus = "Speech recognition not authorized"
             }
-            
+
             let statusMessage: String
             switch authStatus {
             case .denied:
@@ -504,9 +537,9 @@ if let config = openAIConfig {
             @unknown default:
                 statusMessage = "Speech recognition authorization failed."
             }
-            
+
             print("❌ Speech recognition authorization failed: \(statusMessage)")
-            throw TranscriptionError.speechRecognizerUnavailable
+            throw TranscriptionError.speechRecognitionNotAuthorized
         }
         
         // Double-check speech recognizer availability right before transcription
@@ -855,20 +888,26 @@ for (index, chunk) in chunks.enumerated() {
                     return result
                 }
                 
-                // Adjust segment timestamps
-                let adjustedSegments = chunkResult.segments.map { segment in
-                    TranscriptSegment(
-                        speaker: segment.speaker,
-                        text: segment.text,
-                        startTime: segment.startTime + currentOffset,
-                        endTime: segment.endTime + currentOffset
-                    )
+                // Check if this chunk had any content
+                if chunkResult.fullText.isEmpty {
+                    print("⚠️ Chunk \(index + 1) was silent/empty, skipping")
+                } else {
+                    // Adjust segment timestamps
+                    let adjustedSegments = chunkResult.segments.map { segment in
+                        TranscriptSegment(
+                            speaker: segment.speaker,
+                            text: segment.text,
+                            startTime: segment.startTime + currentOffset,
+                            endTime: segment.endTime + currentOffset
+                        )
+                    }
+
+                    allSegments.append(contentsOf: adjustedSegments)
+                    allText.append(chunkResult.fullText)
                 }
-                
-allSegments.append(contentsOf: adjustedSegments)
-                allText.append(chunkResult.fullText)
+
                 currentOffset = chunk.end
-                
+
                 // Check memory pressure after each chunk
                 autoreleasepool { }
                 checkMemoryPressure()
@@ -937,7 +976,14 @@ allSegments.append(contentsOf: adjustedSegments)
         checkMemoryPressure()
         
         print("🎉 Large file transcription completed in \(processingTime/60) minutes")
-        
+
+        // Check if we got any content at all
+        if fullText.isEmpty {
+            print("⚠️ WARNING: No speech was detected in any chunks!")
+            print("📊 All \(chunks.count) chunks were processed, but contained no detectable speech")
+            print("💡 This could mean the audio file contains only silence, background noise, or non-speech content")
+        }
+
         // Debug: Check if the transcript contains placeholder text
         if fullText.lowercased().contains("loading") {
             print("⚠️ WARNING: Transcript contains 'loading' text!")
@@ -949,7 +995,7 @@ allSegments.append(contentsOf: adjustedSegments)
                 }
             }
         }
-        
+
         return TranscriptionResult(
             fullText: fullText,
             segments: allSegments,
@@ -962,18 +1008,154 @@ allSegments.append(contentsOf: adjustedSegments)
     
     private func transcribeChunk(url: URL, startTime: TimeInterval, endTime: TimeInterval) async throws -> TranscriptionResult {
         print("🎵 Extracting chunk from \(startTime/60) to \(endTime/60) minutes...")
-        
+
         // Create a temporary audio file for the chunk
         let chunkURL = try await extractAudioChunk(from: url, startTime: startTime, endTime: endTime)
         print("✅ Chunk extracted to: \(chunkURL.lastPathComponent)")
-        
+
         defer {
             try? FileManager.default.removeItem(at: chunkURL)
             print("🗑️ Cleaned up temporary chunk file")
         }
-        
+
         print("🎤 Transcribing chunk...")
-        return try await transcribeSingleChunk(url: chunkURL)
+        // Use internal method that doesn't manage isTranscribing flag
+        let chunkStartTime = Date()
+        return try await transcribeChunkInternal(url: chunkURL, startTime: chunkStartTime)
+    }
+
+    /// Internal method for transcribing a chunk without managing the isTranscribing flag
+    /// This is used by transcribeLargeFile to avoid cancellation issues between chunks
+    private func transcribeChunkInternal(url: URL, startTime: Date) async throws -> TranscriptionResult {
+        // Check if speech recognizer is available
+        guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+            print("❌ Speech recognizer is not available")
+            throw TranscriptionError.speechRecognizerUnavailable
+        }
+
+        // Add timeout to prevent infinite CPU usage
+        return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
+            // Main transcription task
+            group.addTask { @MainActor in
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptionResult, Error>) in
+
+                    let request = SFSpeechURLRecognitionRequest(url: url)
+                    request.shouldReportPartialResults = false
+
+                    // Add additional request configuration to minimize audio issues
+                    if #available(iOS 16.0, *) {
+                        request.addsPunctuation = true
+                    }
+
+                    // Create a weak reference to avoid retain cycles
+                    weak let weakSelf = self
+                    var hasResumed = false
+
+                    self.currentTask = recognizer.recognitionTask(with: request) { result, error in
+                        guard let self = weakSelf, !hasResumed else { return }
+
+                        DispatchQueue.main.async {
+                            // Ensure we only resume once
+                            guard !hasResumed else { return }
+                            hasResumed = true
+
+                            // Clean up the task immediately
+                            self.currentTask?.cancel()
+                            self.currentTask = nil
+
+                            if let error = error {
+                                // Check if this is "no speech detected" error (code 1110)
+                                let nsError = error as NSError
+                                if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1110 {
+                                    print("⚠️ No speech detected in chunk - returning empty result to continue processing")
+                                    // Return an empty but successful result for silent chunks
+                                    let emptyResult = TranscriptionResult(
+                                        fullText: "",
+                                        segments: [],
+                                        processingTime: Date().timeIntervalSince(startTime),
+                                        chunkCount: 1,
+                                        success: true,
+                                        error: nil
+                                    )
+                                    continuation.resume(returning: emptyResult)
+                                    return
+                                }
+
+                                // Check if this is a non-critical error that can be safely ignored
+                                if self.handleSpeechRecognitionError(error) {
+                                    // Non-critical error, continue processing
+                                    hasResumed = false
+                                    return
+                                }
+
+                                // Check if speech recognizer became unavailable
+                                if !recognizer.isAvailable {
+                                    continuation.resume(throwing: TranscriptionError.speechRecognizerUnavailable)
+                                    return
+                                }
+
+                                // Critical error, stop processing
+                                continuation.resume(throwing: TranscriptionError.recognitionFailed(error))
+                            } else if let result = result {
+                                if result.isFinal {
+                                    let processingTime = Date().timeIntervalSince(startTime)
+                                    let transcriptText = result.bestTranscription.formattedString
+
+                                    if transcriptText.isEmpty {
+                                        // Return an empty but successful result for silent chunks
+                                        print("⚠️ Empty transcript for chunk - returning empty result to continue processing")
+                                        let emptyResult = TranscriptionResult(
+                                            fullText: "",
+                                            segments: [],
+                                            processingTime: processingTime,
+                                            chunkCount: 1,
+                                            success: true,
+                                            error: nil
+                                        )
+                                        continuation.resume(returning: emptyResult)
+                                    } else {
+                                        let segments = self.createSegments(from: result.bestTranscription)
+                                        let transcriptionResult = TranscriptionResult(
+                                            fullText: transcriptText,
+                                            segments: segments,
+                                            processingTime: processingTime,
+                                            chunkCount: 1,
+                                            success: true,
+                                            error: nil
+                                        )
+
+                                        // DON'T set isTranscribing = false here - let transcribeLargeFile manage it
+                                        continuation.resume(returning: transcriptionResult)
+                                    }
+                                } else {
+                                    // Don't resume for partial results
+                                    hasResumed = false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Timeout task
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(300 * 1_000_000_000)) // 5 minute timeout
+                await MainActor.run {
+                    self.currentTask?.cancel()
+                    self.currentTask = nil
+                }
+                throw TranscriptionError.timeout
+            }
+
+            // Return the first completed task (either success or timeout)
+            guard let result = try await group.next() else {
+                throw TranscriptionError.timeout
+            }
+
+            // Cancel remaining tasks
+            group.cancelAll()
+            return result
+        }
     }
     
     private func extractAudioChunk(from url: URL, startTime: TimeInterval, endTime: TimeInterval) async throws -> URL {
@@ -1053,8 +1235,8 @@ allSegments.append(contentsOf: adjustedSegments)
         var chunks: [(start: TimeInterval, end: TimeInterval)] = []
         var currentStart: TimeInterval = 0
         
-        // Limit chunk size to prevent memory issues
-        let maxSafeChunkDuration: TimeInterval = 300 // 5 minutes max per chunk
+        // Limit chunk size to prevent memory issues during transcription
+        let maxSafeChunkDuration: TimeInterval = 60 // 60 seconds max per chunk (safety limit)
         let actualChunkDuration = min(maxChunkDuration, maxSafeChunkDuration)
         
         // Ensure overlap is smaller than chunk duration to prevent infinite loops
@@ -1266,7 +1448,6 @@ if status.isCompleted {
         beginBackgroundTask()
         defer { endBackgroundTask() }
 
-
         let whisperService = WhisperService(config: config, chunkingService: chunkingService)
         
         do {
@@ -1292,9 +1473,45 @@ return result
             throw TranscriptionError.whisperTranscriptionFailed(error)
         }
     }
-    
+
+    // MARK: - WhisperKit Transcription
+
+    private func transcribeWithWhisperKit(url: URL) async throws -> TranscriptionResult {
+        beginBackgroundTask()
+        defer { endBackgroundTask() }
+
+        let manager = WhisperKitManager.shared
+
+        // Check if model is ready
+        guard manager.isModelReady else {
+            throw TranscriptionError.whisperKitNotReady
+        }
+
+        await MainActor.run {
+            isTranscribing = true
+            currentStatus = "Preparing WhisperKit transcription..."
+        }
+
+        do {
+            let result = try await manager.transcribe(audioURL: url)
+
+            await MainActor.run {
+                isTranscribing = false
+                currentStatus = "Transcription complete"
+            }
+
+            return result
+        } catch {
+            await MainActor.run {
+                isTranscribing = false
+                currentStatus = "WhisperKit transcription failed"
+            }
+            throw TranscriptionError.whisperKitTranscriptionFailed(error)
+        }
+    }
+
     // MARK: - OpenAI Transcription
-    
+
 private func transcribeWithOpenAI(url: URL, config: OpenAITranscribeConfig) async throws -> TranscriptionResult {
         
         let openAIService = OpenAITranscribeService(config: config, chunkingService: chunkingService)
@@ -1395,7 +1612,7 @@ return transcriptionResult
             throw TranscriptionError.openAITranscriptionFailed(error)
         }
     }
-    
+
     // MARK: - Job Tracking Helpers
     
 /// Update pending jobs when recording files are renamed
@@ -1513,13 +1730,13 @@ func switchToAWSTranscription() {
 func switchToWhisperTranscription() {
         // Whisper doesn't use background checking like AWS, so we stop any existing background processes
         stopBackgroundChecking()
-        
+
         // Clear any pending AWS jobs since we're switching to Whisper
         let pendingCount = getPendingJobNames().count
         if pendingCount > 0 {
             clearAllPendingJobs()
         }
-        
+
         if whisperConfig != nil {
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
@@ -1529,23 +1746,41 @@ func switchToWhisperTranscription() {
             AppLogger.shared.warning("Whisper transcription selected but not configured", category: "EnhancedTranscriptionManager")
         }
     }
-    
+
+    func switchToWhisperKitTranscription() {
+        // WhisperKit doesn't use background checking like AWS, so we stop any existing background processes
+        stopBackgroundChecking()
+
+        // Clear any pending AWS jobs since we're switching to WhisperKit
+        let pendingCount = getPendingJobNames().count
+        if pendingCount > 0 {
+            clearAllPendingJobs()
+        }
+
+        // Only log if verbose logging is enabled
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("WhisperKit transcription selected", category: "EnhancedTranscriptionManager")
+        }
+    }
+
     /// Public method to update transcription engine and manage background processes
     func updateTranscriptionEngine(_ engine: TranscriptionEngine) {
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
             AppLogger.shared.verbose("Updating transcription engine to: \(engine.rawValue)", category: "EnhancedTranscriptionManager")
         }
-        
+
         switch engine {
         case .notConfigured:
             // For unconfigured state, default to Apple Transcription which is always available
             switchToAppleTranscription()
+        case .whisperKit:
+            switchToWhisperKitTranscription()
         case .awsTranscribe:
             switchToAWSTranscription()
         case .whisper:
             switchToWhisperTranscription()
-        case .appleIntelligence, .openAI, .openAIAPICompatible:
+        case .openAI, .openAIAPICompatible:
             switchToAppleTranscription()
         }
     }
@@ -1677,6 +1912,7 @@ extension EnhancedTranscriptionManager: SFSpeechRecognizerDelegate {
 enum TranscriptionError: LocalizedError {
     case fileNotFound
     case speechRecognizerUnavailable
+    case speechRecognitionNotAuthorized
     case recognitionFailed(Error)
     case noSpeechDetected
     case chunkProcessingFailed(chunk: Int, error: Error)
@@ -1688,14 +1924,18 @@ enum TranscriptionError: LocalizedError {
     case whisperConnectionFailed
     case whisperTranscriptionFailed(Error)
     case openAITranscriptionFailed(Error)
+    case whisperKitNotReady
+    case whisperKitTranscriptionFailed(Error)
     case engineNotConfigured
-    
+
     var errorDescription: String? {
         switch self {
         case .fileNotFound:
             return "Audio file not found"
         case .speechRecognizerUnavailable:
             return "Speech recognition is not available. This may be due to simulator limitations, missing permissions, or device restrictions. Try running on a physical device or check Settings > Privacy & Security > Speech Recognition."
+        case .speechRecognitionNotAuthorized:
+            return "Speech recognition permission denied. Please enable Speech Recognition in Settings > Privacy & Security > Speech Recognition to use Apple Intelligence transcription."
         case .recognitionFailed(let error):
             return "Recognition failed: \(error.localizedDescription)"
         case .noSpeechDetected:
@@ -1716,6 +1956,10 @@ enum TranscriptionError: LocalizedError {
             return "Whisper transcription failed: \(error.localizedDescription)"
         case .openAITranscriptionFailed(let error):
             return "OpenAI transcription failed: \(error.localizedDescription)"
+        case .whisperKitNotReady:
+            return "WhisperKit model is not downloaded. Please download the model in Settings > Transcription > WhisperKit."
+        case .whisperKitTranscriptionFailed(let error):
+            return "WhisperKit transcription failed: \(error.localizedDescription)"
         case .fileTooLarge(let duration, let maxDuration):
             return "File too large for processing (\(Int(duration/60)) minutes, max \(Int(maxDuration/60)) minutes)"
         case .engineNotConfigured:

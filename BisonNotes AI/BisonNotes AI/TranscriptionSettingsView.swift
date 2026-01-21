@@ -10,12 +10,15 @@ import SwiftUI
 struct TranscriptionSettingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @AppStorage("showTranscriptionProgress") private var showTranscriptionProgress: Bool = true
-    @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = TranscriptionEngine.appleIntelligence.rawValue
-    
+    @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = TranscriptionEngine.whisperKit.rawValue
+    @AppStorage(WhisperKitModelInfo.SettingsKeys.enableWhisperKit) private var enableWhisperKit = false
+
+    @StateObject private var whisperKitManager = WhisperKitManager.shared
+
     @State private var showingAWSSettings = false
     @State private var showingWhisperSettings = false
+    @State private var showingWhisperKitSettings = false
     @State private var showingOpenAISettings = false
-    @State private var showingAppleIntelligenceSettings = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -42,11 +45,30 @@ struct TranscriptionSettingsView: View {
             .sheet(isPresented: $showingWhisperSettings) {
                 WhisperSettingsView()
             }
+            .sheet(isPresented: $showingWhisperKitSettings) {
+                NavigationStack {
+                    WhisperKitSettingsView()
+                }
+            }
             .sheet(isPresented: $showingOpenAISettings) {
                 OpenAISettingsView()
             }
-            .sheet(isPresented: $showingAppleIntelligenceSettings) {
-                AppleIntelligenceSettingsView()
+            .onChange(of: selectedTranscriptionEngine) { _, newValue in
+                handleEngineSelection(newValue)
+            }
+        }
+    }
+
+    private func handleEngineSelection(_ engineRawValue: String) {
+        guard let engine = TranscriptionEngine(rawValue: engineRawValue) else { return }
+
+        if engine == .whisperKit {
+            // Auto-enable WhisperKit when selected
+            enableWhisperKit = true
+
+            // If model not downloaded, prompt user to download
+            if !whisperKitManager.isModelReady {
+                showingWhisperKitSettings = true
             }
         }
     }
@@ -59,7 +81,7 @@ struct TranscriptionSettingsView: View {
                     .fontWeight(.medium)
                 
                 Picker("Transcription Engine", selection: $selectedTranscriptionEngine) {
-                    ForEach(TranscriptionEngine.allCases.filter { $0.isAvailable }, id: \.self) { engine in
+                    ForEach(TranscriptionEngine.availableCases.filter { $0.isAvailable }, id: \.self) { engine in
                         VStack(alignment: .leading) {
                             Text(engine.rawValue)
                                 .font(.body)
@@ -110,14 +132,14 @@ struct TranscriptionSettingsView: View {
                                 case .notConfigured:
                                     // No settings for unconfigured state
                                     break
+                                case .whisperKit:
+                                    showingWhisperKitSettings = true
                                 case .awsTranscribe:
                                     showingAWSSettings = true
                                 case .whisper:
                                     showingWhisperSettings = true
                                 case .openAI:
                                     showingOpenAISettings = true
-                                case .appleIntelligence:
-                                    showingAppleIntelligenceSettings = true
                                 case .openAIAPICompatible:
                                     // Coming soon - no settings yet
                                     break
@@ -150,14 +172,14 @@ struct TranscriptionSettingsView: View {
         switch engine {
         case .notConfigured:
             return .gray
+        case .whisperKit:
+            return .indigo
         case .awsTranscribe:
             return .orange
         case .whisper:
             return .green
         case .openAI:
             return .blue
-        case .appleIntelligence:
-            return .purple
         case .openAIAPICompatible:
             return .gray
         }
@@ -190,7 +212,7 @@ struct TranscriptionSettingsView: View {
                     .fontWeight(.medium)
             }
             
-            if engine == .appleIntelligence {
+            if engine == .whisperKit {
                 HStack {
                     Text("Privacy:")
                         .font(.body)
@@ -215,14 +237,14 @@ struct TranscriptionSettingsView: View {
         switch engine {
         case .notConfigured:
             return "Not Configured"
+        case .whisperKit:
+            return "On-Device AI"
         case .awsTranscribe:
             return "Cloud-based"
         case .whisper:
             return "Local AI"
         case .openAI:
             return "Cloud AI"
-        case .appleIntelligence:
-            return "On-Device"
         case .openAIAPICompatible:
             return "Coming Soon"
         }
@@ -277,7 +299,7 @@ struct TranscriptionSettingsView: View {
     
     private func resetToDefaults() {
         showTranscriptionProgress = true
-        selectedTranscriptionEngine = TranscriptionEngine.appleIntelligence.rawValue
+        selectedTranscriptionEngine = TranscriptionEngine.whisperKit.rawValue
     }
 }
 
@@ -315,4 +337,3 @@ struct TranscriptionSettingsView_Previews: PreviewProvider {
             .environmentObject(AudioRecorderViewModel())
     }
 }
-

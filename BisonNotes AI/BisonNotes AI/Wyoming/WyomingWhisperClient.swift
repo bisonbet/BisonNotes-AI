@@ -366,11 +366,13 @@ class WyomingWhisperClient: ObservableObject {
     
     private func performWyomingTranscription(url: URL) async throws {
         do {
-            // Step 1: Send transcribe command
+            // Step 1: Send transcribe command.
+            // We pass `language: nil` so the Wyoming server can auto-detect
+            // the language from audio instead of forcing a specific locale.
             currentStatus = "Sending transcription request..."
             progress = 0.1
             
-            try await tcpClient.sendTranscribe(language: "en")
+            try await tcpClient.sendTranscribe(language: nil)
             
             // Step 2: Send audio start
             currentStatus = "Starting audio stream..."

@@ -129,8 +129,6 @@ struct MistralAISettingsView: View {
                 }
 
                 Section(header: Text("Status")) {
-                    Toggle("Enable Mistral AI", isOn: $isEnabled)
-
                     if !apiKey.isEmpty {
                         HStack {
                             Text("API Key")

@@ -12,9 +12,15 @@ import SwiftUI
 // MARK: - AWS Bedrock Engine
 
 class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
-    let name: String = "AWS Bedrock"
-    let description: String = "Advanced AI-powered summaries using AWS Bedrock with Claude and other foundation models"
+    var name: String { "AWS Bedrock" }
+    var engineType: String { "AWS Bedrock" }
+    var description: String { "Enterprise-grade AI using Amazon Bedrock foundation models." }
     let version: String = "1.0"
+    var metadataName: String {
+        let storedModelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
+        let modelString = AWSBedrockModel.migrate(rawValue: storedModelString)
+        return AWSBedrockModel(rawValue: modelString)?.displayName ?? modelString
+    }
     
     private var service: AWSBedrockService?
     private var currentConfig: AWSBedrockConfig?
@@ -212,7 +218,7 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
             model: model,
             temperature: temperature > 0 ? temperature : 0.1,
             maxTokens: maxTokens > 0 ? maxTokens : 4096,
-            timeout: 60.0,
+            timeout: SummarizationTimeouts.current(),
             useProfile: useProfile,
             profileName: profileName
         )
@@ -457,12 +463,16 @@ struct VoiceCharacteristics {
     let volume: Double
 }
 
-// MARK: - Local LLM Engine (Future Implementation)
+// MARK: - Local LLM Engine (Ollama)
 
 class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     let name: String = "Local LLM (Ollama)"
+    var engineType: String { "Ollama" }
     let description: String = "Privacy-focused local language model processing using Ollama"
     let version: String = "1.0"
+    var metadataName: String {
+        return UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+    }
     
     var isAvailable: Bool {
         // Check if Ollama is enabled in settings
@@ -527,7 +537,8 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             modelName: modelName,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
             temperature: temperature > 0 ? temperature : 0.1,
-            maxContextTokens: contextTokens > 0 ? contextTokens : 4096
+            maxContextTokens: contextTokens > 0 ? contextTokens : 4096,
+            timeoutInterval: SummarizationTimeouts.current()
         )
 
         self.config = config
@@ -968,7 +979,8 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             modelName: modelName,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
             temperature: temperature > 0 ? temperature : 0.1,
-            maxContextTokens: contextTokens > 0 ? contextTokens : 4096
+            maxContextTokens: contextTokens > 0 ? contextTokens : 4096,
+            timeoutInterval: SummarizationTimeouts.current()
         )
 
         self.config = config
@@ -1004,7 +1016,8 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
                     modelName: firstAvailableModel,
                     maxTokens: config?.maxTokens ?? 2048,
                     temperature: config?.temperature ?? 0.1,
-                    maxContextTokens: config?.maxContextTokens ?? 4096
+                    maxContextTokens: config?.maxContextTokens ?? 4096,
+                    timeoutInterval: SummarizationTimeouts.current()
                 )
                 
                 self.config = newConfig
@@ -1130,10 +1143,14 @@ private struct SummaryResponse: Codable {
 }
 
 class GoogleAIStudioEngine: SummarizationEngine {
-    let name = "Google AI Studio"
-    let description = "Advanced AI-powered summaries using Google's Gemini models"
+    var name: String { "Google AI Studio" }
+    var engineType: String { "Google AI" }
+    var description: String { "Summarize using Google's Gemini models via AI Studio." }
     let isAvailable: Bool
     let version = "1.0"
+    var metadataName: String {
+        return UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-2.5-flash"
+    }
     
     private let service = GoogleAIStudioService()
     private let logger = Logger(subsystem: "com.audiojournal.app", category: "GoogleAIStudioEngine")
@@ -1307,7 +1324,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         
         // Deduplicate and limit results
         let deduplicatedTasks = Array(Set(allTasks.map { $0.text })).prefix(15).map { TaskItem(text: $0, priority: .medium, confidence: 0.8) }
-        let deduplicatedReminders = Array(Set(allReminders.map { $0.text })).prefix(15).map { ReminderItem(text: $0, timeReference: ReminderItem.TimeReference(originalText: $0), urgency: .later, confidence: 0.8) }
+        let deduplicatedReminders = Array(Set(allReminders.map { $0.text })).prefix(15).map { ReminderItem(text: $0, timeReference: ReminderItem.TimeReference.fromReminderText($0), urgency: .later, confidence: 0.8) }
         let deduplicatedTitles = Array(Set(allTitles.map { $0.text })).prefix(5).map { TitleItem(text: $0, confidence: 0.8) }
         
         // Use the most common content type or default to general
@@ -1429,7 +1446,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty && (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
-                let taskText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                let taskText = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                 if !taskText.isEmpty {
                     tasks.append(TaskItem(text: taskText, priority: .medium, confidence: 0.8))
                 }
@@ -1446,9 +1463,9 @@ class GoogleAIStudioEngine: SummarizationEngine {
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty && (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
-                let reminderText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                let reminderText = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                 if !reminderText.isEmpty {
-                    let timeRef = ReminderItem.TimeReference(originalText: reminderText)
+                    let timeRef = ReminderItem.TimeReference.fromReminderText(reminderText)
                     reminders.append(ReminderItem(text: reminderText, timeReference: timeRef, urgency: .later, confidence: 0.8))
                 }
             }
@@ -1464,7 +1481,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty && (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
-                let titleText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                let titleText = RecordingNameGenerator.cleanStandardizedTitleResponse(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                 if !titleText.isEmpty {
                     titles.append(TitleItem(text: titleText, confidence: 0.8))
                 }
@@ -1551,9 +1568,12 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 logger.info("Titles count: \(summaryResponse.titles.count)")
                 
                 // Convert string arrays to proper objects
-                let tasks = summaryResponse.tasks.map { TaskItem(text: $0, priority: .medium, confidence: 0.8) }
-                let reminders = summaryResponse.reminders.map { ReminderItem(text: $0, timeReference: ReminderItem.TimeReference(originalText: $0), urgency: .later, confidence: 0.8) }
-                let titles = summaryResponse.titles.map { TitleItem(text: $0, confidence: 0.8) }
+                let tasks = summaryResponse.tasks.map { TaskItem(text: RecordingNameGenerator.cleanAIOutput($0), priority: .medium, confidence: 0.8) }
+                let reminders = summaryResponse.reminders.map { 
+                    let cleaned = RecordingNameGenerator.cleanAIOutput($0)
+                    return ReminderItem(text: cleaned, timeReference: ReminderItem.TimeReference.fromReminderText(cleaned), urgency: .later, confidence: 0.8) 
+                }
+                let titles = summaryResponse.titles.map { TitleItem(text: RecordingNameGenerator.cleanStandardizedTitleResponse($0), confidence: 0.8) }
                 let contentType = ContentType(rawValue: summaryResponse.contentType) ?? .general
                 
                 return (
@@ -1606,22 +1626,22 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 }
             case "tasks":
                 if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") {
-                    let taskText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                    let taskText = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                     if !taskText.isEmpty {
                         tasks.append(TaskItem(text: taskText, priority: .medium, confidence: 0.8))
                     }
                 }
             case "reminders":
                 if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") {
-                    let reminderText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                    let reminderText = RecordingNameGenerator.cleanAIOutput(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                                             if !reminderText.isEmpty {
-                            let timeRef = ReminderItem.TimeReference(originalText: reminderText)
+                            let timeRef = ReminderItem.TimeReference.fromReminderText(reminderText)
                             reminders.append(ReminderItem(text: reminderText, timeReference: timeRef, urgency: .later, confidence: 0.8))
                         }
                 }
             case "titles":
                 if trimmed.hasPrefix("•") || trimmed.hasPrefix("-") {
-                    let titleText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                    let titleText = RecordingNameGenerator.cleanStandardizedTitleResponse(trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines))
                     if !titleText.isEmpty {
                         titles.append(TitleItem(text: titleText, confidence: 0.8))
                     }
@@ -1725,6 +1745,8 @@ class AIEngineFactory {
             return LocalLLMEngine()
         case .googleAIStudio:
             return GoogleAIStudioEngine()
+        case .onDeviceLLM:
+            return OnDeviceLLMEngine()
         }
     }
     
@@ -1736,18 +1758,30 @@ class AIEngineFactory {
     }
     
     static func getAllEngines() -> [AIEngineType] {
-        return AIEngineType.allCases
+        return AIEngineType.availableCases
     }
 }
 
 enum AIEngineType: String, CaseIterable {
-    case enhancedAppleIntelligence = "Enhanced Apple Intelligence"
+    case enhancedAppleIntelligence = "Apple Intelligence"
     case openAI = "OpenAI"
     case mistralAI = "Mistral AI"
     case awsBedrock = "AWS Bedrock"
     case openAICompatible = "OpenAI API Compatible"
     case localLLM = "Ollama"
     case googleAIStudio = "Google AI Studio"
+    case onDeviceLLM = "On-Device AI"
+
+    /// Returns all available engine types based on device capabilities
+    static var availableCases: [AIEngineType] {
+        return allCases.filter { engineType in
+            // Hide on-device LLM if device doesn't have sufficient RAM
+            if engineType == .onDeviceLLM {
+                return DeviceCapabilities.supportsOnDeviceLLM
+            }
+            return true
+        }
+    }
 
     var description: String {
         switch self {
@@ -1762,15 +1796,17 @@ enum AIEngineType: String, CaseIterable {
         case .openAICompatible:
             return "Advanced AI summaries using OpenAI API compatible models"
         case .localLLM:
-            return "Privacy-focused local language model processing"
+            return "Privacy-focused local language model processing with Ollama"
         case .googleAIStudio:
             return "Advanced AI-powered summaries using Google's Gemini models"
+        case .onDeviceLLM:
+            return "Privacy-focused on-device AI processing using local AI models"
         }
     }
 
     var isComingSoon: Bool {
         switch self {
-        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock:
+        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM:
             return false
         }
     }
@@ -1791,6 +1827,8 @@ enum AIEngineType: String, CaseIterable {
             return ["Ollama Server", "Local Network", "Model Download"]
         case .googleAIStudio:
             return ["Google AI Studio API Key", "Internet Connection", "Usage Credits"]
+        case .onDeviceLLM:
+            return ["Downloaded LLM Model (~2 GB)", "No Internet Required", "A16+ Chip Recommended"]
         }
     }
 }

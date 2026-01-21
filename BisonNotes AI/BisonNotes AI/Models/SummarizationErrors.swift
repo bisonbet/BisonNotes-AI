@@ -48,7 +48,7 @@ enum SummarizationError: Error, LocalizedError {
         case .aiServiceUnavailable:
             return "Switch to a different AI method in settings or try again later."
         case .processingTimeout:
-            return "Try with a shorter recording or check your internet connection."
+            return "Try with a shorter recording, check your connection, or increase the AI timeout in Settings > AI Processing."
         case .insufficientContent:
             return "Ensure your recording contains clear speech with actionable content."
         case .networkError:

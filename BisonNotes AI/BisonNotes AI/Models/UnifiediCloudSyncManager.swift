@@ -213,7 +213,10 @@ class UnifiediCloudSyncManager: ObservableObject {
         record["transcriptId"] = summary.transcriptId?.uuidString
         record["summary"] = summary.summary
         record["contentType"] = summary.contentType.rawValue
-        record["aiMethod"] = summary.aiMethod
+        record["aiMethod"] = SummaryMetadataCodec.encode(
+            aiEngine: summary.aiEngine,
+            aiModel: summary.aiModel
+        )
         record["generatedAt"] = summary.generatedAt
         record["version"] = summary.version
         record["wordCount"] = summary.wordCount
@@ -459,6 +462,9 @@ class UnifiediCloudSyncManager: ObservableObject {
             titles = (try? JSONDecoder().decode([TitleItem].self, from: titlesData)) ?? []
         }
         
+        let decodedMetadata = SummaryMetadataCodec.decode(aiMethod)
+        let engine = decodedMetadata.engine ?? SummaryMetadataCodec.inferredEngine(from: decodedMetadata.model)
+        
         return EnhancedSummaryData(
             recordingId: recordingId,
             transcriptId: transcriptId,
@@ -470,7 +476,8 @@ class UnifiediCloudSyncManager: ObservableObject {
             reminders: reminders,
             titles: titles,
             contentType: contentType,
-            aiMethod: aiMethod,
+            aiEngine: engine,
+            aiModel: decodedMetadata.model,
             originalLength: originalLength,
             processingTime: processingTime
         )

@@ -561,14 +561,13 @@ struct SummaryDetailView: View {
             .padding(.bottom, 8)
             
             VStack(alignment: .leading, spacing: 12) {
-                metadataRow(title: "AI Method", value: summaryData.aiMethod, icon: "brain.head.profile")
+                metadataRow(title: "AI Engine", value: summaryData.aiEngine, icon: "cpu")
+                metadataRow(title: "AI Model", value: summaryData.aiModel, icon: "brain.head.profile")
                 metadataRow(title: "Generation Time", value: formatDate(summaryData.generatedAt), icon: "clock.arrow.circlepath")
                 metadataRow(title: "Content Type", value: summaryData.contentType.rawValue, icon: "doc.text")
                 metadataRow(title: "Word Count", value: "\(summaryData.wordCount) words", icon: "text.word.spacing")
                 metadataRow(title: "Compression Ratio", value: summaryData.formattedCompressionRatio, icon: "chart.bar.fill")
                 metadataRow(title: "Processing Time", value: summaryData.formattedProcessingTime, icon: "timer")
-                metadataRow(title: "Quality", value: summaryData.qualityDescription, icon: "star.fill", valueColor: qualityColor)
-                metadataRow(title: "Confidence", value: "\(Int(summaryData.confidence * 100))%", icon: "checkmark.shield.fill", valueColor: confidenceColor)
             }
         }
         .onTapGesture {
@@ -596,24 +595,6 @@ struct SummaryDetailView: View {
         }
     }
     
-    private var qualityColor: Color {
-        switch summaryData.qualityDescription {
-        case "High Quality": return .green
-        case "Good Quality": return .blue
-        case "Fair Quality": return .orange
-        default: return .red
-        }
-    }
-    
-    private var confidenceColor: Color {
-        switch summaryData.confidence {
-        case 0.8...1.0: return .green
-        case 0.6..<0.8: return .blue
-        case 0.4..<0.6: return .orange
-        default: return .red
-        }
-    }
-    
     // MARK: - Summary Section
     
     private var summarySection: some View {
@@ -627,7 +608,7 @@ struct SummaryDetailView: View {
             }
             .padding(.bottom, 8)
             
-            AITextView(text: summaryData.summary, aiService: AIService.from(aiMethod: summaryData.aiMethod))
+            AITextView(text: summaryData.summary, aiService: AIService.from(aiEngine: summaryData.aiEngine, aiModel: summaryData.aiModel))
                 .font(.body)
                 .lineSpacing(4)
                 .padding(.top, 4)
@@ -1137,7 +1118,7 @@ struct SummaryDetailView: View {
             
             print("🔄 Starting summary regeneration for: \(summaryData.recordingName)")
             print("📝 Transcript length: \(transcript.plainText.count) characters")
-            print("🤖 Current AI method: \(summaryData.aiMethod)")
+            print("🤖 Current AI model: \(summaryData.aiModel)")
             
             // Generate new summary using the current AI engine
             let newEnhancedSummary = try await SummaryManager.shared.generateEnhancedSummary(
@@ -1184,7 +1165,8 @@ struct SummaryDetailView: View {
                 reminders: newEnhancedSummary.reminders,
                 titles: newEnhancedSummary.titles,
                 contentType: newEnhancedSummary.contentType,
-                aiMethod: newEnhancedSummary.aiMethod,
+                aiEngine: newEnhancedSummary.aiEngine,
+                aiModel: newEnhancedSummary.aiModel,
                 originalLength: newEnhancedSummary.originalLength,
                 processingTime: newEnhancedSummary.processingTime
             )
@@ -1239,11 +1221,6 @@ struct SummaryDetailView: View {
         return UserPreferences.shared.formatShortDateTime(date)
     }
     
-    private func safeConfidencePercent(_ confidence: Double) -> Int {
-        guard confidence.isFinite else { return 0 }
-        return Int(confidence * 100)
-    }
-    
     private func formatFullDateTime(_ date: Date) -> String {
         return UserPreferences.shared.formatFullDateTime(date)
     }
@@ -1288,7 +1265,8 @@ struct SummaryDetailView: View {
                         reminders: summaryData.reminders,
                         titles: summaryData.titles,
                         contentType: summaryData.contentType,
-                        aiMethod: summaryData.aiMethod,
+                        aiEngine: summaryData.aiEngine,
+                        aiModel: summaryData.aiModel,
                         originalLength: summaryData.originalLength,
                         processingTime: summaryData.processingTime,
                         generatedAt: summaryData.generatedAt,
@@ -1351,7 +1329,8 @@ struct SummaryDetailView: View {
                         reminders: summaryData.reminders,
                         titles: summaryData.titles,
                         contentType: summaryData.contentType,
-                        aiMethod: summaryData.aiMethod,
+                        aiEngine: summaryData.aiEngine,
+                        aiModel: summaryData.aiModel,
                         originalLength: summaryData.originalLength,
                         processingTime: summaryData.processingTime,
                         generatedAt: summaryData.generatedAt,
@@ -1533,11 +1512,12 @@ struct EnhancedTaskRowView: View {
             
             // Task content
             VStack(alignment: .leading, spacing: 4) {
-                Text(task.text)
+                // Task text - sanitized for display
+                Text(task.text.sanitizedPlainText())
                     .font(.body)
                     .foregroundColor(.primary)
                     .lineLimit(nil)
-                
+
                 // Task metadata
                 HStack {
                     Image(systemName: task.category.icon)
@@ -1559,15 +1539,6 @@ struct EnhancedTaskRowView: View {
                     }
                     
                     Spacer()
-                    
-                    // Confidence indicator
-                    HStack(spacing: 2) {
-                        ForEach(0..<3, id: \.self) { index in
-                            Circle()
-                                .fill(index < confidenceLevel ? .green : .gray.opacity(0.3))
-                                .frame(width: 4, height: 4)
-                        }
-                    }
                 }
                 
                 // Integration button
@@ -1664,14 +1635,6 @@ struct EnhancedTaskRowView: View {
         case .general: return .gray
         }
     }
-    
-    private var confidenceLevel: Int {
-        switch task.confidence {
-        case 0.8...1.0: return 3
-        case 0.6..<0.8: return 2
-        default: return 1
-        }
-    }
 }
 
 // MARK: - Enhanced Reminder Row Component
@@ -1694,11 +1657,12 @@ struct EnhancedReminderRowView: View {
             
             // Reminder content
             VStack(alignment: .leading, spacing: 4) {
-                Text(reminder.text)
+                // Reminder text - sanitized for display
+                Text(reminder.text.sanitizedPlainText())
                     .font(.body)
                     .foregroundColor(.primary)
                     .lineLimit(nil)
-                
+
                 // Reminder metadata
                 HStack {
                     Text(reminder.urgency.rawValue)
@@ -1715,15 +1679,6 @@ struct EnhancedReminderRowView: View {
                         .foregroundColor(.secondary)
                     
                     Spacer()
-                    
-                    // Confidence indicator
-                    HStack(spacing: 2) {
-                        ForEach(0..<3, id: \.self) { index in
-                            Circle()
-                                .fill(index < confidenceLevel ? .orange : .gray.opacity(0.3))
-                                .frame(width: 4, height: 4)
-                        }
-                    }
                 }
                 
                 // Integration button
@@ -1806,14 +1761,6 @@ struct EnhancedReminderRowView: View {
         case .later: return .blue
         }
     }
-    
-    private var confidenceLevel: Int {
-        switch reminder.confidence {
-        case 0.8...1.0: return 3
-        case 0.6..<0.8: return 2
-        default: return 1
-        }
-    }
 }
 
 // MARK: - Selectable Title Row View
@@ -1837,31 +1784,26 @@ struct SelectableTitleRowView: View {
             .disabled(isCurrentTitle)
             
             VStack(alignment: .leading, spacing: 4) {
-                // Title text
-                Text(title.text)
+                // Title text - sanitized for display (includes quote stripping)
+                Text(title.text.sanitizedForTitle())
                     .font(.body)
                     .foregroundColor(isCurrentTitle ? .green : .primary)
                     .fontWeight(isCurrentTitle ? .medium : .regular)
                     .multilineTextAlignment(.leading)
-                
+
                 // Title metadata
                 HStack {
                     // Category
                     Image(systemName: title.category.icon)
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    
+
                     Text(title.category.rawValue)
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    
+
                     Spacer()
-                    
-                    // Confidence
-                    Text("\(SafeConfidenceHelper.percent(title.confidence))%")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    
+
                     if isCurrentTitle {
                         Text("Current")
                             .font(.caption2)
@@ -2050,33 +1992,21 @@ struct TitleOptionRow: View {
                     .foregroundColor(isSelected ? .green : .gray)
                 
                 VStack(alignment: .leading, spacing: 4) {
-                    // Title text
-                    Text(title.text)
+                    // Title text - sanitized for display (includes quote stripping)
+                    Text(title.text.sanitizedForTitle())
                         .font(.body)
                         .foregroundColor(.primary)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    
+
                     // Metadata
                     HStack {
                         Image(systemName: title.category.icon)
                             .font(.caption2)
                         Text(title.category.rawValue)
                             .font(.caption2)
-                        
+
                         Spacer()
-                        
-                        // Confidence indicator
-                        HStack(spacing: 2) {
-                            ForEach(0..<3, id: \.self) { index in
-                                Circle()
-                                    .fill(index < confidenceLevel ? .blue : .gray.opacity(0.3))
-                                    .frame(width: 4, height: 4)
-                            }
-                        }
-                        
-                        Text("\(SafeConfidenceHelper.percent(title.confidence))%")
-                            .font(.caption2)
                     }
                     .foregroundColor(.secondary)
                 }
@@ -2087,15 +2017,6 @@ struct TitleOptionRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
-    }
-    
-    private var confidenceLevel: Int {
-        guard title.confidence.isFinite else { return 1 }
-        switch title.confidence {
-        case 0.8...1.0: return 3
-        case 0.6..<0.8: return 2
-        default: return 1
-        }
     }
 }
 

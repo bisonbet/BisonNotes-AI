@@ -8,9 +8,14 @@
 import Foundation
 
 class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
-    let name: String = "OpenAI"
-    let description: String = "Advanced AI-powered summaries using OpenAI's GPT models"
+    var name: String { "OpenAI" }
+    var engineType: String { "OpenAI" }
+    var description: String { "Advanced summarization using OpenAI's latest models." }
     let version: String = "1.0"
+    var metadataName: String {
+        return UserDefaults.standard.string(forKey: "openAISummarizationModel")
+            ?? OpenAISummarizationModel.gpt41Mini.rawValue
+    }
     
     private var service: OpenAISummarizationService?
     private var currentConfig: OpenAISummarizationConfig?
@@ -200,7 +205,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
             baseURL: baseURL,
             temperature: temperature > 0 ? temperature : 0.1,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
-            timeout: 30.0,
+            timeout: SummarizationTimeouts.current(),
             dynamicModelId: modelString // Pass the actual model ID for dynamic models
         )
         
@@ -394,9 +399,13 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
 // MARK: - OpenAI Compatible Engine
 
 class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
-    let name: String = "OpenAI API Compatible"
-    let description: String = "Advanced AI summaries using OpenAI API compatible models"
+    var name: String { "OpenAI-Compatible" }
+    var engineType: String { "OpenAI API Compatible" }
+    var description: String { "Connect to any OpenAI-compatible API endpoint (e.g., local server or custom provider)." }
     let version: String = "1.0"
+    var metadataName: String {
+        return UserDefaults.standard.string(forKey: "openAICompatibleModel") ?? "gpt-3.5-turbo"
+    }
     
     private var service: OpenAISummarizationService?
     private var currentConfig: OpenAISummarizationConfig?
@@ -566,7 +575,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
             baseURL: baseURL,
             temperature: temperature > 0 ? temperature : 0.1,
             maxTokens: maxTokens > 0 ? maxTokens : 2048,
-            timeout: 30.0,
+            timeout: SummarizationTimeouts.current(),
             dynamicModelId: modelId // Pass the actual model ID for dynamic models
         )
         

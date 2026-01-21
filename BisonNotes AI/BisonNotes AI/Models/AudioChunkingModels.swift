@@ -99,15 +99,15 @@ struct ChunkingConfig {
     static func config(for engine: TranscriptionEngine) -> ChunkingConfig {
         switch engine {
         case .notConfigured:
-            return ChunkingConfig(strategy: .appleIntelligence) // Default fallback for unconfigured state
+            return ChunkingConfig(strategy: .whisper) // Default fallback for unconfigured state
         case .openAI:
             return ChunkingConfig(strategy: .openAI)
         case .whisper:
             return ChunkingConfig(strategy: .whisper)
         case .awsTranscribe:
             return ChunkingConfig(strategy: .aws)
-        case .appleIntelligence:
-            return ChunkingConfig(strategy: .appleIntelligence)
+        case .whisperKit:
+            return ChunkingConfig(strategy: .whisper) // WhisperKit uses similar limits to Whisper
         case .openAIAPICompatible:
             return ChunkingConfig(strategy: .openAI) // Default to OpenAI limits
         }

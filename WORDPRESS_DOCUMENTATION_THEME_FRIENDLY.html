@@ -9,7 +9,11 @@
         .audio-journal-guide {
             /* Inherit theme's font and colors */
             line-height: 1.6;
-            margin: 2em 0;
+            width: 100%;
+            max-width: none;
+            margin: 0 auto;
+            padding: 0.5em;
+            box-sizing: border-box;
         }
         
         /* Use theme's existing heading styles */
@@ -278,12 +282,21 @@
             <h3>📋 Table of Contents</h3>
             <ul>
                 <li><a href="#getting-started">📱 Getting Started</a></li>
-                <li><a href="#recording-features">🎙️ Recording Features</a></li>
+                <li><a href="#recording-features">🎙️ Recording Features</a>
+                    <ul style="margin-left: 1.5em; margin-top: 0.5em;">
+                        <li><a href="#action-button">iPhone Action Button Integration</a></li>
+                        <li><a href="#combining-recordings">Combining Recordings</a></li>
+                    </ul>
+                </li>
                 <li><a href="#ai-engine-configuration">🤖 AI Engine Configuration</a></li>
                 <li><a href="#transcription-configuration">📝 Transcription Configuration</a></li>
                 <li><a href="#working-with-summaries">📊 Working with Summaries</a></li>
                 <li><a href="#audio-playback">🎵 Audio Playback</a></li>
-                <li><a href="#settings-configuration">⚙️ Settings & Configuration</a></li>
+                <li><a href="#settings-configuration">⚙️ Settings & Configuration</a>
+                    <ul style="margin-left: 1.5em; margin-top: 0.5em;">
+                        <li><a href="#simple-vs-advanced-settings">Simple Settings vs Advanced Settings</a></li>
+                    </ul>
+                </li>
                 <li><a href="#troubleshooting">🔧 Troubleshooting</a></li>
                 <li><a href="#advanced-features">📱 Advanced Features</a></li>
                 <li><a href="#best-practices">🎯 Best Practices</a></li>
@@ -296,21 +309,51 @@
         <h3>First Launch Setup</h3>
         <ol class="step-list">
             <li><strong>Install the App</strong>: Download BisonNotes AI from the App Store</li>
-            <li><strong>Simple Settings Welcome Screen</strong>: Upon first launch, you'll see a streamlined setup screen with essential options:
+            <li><strong>Simple Settings Welcome Screen</strong>: Upon first launch, you'll see a streamlined setup screen with three main options:
                 <div class="info-box">
                     <h4>🎯 Initial Setup Options</h4>
                     <ul>
-                        <li><strong>AI Engine Selection</strong>: Choose your preferred AI engine for transcription and summaries:
+                        <li><strong>OpenAI (Cloud)</strong>: 
                             <ul>
-                                <li><strong>OpenAI</strong> (Recommended): Most powerful and capable, requires API key, pay-per-use</li>
-                                <li><strong>Enhanced Apple Intelligence</strong>: Free, on-device processing, best for privacy but limited in advanced capabilities</li>
-                                <li><strong>Other engines</strong>: Google AI Studio, Ollama, AWS Bedrock (can be configured later)</li>
+                                <li>Cloud-based transcription and AI summaries</li>
+                                <li>Requires OpenAI API key (enter during setup)</li>
+                                <li>Most powerful and capable option</li>
+                                <li>Pay-per-use pricing</li>
+                                <li>Best for: High-quality results, advanced features</li>
                             </ul>
                         </li>
-                        <li><strong>Audio Quality</strong>: Select recording quality (64kbps to 256kbps) - Higher quality means larger files</li>
-                        <li><strong>Location Tracking</strong>: Enable to automatically capture where recordings are made</li>
+                        <li><strong>On-Device AI</strong>:
+                            <ul>
+                                <li>Private, on-device AI processing</li>
+                                <li>No data leaves your device</li>
+                                <li>Best for recordings under 60 minutes</li>
+                                <li>Requires download of AI summary models (2-3GB each) and On Device transcription model (150-520MB)</li>
+                                <li>May be less accurate than cloud services</li>
+                                <li>After selecting, you'll configure On Device transcription and download AI models</li>
+                                <li>Device requirements: 
+                                    <ul>
+                                        <li>Transcription: iOS 17.0+, 4GB+ RAM (most modern devices)</li>
+                                        <li>AI Summary: iPhone 15 Pro or iPhone 16+, iOS 18.1+</li>
+                                    </ul>
+                                </li>
+                            </ul>
+                        </li>
+                        <li><strong>Advanced & Other Options</strong>:
+                            <ul>
+                                <li>Skip initial setup and configure later</li>
+                                <li>Access to all available engines:
+                                    <ul>
+                                        <li>OpenAI Compatible - Use LiteLLM, llama.cpp, or similar proxies</li>
+                                        <li>Google AI Studio - Advanced Gemini AI processing</li>
+                                        <li>AWS Bedrock - Enterprise-grade Claude AI</li>
+                                        <li>Mistral AI - Advanced AI processing with Mistral models</li>
+                                    </ul>
+                                </li>
+                                <li>Selecting this option immediately opens the advanced settings page</li>
+                            </ul>
+                        </li>
                     </ul>
-                    <p><strong>💡 Tip</strong>: You can change these settings anytime in the full Settings view</p>
+                    <p><strong>💡 Tip</strong>: The simple settings page automatically detects your current configuration. If you've configured something in advanced settings that doesn't match the simple options, it will automatically show "Advanced & Other Options".</p>
                 </div>
             </li>
             <li><strong>Location Permission</strong>: The app will ask for location access if you enabled location tracking:
@@ -464,6 +507,39 @@
 
         <h2 id="recording-features">🎙️ Recording Features</h2>
 
+        <h3 id="action-button">iPhone Action Button Integration</h3>
+        <div class="info-box">
+            <p><strong>📱 Available On</strong>: iPhone 15 Pro, iPhone 15 Pro Max, iPhone 16 Pro, iPhone 16 Pro Max, and future iPhone Pro models with Action Button</p>
+        </div>
+        <p>BisonNotes AI supports the iPhone Action Button, allowing you to quickly start recording without opening the app first. This is perfect for capturing thoughts, meetings, or voice notes instantly.</p>
+        
+        <h4>How to Configure the Action Button</h4>
+        <ol class="step-list">
+            <li><strong>Open Settings</strong>: On your iPhone, open the Settings app</li>
+            <li><strong>Navigate to Action Button</strong>: Scroll down and tap "Action Button"</li>
+            <li><strong>Select Shortcut</strong>: Choose "Shortcut" as the Action Button function</li>
+            <li><strong>Choose BisonNotes AI</strong>: 
+                <ul>
+                    <li>Tap "Choose a Shortcut"</li>
+                    <li>Search for "Start Recording" or "BisonNotes AI"</li>
+                    <li>Select "Start Recording" from BisonNotes AI</li>
+                </ul>
+            </li>
+            <li><strong>Done</strong>: Press the Action Button to test - it should launch BisonNotes AI and start recording automatically!</li>
+        </ol>
+
+        <h4>What Happens When You Press the Action Button</h4>
+        <ul>
+            <li><strong>App Opens</strong>: BisonNotes AI launches automatically (even if the app was closed)</li>
+            <li><strong>Switches to Recordings Tab</strong>: The app automatically navigates to the main recording screen</li>
+            <li><strong>Recording Starts Immediately</strong>: Recording begins automatically without needing to tap the microphone button</li>
+            <li><strong>Background Recording</strong>: Once started, recording continues even if you switch to another app or lock your phone</li>
+        </ul>
+
+        <div class="success-box">
+            <p><strong>💡 Pro Tip</strong>: The Action Button works even when your phone is locked! Press the Action Button, and BisonNotes AI will launch and start recording. This makes it perfect for quick voice notes without unlocking your phone.</p>
+        </div>
+
         <h3>Location Tracking</h3>
         <ul>
             <li><strong>Automatic</strong>: GPS location is captured with each recording</li>
@@ -478,6 +554,80 @@
             <li>Files are automatically added to your recordings library</li>
         </ol>
 
+        <h3 id="combining-recordings">Combining Recordings</h3>
+        <div class="info-box">
+            <p><strong>🔗 When to Combine</strong>: Use this feature to merge two separate recordings into one continuous file. This is especially useful if your recording was interrupted (e.g., microphone disconnected) and you want to create a single combined recording.</p>
+        </div>
+        <ol class="step-list">
+            <li><strong>Access Recordings List</strong>: 
+                <ul>
+                    <li>Go to the "Recordings" tab</li>
+                    <li>Tap "Select" button in the top right</li>
+                </ul>
+            </li>
+            <li><strong>Select Two Recordings</strong>:
+                <ul>
+                    <li>Tap the checkbox next to the first recording you want to combine</li>
+                    <li>Tap the checkbox next to the second recording</li>
+                    <li>You can only select two recordings at a time</li>
+                </ul>
+            </li>
+            <li><strong>Combine Recordings</strong>:
+                <ul>
+                    <li>Once two recordings are selected, a "Combine" button appears</li>
+                    <li>Tap "Combine" to open the combination interface</li>
+                </ul>
+            </li>
+            <li><strong>Choose Recording Order</strong>:
+                <div class="info-box">
+                    <h4>📋 Order Selection</h4>
+                    <ul>
+                        <li>The app automatically recommends which recording should be first based on recording dates</li>
+                        <li>You'll see a "Recommended" badge on the suggested first recording</li>
+                        <li>Tap the "First" recording card to swap the order if needed</li>
+                        <li>The preview shows the total combined duration</li>
+                    </ul>
+                </div>
+            </li>
+            <li><strong>Important Requirements</strong>:
+                <div class="warning-box">
+                    <h4>⚠️ Before Combining</h4>
+                    <p><strong>Recordings with transcripts or summaries cannot be combined.</strong> You must delete any existing transcripts and/or summaries from both recordings before combining them.</p>
+                    <ul>
+                        <li>If either recording has a transcript, you'll see a message explaining which recording has a transcript</li>
+                        <li>If either recording has a summary, you'll see a message explaining which recording has a summary</li>
+                        <li>Delete the transcripts/summaries from both recordings, then try combining again</li>
+                    </ul>
+                    <p><strong>Why?</strong> Transcripts and summaries are tied to specific audio files. When combining recordings, you'll need to regenerate transcripts and summaries for the new combined file.</p>
+                </div>
+            </li>
+            <li><strong>Complete the Combination</strong>:
+                <ul>
+                    <li>Review the combined duration preview</li>
+                    <li>Tap "Combine Recordings" to merge the files</li>
+                    <li>The app will create a new combined recording file</li>
+                    <li>The original recordings remain unchanged</li>
+                </ul>
+            </li>
+            <li><strong>After Combining</strong>:
+                <ul>
+                    <li>The new combined recording appears in your recordings list</li>
+                    <li>You can generate a new transcript for the combined recording</li>
+                    <li>You can generate a new summary for the combined recording</li>
+                    <li>The original two recordings remain available if you need them</li>
+                </ul>
+            </li>
+        </ol>
+        <div class="info-box">
+            <h4>💡 Tips for Combining Recordings</h4>
+            <ul>
+                <li><strong>Best Use Case</strong>: Combining recordings that were split due to microphone disconnection or app interruption</li>
+                <li><strong>Order Matters</strong>: Make sure the recordings are in the correct chronological order</li>
+                <li><strong>Storage</strong>: The combined file will be the sum of both original file sizes</li>
+                <li><strong>Processing</strong>: After combining, you'll need to generate new transcripts and summaries for the combined recording</li>
+            </ul>
+        </div>
+
         <h2 id="ai-engine-configuration">🤖 AI Engine Configuration</h2>
 
         <div class="info-box">
@@ -487,16 +637,45 @@
 
         <div class="engine-grid">
             <div class="engine-card">
-                <h4>1. Enhanced Apple Intelligence</h4>
+                <h4>1. On-Device AI</h4>
                 <span class="engine-type type-local">On-device</span>
                 <span class="engine-type type-free">Free</span>
-                <p><strong>Type</strong>: On-device processing<br>
+                <p><strong>Type</strong>: On-device AI processing using local LLM models<br>
                 <strong>Cost</strong>: Free<br>
                 <strong>Privacy</strong>: 100% local<br>
-                <strong>Internet</strong>: Not required<br>
-                <strong>Requirements</strong>: iPhone 15 Pro, iPhone 16+, iOS 18.1+</p>
-                <p><strong>Setup</strong>: No configuration needed - works out of the box</p>
-                <p><strong>Best for</strong>: Privacy-conscious users, offline use, basic transcription and summarization</p>
+                <strong>Internet</strong>: Required only for initial model download<br>
+                <strong>Requirements</strong>:
+                    <ul>
+                        <li><strong>Transcription</strong>: iOS 17.0+, 4GB+ RAM (most modern iPhones and iPads)</li>
+                        <li><strong>AI Summary</strong>: iPhone 15 Pro, iPhone 16 or newer, iOS 18.1+</li>
+                        <li><strong>Storage</strong>: 2-3GB for AI models, 150-520MB for transcription model</li>
+                    </ul>
+                </p>
+                <p><strong>Setup</strong>:
+                    <ul>
+                        <li>Select "On-Device AI" in simple settings</li>
+                        <li>Download On Device transcription model (Higher Quality or Faster Processing)</li>
+                        <li>Download one or more AI summary models</li>
+                        <li>Uses On Device transcription for transcription (requires model download)</li>
+                        <li>Uses downloaded LLM models for AI summaries</li>
+                    </ul>
+                </p>
+                <p><strong>Available Models</strong>:
+                    <ul>
+                        <li><strong>Gemma 3n E4B</strong> (Default): 3.09 GB download, 32K context</li>
+                        <li><strong>Qwen3 4B</strong>: 2.72 GB download, 32K context</li>
+                        <li><strong>Phi-4 Mini</strong>: 2.49 GB download, 16K context</li>
+                        <li><strong>Ministral 3B</strong>: ~2.15 GB download, 32K context</li>
+                    </ul>
+                </p>
+                <p><strong>Best for</strong>: Privacy-conscious users, offline use, recordings under 60 minutes</p>
+                <p><strong>Limitations</strong>:
+                    <ul>
+                        <li>Best for recordings under 60 minutes</li>
+                        <li>Requires 2-3GB storage per model</li>
+                        <li>May be less accurate than cloud services</li>
+                    </ul>
+                </p>
             </div>
 
             <div class="engine-card">
@@ -522,40 +701,62 @@
             </div>
 
             <div class="engine-card">
-                <h4>4. Whisper Integration</h4>
-                <span class="engine-type type-local">Local server</span>
-                <span class="engine-type type-free">Free</span>
-                <p><strong>Type</strong>: Local AI processing<br>
-                <strong>Cost</strong>: Free (requires your own server)<br>
-                <strong>Privacy</strong>: 100% local<br>
-                <strong>Internet</strong>: Not required for processing</p>
-                <p><strong>Best for</strong>: Privacy, custom setup</p>
+                <h4>4. OpenAI API Compatible</h4>
+                <span class="engine-type type-cloud">Cloud/Local</span>
+                <span class="engine-type type-free">Flexible</span>
+                <p><strong>Type</strong>: OpenAI-compatible API endpoint<br>
+                <strong>Cost</strong>: Varies by provider<br>
+                <strong>Privacy</strong>: Depends on provider<br>
+                <strong>Internet</strong>: Required (unless local server)</p>
+                <p><strong>Supported Providers</strong>: This single engine option works with multiple providers:
+                    <ul>
+                        <li><strong>LiteLLM</strong>: Open-source proxy for multiple providers</li>
+                        <li><strong>llama.cpp</strong>: High-performance local LLM inference server</li>
+                        <li><strong>Nebius</strong>: Cloud provider with OpenAI-compatible API</li>
+                        <li><strong>Groq</strong>: Fast inference with OpenAI-compatible API</li>
+                        <li><strong>Custom Servers</strong>: Any OpenAI-compatible endpoint</li>
+                    </ul>
+                </p>
+                <p><strong>Setup</strong>:
+                    <ul>
+                        <li>Go to Settings → AI Settings → OpenAI API Compatible</li>
+                        <li>Enter your API key (from your chosen provider, or use "no-key" for local servers)</li>
+                        <li>Set base URL to your provider's endpoint:
+                            <ul>
+                                <li>Groq: <code>https://api.groq.com/v1</code></li>
+                                <li>Nebius: Your Nebius endpoint URL</li>
+                                <li>LiteLLM: Your LiteLLM server URL</li>
+                                <li>llama.cpp: Your llama.cpp server URL (default: <code>http://localhost:8080</code>)</li>
+                            </ul>
+                        </li>
+                        <li>Select model (use your provider's model name)</li>
+                        <li>Test the connection</li>
+                    </ul>
+                </p>
+                <p><strong>Best for</strong>: Using LiteLLM, llama.cpp, Nebius, Groq, or other OpenAI-compatible services</p>
             </div>
 
             <div class="engine-card">
-                <h4>5. Wyoming Protocol</h4>
-                <span class="engine-type type-local">Local streaming</span>
-                <span class="engine-type type-free">Free</span>
-                <p><strong>Type</strong>: Local streaming transcription<br>
-                <strong>Cost</strong>: Free (requires your own server)<br>
-                <strong>Privacy</strong>: 100% local<br>
-                <strong>Internet</strong>: Not required for processing</p>
-                <p><strong>Best for</strong>: Real-time transcription</p>
+                <h4>5. Mistral AI</h4>
+                <span class="engine-type type-cloud">Cloud-based</span>
+                <span class="engine-type type-paid">Pay-per-use</span>
+                <p><strong>Type</strong>: Cloud-based AI processing<br>
+                <strong>Cost</strong>: Pay-per-use<br>
+                <strong>Privacy</strong>: Data sent to Mistral AI<br>
+                <strong>Internet</strong>: Required</p>
+                <p><strong>Setup</strong>:
+                    <ul>
+                        <li>Go to Settings → AI Settings → Mistral AI</li>
+                        <li>Enter your Mistral API key</li>
+                        <li>Select model (Mistral Medium, Large, etc.)</li>
+                        <li>Test the connection</li>
+                    </ul>
+                </p>
+                <p><strong>Best for</strong>: Fast, high-quality summaries using Mistral's optimized models</p>
             </div>
 
             <div class="engine-card">
-                <h4>6. Ollama Integration</h4>
-                <span class="engine-type type-local">Local AI</span>
-                <span class="engine-type type-free">Free</span>
-                <p><strong>Type</strong>: Local AI processing<br>
-                <strong>Cost</strong>: Free<br>
-                <strong>Privacy</strong>: 100% local<br>
-                <strong>Internet</strong>: Not required for processing</p>
-                <p><strong>Best for</strong>: Privacy, customizable models</p>
-            </div>
-
-            <div class="engine-card">
-                <h4>7. AWS Bedrock</h4>
+                <h4>6. AWS Bedrock</h4>
                 <span class="engine-type type-cloud">Cloud-based</span>
                 <span class="engine-type type-paid">Pay-per-use</span>
                 <p><strong>Type</strong>: Cloud-based AI<br>
@@ -566,15 +767,26 @@
             </div>
 
             <div class="engine-card">
-                <h4>8. AWS Transcribe</h4>
-                <span class="engine-type type-cloud">Cloud-based</span>
-                <span class="engine-type type-paid">Pay-per-use</span>
-                <p><strong>Type</strong>: Cloud-based transcription<br>
-                <strong>Cost</strong>: Pay-per-use<br>
-                <strong>Privacy</strong>: Data sent to AWS<br>
-                <strong>Internet</strong>: Required</p>
-                <p><strong>Best for</strong>: Large file processing</p>
+                <h4>7. Ollama</h4>
+                <span class="engine-type type-local">Local AI</span>
+                <span class="engine-type type-free">Free</span>
+                <p><strong>Type</strong>: Local LLM server<br>
+                <strong>Cost</strong>: Free (requires your own server)<br>
+                <strong>Privacy</strong>: 100% local<br>
+                <strong>Internet</strong>: Not required for processing</p>
+                <p><strong>Setup</strong>:
+                    <ul>
+                        <li>Install Ollama server on your local machine or network</li>
+                        <li>Go to Settings → AI Settings → Ollama</li>
+                        <li>Set server URL (default: <code>http://localhost</code>)</li>
+                        <li>Set port (default: 11434)</li>
+                        <li>Select model (llama2:7b, qwen3:30b, etc.)</li>
+                        <li>Test the connection</li>
+                    </ul>
+                </p>
+                <p><strong>Best for</strong>: Privacy, customizable models, offline use</p>
             </div>
+
         </div>
 
         <h3>Setup Instructions for Each Engine</h3>
@@ -605,21 +817,21 @@
             </thead>
             <tbody>
                 <tr>
-                    <td><strong>GPT-41</strong></td>
+                    <td><strong>GPT-4.1</strong></td>
                     <td>Summarization</td>
                     <td>Most powerful, best quality</td>
                 </tr>
                 <tr>
-                    <td><strong>GPT-41 Mini</strong></td>
+                    <td><strong>GPT-4.1 Mini</strong></td>
                     <td>Summarization</td>
                     <td>Fast and economical</td>
                 </tr>
                 <tr>
-                    <td><strong>GPT-41 Nano</strong></td>
+                    <td><strong>GPT-4.1 Nano</strong></td>
                     <td>Summarization</td>
                     <td>Fastest and most economical</td>
                 </tr>
-                
+
             </tbody>
         </table>
 
@@ -638,39 +850,98 @@
             </li>
         </ol>
 
-        <h4>Whisper Integration (Local Server)</h4>
+        <h4>OpenAI API Compatible Integration</h4>
+        <div class="info-box">
+            <h4>📌 Important Note</h4>
+            <p><strong>OpenAI API Compatible is a single engine option</strong> that works with multiple providers. You don't select Nebius, Groq, LiteLLM, or vLLM as separate engines - instead, you configure the "OpenAI API Compatible" option with your chosen provider's settings.</p>
+        </div>
         <ol class="step-list">
-            <li><strong>Install Whisper Server</strong>: 
-                <pre><code># Using Docker (recommended)
-docker run -d -p 9000:9000 \
-  -e ASR_MODEL=base \
-  -e ASR_ENGINE=openai_whisper \
-  onerahmet/openai-whisper-asr-webservice:latest</code></pre>
+            <li><strong>Choose Your Provider</strong>: Select one of these OpenAI-compatible services:
+                <ul>
+                    <li><strong>LiteLLM</strong>: Open-source proxy for multiple providers
+                        <ul>
+                            <li>Base URL: Your LiteLLM server URL (e.g., <code>http://localhost:4000/v1</code>)</li>
+                            <li>Get API key from your LiteLLM configuration</li>
+                            <li>Documentation: <a href="https://github.com/BerriAI/litellm" target="_blank">github.com/BerriAI/litellm</a></li>
+                        </ul>
+                    </li>
+                    <li><strong>llama.cpp</strong>: High-performance local LLM inference server
+                        <ul>
+                            <li>Base URL: Your llama.cpp server URL (default: <code>http://localhost:8080</code>)</li>
+                            <li>API key: Use "no-key" or leave empty for local servers</li>
+                            <li>Installation: Clone from <a href="https://github.com/ggerganov/llama.cpp" target="_blank">github.com/ggerganov/llama.cpp</a>, build with <code>make</code>, then run <code>./server --model &lt;model_file&gt;</code></li>
+                            <li>Documentation: See <a href="https://github.com/ggerganov/llama.cpp" target="_blank">llama.cpp README</a> for full setup instructions</li>
+                            <li>Alternative: Use <code>llama-cpp-python</code> with <code>pip install 'llama-cpp-python[server]'</code> and run <code>python3 -m llama_cpp.server --model /path/to/model.gguf</code></li>
+                        </ul>
+                    </li>
+                    <li><strong>Nebius</strong>: Cloud provider with OpenAI-compatible API
+                        <ul>
+                            <li>Base URL: Your Nebius endpoint URL</li>
+                            <li>Get API key from Nebius console</li>
+                        </ul>
+                    </li>
+                    <li><strong>Groq</strong>: Fast inference with OpenAI-compatible API
+                        <ul>
+                            <li>Base URL: <code>https://api.groq.com/v1</code></li>
+                            <li>Get API key from <a href="https://console.groq.com" target="_blank">console.groq.com</a></li>
+                        </ul>
+                    </li>
+                    <li><strong>Custom Server</strong>: Your own OpenAI-compatible endpoint
+                        <ul>
+                            <li>Base URL: Your server's endpoint URL</li>
+                            <li>API key: As configured on your server</li>
+                        </ul>
+                    </li>
+                </ul>
             </li>
+            <li><strong>Get API Key</strong>: Obtain an API key from your chosen provider (if required)</li>
             <li><strong>Configure in App</strong>:
                 <ul>
-                    <li>Go to Settings → Transcription Settings → Whisper</li>
-                    <li>Set server URL (e.g., <code>http://localhost</code> or <code>http://192.168.1.100</code>)</li>
-                    <li>Set port (default: 9000)</li>
-                    <li>Select model size (tiny, base, small, medium, large-v3)</li>
+                    <li>Go to Settings → AI Settings → OpenAI API Compatible</li>
+                    <li>Enter your API key (from your chosen provider)</li>
+                    <li>Set base URL to your provider's endpoint (see examples above)</li>
+                    <li>Select model (use your provider's exact model name, e.g., <code>llama-3.1-70b-versatile</code> for Groq)</li>
+                    <li>Configure temperature and max tokens</li>
                     <li>Test the connection</li>
                 </ul>
             </li>
         </ol>
+        <div class="info-box">
+            <h4>💡 OpenAI Compatible Tips</h4>
+            <ul>
+                <li><strong>Single Engine Option</strong>: All providers (Nebius, Groq, LiteLLM, llama.cpp) use the same "OpenAI API Compatible" engine option - just change the base URL and API key</li>
+                <li><strong>Base URL Examples</strong>:
+                    <ul>
+                        <li>Groq: <code>https://api.groq.com/v1</code></li>
+                        <li>Local llama.cpp: <code>http://localhost:8080</code> (default port)</li>
+                        <li>Local LiteLLM: <code>http://localhost:4000/v1</code></li>
+                        <li>Nebius: Your Nebius endpoint URL</li>
+                    </ul>
+                </li>
+                <li><strong>Model Names</strong>: Use the exact model name your provider supports (e.g., Groq uses names like <code>llama-3.1-70b-versatile</code>, not <code>gpt-4o</code>)</li>
+                <li><strong>Local Servers</strong>: For local servers (llama.cpp, LiteLLM), ensure your device can reach the server IP address</li>
+                <li><strong>llama.cpp Setup</strong>: 
+                    <ul>
+                        <li>Native server: Clone <a href="https://github.com/ggerganov/llama.cpp" target="_blank">llama.cpp</a>, build with <code>make</code>, run <code>./server --model &lt;model.gguf&gt;</code></li>
+                        <li>Python server: Install with <code>pip install 'llama-cpp-python[server]'</code>, run <code>python3 -m llama_cpp.server --model /path/to/model.gguf</code></li>
+                        <li>Default port is 8080, API key can be "no-key" or empty</li>
+                    </ul>
+                </li>
+                <li><strong>Transcription</strong>: OpenAI API Compatible is also available for transcription in Settings → Transcription Settings</li>
+            </ul>
+        </div>
 
-        <h4>Wyoming Protocol Integration</h4>
+        <h4>Mistral AI Integration</h4>
         <ol class="step-list">
-            <li><strong>Install Wyoming Server</strong>:
-                <pre><code># Using Docker
-docker run -d -p 10300:10300 \
-  --name wyoming-whisper \
-  rhasspy/wyoming-whisper:latest</code></pre>
-            </li>
+            <li><strong>Get API Key</strong>: Visit <a href="https://console.mistral.ai" target="_blank">console.mistral.ai</a></li>
+            <li><strong>Create Account</strong>: Sign up for a Mistral AI account</li>
+            <li><strong>Generate API Key</strong>: Create a new API key in your account settings</li>
             <li><strong>Configure in App</strong>:
                 <ul>
-                    <li>Go to Settings → Transcription Settings</li>
-                    <li>Select "Whisper (Wyoming Protocol)"</li>
-                    <li>Set server URL and port (default: 10300)</li>
+                    <li>Go to Settings → AI Settings → Mistral AI</li>
+                    <li>Enter your API key</li>
+                    <li>Select model (Mistral Medium, Large, etc.)</li>
+                    <li>Configure temperature and other parameters</li>
                     <li>Test the connection</li>
                 </ul>
             </li>
@@ -678,22 +949,38 @@ docker run -d -p 10300:10300 \
 
         <h4>Ollama Integration</h4>
         <ol class="step-list">
-            <li><strong>Install Ollama</strong>: Visit <a href="https://ollama.com" target="_blank">ollama.com</a></li>
+            <li><strong>Install Ollama</strong>: Visit <a href="https://ollama.com" target="_blank">ollama.com</a> and install Ollama on your local machine or server</li>
             <li><strong>Download Recommended Models</strong>:
-                <pre><code>ollama pull qwen3:30b</code></pre>
+                <pre><code>ollama pull qwen3:30b
+ollama pull gpt-oss:20b
+ollama pull mistral-small3.2</code></pre>
             </li>
             <li><strong>Configure in App</strong>:
                 <ul>
                     <li>Go to Settings → AI Settings → Ollama</li>
-                    <li>Set server URL (default: <code>http://localhost:11434</code>)</li>
+                    <li>Set server URL (default: <code>http://localhost</code> for local, or your server's IP address)</li>
                     <li>Set port (default: 11434)</li>
+                    <li><strong>Run a Model Scan</strong>: Tap the refresh button to scan your Ollama server for available models</li>
                     <li>Select your preferred model:
-                        <strong>Recommended</strong>: qwen3:30b, gpt-oss:20b, magistral
+                        <ul>
+                            <li><strong>Recommended</strong>: qwen3:30b, gpt-oss:20b, mistral-small3.2</li>
+                            <li>Available models will be fetched from your Ollama server</li>
+                        </ul>
                     </li>
+                    <li>Configure temperature and max tokens</li>
                     <li>Test the connection</li>
                 </ul>
             </li>
         </ol>
+        <div class="info-box">
+            <h4>💡 Ollama Tips</h4>
+            <ul>
+                <li><strong>Local Server</strong>: Use <code>http://localhost:11434</code> if Ollama is running on the same device</li>
+                <li><strong>Network Server</strong>: Use your server's IP address (e.g., <code>http://192.168.1.100:11434</code>)</li>
+                <li><strong>Model Scan</strong>: Always run a model scan after connecting to fetch the list of models installed on your Ollama server</li>
+                <li><strong>Performance</strong>: Larger models provide better results but require more RAM and processing time</li>
+            </ul>
+        </div>
 
         <h4>AWS Bedrock Integration</h4>
         <ol class="step-list">
@@ -712,24 +999,105 @@ docker run -d -p 10300:10300 \
             </li>
         </ol>
 
+        <h4>Whisper Integration (Local Server)</h4>
+        <ol class="step-list">
+            <li><strong>Install Whisper Server</strong>: 
+                <pre><code># Using Docker (recommended)
+docker run -d -p 9000:9000 \
+  -e ASR_MODEL=base \
+  -e ASR_ENGINE=openai_whisper \
+  onerahmet/openai-whisper-asr-webservice:latest</code></pre>
+            </li>
+            <li><strong>Configure in App</strong>:
+                <ul>
+                    <li>Go to Settings → Transcription Settings → Whisper (Local Server)</li>
+                    <li>Set server URL (e.g., <code>http://localhost</code> or <code>http://192.168.1.100</code>)</li>
+                    <li>Set port (default: 9000)</li>
+                    <li>Select protocol (REST API or Wyoming)</li>
+                    <li>Select model size (tiny, base, small, medium, large-v3)</li>
+                    <li>Test the connection</li>
+                </ul>
+            </li>
+        </ol>
+        <div class="info-box">
+            <h4>💡 Whisper Protocol Options</h4>
+            <ul>
+                <li><strong>REST API</strong>: Traditional HTTP REST API with file uploads</li>
+                <li><strong>Wyoming</strong>: Modern streaming protocol with WebSocket connection</li>
+            </ul>
+        </div>
+
         <h4>AWS Transcribe Integration</h4>
         <ol class="step-list">
             <li><strong>AWS Account</strong>: Create an AWS account</li>
-            <li><strong>Enable Transcribe</strong>: Enable AWS Transcribe service</li>
+            <li><strong>Enable Transcribe</strong>: Enable AWS Transcribe service in your AWS console</li>
             <li><strong>Create IAM User</strong>: Create user with Transcribe permissions</li>
             <li><strong>Get Credentials</strong>: Generate access keys</li>
             <li><strong>Configure in App</strong>:
                 <ul>
                     <li>Go to Settings → Transcription Settings → AWS Transcribe</li>
-                    <li>Enter AWS credentials</li>
-                    <li>Select region</li>
+                    <li>Enter AWS access key ID</li>
+                    <li>Enter AWS secret access key</li>
+                    <li>Select region (e.g., us-east-1, eu-west-1)</li>
                     <li>Choose language</li>
                     <li>Test the connection</li>
                 </ul>
             </li>
         </ol>
+        <div class="info-box">
+            <h4>💡 AWS Transcribe Tips</h4>
+            <ul>
+                <li><strong>IAM Permissions</strong>: Ensure your IAM user has <code>transcribe:StartTranscriptionJob</code> and <code>transcribe:GetTranscriptionJob</code> permissions</li>
+                <li><strong>Regions</strong>: Choose a region close to you for better performance</li>
+                <li><strong>Cost</strong>: AWS Transcribe charges per minute of audio transcribed</li>
+            </ul>
+        </div>
+
+        <h4>On-Device AI Setup</h4>
+        <ol class="step-list">
+            <li><strong>Select On-Device AI</strong>: Choose "On-Device AI" in the simple settings page</li>
+            <li><strong>Download Transcription Model</strong>: 
+                <ul>
+                    <li>You'll be prompted to configure On Device transcription</li>
+                    <li>Go to Settings → Transcription Settings → On Device</li>
+                    <li>Download either "Higher Quality" (~520MB) or "Faster Processing" (~150MB) model</li>
+                    <li>See <a href="#on-device-transcription-setup">On Device Transcription Setup</a> section above for detailed model selection guide</li>
+                </ul>
+            </li>
+            <li><strong>Download AI Summary Models</strong>: After saving, you'll be taken to the On-Device AI settings page:
+                <ul>
+                    <li>Select one or more AI summary models to download</li>
+                    <li>Available models:
+                        <ul>
+                            <li><strong>Gemma 3n E4B</strong> (Default): 3.09 GB, 32K context window</li>
+                            <li><strong>Qwen3 4B</strong>: 2.72 GB, 32K context window</li>
+                            <li><strong>Phi-4 Mini</strong>: 2.49 GB, 16K context window</li>
+                            <li><strong>Ministral 3B</strong>: ~2.15 GB, 32K context window</li>
+                        </ul>
+                    </li>
+                    <li>Download progress is shown with speed and time remaining</li>
+                </ul>
+            </li>
+            <li><strong>Model Selection</strong>: Choose which model to use for summaries</li>
+            <li><strong>Configuration</strong>: Adjust generation settings (temperature, max tokens, etc.)</li>
+            <li><strong>Transcription</strong>: Uses On Device transcription (requires model download as described above)</li>
+        </ol>
+        <div class="info-box">
+            <h4>💾 Storage Requirements</h4>
+            <p>On-Device AI requires 2-3GB of storage per AI summary model, plus 150-520MB for the On Device transcription model. Make sure you have sufficient free space before downloading models.</p>
+            <h4>📱 Device Requirements</h4>
+            <ul>
+                <li><strong>Transcription</strong>: iOS 17.0+, 4GB+ RAM (most modern iPhones and iPads)</li>
+                <li><strong>AI Summary</strong>: iPhone 15 Pro, iPhone 16 or newer, iOS 18.1+ (requires more processing power)</li>
+            </ul>
+        </div>
 
         <h2 id="transcription-configuration">📝 Transcription Configuration</h2>
+        
+        <div class="info-box">
+            <h3>🔒 On Device Transcription</h3>
+            <p>For complete privacy, use On Device transcription. Your audio is processed entirely on your device and never leaves your iPhone or iPad. See the <a href="#on-device-transcription-setup">On Device Transcription Setup</a> section below for complete setup instructions.</p>
+        </div>
 
         <h3>Engine Selection</h3>
         <ol class="step-list">
@@ -739,14 +1107,135 @@ docker run -d -p 10300:10300 \
             <li>Test the connection</li>
         </ol>
 
-        <h3>Available Engines</h3>
+        <h3>Available Transcription Engines</h3>
         <ul>
-            <li><strong>Apple Intelligence</strong>: On-device, no setup required</li>
-            <li><strong>OpenAI</strong>: Cloud-based, requires API key</li>
-            <li><strong>Whisper (Local)</strong>: Local server, requires setup</li>
-            <li><strong>Whisper (Wyoming)</strong>: Local streaming, requires setup</li>
-            <li><strong>AWS Transcribe</strong>: Cloud-based, requires AWS account</li>
+            <li><strong>On Device</strong>: High-quality on-device transcription. Your audio never leaves your device, ensuring complete privacy. Requires model download (~150-520MB). Best for privacy-conscious users.</li>
+            <li><strong>OpenAI</strong>: Cloud-based, requires API key, high-quality transcription</li>
+            <li><strong>Whisper (Local Server)</strong>: High-quality transcription using OpenAI's Whisper model on your local server (REST API or Wyoming protocol)</li>
+            <li><strong>AWS Transcribe</strong>: Cloud-based transcription service with support for long audio files</li>
         </ul>
+
+        <h3 id="on-device-transcription-setup">On Device Transcription Setup</h3>
+        <div class="info-box">
+            <h4>🔒 Privacy-First Transcription</h4>
+            <p>On Device transcription processes your audio entirely on your device. Your audio files never leave your iPhone or iPad, ensuring complete privacy and security.</p>
+        </div>
+        
+        <h4>Initial Setup</h4>
+        <ol class="step-list">
+            <li><strong>Enable On Device</strong>:
+                <ul>
+                    <li>Go to Settings → Transcription Settings</li>
+                    <li>Select "On Device" as your transcription engine</li>
+                    <li>Tap "Configure" to open On Device settings</li>
+                </ul>
+            </li>
+            <li><strong>Download a Model</strong>:
+                <ul>
+                    <li>In On Device settings, you'll see two model options:
+                        <ul>
+                            <li><strong>Higher Quality</strong> (~520MB): Best accuracy and quality. Takes longer to process but produces more accurate transcriptions.</li>
+                            <li><strong>Faster Processing</strong> (~150MB): Faster transcription with good quality. Ideal for quick transcriptions with slightly lower accuracy.</li>
+                        </ul>
+                    </li>
+                    <li>Tap the download button next to your preferred model</li>
+                    <li>Wait for download to complete (progress is shown with speed and time remaining)</li>
+                    <li>Model download requires internet connection, but transcription works offline after download</li>
+                </ul>
+            </li>
+            <li><strong>Device Requirements</strong>:
+                <ul>
+                    <li><strong>RAM</strong>: Requires 4GB+ RAM (most modern iPhones and iPads)</li>
+                    <li><strong>iOS</strong>: iOS 17.0 or later</li>
+                    <li><strong>Storage</strong>: 150-520MB free space depending on model selected</li>
+                </ul>
+            </li>
+            <li><strong>Test the Model</strong>:
+                <ul>
+                    <li>Once downloaded, tap "Test Model Loading" to verify it works</li>
+                    <li>First load may take 30-60 seconds as the model compiles</li>
+                    <li>If you see errors, try deleting and re-downloading the model</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h4>Model Selection Guide</h4>
+        <div class="info-box">
+            <h4>📋 Which Model Should I Use?</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Use Case</th>
+                        <th>Recommended Model</th>
+                        <th>Why?</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Voice Notes / Journaling</strong></td>
+                        <td>Faster Processing</td>
+                        <td>You are close to the mic; audio is clear. Speed is better.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Meeting / Interview</strong></td>
+                        <td>Higher Quality</td>
+                        <td>Handling multiple voices and distance from the mic requires the extra accuracy.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Noisy Environment</strong></td>
+                        <td>Higher Quality</td>
+                        <td>Faster Processing will fail to separate voice from noise.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Long Battery Life Needed</strong></td>
+                        <td>Faster Processing</td>
+                        <td>Higher Quality uses significantly more power per second of audio.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h4>Using On Device Transcription</h4>
+        <ol class="step-list">
+            <li><strong>Record Audio</strong>: Create a recording as usual</li>
+            <li><strong>Generate Transcript</strong>: 
+                <ul>
+                    <li>Open your recording</li>
+                    <li>Tap "Generate Transcript"</li>
+                    <li>On Device transcription will process your audio locally</li>
+                </ul>
+            </li>
+            <li><strong>Processing Time</strong>:
+                <ul>
+                    <li><strong>Faster Processing</strong>: Approximately 3x faster than Higher Quality</li>
+                    <li><strong>Higher Quality</strong>: Takes longer but produces more accurate results</li>
+                    <li>Processing time depends on audio length and device performance</li>
+                </ul>
+            </li>
+            <li><strong>View Results</strong>: Once complete, your transcript appears with full text and timestamps</li>
+        </ol>
+
+        <div class="success-box">
+            <h4>✅ Benefits of On Device Transcription</h4>
+            <ul>
+                <li><strong>Complete Privacy</strong>: Your audio never leaves your device</li>
+                <li><strong>Works Offline</strong>: No internet required after model download</li>
+                <li><strong>No API Costs</strong>: Free to use after initial model download</li>
+                <li><strong>Fast Processing</strong>: Especially with "Faster Processing" model</li>
+                <li><strong>High Quality</strong>: Excellent accuracy with "Higher Quality" model</li>
+            </ul>
+        </div>
+
+        <div class="warning-box">
+            <h4>⚠️ Important Notes</h4>
+            <ul>
+                <li><strong>Model Download</strong>: Requires internet connection and sufficient storage space</li>
+                <li><strong>First Load</strong>: First transcription after download may take 30-60 seconds as the model compiles</li>
+                <li><strong>Device Compatibility</strong>: Some older devices may not support On Device transcription</li>
+                <li><strong>Battery Usage</strong>: Higher Quality model uses more battery than Faster Processing</li>
+                <li><strong>Storage</strong>: Models take 150-520MB of storage space</li>
+            </ul>
+        </div>
 
         <h3>Large File Processing</h3>
         <ul>
@@ -832,20 +1321,102 @@ docker run -d -p 10300:10300 \
 
         <h2 id="settings-configuration">⚙️ Settings & Configuration</h2>
 
+        <h3 id="simple-vs-advanced-settings">Simple Settings vs Advanced Settings</h3>
+        <div class="info-box">
+            <h4>🎯 Understanding the Two Settings Interfaces</h4>
+            <p>BisonNotes AI has two settings interfaces designed for different use cases:</p>
+        </div>
+        
+        <h4>Simple Settings Page</h4>
+        <p>The simple settings page appears on first launch and provides quick setup for the most common configurations:</p>
+        <ul>
+            <li><strong>Automatic Detection</strong>: The page automatically detects your current configuration:
+                <ul>
+                    <li>If both AI engine and transcription are set to "OpenAI" → Shows "OpenAI" option</li>
+                    <li>If AI engine is "On-Device AI" and transcription is "On Device" → Shows "On-Device AI" option</li>
+                    <li>Any other configuration → Automatically shows "Advanced & Other Options"</li>
+                </ul>
+            </li>
+            <li><strong>Preserves Settings</strong>: If you manually switch to "Advanced & Other Options", your current settings are preserved (not reset to blank)</li>
+            <li><strong>Quick Access</strong>: Tap "Advanced Options" button to access full settings at any time</li>
+            <li><strong>Immediate Action</strong>: 
+                <ul>
+                    <li>Selecting "OpenAI" → Enter API key and save</li>
+                    <li>Selecting "On-Device AI" → Saves and immediately opens On-Device AI settings to download models</li>
+                    <li>Selecting "Advanced & Other Options" → Saves and immediately opens advanced settings page</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h4>Advanced Settings Page</h4>
+        <p>The advanced settings page provides full control over all configuration options:</p>
+        <ul>
+                    <li><strong>AI Processing</strong>: Configure AI summarization engines
+                <ul>
+                    <li>On-Device AI</li>
+                    <li>OpenAI</li>
+                    <li>Google AI Studio</li>
+                    <li>AWS Bedrock</li>
+                    <li>Mistral AI</li>
+                    <li>OpenAI API Compatible</li>
+                    <li>Ollama</li>
+                </ul>
+            </li>
+            <li><strong>Transcription Engine</strong>: Configure transcription engines
+                <ul>
+                    <li>On Device</li>
+                    <li>OpenAI</li>
+                    <li>Whisper (Local Server)</li>
+                    <li>AWS Transcribe</li>
+                    <li>OpenAI API Compatible</li>
+                </ul>
+            </li>
+            <li><strong>Microphone Selection</strong>: Choose from available microphones (appears below AI and Transcription sections)</li>
+            <li><strong>Preferences</strong>: Display preferences, time format, etc.</li>
+            <li><strong>Advanced Settings</strong>: Location services, iCloud sync, background processing</li>
+        </ul>
+
+        <div class="info-box">
+            <h4>🔄 Switching Between Simple and Advanced</h4>
+            <ul>
+                <li><strong>From Simple to Advanced</strong>: Tap "Advanced Options" button in the top right</li>
+                <li><strong>From Advanced to Simple</strong>: The simple settings page automatically detects your configuration when you return to it</li>
+                <li><strong>Automatic Updates</strong>: If you change settings in advanced options, the simple settings page will automatically switch to "Advanced & Other Options" when you return</li>
+            </ul>
+        </div>
+
         <h3>Audio Settings</h3>
         <ul>
-            <li><strong>Quality</strong>: Low (64kbps), Medium (128kbps), High (256kbps)</li>
-            <li><strong>Input Selection</strong>: Built-in mic, Bluetooth, USB devices</li>
+            <li><strong>Quality</strong>: Whisper Optimized (22 kHz, 64 kbps AAC) - Optimized for voice transcription</li>
+            <li><strong>Microphone Selection</strong>: 
+                <ul>
+                    <li>Choose from available microphones (built-in, Bluetooth, USB devices)</li>
+                    <li>Your selection is saved and used for all recordings</li>
+                    <li>If selected microphone becomes unavailable, automatically falls back to iOS default</li>
+                    <li>During recording, if microphone disconnects, recording continues with default microphone</li>
+                </ul>
+            </li>
             <li><strong>Mixed Audio</strong>: Record without interrupting system audio</li>
             <li><strong>Background Recording</strong>: Continue recording when app is minimized</li>
         </ul>
 
         <h3>AI Settings</h3>
         <ul>
-            <li><strong>Engine Selection</strong>: Choose your preferred AI engine</li>
-            <li><strong>Model Configuration</strong>: Adjust settings for selected engine</li>
+            <li><strong>Engine Selection</strong>: Choose your preferred AI engine for summaries:
+                <ul>
+                    <li><strong>On-Device AI</strong>: Privacy-focused local AI processing</li>
+                    <li><strong>OpenAI</strong>: Cloud-based AI with GPT models</li>
+                    <li><strong>Google AI Studio</strong>: Gemini AI processing</li>
+                    <li><strong>AWS Bedrock</strong>: Enterprise-grade Claude AI</li>
+                    <li><strong>Mistral AI</strong>: Advanced AI processing with Mistral models</li>
+                    <li><strong>OpenAI API Compatible</strong>: Connect to OpenAI-compatible endpoints (LiteLLM, llama.cpp, Nebius, Groq, etc.)</li>
+                    <li><strong>Ollama</strong>: Local LLM server for privacy-focused processing</li>
+                </ul>
+            </li>
+            <li><strong>Model Configuration</strong>: Adjust settings for selected engine (temperature, max tokens, etc.)</li>
             <li><strong>Connection Testing</strong>: Verify API connectivity</li>
             <li><strong>Batch Regeneration</strong>: Update all summaries with new engine</li>
+            <li><strong>Note</strong>: Apple Intelligence is no longer available as an AI engine option. Use On-Device AI for local processing.</li>
         </ul>
 
         <h3>Background Processing</h3>
@@ -917,6 +1488,7 @@ docker run -d -p 10300:10300 \
         <h3>File Management</h3>
         <ul>
             <li><strong>Import/Export</strong>: Support for various audio formats</li>
+            <li><strong>Combining Recordings</strong>: Merge two recordings into one continuous file (see <a href="#combining-recordings">Combining Recordings</a> section)</li>
             <li><strong>File Relationships</strong>: Maintains connections between audio, transcripts, and summaries</li>
             <li><strong>Orphaned File Detection</strong>: Identifies and manages disconnected files</li>
             <li><strong>Selective Deletion</strong>: Choose what to keep when deleting recordings</li>
@@ -986,11 +1558,21 @@ docker run -d -p 10300:10300 \
             <li><strong>AWS Transcribe</strong>: <a href="https://docs.aws.amazon.com/transcribe" target="_blank">docs.aws.amazon.com/transcribe</a></li>
         </ul>
 
-        <h3>Local Server Setup</h3>
+        <h3>Additional Resources</h3>
         <ul>
-            <li><strong>Whisper ASR</strong>: <a href="https://github.com/ahmetoner/whisper-asr-webservice" target="_blank">github.com/ahmetoner/whisper-asr-webservice</a></li>
-            <li><strong>Wyoming Protocol</strong>: <a href="https://github.com/rhasspy/wyoming" target="_blank">github.com/rhasspy/wyoming</a></li>
+            <li><strong>Mistral AI</strong>: <a href="https://docs.mistral.ai" target="_blank">docs.mistral.ai</a></li>
             <li><strong>Ollama</strong>: <a href="https://ollama.com" target="_blank">ollama.com</a></li>
+            <li><strong>OpenAI API Compatible</strong>:
+                <ul>
+                    <li><strong>LiteLLM</strong>: <a href="https://github.com/BerriAI/litellm" target="_blank">github.com/BerriAI/litellm</a></li>
+                    <li><strong>llama.cpp</strong>: <a href="https://github.com/ggerganov/llama.cpp" target="_blank">github.com/ggerganov/llama.cpp</a> - Official repository with installation and server setup instructions</li>
+                    <li><strong>llama-cpp-python</strong>: <a href="https://llama-cpp-python.readthedocs.io/en/latest/server/" target="_blank">llama-cpp-python.readthedocs.io</a> - Python bindings with server support</li>
+                    <li><strong>Nebius</strong>: <a href="https://nebius.com" target="_blank">nebius.com</a></li>
+                    <li><strong>Groq</strong>: <a href="https://groq.com" target="_blank">groq.com</a></li>
+                </ul>
+            </li>
+            <li><strong>Whisper</strong>: <a href="https://github.com/ahmetoner/whisper-asr-webservice" target="_blank">github.com/ahmetoner/whisper-asr-webservice</a></li>
+            <li><strong>AWS Transcribe</strong>: <a href="https://aws.amazon.com/transcribe/" target="_blank">aws.amazon.com/transcribe/</a></li>
         </ul>
 
         <h3>Support</h3>

@@ -18,6 +18,11 @@ struct ContentView: View {
     @State private var isFirstLaunch = false
     @State private var showingLocationPermission = false
     @State private var pendingActionButtonRecording = false
+    @State private var showingAppleIntelligenceMigrationAlert = false
+    @State private var showingOnDeviceLLMSettings = false
+    @State private var showingWhisperKitMigrationAlert = false
+    @State private var showingWhisperKitSettings = false
+    @StateObject private var downloadMonitor = OnDeviceAIDownloadMonitor.shared
     
     var body: some View {
         Group {
@@ -74,6 +79,38 @@ struct ContentView: View {
                     }
                 } message: {
                     Text("We use your location to log where each recording happens, helping you organize and revisit your audio notes with helpful context.")
+                }
+                .alert("Apple Intelligence Has Been Removed", isPresented: $showingAppleIntelligenceMigrationAlert) {
+                    Button("Configure On-Device AI") {
+                        showingOnDeviceLLMSettings = true
+                    }
+                } message: {
+                    Text("Apple Intelligence has been removed from the app. Your settings have been automatically updated to use On-Device AI, which provides similar functionality. Please download an AI model to continue using on-device AI processing.")
+                }
+                .sheet(isPresented: $showingOnDeviceLLMSettings) {
+                    NavigationView {
+                        OnDeviceLLMSettingsView()
+                    }
+                }
+                .alert("Transcription Engine Updated", isPresented: $showingWhisperKitMigrationAlert) {
+                    Button("Download Model") {
+                        showingWhisperKitSettings = true
+                    }
+                    Button("Later", role: .cancel) { }
+                } message: {
+                    Text("Apple Transcription has been replaced with WhisperKit, a high-quality on-device transcription engine. Please download the WhisperKit model (~950MB) to continue transcribing audio.")
+                }
+                .sheet(isPresented: $showingWhisperKitSettings) {
+                    NavigationStack {
+                        WhisperKitSettingsView()
+                    }
+                }
+                .alert("Download Complete", isPresented: $downloadMonitor.showingCompletionAlert) {
+                    Button("OK") {
+                        downloadMonitor.reset()
+                    }
+                } message: {
+                    Text(downloadMonitor.completionMessage)
                 }
             }
         } else {
@@ -163,8 +200,6 @@ struct ContentView: View {
                         
                         if totalCleaned > 0 {
                             print("✅ Cleaned up \(totalCleaned) orphaned records (\(cleanedCount) orphaned, \(fixedCount) incomplete deletions, \(missingFileCount) missing files)")
-                        } else {
-                            print("ℹ️ No orphaned records found")
                         }
                         
                         // Check if any recordings have transcripts in Core Data
@@ -200,6 +235,22 @@ struct ContentView: View {
                             UserDefaults.standard.set(true, forKey: "hasAskedLocationPermission")
                         }
                     }
+                    
+                    // Check if we need to show Apple Intelligence migration alert
+                    if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showAppleIntelligenceMigrationAlert") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showingAppleIntelligenceMigrationAlert = true
+                            UserDefaults.standard.removeObject(forKey: "showAppleIntelligenceMigrationAlert")
+                        }
+                    }
+
+                    // Check if we need to show WhisperKit migration alert (Apple Transcription → WhisperKit)
+                    if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showWhisperKitMigrationSettings") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showingWhisperKitMigrationAlert = true
+                            UserDefaults.standard.removeObject(forKey: "showWhisperKitMigrationSettings")
+                        }
+                    }
                 } catch {
                     initializationError = error.localizedDescription
                     isInitialized = true // Still show the app even if there's an error
@@ -209,7 +260,6 @@ struct ContentView: View {
     }
 
     private func handleActionButtonLaunchIfNeeded() {
-        EnhancedLogger.shared.logDebug("ContentView: Checking for action button launch")
         if ActionButtonLaunchManager.consumeRecordingRequest() {
             print("📱 ContentView: Action button recording requested!")
             if isInitialized {
@@ -220,7 +270,6 @@ struct ContentView: View {
                 pendingActionButtonRecording = true
             }
         } else {
-            EnhancedLogger.shared.logDebug("ContentView: No action button recording request found")
         }
     }
 

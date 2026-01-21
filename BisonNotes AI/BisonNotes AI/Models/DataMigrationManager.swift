@@ -357,7 +357,7 @@ class DataMigrationManager: ObservableObject {
             summaryEntry.recordingId = recordingEntry.id
             summaryEntry.transcriptId = summary.transcriptId
             summaryEntry.generatedAt = summary.generatedAt
-            summaryEntry.aiMethod = summary.aiMethod
+            summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: summary.aiEngine, aiModel: summary.aiModel)
             summaryEntry.processingTime = summary.processingTime
             summaryEntry.confidence = summary.confidence
             summaryEntry.summary = summary.summary
@@ -480,7 +480,7 @@ class DataMigrationManager: ObservableObject {
                                 }
                                 
                                 summaryEntry.contentType = summary.contentType.rawValue
-                                summaryEntry.aiMethod = summary.aiMethod
+                                summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: summary.aiEngine, aiModel: summary.aiModel)
                                 summaryEntry.originalLength = Int32(summary.originalLength)
                                 summaryEntry.processingTime = summary.processingTime
                                 summaryEntry.recordingId = summary.recordingId
@@ -2134,9 +2134,6 @@ class DataMigrationManager: ObservableObject {
                     }
                     
                     // Keep summary - it's valuable without audio/transcript
-                    if recording.summary != nil {
-                        print("✅ Preserving summary (valuable without audio): \(recording.recordingName ?? "unknown")")
-                    }
                     
                     cleanedCount += 1
                 }

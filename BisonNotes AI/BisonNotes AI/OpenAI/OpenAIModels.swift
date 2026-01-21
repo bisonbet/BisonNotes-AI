@@ -69,16 +69,21 @@ struct OpenAISummarizationConfig: Equatable {
     let maxTokens: Int
     let timeout: TimeInterval
     let dynamicModelId: String? // For dynamic models not in the predefined enum
-    
-    static let `default` = OpenAISummarizationConfig(
-        apiKey: "",
-        model: .gpt41Mini,
-        baseURL: "https://api.openai.com/v1",
-        temperature: 0.1,
-        maxTokens: 2048,
-        timeout: 30.0,
-        dynamicModelId: nil
-    )
+
+    static var defaultTimeout: TimeInterval { SummarizationTimeouts.current() }
+    static let connectionTestTimeout: TimeInterval = 30.0
+
+    static var `default`: OpenAISummarizationConfig {
+        return OpenAISummarizationConfig(
+            apiKey: "",
+            model: .gpt41Mini,
+            baseURL: "https://api.openai.com/v1",
+            temperature: 0.1,
+            maxTokens: 2048,
+            timeout: OpenAISummarizationConfig.defaultTimeout,
+            dynamicModelId: nil
+        )
+    }
     
     var effectiveModelId: String {
         return dynamicModelId ?? model.rawValue

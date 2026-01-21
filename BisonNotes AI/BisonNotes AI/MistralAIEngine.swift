@@ -9,9 +9,14 @@ import Foundation
 import os.log
 
 class MistralAIEngine: SummarizationEngine, ConnectionTestable {
-    let name: String = "Mistral AI"
-    let description: String = "Summaries powered by Mistral's latest chat and reasoning models"
+    var name: String { "Mistral AI" }
+    var engineType: String { "Mistral AI" }
+    var description: String { "Advanced summarization using Mistral AI's optimized models." }
     let version: String = "1.0"
+    var metadataName: String {
+        let modelId = UserDefaults.standard.string(forKey: "mistralModel") ?? MistralAIModel.mistralMedium2508.rawValue
+        return MistralAIModel(rawValue: modelId)?.displayName ?? modelId
+    }
 
     private var service: MistralAISummarizationService?
     private var currentConfig: MistralAIConfig?
@@ -273,7 +278,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
             baseURL: baseURL,
             temperature: temperature > 0 ? temperature : 0.1,
             maxTokens: maxTokens > 0 ? maxTokens : model.maxTokens,
-            timeout: 45.0,
+            timeout: SummarizationTimeouts.current(),
             supportsJsonResponseFormat: supportsJsonResponseFormat
         )
 

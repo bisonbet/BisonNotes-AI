@@ -7,18 +7,19 @@
 
 import SwiftUI
 import UIKit
+import SafariServices
 
 enum ProcessingOption: String, CaseIterable {
     case openai = "OpenAI"
-    case appleIntelligence = "Apple Intelligence"
+    case onDeviceLLM = "On-Device AI"
     case chooseLater = "Choose Later"
 
     var displayName: String {
         switch self {
         case .openai:
             return "OpenAI (Cloud)"
-        case .appleIntelligence:
-            return "Apple Intelligence (On-Device)"
+        case .onDeviceLLM:
+            return "On-Device AI"
         case .chooseLater:
             return "Advanced & Other Options"
         }
@@ -28,8 +29,8 @@ enum ProcessingOption: String, CaseIterable {
         switch self {
         case .openai:
             return "Cloud-based transcription and AI summaries"
-        case .appleIntelligence:
-            return "Private, on-device processing (limited)"
+        case .onDeviceLLM:
+            return "Private, on-device AI processing"
         case .chooseLater:
             return "Configure additional providers later"
         }
@@ -49,6 +50,11 @@ struct SimpleSettingsView: View {
     @State private var saveSuccessful = false
     @State private var isFirstLaunch = false
     @State private var deviceSupported = false
+    @State private var showingOnDeviceLLMSettings = false
+    @State private var showingWhisperKitSettings = false
+    @State private var showingHelpDocumentation = false
+    @State private var showingOnDeviceAIDownload = false
+    @StateObject private var whisperKitManager = WhisperKitManager.shared
     
     var body: some View {
         NavigationView {
@@ -58,7 +64,7 @@ struct SimpleSettingsView: View {
                     processingOptionSection
                     if selectedOption == .openai {
                         apiKeySection
-                    } else if selectedOption == .appleIntelligence {
+                    } else if selectedOption == .onDeviceLLM {
                         appleIntelligenceInfoSection
                     } else if selectedOption == .chooseLater {
                         chooseLaterSection
@@ -77,9 +83,50 @@ struct SimpleSettingsView: View {
         }
         .onAppear {
             loadCurrentSettings()
-            deviceSupported = DeviceCompatibility.isAppleIntelligenceSupported
+            // Check if device supports On-Device LLM (requires 6GB+ RAM)
+            deviceSupported = DeviceCapabilities.supportsOnDeviceLLM
             // Check if this is first launch
             isFirstLaunch = !UserDefaults.standard.bool(forKey: "hasCompletedFirstSetup")
+        }
+        .onChange(of: showingAdvancedSettings) { oldValue, newValue in
+            // When advanced settings sheet is dismissed, reload settings to check if we need to switch options
+            if oldValue == true && newValue == false {
+                loadCurrentSettings()
+            }
+        }
+        .onChange(of: showingWhisperKitSettings) { oldValue, newValue in
+            // When WhisperKit settings is dismissed, check if model is ready and proceed to On-Device AI settings
+            if oldValue == true && newValue == false {
+                whisperKitManager.refreshModelStatus()
+                // If WhisperKit is now ready, show On-Device AI settings
+                if whisperKitManager.isModelReady && selectedOption == .onDeviceLLM {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        showingOnDeviceLLMSettings = true
+                    }
+                }
+            }
+        }
+        .onChange(of: showingOnDeviceAIDownload) { oldValue, newValue in
+            // When download view is dismissed, check if both models are ready and complete setup
+            if oldValue == true && newValue == false {
+                Task { @MainActor in
+                    whisperKitManager.refreshModelStatus()
+                    OnDeviceLLMDownloadManager.shared.refreshModelStatus()
+                    
+                    let whisperKitReady = whisperKitManager.isModelReady
+                    let onDeviceAIReady = OnDeviceLLMDownloadManager.shared.isModelReady
+                    
+                    // If both models are ready and this is first launch, complete the setup
+                    if whisperKitReady && onDeviceAIReady && isFirstLaunch && selectedOption == .onDeviceLLM {
+                        // Post notification to complete first setup and navigate to recording page
+                        try? await Task.sleep(nanoseconds: 500_000_000) // Wait 0.5 seconds
+                        NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
+                        // Also request location permission after setup
+                        try? await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second
+                        NotificationCenter.default.post(name: NSNotification.Name("RequestLocationPermission"), object: nil)
+                    }
+                }
+            }
         }
         .sheet(isPresented: $showingAdvancedSettings) {
             NavigationView {
@@ -95,6 +142,30 @@ struct SimpleSettingsView: View {
                         }
                     }
             }
+        }
+        .sheet(isPresented: $showingOnDeviceLLMSettings) {
+            NavigationStack {
+                OnDeviceLLMSettingsView()
+            }
+        }
+        .sheet(isPresented: $showingWhisperKitSettings) {
+            NavigationStack {
+                WhisperKitSettingsView()
+            }
+        }
+        .sheet(isPresented: $showingHelpDocumentation) {
+            if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
+                SafariView(url: url)
+            }
+        }
+        .sheet(isPresented: $showingOnDeviceAIDownload) {
+            OnDeviceAIDownloadView(
+                isPresented: $showingOnDeviceAIDownload,
+                onCancel: {
+                    // Cancel goes back to simple settings
+                    showingOnDeviceAIDownload = false
+                }
+            )
         }
     }
     
@@ -136,8 +207,8 @@ struct SimpleSettingsView: View {
             
             VStack(spacing: 12) {
                 ForEach(ProcessingOption.allCases.filter { option in
-                    // Only show Apple Intelligence if device is supported, always show OpenAI and Choose Later
-                    option == .openai || option == .chooseLater || (option == .appleIntelligence && deviceSupported)
+                    // Only show On-Device LLM if device is supported, always show OpenAI and Choose Later
+                    option == .openai || option == .chooseLater || (option == .onDeviceLLM && deviceSupported)
                 }, id: \.self) { option in
                     Button(action: {
                         selectedOption = option
@@ -184,7 +255,7 @@ struct SimpleSettingsView: View {
                             .foregroundColor(.blue)
                     }
                     
-                    Text("Apple Intelligence requires iPhone 16 series or newer, or newer iPads with M1+ or A17 Pro chips.")
+                    Text("On-Device AI requires 6GB+ RAM. Your device has \(String(format: "%.1f", DeviceCapabilities.totalRAMInGB))GB RAM.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -210,25 +281,41 @@ struct SimpleSettingsView: View {
     private var appleIntelligenceInfoSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Apple Intelligence Setup")
+                Text("On-Device AI Setup")
                     .font(.headline)
                     .foregroundColor(.primary)
                 
-                Text("Private, on-device processing using Apple Intelligence. No data leaves your device.")
+                Text("Private, on-device AI processing. No data leaves your device.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
             
             VStack(alignment: .leading, spacing: 8) {
-                Text("Important Limitations:")
+                Text("Setup Process:")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.blue)
+                
+                VStack(alignment: .leading, spacing: 6) {
+                    FeatureBullet(text: "Step 1: Download transcription model (150-520MB)")
+                    FeatureBullet(text: "Step 2: Download AI summary model (2-3GB)")
+                    FeatureBullet(text: "Total storage needed: ~3.5GB")
+                }
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.05))
+            )
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Important Notes:")
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .foregroundColor(.orange)
                 
                 VStack(alignment: .leading, spacing: 6) {
-                    LimitationBullet(text: "Best for recordings under 5 minutes")
-                    LimitationBullet(text: "Processing limited to 1-minute chunks")
-                    LimitationBullet(text: "Requires Speech Recognition permission")
+                    LimitationBullet(text: "Best for recordings under 60 minutes")
                     LimitationBullet(text: "May be less accurate than cloud services")
                 }
             }
@@ -270,11 +357,9 @@ struct SimpleSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     FeatureBullet(text: "OpenAI Compatible - Use LiteLLM, vLLM, or similar proxies")
-                    FeatureBullet(text: "AWS Transcribe - Cloud-based transcription service")
                     FeatureBullet(text: "Google AI Studio - Advanced Gemini AI processing")
                     FeatureBullet(text: "AWS Bedrock - Enterprise-grade Claude AI")
-                    FeatureBullet(text: "Ollama - Run local AI models privately")
-                    FeatureBullet(text: "Local Whisper - Self-hosted transcription server")
+                    FeatureBullet(text: "Mistral AI - Advanced AI processing with Mistral models")
                 }
             }
             .padding()
@@ -284,9 +369,7 @@ struct SimpleSettingsView: View {
             )
 
             Button(action: {
-                if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
-                    UIApplication.shared.open(url)
-                }
+                showingHelpDocumentation = true
             }) {
                 HStack {
                     Image(systemName: "safari")
@@ -417,22 +500,25 @@ struct SimpleSettingsView: View {
                 )
             }
             
-            VStack(alignment: .leading, spacing: 8) {
-                Text("💡 Need an API key?")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.secondary)
-                
-                Text("Visit platform.openai.com, go to API Keys, and create a new secret key. Make sure your account has credits for usage.")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            // Only show API key help when OpenAI is selected
+            if selectedOption == .openai {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("💡 Need an API key?")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Visit platform.openai.com, go to API Keys, and create a new secret key. Make sure your account has credits for usage.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(.systemGray6))
+                )
             }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(.systemGray6))
-            )
         }
     }
     
@@ -487,6 +573,23 @@ struct SimpleSettingsView: View {
     
     private func loadCurrentSettings() {
         apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
+        
+        // Determine which option should be selected based on current configuration
+        let transcriptionEngine = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? "Not Configured"
+        let aiEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Not Configured"
+        
+        // Check if OpenAI is selected for both AI and Transcription
+        if transcriptionEngine == "OpenAI" && aiEngine == "OpenAI" {
+            selectedOption = .openai
+        }
+        // Check if On-Device AI is selected for AI and WhisperKit (On Device) for Transcription
+        else if transcriptionEngine == TranscriptionEngine.whisperKit.rawValue && aiEngine == "On-Device AI" {
+            selectedOption = .onDeviceLLM
+        }
+        // Any other permutation should show Advanced & Other Options
+        else {
+            selectedOption = .chooseLater
+        }
     }
     
     private func saveConfiguration() {
@@ -504,15 +607,34 @@ struct SimpleSettingsView: View {
 
                 // Configure based on selected option
                 if selectedOption == .chooseLater {
-                    // For "Choose later", set engines to "Not Configured"
-                    UserDefaults.standard.set("Not Configured", forKey: "selectedTranscriptionEngine")
-                    UserDefaults.standard.set("Not Configured", forKey: "SelectedAIEngine")
+                    // For "Advanced & Other Options", preserve current settings instead of resetting
+                    // Only set to "Not Configured" if this is truly a first-time setup
+                    let currentTranscription = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine")
+                    let currentAI = UserDefaults.standard.string(forKey: "SelectedAIEngine")
+                    
+                    // Only set to "Not Configured" if nothing is currently configured
+                    if currentTranscription == nil || currentTranscription == "Not Configured" {
+                        UserDefaults.standard.set("Not Configured", forKey: "selectedTranscriptionEngine")
+                    }
+                    if currentAI == nil || currentAI == "Not Configured" {
+                        UserDefaults.standard.set("Not Configured", forKey: "SelectedAIEngine")
+                    }
+                    // Otherwise, keep the existing settings as-is
 
                     await MainActor.run {
-                        saveMessage = "Setup completed! You can configure processing options in Settings later."
+                        saveMessage = "Setup completed! Opening advanced settings..."
                         saveSuccessful = true
                         showingSaveResult = true
                         isSaving = false
+                    }
+                    
+                    // Mark first setup as complete
+                    UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
+                    
+                    // Immediately open the advanced settings page
+                    try await Task.sleep(nanoseconds: 500_000_000) // Brief delay to show message
+                    await MainActor.run {
+                        showingAdvancedSettings = true
                     }
                 } else if selectedOption == .openai {
                     guard !apiKey.isEmpty else {
@@ -547,13 +669,27 @@ struct SimpleSettingsView: View {
                     try await service.testConnection()
                     
                 } else {
-                    // Set transcription engine to Apple Intelligence
-                    UserDefaults.standard.set("Apple Intelligence (Limited)", forKey: "selectedTranscriptionEngine")
+                    // Set transcription engine to WhisperKit (On Device) for transcription
+                    UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: "selectedTranscriptionEngine")
+                    UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
                     
-                    // Set AI engine to Apple Intelligence for summaries
-                    UserDefaults.standard.set("Enhanced Apple Intelligence", forKey: "SelectedAIEngine")
+                    // Set WhisperKit to use small model (recommended for onboarding)
+                    UserDefaults.standard.set(WhisperKitModelInfo.small.id, forKey: WhisperKitModelInfo.SettingsKeys.selectedModelId)
                     
-                    // No API key testing needed for Apple Intelligence
+                    // Set AI engine to On-Device AI for summaries
+                    UserDefaults.standard.set("On-Device AI", forKey: "SelectedAIEngine")
+                    
+                    // Enable On-Device LLM
+                    UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+                    
+                    // Set On-Device LLM to use Granite Micro (recommended for 6GB+ devices)
+                    // This prevents migration warnings when selectedModel is accessed
+                    let deviceRAM = DeviceCapabilities.totalRAMInGB
+                    if deviceRAM >= 6.0 {
+                        UserDefaults.standard.set(OnDeviceLLMModelInfo.granite4Micro.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+                    } else if deviceRAM >= 8.0 {
+                        UserDefaults.standard.set(OnDeviceLLMModelInfo.granite4H.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+                    }
                 }
                 
                 await MainActor.run {
@@ -566,17 +702,46 @@ struct SimpleSettingsView: View {
                 // Mark first setup as complete
                 UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
                 
-                try await Task.sleep(nanoseconds: 2_000_000_000)
-                await MainActor.run {
-                    if isFirstLaunch {
-                        // For first launch, we need to trigger a complete app refresh
-                        NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
-                        // Also request location permission after setup
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                            NotificationCenter.default.post(name: NSNotification.Name("RequestLocationPermission"), object: nil)
+                // If On-Device AI was selected, show download confirmation dialog
+                if selectedOption == .onDeviceLLM {
+                    try await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second to show success message
+                    
+                    // Check if models are already downloaded
+                    whisperKitManager.refreshModelStatus()
+                    OnDeviceLLMDownloadManager.shared.refreshModelStatus()
+                    
+                    let whisperKitReady = whisperKitManager.isModelReady
+                    let onDeviceAIReady = OnDeviceLLMDownloadManager.shared.isModelReady
+                    
+                    await MainActor.run {
+                        if whisperKitReady && onDeviceAIReady {
+                            // Both models already downloaded, skip download view
+                            if isFirstLaunch {
+                                // Post notification to complete first setup
+                                NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
+                                // Also request location permission after setup
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                    NotificationCenter.default.post(name: NSNotification.Name("RequestLocationPermission"), object: nil)
+                                }
+                            }
+                        } else {
+                            // Show the download confirmation and progress view
+                            showingOnDeviceAIDownload = true
                         }
-                    } else {
-                        dismiss()
+                    }
+                } else {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    await MainActor.run {
+                        if isFirstLaunch {
+                            // For first launch, we need to trigger a complete app refresh
+                            NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
+                            // Also request location permission after setup
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                NotificationCenter.default.post(name: NSNotification.Name("RequestLocationPermission"), object: nil)
+                            }
+                        } else {
+                            dismiss()
+                        }
                     }
                 }
                 

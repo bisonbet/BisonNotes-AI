@@ -86,18 +86,23 @@ public enum WhisperProtocol: String, CaseIterable, Codable {
 
 public enum TranscriptionEngine: String, CaseIterable, Codable {
     case notConfigured = "Not Configured"
-    case appleIntelligence = "Apple Intelligence (Limited)"
+    case whisperKit = "On Device"
     case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
     case openAI = "OpenAI"
     case openAIAPICompatible = "OpenAI API Compatible"
-    
+
+    /// Returns all available engine types based on device capabilities
+    static var availableCases: [TranscriptionEngine] {
+        return allCases
+    }
+
     var description: String {
         switch self {
         case .notConfigured:
             return "No transcription engine has been configured yet"
-        case .appleIntelligence:
-            return "Uses Apple's built-in Speech framework for local transcription with 1-minute limit per request"
+        case .whisperKit:
+            return "High-quality on-device transcription. Your audio never leaves your device, ensuring complete privacy."
         case .awsTranscribe:
             return "Cloud-based transcription service with support for long audio files"
         case .whisper:
@@ -108,32 +113,35 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             return "Connect to OpenAI-compatible API endpoints for flexible transcription options (Coming Soon)"
         }
     }
-    
+
     var isAvailable: Bool {
         switch self {
         case .notConfigured:
             return false
-        case .appleIntelligence, .awsTranscribe, .whisper, .openAI:
+        case .whisperKit:
+            // Only show WhisperKit if device is compatible
+            return DeviceCompatibility.isWhisperKitSupported
+        case .awsTranscribe, .whisper, .openAI:
             return true
         case .openAIAPICompatible:
             return false
         }
     }
-    
+
     var requiresConfiguration: Bool {
         switch self {
         case .notConfigured:
             return true
-        case .appleIntelligence:
-            return false
+        case .whisperKit:
+            return true  // Requires model download
         case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible:
             return true
         }
     }
-    
+
     var usesWyomingProtocol: Bool {
         switch self {
-        case .notConfigured:
+        case .notConfigured, .whisperKit:
             return false
         case .whisper:
             // For unified Whisper, check the user's protocol preference

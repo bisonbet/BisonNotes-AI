@@ -580,6 +580,10 @@ class CoreDataManager: ObservableObject {
         // Convert content type string to enum
         let contentType = summaryEntry.contentType.flatMap { ContentType(rawValue: $0) } ?? .general
         
+        let method = summaryEntry.aiMethod ?? ""
+        let decodedMetadata = SummaryMetadataCodec.decode(method)
+        let engine = decodedMetadata.engine ?? SummaryMetadataCodec.inferredEngine(from: decodedMetadata.model)
+        
         return EnhancedSummaryData(
             id: summaryEntry.id ?? UUID(),
             recordingId: recordingId,
@@ -592,7 +596,8 @@ class CoreDataManager: ObservableObject {
             reminders: reminders,
             titles: titles,
             contentType: contentType,
-            aiMethod: summaryEntry.aiMethod ?? "",
+            aiEngine: engine,
+            aiModel: decodedMetadata.model,
             originalLength: Int(summaryEntry.originalLength),
             processingTime: summaryEntry.processingTime,
             generatedAt: summaryEntry.generatedAt,
@@ -721,11 +726,8 @@ class CoreDataManager: ObservableObject {
                 context.delete(recording)
                 cleanedCount += 1
             }
-            // For recordings with summaries but no audio, just mark them properly
-            else if hasNoURL && recording.summary != nil {
-                print("📝 Preserving summary-only recording: \(recording.recordingName ?? "unknown")")
-                // These are intentionally preserved summaries
-            }
+            // For recordings with summaries but no audio, preserve them silently
+            // (These are intentionally preserved summaries)
         }
         
         if cleanedCount > 0 {
@@ -742,7 +744,6 @@ class CoreDataManager: ObservableObject {
     
     /// Fixes recordings that should have been deleted completely but still exist as orphans
     func fixIncompletelyDeletedRecordings() -> Int {
-        print("🔍 Checking for incompletely deleted recordings...")
         let allRecordings = getAllRecordings()
         var fixedCount = 0
         
@@ -753,10 +754,6 @@ class CoreDataManager: ObservableObject {
             let hasNoSummary = recording.summary == nil
             
             if hasNoURL && hasNoTranscript && hasNoSummary {
-                let recordingName = recording.recordingName ?? "unknown"
-                print("🗑️ Found incompletely deleted recording: \(recordingName)")
-                print("   - This appears to be leftover from a partial deletion")
-                
                 // Delete this orphaned record
                 context.delete(recording)
                 fixedCount += 1
@@ -770,8 +767,6 @@ class CoreDataManager: ObservableObject {
             } catch {
                 print("❌ Failed to save fixes: \(error)")
             }
-        } else {
-            print("ℹ️ No incompletely deleted recordings found")
         }
         
         return fixedCount

@@ -16,6 +16,7 @@ struct TranscriptsView: View {
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
     @State private var recordings: [(recording: RecordingEntry, transcript: TranscriptData?)] = []
+    @State private var importedTranscripts: [(recording: RecordingEntry, transcript: TranscriptData?)] = []
     @State private var selectedRecording: RecordingEntry?
     @State private var isGeneratingTranscript = false
     @State private var generatingTranscriptRecording: RecordingEntry?
@@ -58,7 +59,7 @@ struct TranscriptsView: View {
     
     private var mainContentView: some View {
         VStack {
-            if recordings.isEmpty {
+            if recordings.isEmpty && importedTranscripts.isEmpty {
                 emptyStateView
             } else {
                 recordingsListView
@@ -121,11 +122,82 @@ struct TranscriptsView: View {
     }
     
     private var recordingsListView: some View {
-        List {
-            ForEach(recordings.indices, id: \.self) { index in
-                recordingRowView(recordings[index])
+        let recentRecordings = Array(recordings.prefix(3))
+        let recentImportedTranscripts = Array(importedTranscripts.prefix(3))
+
+        return List {
+            // Audio Recordings with Transcripts
+            if !recordings.isEmpty {
+                Section(header: Text("Audio Recordings")) {
+                    ForEach(recentRecordings, id: \.recording.id) { recordingData in
+                        recordingRowView(recordingData)
+                    }
+
+                    if recordings.count > recentRecordings.count {
+                        NavigationLink(destination: audioRecordingsFullListView) {
+                            moreRowView(remainingCount: recordings.count - recentRecordings.count)
+                        }
+                    }
+                }
+            }
+
+            // Imported Transcripts (with delete functionality)
+            if !importedTranscripts.isEmpty {
+                Section(header:
+                    HStack {
+                        Text("Imported Transcripts")
+                        Spacer()
+                        Text("\(importedTranscripts.count)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                ) {
+                    ForEach(recentImportedTranscripts, id: \.recording.id) { recordingData in
+                        importedTranscriptRowView(recordingData)
+                    }
+                    .onDelete { indexSet in
+                        deleteImportedTranscripts(at: indexSet, in: recentImportedTranscripts)
+                    }
+
+                    if importedTranscripts.count > recentImportedTranscripts.count {
+                        NavigationLink(destination: importedTranscriptsFullListView) {
+                            moreRowView(remainingCount: importedTranscripts.count - recentImportedTranscripts.count)
+                        }
+                    }
+                }
             }
         }
+    }
+
+    private var audioRecordingsFullListView: some View {
+        List {
+            ForEach(recordings, id: \.recording.id) { recordingData in
+                recordingRowView(recordingData)
+            }
+        }
+        .navigationTitle("Audio Recordings")
+    }
+
+    private var importedTranscriptsFullListView: some View {
+        List {
+            ForEach(importedTranscripts, id: \.recording.id) { recordingData in
+                importedTranscriptRowView(recordingData)
+            }
+            .onDelete { indexSet in
+                deleteImportedTranscripts(at: indexSet, in: importedTranscripts)
+            }
+        }
+        .navigationTitle("Imported Transcripts")
+    }
+
+    private func moreRowView(remainingCount: Int) -> some View {
+        HStack {
+            Text("More")
+            Spacer()
+            Text("\(remainingCount)")
+                .foregroundColor(.secondary)
+        }
+        .foregroundColor(.accentColor)
     }
     
     private func recordingRowView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
@@ -137,6 +209,41 @@ struct TranscriptsView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func importedTranscriptRowView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
+        Button(action: {
+            selectedRecording = recordingData.recording
+        }) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "doc.text.fill")
+                                .font(.caption2)
+                                .foregroundColor(.purple)
+                            Text(recordingData.recording.recordingName ?? "Untitled Import")
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                        }
+                        Text(UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if let transcript = recordingData.transcript {
+                            Text("\(transcript.segments.reduce(0) { $0 + $1.text.split(separator: " ").count }) words")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(PlainButtonStyle())
     }
     
     private func recordingInfoView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
@@ -215,10 +322,10 @@ struct TranscriptsView: View {
     private func loadRecordings() {
 		// Use Core Data to get recordings
 		let recordingsWithData = appCoordinator.getAllRecordingsWithData()
-		
+
 		// Deduplicate by resolved filename; prefer items with transcript and non-generic titles
 		var bestByFilename: [String: (recording: RecordingEntry, transcript: TranscriptData?)] = [:]
-		
+
 		func isGenericName(_ name: String) -> Bool {
 			if name.hasPrefix("recording_") { return true }
 			if name.hasPrefix("V20210426-") || name.hasPrefix("V20210427-") { return true }
@@ -227,7 +334,7 @@ struct TranscriptsView: View {
 			if name.count > 20 && (name.contains("1754") || name.contains("2025") || name.contains("2024")) { return true }
 			return false
 		}
-		
+
 		func score(_ entry: (recording: RecordingEntry, transcript: TranscriptData?)) -> Int {
 			var s = 0
 			if entry.transcript != nil { s += 3 }
@@ -236,7 +343,7 @@ struct TranscriptsView: View {
 			if entry.recording.duration > 0 { s += 1 }
 			return s
 		}
-		
+
 		for rd in recordingsWithData {
 			guard let url = appCoordinator.getAbsoluteURL(for: rd.recording) else { continue }
 			let key = url.lastPathComponent
@@ -247,14 +354,78 @@ struct TranscriptsView: View {
 				bestByFilename[key] = candidate
 			}
 		}
-		
+
 		let deduped = Array(bestByFilename.values)
-		
-		// Sort by date
-		recordings = deduped.sorted { $0.recording.recordingDate ?? Date() > $1.recording.recordingDate ?? Date() }
-		
+
+		// Separate imported transcripts from regular recordings
+		let (imported, regular) = deduped.reduce(into: (imported: [(RecordingEntry, TranscriptData?)](), regular: [(RecordingEntry, TranscriptData?)]())) { result, item in
+			// Check if this is an imported transcript (identified by audioQuality = "imported")
+			if item.recording.audioQuality == "imported" {
+				result.imported.append(item)
+			} else {
+				result.regular.append(item)
+			}
+		}
+
+		// Sort by date (accessing tuple elements as $0.0 for RecordingEntry, $0.1 for TranscriptData)
+		recordings = regular.sorted { $0.0.recordingDate ?? Date() > $1.0.recordingDate ?? Date() }
+		importedTranscripts = imported.sorted { $0.0.recordingDate ?? Date() > $1.0.recordingDate ?? Date() }
+
 		// Geocode locations for all recordings (with rate limiting)
 		loadLocationAddressesBatch(for: recordings.map { $0.recording })
+    }
+
+    private func deleteImportedTranscripts(
+        at offsets: IndexSet,
+        in list: [(recording: RecordingEntry, transcript: TranscriptData?)]
+    ) {
+        let itemsToDelete = offsets.map { list[$0] }
+        for importedTranscript in itemsToDelete {
+            deleteImportedTranscript(importedTranscript)
+        }
+
+        // Reload the list
+        loadRecordings()
+    }
+
+    private func deleteImportedTranscript(
+        _ importedTranscript: (recording: RecordingEntry, transcript: TranscriptData?)
+    ) {
+        guard let recordingId = importedTranscript.recording.id else {
+            print("❌ Cannot delete imported transcript: missing recording ID")
+            return
+        }
+
+        // Delete the associated dummy audio file if it exists
+        if let recordingURL = appCoordinator.getAbsoluteURL(for: importedTranscript.recording) {
+            try? FileManager.default.removeItem(at: recordingURL)
+            // Delete associated location file if present
+            let locationURL = recordingURL.deletingPathExtension().appendingPathExtension("location")
+            try? FileManager.default.removeItem(at: locationURL)
+            print("🗑️ Deleted dummy audio file: \(recordingURL.lastPathComponent)")
+        }
+
+        // Check if there's an associated summary to preserve
+        let hasSummary = appCoordinator.coreDataManager.getSummary(for: recordingId) != nil
+
+        if hasSummary {
+            // Preserve the summary - only delete the transcript and clear the audio URL
+            if let transcript = appCoordinator.coreDataManager.getTranscript(for: recordingId) {
+                appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
+            }
+
+            // Clear the recording URL to mark as "summary only" mode
+            importedTranscript.recording.recordingURL = nil
+            importedTranscript.recording.lastModified = Date()
+
+            // Save the context
+            try? appCoordinator.coreDataManager.saveContext()
+            print("✅ Deleted imported transcript, preserved summary: \(importedTranscript.recording.recordingName ?? "Unknown")")
+        } else {
+            // No summary to preserve - delete everything
+            appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+            print("✅ Deleted imported transcript: \(importedTranscript.recording.recordingName ?? "Unknown")")
+        }
     }
     
     func loadLocationDataForRecording(url: URL) -> LocationData? {
@@ -333,32 +504,8 @@ struct TranscriptsView: View {
         isGeneratingTranscript = true
         generatingTranscriptRecording = recording // Track which recording is being generated
 
-        // Get the selected transcription engine
-        let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
-        
-        // Only request Apple Speech recognition permission for Apple Intelligence engine
-        if selectedEngine == .appleIntelligence {
-            SFSpeechRecognizer.requestAuthorization { authStatus in
-                DispatchQueue.main.async {
-                    switch authStatus {
-                    case .authorized:
-                        self.performEnhancedTranscription(for: recording)
-                    case .denied, .restricted:
-                        self.isGeneratingTranscript = false
-                        self.generatingTranscriptRecording = nil
-                    case .notDetermined:
-                        self.isGeneratingTranscript = false
-                        self.generatingTranscriptRecording = nil
-                    @unknown default:
-                        self.isGeneratingTranscript = false
-                        self.generatingTranscriptRecording = nil
-                    }
-                }
-            }
-        } else {
-            // For non-Apple engines (OpenAI, AWS, Whisper), skip Apple Speech permission
-            self.performEnhancedTranscription(for: recording)
-        }
+        // Proceed directly with transcription - each engine handles its own permissions
+        self.performEnhancedTranscription(for: recording)
     }
     
     private func performEnhancedTranscription(for recording: RecordingEntry) {
@@ -366,7 +513,7 @@ struct TranscriptsView: View {
         
         Task {
             // Use the selected transcription engine
-            let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+            let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
             
             do {
                 // Get the absolute URL using the coordinator
@@ -796,7 +943,7 @@ struct EditableTranscriptView: View {
         Task {
             do {
                 // Get the currently configured transcription engine
-                let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+                let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
                 
                 print("🔧 Using transcription engine: \(selectedEngine.rawValue)")
                 
@@ -850,7 +997,7 @@ struct EditableTranscriptView: View {
                     }
                     
                     // Get the currently configured transcription engine
-                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue) ?? .appleIntelligence
+                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
                     
                     let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recordingURL, using: selectedEngine)
                     
@@ -936,8 +1083,8 @@ struct EditableTranscriptView: View {
             print("🔄 Replacing transcript for recording ID: \(recordingId)")
             
             // Get the selected transcription engine
-            let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? "appleIntelligence"
-            let engine = TranscriptionEngine(rawValue: engineString) ?? .appleIntelligence
+            let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue
+            let engine = TranscriptionEngine(rawValue: engineString) ?? .whisperKit
             
             
             // Add the new transcript

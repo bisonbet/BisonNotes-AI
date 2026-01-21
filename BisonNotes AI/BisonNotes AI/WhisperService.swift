@@ -30,25 +30,6 @@ enum WhisperError: Error, LocalizedError {
     }
 }
 
-// MARK: - Helper Functions
-
-func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask {
-            try await operation()
-        }
-        
-        group.addTask {
-            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            throw WhisperError.serverError("Operation timed out after \(seconds) seconds")
-        }
-        
-        let result = try await group.next()!
-        group.cancelAll()
-        return result
-    }
-}
-
 // MARK: - Whisper Configuration
 
 struct WhisperConfig {
@@ -206,7 +187,10 @@ class WhisperService: ObservableObject {
             let testURL = URL(string: "\(restBaseURL)/asr")!
             print("🔌 Testing REST API connection to: \(testURL)")
             
-            let (_, response) = try await withTimeout(seconds: 10) { [self] in
+            let (_, response) = try await withTimeout(
+                seconds: 10,
+                timeoutError: WhisperError.serverError("REST API request timed out after 10 seconds")
+            ) { [self] in
                 try await session.data(from: testURL)
             }
             
@@ -559,10 +543,11 @@ class WhisperService: ObservableObject {
         
         // Add query parameters
         var urlComponents = URLComponents(string: "\(restBaseURL)/asr")!
+        // Query parameters intentionally omit an explicit `language` so that the
+        // Whisper REST server can auto-detect the spoken language from audio.
         urlComponents.queryItems = [
             URLQueryItem(name: "output", value: "json"),
             URLQueryItem(name: "task", value: "transcribe"),
-            URLQueryItem(name: "language", value: "en"),
             URLQueryItem(name: "word_timestamps", value: "false"),
             URLQueryItem(name: "vad_filter", value: "false"),
             URLQueryItem(name: "encode", value: "true"),
@@ -593,7 +578,10 @@ class WhisperService: ObservableObject {
         // Send request with timeout and timing
         let requestStartTime = Date()
         
-        let (data, response) = try await withTimeout(seconds: 1800) { [self] in
+        let (data, response) = try await withTimeout(
+            seconds: 1800,
+            timeoutError: WhisperError.serverError("Transcription request timed out after 30 minutes")
+        ) { [self] in
             let result = try await session.data(for: request)
             let requestDuration = Date().timeIntervalSince(requestStartTime)
             
@@ -845,7 +833,10 @@ class WhisperService: ObservableObject {
         
         
         // Send request with timeout
-        let (data, response) = try await withTimeout(seconds: 60) { [self] in
+        let (data, response) = try await withTimeout(
+            seconds: 60,
+            timeoutError: WhisperError.serverError("Language detection timed out after 60 seconds")
+        ) { [self] in
             try await session.data(for: request)
         }
         

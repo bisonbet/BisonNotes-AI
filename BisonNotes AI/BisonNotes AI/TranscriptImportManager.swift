@@ -7,6 +7,7 @@
 
 import Foundation
 import AVFoundation
+import CoreMedia
 import CoreData
 import PDFKit
 import UniformTypeIdentifiers
@@ -564,6 +565,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
     }
 
     /// Creates a minimal dummy audio file (~1KB) for the imported transcript
+    /// Note: This generates a silent audio file programmatically WITHOUT using the microphone
     private func createDummyAudioFile(name: String) async throws -> URL {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
 
@@ -574,65 +576,166 @@ class TranscriptImportManager: NSObject, ObservableObject {
         let filename = "\(name)_\(timestamp)_transcript.m4a"
         let fileURL = documentsPath.appendingPathComponent(filename)
 
-        // Create audio settings for minimal file size
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: DummyAudioConstants.sampleRate,
-            AVNumberOfChannelsKey: DummyAudioConstants.numberOfChannels,
-            AVEncoderAudioQualityKey: AVAudioQuality.min.rawValue,
-            AVEncoderBitRateKey: DummyAudioConstants.bitRate
-        ]
-
-        // Set up audio session - save previous state for restoration
-        let audioSession = AVAudioSession.sharedInstance()
-        let previousCategory = audioSession.category
-        let previousMode = audioSession.mode
-        let wasActive = audioSession.isOtherAudioPlaying
-
-        try audioSession.setCategory(.playAndRecord, mode: .default)
-        try audioSession.setActive(true)
-
-        defer {
-            // Restore previous audio session state
-            do {
-                try audioSession.setCategory(previousCategory, mode: previousMode)
-                if !wasActive {
-                    try audioSession.setActive(false)
-                }
-            } catch {
-                print("⚠️ Failed to restore audio session state: \(error)")
-            }
-        }
-
-        // Create a very short audio file (0.1 seconds of silence)
-        let audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
-        audioRecorder.prepareToRecord()
-
-        guard audioRecorder.record() else {
-            throw TranscriptImportError.dummyAudioCreationFailed("Failed to start audio recording")
-        }
-
-        // Record for configured duration
-        try await Task.sleep(nanoseconds: DummyAudioConstants.durationNanoseconds)
-
-        audioRecorder.stop()
+        // Create silent audio file programmatically (no microphone needed)
+        try await createSilentAudioFile(at: fileURL)
 
         // Verify file was created
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw TranscriptImportError.dummyAudioCreationFailed("Failed to create dummy audio file")
         }
 
-        // Verify file size is reasonable (should be at least 1KB for valid audio)
+        // Verify file size is reasonable
         let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
         let fileSize = attributes[.size] as? Int64 ?? 0
         print("📝 Created dummy audio file: \(filename) (\(fileSize) bytes)")
 
-        // Ensure file is valid by checking if it can be opened
-        if fileSize < 100 {
-            print("⚠️ Dummy audio file seems too small (\(fileSize) bytes), may be invalid")
+        return fileURL
+    }
+
+    /// Creates a silent M4A audio file programmatically without using the microphone
+    private func createSilentAudioFile(at url: URL) async throws {
+        // Audio format settings
+        let sampleRate = DummyAudioConstants.sampleRate
+        let channels = UInt32(DummyAudioConstants.numberOfChannels)
+        let durationSeconds = DummyAudioConstants.durationSeconds
+
+        // Create audio format for PCM (input format)
+        guard let inputFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: channels,
+            interleaved: false
+        ) else {
+            throw TranscriptImportError.dummyAudioCreationFailed("Failed to create audio format")
         }
 
-        return fileURL
+        // Calculate frame count for the duration
+        let frameCount = AVAudioFrameCount(sampleRate * durationSeconds)
+
+        // Create a buffer with silence (all zeros)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: frameCount) else {
+            throw TranscriptImportError.dummyAudioCreationFailed("Failed to create audio buffer")
+        }
+        buffer.frameLength = frameCount
+
+        // Buffer is already zeroed (silence) by default
+
+        // Output settings for AAC M4A
+        let outputSettings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: channels,
+            AVEncoderAudioQualityKey: AVAudioQuality.min.rawValue,
+            AVEncoderBitRateKey: DummyAudioConstants.bitRate
+        ]
+
+        // Use AVAssetWriter to write the silent audio as AAC
+        let assetWriter = try AVAssetWriter(outputURL: url, fileType: .m4a)
+
+        let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: outputSettings)
+        audioInput.expectsMediaDataInRealTime = false
+
+        guard assetWriter.canAdd(audioInput) else {
+            throw TranscriptImportError.dummyAudioCreationFailed("Cannot add audio input to asset writer")
+        }
+        assetWriter.add(audioInput)
+
+        guard assetWriter.startWriting() else {
+            throw TranscriptImportError.dummyAudioCreationFailed("Failed to start writing: \(assetWriter.error?.localizedDescription ?? "unknown error")")
+        }
+
+        assetWriter.startSession(atSourceTime: .zero)
+
+        // Convert PCM buffer to CMSampleBuffer and write
+        let sampleBuffer = try createSampleBuffer(from: buffer, format: inputFormat)
+
+        // Wait for the input to be ready and append
+        while !audioInput.isReadyForMoreMediaData {
+            try await Task.sleep(nanoseconds: 10_000_000) // 0.01 seconds
+        }
+
+        guard audioInput.append(sampleBuffer) else {
+            throw TranscriptImportError.dummyAudioCreationFailed("Failed to append audio sample buffer")
+        }
+
+        audioInput.markAsFinished()
+
+        // Finish writing synchronously using async/await
+        await assetWriter.finishWriting()
+
+        if assetWriter.status == .failed {
+            let errorMessage = assetWriter.error?.localizedDescription ?? "unknown error"
+            throw TranscriptImportError.dummyAudioCreationFailed("Failed to finish writing: \(errorMessage)")
+        }
+    }
+
+    /// Creates a CMSampleBuffer from an AVAudioPCMBuffer
+    private func createSampleBuffer(from buffer: AVAudioPCMBuffer, format: AVAudioFormat) throws -> CMSampleBuffer {
+        let frameCount = buffer.frameLength
+
+        // Create audio stream basic description
+        var asbd = format.streamDescription.pointee
+
+        // Create format description
+        var formatDescription: CMAudioFormatDescription?
+        let status = CMAudioFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault,
+            asbd: &asbd,
+            layoutSize: 0,
+            layout: nil,
+            magicCookieSize: 0,
+            magicCookie: nil,
+            extensions: nil,
+            formatDescriptionOut: &formatDescription
+        )
+
+        guard status == noErr, let formatDesc = formatDescription else {
+            throw TranscriptImportError.dummyAudioCreationFailed("Failed to create format description")
+        }
+
+        // Create the sample buffer
+        var sampleBuffer: CMSampleBuffer?
+
+        // Get the audio buffer list
+        guard let floatChannelData = buffer.floatChannelData else {
+            throw TranscriptImportError.dummyAudioCreationFailed("Failed to get audio channel data")
+        }
+
+        // Create block buffer from the audio data
+        let dataSize = Int(frameCount) * MemoryLayout<Float>.size
+        var blockBuffer: CMBlockBuffer?
+
+        let blockStatus = CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault,
+            memoryBlock: floatChannelData[0],
+            blockLength: dataSize,
+            blockAllocator: kCFAllocatorNull,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: dataSize,
+            flags: 0,
+            blockBufferOut: &blockBuffer
+        )
+
+        guard blockStatus == kCMBlockBufferNoErr, let block = blockBuffer else {
+            throw TranscriptImportError.dummyAudioCreationFailed("Failed to create block buffer")
+        }
+
+        let sampleStatus = CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+            allocator: kCFAllocatorDefault,
+            dataBuffer: block,
+            formatDescription: formatDesc,
+            sampleCount: CMItemCount(frameCount),
+            presentationTimeStamp: .zero,
+            packetDescriptions: nil,
+            sampleBufferOut: &sampleBuffer
+        )
+
+        guard sampleStatus == noErr, let sample = sampleBuffer else {
+            throw TranscriptImportError.dummyAudioCreationFailed("Failed to create sample buffer")
+        }
+
+        return sample
     }
 
     /// Parse text into transcript segments

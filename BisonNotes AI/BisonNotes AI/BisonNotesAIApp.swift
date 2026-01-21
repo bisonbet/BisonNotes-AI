@@ -47,7 +47,7 @@ struct BisonNotesAIApp: App {
     /// Defaults to Apple Intelligence on supported devices, OpenAI with dummy key on older devices
     private func migrateAIEngineSelection() {
         let aiEngineKey = "SelectedAIEngine"
-        let transcriptionEngineKey = "SelectedTranscriptionEngine"
+        let transcriptionEngineKey = "selectedTranscriptionEngine"
         let migrationKey = "aiEngineSelectionMigrated_v1.3"
 
         // Check if migration has already been performed
@@ -59,15 +59,17 @@ struct BisonNotesAIApp: App {
         let currentTranscriptionEngine = UserDefaults.standard.string(forKey: transcriptionEngineKey)
 
         // Determine the appropriate default based on device capabilities
-        let isAppleIntelligenceSupported = DeviceCompatibility.isAppleIntelligenceSupported
+        // Check if device has 6GB+ RAM for on-device AI support
+        let hasOnDeviceAISupport = DeviceCapabilities.supportsOnDeviceLLM
 
         // Migrate AI engine if not configured
         if currentAIEngine == "None" || currentAIEngine == "Not Configured" || currentAIEngine == nil {
-            if isAppleIntelligenceSupported {
-                UserDefaults.standard.set("Enhanced Apple Intelligence", forKey: aiEngineKey)
-                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'Enhanced Apple Intelligence' (device supported)")
+            if hasOnDeviceAISupport {
+                UserDefaults.standard.set("On-Device AI", forKey: aiEngineKey)
+                UserDefaults.standard.set(true, forKey: "enableOnDeviceLLM")
+                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'On-Device AI' (device has 6GB+ RAM)")
             } else {
-                // Set OpenAI as default for older devices
+                // Set OpenAI as default for devices with less than 6GB RAM
                 UserDefaults.standard.set("OpenAI", forKey: aiEngineKey)
                 // Set dummy API key if none exists
                 if UserDefaults.standard.string(forKey: "openAIAPIKey") == nil {
@@ -75,17 +77,19 @@ struct BisonNotesAIApp: App {
                     NSLog("✅ Set dummy OpenAI API key for older device")
                 }
                 UserDefaults.standard.set(true, forKey: "enableOpenAI")
-                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'OpenAI' (device not supported for Apple Intelligence)")
+                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'OpenAI' (device has <6GB RAM)")
             }
         }
 
         // Migrate transcription engine if not configured
         if currentTranscriptionEngine == "Not Configured" || currentTranscriptionEngine == nil {
-            if isAppleIntelligenceSupported {
-                UserDefaults.standard.set("Apple Intelligence (Limited)", forKey: transcriptionEngineKey)
-                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'Apple Intelligence (Limited)' (device supported)")
+            if hasOnDeviceAISupport {
+                // Use WhisperKit (On Device) for devices with 6GB+ RAM
+                UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
+                UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
+                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'On Device' (device has 6GB+ RAM)")
             } else {
-                // Set OpenAI as default for older devices
+                // Set OpenAI as default for devices with less than 6GB RAM
                 UserDefaults.standard.set("OpenAI", forKey: transcriptionEngineKey)
                 // Set dummy API key if none exists
                 if UserDefaults.standard.string(forKey: "openAIAPIKey") == nil {
@@ -93,10 +97,137 @@ struct BisonNotesAIApp: App {
                     NSLog("✅ Set dummy OpenAI API key for older device")
                 }
                 UserDefaults.standard.set(true, forKey: "enableOpenAI")
-                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'OpenAI' (device not supported for Apple Intelligence)")
+                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'OpenAI' (device has <6GB RAM)")
             }
         }
 
+        // Mark migration as complete
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+    
+    /// Migrates users from Apple Transcription to WhisperKit (On-Device)
+    /// Sets a flag to show WhisperKit settings for model download
+    private func migrateAppleTranscriptionToWhisperKit() {
+        let transcriptionEngineKey = "selectedTranscriptionEngine"
+        let migrationKey = "appleTranscriptionToWhisperKitMigrated_v1.4"
+
+        // Check if migration has already been performed
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+
+        let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
+
+        // Check if user was using Apple Transcription
+        if currentTranscription == "Apple Transcription" {
+            // Migrate to WhisperKit
+            UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
+            UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
+
+            // Set flag to show WhisperKit settings on first launch
+            UserDefaults.standard.set(true, forKey: "showWhisperKitMigrationSettings")
+
+            NSLog("✅ Migrated transcription from Apple Transcription to WhisperKit (On-Device)")
+        }
+
+        // Mark migration as complete
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+    
+    /// Ensures users with old WhisperKit values still work if the enum rawValue changes
+    /// This handles backward compatibility for any future renames of the WhisperKit engine
+    private func migrateWhisperKitNameIfNeeded() {
+        let transcriptionEngineKey = "selectedTranscriptionEngine"
+        let migrationKey = "whisperKitNameMigration_v1.5"
+        
+        // Check if migration has already been performed
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+        
+        let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
+        let currentWhisperKitRawValue = TranscriptionEngine.whisperKit.rawValue
+        
+        // If the stored value is an old WhisperKit name but doesn't match current rawValue, update it
+        // This handles cases where "On Device" might be renamed to something else (e.g., "WhisperKit")
+        if let storedValue = currentTranscription,
+           storedValue != currentWhisperKitRawValue {
+            // Check if it's an old WhisperKit value that needs updating
+            let oldWhisperKitNames = ["On Device", "WhisperKit", "On-Device"]
+            if oldWhisperKitNames.contains(storedValue) {
+                // Update to current WhisperKit rawValue
+                UserDefaults.standard.set(currentWhisperKitRawValue, forKey: transcriptionEngineKey)
+                NSLog("✅ Migrated transcription engine from '\(storedValue)' to '\(currentWhisperKitRawValue)'")
+            }
+        }
+        
+        // Mark migration as complete
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
+    /// Migrates users from Apple Intelligence to On-Device AI
+    /// Shows an alert and opens the On-Device AI settings page
+    private func migrateAppleIntelligenceToOnDeviceLLM() {
+        let aiEngineKey = "SelectedAIEngine"
+        let migrationKey = "appleIntelligenceToOnDeviceLLMMigrated_v1.4"
+        
+        // Check if migration has already been performed
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+        
+        let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
+        
+        // Check if user was using Apple Intelligence (check all possible variations)
+        let appleIntelligenceVariants = [
+            "Apple Intelligence",
+            "Enhanced Apple Intelligence",
+            "enhancedAppleIntelligence"
+        ]
+        
+        if let engine = currentAIEngine, appleIntelligenceVariants.contains(engine) {
+            // Mark that we need to show the migration alert
+            UserDefaults.standard.set(true, forKey: "showAppleIntelligenceMigrationAlert")
+            
+            // Migrate to On-Device AI
+            UserDefaults.standard.set("On-Device AI", forKey: aiEngineKey)
+            UserDefaults.standard.set(true, forKey: "enableOnDeviceLLM")
+            
+            // Also update transcription if it was using Apple Intelligence
+            let transcriptionEngineKey = "selectedTranscriptionEngine"
+            let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
+            if let transcription = currentTranscription, appleIntelligenceVariants.contains(transcription) {
+                UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
+                UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
+                UserDefaults.standard.set(true, forKey: "showWhisperKitMigrationSettings")
+            }
+            
+            NSLog("✅ Migrated from Apple Intelligence (\(engine)) to On-Device AI")
+        }
+        
+        // Mark migration as complete
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+    
+    /// Migrates users from old "On-Device LLM" name to "On-Device AI"
+    /// Handles backward compatibility for users who have the old name saved
+    private func migrateOnDeviceLLMNameToOnDeviceAI() {
+        let aiEngineKey = "SelectedAIEngine"
+        let migrationKey = "onDeviceLLMNameMigration_v1.5"
+        
+        // Check if migration has already been performed
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+        
+        let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
+        
+        // If the stored value is the old name, update it to the new name
+        if currentAIEngine == "On-Device LLM" {
+            UserDefaults.standard.set("On-Device AI", forKey: aiEngineKey)
+            NSLog("✅ Migrated AI engine name from 'On-Device LLM' to 'On-Device AI'")
+        }
+        
         // Mark migration as complete
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
@@ -105,10 +236,24 @@ struct BisonNotesAIApp: App {
 #if DEBUG
         Self.configureCoverageOutputIfNeeded()
 #endif
+        // Log device capabilities on startup
+        logDeviceCapabilities()
+
         setupBackgroundTasks()
         setupAppShortcuts()
         migrateAWSBedrockSettings()
         migrateAIEngineSelection()
+        migrateAppleIntelligenceToOnDeviceLLM()
+        migrateAppleTranscriptionToWhisperKit()
+        migrateWhisperKitNameIfNeeded()
+        migrateOnDeviceLLMNameToOnDeviceAI()
+    }
+
+    /// Logs device capabilities on app startup
+    private func logDeviceCapabilities() {
+        print(String(repeating: "=", count: 50))
+        print(DeviceCapabilities.getCapabilityReport())
+        print(String(repeating: "=", count: 50))
     }
     
     var body: some Scene {
@@ -120,6 +265,8 @@ struct BisonNotesAIApp: App {
                     requestBackgroundAppRefreshPermission()
                     setupWatchConnectivity()
                     // Note: Notification permission is now requested when first needed (in BackgroundProcessingManager)
+                    // Initialize download monitor for on-device AI models
+                    _ = OnDeviceAIDownloadMonitor.shared
                 }
         }
     }
@@ -243,24 +390,20 @@ struct BisonNotesAIApp: App {
         Task {
             AppShortcuts.updateAppShortcutParameters()
         }
-        EnhancedLogger.shared.logDebug("App shortcuts configured for Action Button support")
 
         if #available(iOS 18.0, *) {
             if let plugInsURL = Bundle.main.builtInPlugInsURL,
-               let items = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {
-                EnhancedLogger.shared.logDebug("Built-in PlugIns: \(items.map { $0.lastPathComponent })")
+               let _ = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {
             } else {
                 print("⚠️ Unable to enumerate built-in PlugIns")
             }
-            EnhancedLogger.shared.logDebug("Asking WidgetKit to reload control configurations")
             ControlCenter.shared.reloadAllControls()
             ControlCenter.shared.reloadControls(ofKind: "com.bisonnotesai.controls.recording")
 
             Task {
                 do {
                     let controls = try await ControlCenter.shared.currentControls()
-                    let kinds = controls.map { $0.kind }
-                    EnhancedLogger.shared.logDebug("ControlCenter reports controls: \(kinds)")
+                    let _ = controls.map { $0.kind }
                 } catch {
                     print("❌ Failed to fetch current controls: \(error)")
                 }

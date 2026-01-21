@@ -58,7 +58,7 @@ final class AISettingsViewModel: ObservableObject {
 
     /// Moves the engine selection logic into the view model.
     func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) -> (shouldPrompt: Bool, oldEngine: String, error: String?) {
-        let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+        let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
         let newEngine = engineType.rawValue
 
         guard oldEngine != newEngine else {
@@ -91,6 +91,9 @@ final class AISettingsViewModel: ObservableObject {
         case .openAI:
             UserDefaults.standard.set(true, forKey: "enableOpenAI")
             print("🔧 Auto-enabled OpenAI engine")
+        case .onDeviceLLM:
+            UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+            print("🔧 Auto-enabled On-Device AI engine")
         default:
             break
         }
@@ -138,6 +141,10 @@ final class AISettingsViewModel: ObservableObject {
                 let credentials = AWSCredentialsManager.shared.credentials
                 return credentials.isValid && isEnabled
             }
+        case .onDeviceLLM:
+            let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+            let selectedModel = OnDeviceLLMModelInfo.selectedModel
+            return isEnabled && selectedModel.isDownloaded
         }
     }
 }
@@ -148,6 +155,7 @@ struct AISettingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var errorHandler = ErrorHandler()
+    @AppStorage(SummarizationTimeouts.storageKey) private var summarizationTimeout: Double = SummarizationTimeouts.defaultTimeout
 
     @Environment(\.dismiss) private var dismiss
     @State private var showingEngineChangePrompt = false
@@ -159,6 +167,7 @@ struct AISettingsView: View {
     @State private var showingMistralAISettings = false
     @State private var showingAWSBedrockSettings = false
     @State private var showingAppleIntelligenceSettings = false
+    @State private var showingOnDeviceLLMSettings = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     @State private var showingRegenerateConfirmation = false
@@ -171,7 +180,7 @@ struct AISettingsView: View {
     private var currentEngineType: AIEngineType? {
         // Note: AudioRecorderViewModel doesn't have selectedAIEngine property
         // Use the actual current engine from UserDefaults
-        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
         return AIEngineType.allCases.first { $0.rawValue == currentEngineName }
     }
     
@@ -182,7 +191,7 @@ struct AISettingsView: View {
             }
             
             var statuses: [String: EngineAvailabilityStatus] = [:]
-            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
             
             // Check each engine type
             for engineType in AIEngineType.allCases {
@@ -242,6 +251,10 @@ struct AISettingsView: View {
                 let credentials = AWSCredentialsManager.shared.credentials
                 return credentials.isValid && isEnabled
             }
+        case .onDeviceLLM:
+            let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+            let isModelReady = OnDeviceLLMDownloadManager.shared.isModelReady
+            return isEnabled && isModelReady
         }
     }
     
@@ -270,6 +283,8 @@ struct AISettingsView: View {
                 return model.displayName
             }
             return "Claude 4.5 Haiku"
+        case .onDeviceLLM:
+            return OnDeviceLLMModelInfo.selectedModel.displayName
         }
     }
     
@@ -286,6 +301,7 @@ struct AISettingsView: View {
                     headerSection
                     engineSelectionSection
                     selectedEngineConfigurationSection
+                    timeoutConfigurationSection
                     summaryManagementSection
 
                     Spacer(minLength: 40)
@@ -309,7 +325,7 @@ struct AISettingsView: View {
                 Task { await viewModel.regenerationManager.regenerateAllSummaries() }
             }
         } message: {
-            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"). Would you like to regenerate your existing summaries with the new AI engine?")
+            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"). Would you like to regenerate your existing summaries with the new AI engine?")
                 .font(.headline)
                 .padding()
             
@@ -320,7 +336,7 @@ struct AISettingsView: View {
                 .buttonStyle(.bordered)
                 
                 Button("Regenerate") {
-                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
                     // TODO: Implement setEngine with new Core Data system
                     viewModel.regenerationManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
                     showingEngineChangePrompt = false
@@ -343,6 +359,9 @@ struct AISettingsView: View {
             Text("This will regenerate all summaries using the current AI engine. Only summaries with existing transcripts will be processed. This may take some time depending on how many recordings you have.")
         }
         .onAppear {
+            summarizationTimeout = SummarizationTimeouts.clamp(
+                summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
+            )
             // Align regeneration manager with the user's currently selected engine instead of forcing OpenAI
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ??
                 AIEngineType.enhancedAppleIntelligence.rawValue
@@ -387,6 +406,11 @@ struct AISettingsView: View {
         .sheet(isPresented: $showingAppleIntelligenceSettings) {
             AppleIntelligenceSettingsView()
         }
+        .sheet(isPresented: $showingOnDeviceLLMSettings) {
+            NavigationStack {
+                OnDeviceLLMSettingsView()
+            }
+        }
     }
 }
 
@@ -416,6 +440,65 @@ private extension AISettingsView {
         }
     }
     
+    var timeoutConfigurationSection: some View {
+        let effectiveTimeout = SummarizationTimeouts.clamp(
+            summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
+        )
+        let isUnlimitedEngine = currentEngineType == .enhancedAppleIntelligence
+        
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("Summary Request Timeout")
+                .font(.headline)
+                .padding(.horizontal, 24)
+            
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Set how long the app waits for AI models to respond when generating summaries and tasks.")
+                    .font(.body)
+                    .fontWeight(.medium)
+                
+                if isUnlimitedEngine {
+                    Text("Apple Intelligence runs on-device with no timeout. It will continue processing until complete.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Slider(
+                        value: Binding(
+                            get: { effectiveTimeout },
+                            set: { summarizationTimeout = SummarizationTimeouts.clamp($0) }
+                        ),
+                        in: SummarizationTimeouts.minimumTimeout...SummarizationTimeouts.maximumTimeout,
+                        step: 10
+                    )
+                    
+                    HStack {
+                        Text("Timeout: \(Int(effectiveTimeout)) seconds")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Spacer()
+                        Text("\(String(format: "%.1f", effectiveTimeout / 60)) minutes")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Text("Range: 30-600 seconds.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Applies to OpenAI, OpenAI Compatible, Mistral AI, AWS Bedrock, Google AI Studio, and Ollama engines.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.orange.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+
     
     var engineSelectionSection: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -429,7 +512,7 @@ private extension AISettingsView {
                     .fontWeight(.medium)
                 
                 Picker("AI Engine", selection: Binding(
-                    get: { UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence" },
+                    get: { UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI" },
                     set: { newValue in
                         if let engineType = AIEngineType.allCases.first(where: { $0.rawValue == newValue }) {
                             let result = self.viewModel.selectEngine(engineType, recorderVM: self.recorderVM)
@@ -445,7 +528,7 @@ private extension AISettingsView {
                         }
                     }
                 )) {
-                    ForEach(AIEngineType.allCases.filter { !$0.isComingSoon }, id: \.self) { engineType in
+                    ForEach(AIEngineType.availableCases.filter { !$0.isComingSoon && $0 != .enhancedAppleIntelligence }, id: \.self) { engineType in
                         VStack(alignment: .leading) {
                             Text(engineType.rawValue)
                                 .font(.body)
@@ -477,11 +560,12 @@ private extension AISettingsView {
                     .fill(Color.blue.opacity(0.1))
             )
             .padding(.horizontal, 24)
+
         }
     }
-    
+
     var selectedEngineConfigurationSection: some View {
-        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Enhanced Apple Intelligence"
+        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
 
         return Group {
             if let currentEngine = AIEngineType.allCases.first(where: { $0.rawValue == currentEngineName }) {
@@ -500,6 +584,12 @@ private extension AISettingsView {
                     mistralConfigurationSection
                 case .awsBedrock:
                     awsBedrockConfigurationSection
+                case .onDeviceLLM:
+                    if DeviceCapabilities.supportsOnDeviceLLM {
+                        onDeviceLLMConfigurationSection
+                    } else {
+                        EmptyView()
+                    }
                 }
             }
         }
@@ -1026,7 +1116,94 @@ private extension AISettingsView {
             .padding(.horizontal, 24)
         }
     }
-    
+
+    var onDeviceLLMConfigurationSection: some View {
+        let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+        let selectedModel = OnDeviceLLMModelInfo.selectedModel
+        let isModelReady = selectedModel.isDownloaded
+
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("On-Device AI Configuration")
+                .font(.headline)
+                .padding(.horizontal, 24)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("On-Device AI Settings")
+                            .font(.body)
+                        Text("Privacy-focused local AI processing. No internet required after model download.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button(action: { 
+                        guard DeviceCapabilities.supportsOnDeviceLLM else { return }
+                        self.showingOnDeviceLLMSettings = true 
+                    }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("Configure")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.purple)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Status:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(isEnabled && isModelReady ? Color.green : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text(isEnabled && isModelReady ? "Ready" : (isModelReady ? "Disabled" : "Model Not Downloaded"))
+                                .font(.caption)
+                                .foregroundColor(isEnabled && isModelReady ? .green : .red)
+                        }
+                    }
+
+                    HStack {
+                        Text("Model:")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(isModelReady ? selectedModel.displayName : "None")
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(isModelReady ? .primary : .secondary)
+                    }
+
+                    if isModelReady {
+                        HStack {
+                            Text("Size:")
+                                .font(.body)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(selectedModel.downloadSize)
+                                .font(.body)
+                                .fontWeight(.medium)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.purple.opacity(0.1))
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+
     var openAICompatibleConfigurationSection: some View {
         // FIX: Logic moved outside the ViewBuilder closure.
         let compatibleApiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""

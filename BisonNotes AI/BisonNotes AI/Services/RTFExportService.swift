@@ -132,28 +132,35 @@ final class RTFExportService {
         dateFormatter.dateStyle = .full
         dateFormatter.timeStyle = .short
 
-        let metadataStyle = NSMutableParagraphStyle()
-        metadataStyle.alignment = .center
-        metadataStyle.paragraphSpacing = 3
-        metadataStyle.lineSpacing = 2
+        // Left-aligned style for date and AI info section
+        let leftMetadataStyle = NSMutableParagraphStyle()
+        leftMetadataStyle.alignment = .left
+        leftMetadataStyle.paragraphSpacing = 3
+        leftMetadataStyle.lineSpacing = 2
+
+        // Center-aligned style for other metadata
+        let centerMetadataStyle = NSMutableParagraphStyle()
+        centerMetadataStyle.alignment = .center
+        centerMetadataStyle.paragraphSpacing = 3
+        centerMetadataStyle.lineSpacing = 2
 
         // Create rich metadata with labels and values
         let metadata = NSMutableAttributedString()
 
-        let items = [
+        // Left-aligned section: Date and AI info (matching PDF layout)
+        let leftItems = [
             ("Recording Date: ", dateFormatter.string(from: summaryData.recordingDate)),
-            ("AI Engine: ", summaryData.aiMethod),
-            ("Content Type: ", summaryData.contentType.rawValue),
-            ("Generated: ", DateFormatter.localizedString(from: summaryData.generatedAt, dateStyle: .medium, timeStyle: .short))
+            ("AI Provider: ", summaryData.aiEngine),
+            ("AI Model: ", summaryData.aiModel)
         ]
 
-        for (label, value) in items {
+        for (label, value) in leftItems {
             let labelAttr = NSAttributedString(
                 string: label,
                 attributes: [
                     .font: UIFont.systemFont(ofSize: 12, weight: .medium),
                     .foregroundColor: UIColor.secondaryLabel,
-                    .paragraphStyle: metadataStyle
+                    .paragraphStyle: leftMetadataStyle
                 ]
             )
 
@@ -162,7 +169,39 @@ final class RTFExportService {
                 attributes: [
                     .font: UIFont.systemFont(ofSize: 12),
                     .foregroundColor: UIColor.label,
-                    .paragraphStyle: metadataStyle
+                    .paragraphStyle: leftMetadataStyle
+                ]
+            )
+
+            metadata.append(labelAttr)
+            metadata.append(valueAttr)
+        }
+
+        // Add spacing before center-aligned metadata
+        metadata.append(NSAttributedString(string: "\n"))
+
+        // Center-aligned section: Other metadata
+        let centerItems = [
+            ("Content Type: ", summaryData.contentType.rawValue),
+            ("Generated: ", DateFormatter.localizedString(from: summaryData.generatedAt, dateStyle: .medium, timeStyle: .short))
+        ]
+
+        for (label, value) in centerItems {
+            let labelAttr = NSAttributedString(
+                string: label,
+                attributes: [
+                    .font: UIFont.systemFont(ofSize: 12, weight: .medium),
+                    .foregroundColor: UIColor.secondaryLabel,
+                    .paragraphStyle: centerMetadataStyle
+                ]
+            )
+
+            let valueAttr = NSAttributedString(
+                string: value + "\n",
+                attributes: [
+                    .font: UIFont.systemFont(ofSize: 12),
+                    .foregroundColor: UIColor.label,
+                    .paragraphStyle: centerMetadataStyle
                 ]
             )
 
@@ -365,9 +404,7 @@ final class RTFExportService {
         style.lineSpacing = 3
 
         for (index, title) in titles.enumerated() {
-            let confidencePercent = Int(title.confidence * 100)
-            let titleText = "\(index + 1). \(title.text) "
-            let confidenceText = "(Confidence: \(confidencePercent)%)\n"
+            let titleText = "\(index + 1). \(title.text)\n"
 
             // Title text in normal color
             let titleAttr = NSMutableAttributedString(
@@ -379,17 +416,6 @@ final class RTFExportService {
                 ]
             )
 
-            // Confidence in gray
-            let confidenceAttr = NSAttributedString(
-                string: confidenceText,
-                attributes: [
-                    .font: UIFont.systemFont(ofSize: 11),
-                    .foregroundColor: UIColor.secondaryLabel,
-                    .paragraphStyle: style
-                ]
-            )
-
-            titleAttr.append(confidenceAttr)
             document.append(titleAttr)
         }
 
@@ -407,9 +433,7 @@ final class RTFExportService {
             ("Word Count:", "\(summaryData.wordCount) words"),
             ("Original Length:", "\(summaryData.originalLength) characters"),
             ("Compression Ratio:", summaryData.formattedCompressionRatio),
-            ("Processing Time:", summaryData.formattedProcessingTime),
-            ("Quality Rating:", summaryData.qualityDescription),
-            ("Confidence Score:", "\(Int(summaryData.confidence * 100))%")
+            ("Processing Time:", summaryData.formattedProcessingTime)
         ]
 
         for (label, value) in details {

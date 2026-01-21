@@ -54,3 +54,7 @@ BisonNotes AI/TEST_PLAN.md
 
 .gemini/
 gha-creds-*.json
+
+# Local AI model packages
+OLMoE.swift/
+.gemini-clipboard/

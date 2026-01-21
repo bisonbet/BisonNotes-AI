@@ -26,10 +26,11 @@ struct SettingsView: View {
     @State private var showingPreferences = false
     @State private var showingTroubleshootingWarning = false
 
-    @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "Enhanced Apple Intelligence"
+    @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "Apple Intelligence"
     @AppStorage("WatchIntegrationEnabled") private var watchIntegrationEnabled: Bool = true
     @AppStorage("WatchAutoSync") private var watchAutoSync: Bool = true
     @AppStorage("WatchBatteryAware") private var watchBatteryAware: Bool = true
+    @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels) private var enableExperimentalModels = false
     
     init() {
         // Initialize regeneration manager with the coordinator's registry manager
@@ -46,9 +47,9 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     headerSection
                     preferencesSection
-                    microphoneSection
                     aiEngineSection
                     transcriptionSection
+                    microphoneSection
                     advancedSection
                     debugSection
                     databaseMaintenanceSection
@@ -89,6 +90,10 @@ struct SettingsView: View {
             // Immediately update the SummaryManager when user changes AI engine selection
             SummaryManager.shared.setEngine(newEngine)
             print("🔄 SettingsView: Updated AI engine to '\(newEngine)'")
+        }
+        .onChange(of: enableExperimentalModels) { oldValue, newValue in
+            // Refresh model list when experimental models toggle changes
+            OnDeviceLLMDownloadManager.shared.refreshModelStatus()
         }
         .sheet(isPresented: $showingAISettings) {
             AISettingsView()
@@ -335,7 +340,7 @@ struct SettingsView: View {
                 Text("Current Engine:")
                     .font(.body)
                     .foregroundColor(.secondary)
-                Text(TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.appleIntelligence.rawValue)?.rawValue ?? "Apple Intelligence")
+                Text(TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue)?.rawValue ?? "On Device")
                     .font(.body)
                     .fontWeight(.medium)
                     .foregroundColor(.primary)
@@ -656,7 +661,29 @@ struct SettingsView: View {
                         .opacity(0.3)
                 )
                 
-                
+                // Experimental On-Device AI Models
+                VStack(spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Enable Experimental On-Device AI Models")
+                                .font(.body)
+                                .foregroundColor(.primary)
+                            Text("Allow use of experimental models (LFM 2.5, Qwen3-1.7B, Qwen 4B for 8GB+). These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only small experimental models available.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $enableExperimentalModels)
+                            .labelsHidden()
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+                .background(
+                    Rectangle()
+                        .fill(Color(.systemGray6))
+                        .opacity(0.3)
+                )
                 
             }
             .background(
@@ -796,7 +823,6 @@ struct SettingsView: View {
         // Set the engine to the currently selected one from settings
         regenerationManager.setEngine(selectedAIEngine)
     }
-    
 
 }
 

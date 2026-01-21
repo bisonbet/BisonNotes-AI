@@ -17,6 +17,7 @@ struct OllamaConfig {
     let temperature: Double
     /// Maximum number of tokens the model can accept in the prompt/context
     let maxContextTokens: Int
+    let timeoutInterval: TimeInterval
     
     var baseURL: String {
         return "\(serverURL):\(port)"
@@ -28,7 +29,8 @@ struct OllamaConfig {
         modelName: "llama2:7b",
         maxTokens: 2048,
         temperature: 0.1,
-        maxContextTokens: 4096
+        maxContextTokens: 4096,
+        timeoutInterval: SummarizationTimeouts.current()
     )
 }
 
@@ -323,11 +325,12 @@ class OllamaService: ObservableObject {
     init(config: OllamaConfig = .default) {
         self.config = config
         
-        // Create a custom URLSession with longer timeout for Ollama requests
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 1800.0  // 30 minutes
-        config.timeoutIntervalForResource = 1800.0 // 30 minutes
-        self.session = URLSession(configuration: config)
+        // Create a custom URLSession with configurable timeout for Ollama requests
+        let sessionConfig = URLSessionConfiguration.default
+        sessionConfig.timeoutIntervalForRequest = config.timeoutInterval
+        // Provide additional time for streamed or larger local responses to finish after the request is accepted.
+        sessionConfig.timeoutIntervalForResource = config.timeoutInterval * 2
+        self.session = URLSession(configuration: sessionConfig)
     }
     
     // MARK: - Connection Management
@@ -713,7 +716,7 @@ class OllamaService: ObservableObject {
             // Convert raw results to proper objects
             let tasks = rawResult.tasks.map { rawTask in
                 TaskItem(
-                    text: rawTask.text,
+                    text: RecordingNameGenerator.cleanAIOutput(rawTask.text),
                     priority: TaskItem.Priority(rawValue: rawTask.priority) ?? .medium,
                     timeReference: rawTask.timeReference,
                     category: TaskItem.TaskCategory(rawValue: rawTask.category) ?? .general,
@@ -722,9 +725,17 @@ class OllamaService: ObservableObject {
             }
             
             let reminders = rawResult.reminders.map { rawReminder in
-                ReminderItem(
-                    text: rawReminder.text,
-                    timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                let timeRef: ReminderItem.TimeReference
+                if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                } else {
+                    timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                }
+
+                return ReminderItem(
+                    text: RecordingNameGenerator.cleanAIOutput(rawReminder.text),
+                    timeReference: timeRef,
                     urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                     confidence: 0.8
                 )
@@ -732,7 +743,7 @@ class OllamaService: ObservableObject {
             
             let titles = rawResult.titles.map { rawTitle in
                 TitleItem(
-                    text: rawTitle.text,
+                    text: RecordingNameGenerator.cleanStandardizedTitleResponse(rawTitle.text),
                     confidence: rawTitle.confidence,
                     category: TitleItem.TitleCategory(rawValue: rawTitle.category) ?? .general
                 )
@@ -764,7 +775,7 @@ class OllamaService: ObservableObject {
                     
                     let tasks = rawResult.tasks.map { rawTask in
                         TaskItem(
-                            text: rawTask.text,
+                            text: RecordingNameGenerator.cleanAIOutput(rawTask.text),
                             priority: TaskItem.Priority(rawValue: rawTask.priority) ?? .medium,
                             timeReference: rawTask.timeReference,
                             category: TaskItem.TaskCategory(rawValue: rawTask.category) ?? .general,
@@ -773,9 +784,17 @@ class OllamaService: ObservableObject {
                     }
                     
                     let reminders = rawResult.reminders.map { rawReminder in
-                        ReminderItem(
-                            text: rawReminder.text,
-                            timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                        // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                        let timeRef: ReminderItem.TimeReference
+                        if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                            timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                        } else {
+                            timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                        }
+
+                        return ReminderItem(
+                            text: RecordingNameGenerator.cleanAIOutput(rawReminder.text),
+                            timeReference: timeRef,
                             urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                             confidence: 0.8
                         )
@@ -783,7 +802,7 @@ class OllamaService: ObservableObject {
                     
                     let titles = rawResult.titles.map { rawTitle in
                         TitleItem(
-                            text: rawTitle.text,
+                            text: RecordingNameGenerator.cleanStandardizedTitleResponse(rawTitle.text),
                             confidence: rawTitle.confidence,
                             category: TitleItem.TitleCategory(rawValue: rawTitle.category) ?? .general
                         )
@@ -1242,7 +1261,7 @@ class OllamaService: ObservableObject {
             // Convert raw results to proper TaskItem and ReminderItem objects
             let tasks = rawResult.tasks.map { rawTask in
                 TaskItem(
-                    text: rawTask.text,
+                    text: RecordingNameGenerator.cleanAIOutput(rawTask.text),
                     priority: TaskItem.Priority(rawValue: rawTask.priority) ?? .medium,
                     timeReference: rawTask.timeReference,
                     category: TaskItem.TaskCategory(rawValue: rawTask.category) ?? .general,
@@ -1252,7 +1271,7 @@ class OllamaService: ObservableObject {
             
             let reminders = rawResult.reminders.map { rawReminder in
                 ReminderItem(
-                    text: rawReminder.text,
+                    text: RecordingNameGenerator.cleanAIOutput(rawReminder.text),
                     timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
                     urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                     confidence: 0.8 // Default confidence for Ollama results
@@ -1280,7 +1299,7 @@ class OllamaService: ObservableObject {
                     
                     let tasks = rawResult.tasks.map { rawTask in
                         TaskItem(
-                            text: rawTask.text,
+                            text: RecordingNameGenerator.cleanAIOutput(rawTask.text),
                             priority: TaskItem.Priority(rawValue: rawTask.priority) ?? .medium,
                             timeReference: rawTask.timeReference,
                             category: TaskItem.TaskCategory(rawValue: rawTask.category) ?? .general,
@@ -1289,9 +1308,17 @@ class OllamaService: ObservableObject {
                     }
                     
                     let reminders = rawResult.reminders.map { rawReminder in
-                        ReminderItem(
-                            text: rawReminder.text,
-                            timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                        // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                        let timeRef: ReminderItem.TimeReference
+                        if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                            timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                        } else {
+                            timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                        }
+
+                        return ReminderItem(
+                            text: RecordingNameGenerator.cleanAIOutput(rawReminder.text),
+                            timeReference: timeRef,
                             urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                             confidence: 0.8
                         )
@@ -1355,7 +1382,7 @@ class OllamaService: ObservableObject {
             // Convert raw results to proper TitleItem objects
             let titles = rawResult.titles.map { rawTitle in
                 TitleItem(
-                    text: rawTitle.text,
+                    text: RecordingNameGenerator.cleanStandardizedTitleResponse(rawTitle.text),
                     confidence: rawTitle.confidence,
                     category: TitleItem.TitleCategory(rawValue: rawTitle.category) ?? .general
                 )
@@ -1383,7 +1410,7 @@ class OllamaService: ObservableObject {
                     
                     let titles = rawResult.titles.map { rawTitle in
                         TitleItem(
-                            text: rawTitle.text,
+                            text: RecordingNameGenerator.cleanStandardizedTitleResponse(rawTitle.text),
                             confidence: rawTitle.confidence,
                             category: TitleItem.TitleCategory(rawValue: rawTitle.category) ?? .general
                         )
@@ -1446,7 +1473,7 @@ class OllamaService: ObservableObject {
             // Convert raw results to proper objects
             let tasks = rawResult.tasks.map { rawTask in
                 TaskItem(
-                    text: rawTask.text,
+                    text: RecordingNameGenerator.cleanAIOutput(rawTask.text),
                     priority: TaskItem.Priority(rawValue: rawTask.priority) ?? .medium,
                     timeReference: rawTask.timeReference,
                     category: TaskItem.TaskCategory(rawValue: rawTask.category) ?? .general,
@@ -1455,9 +1482,17 @@ class OllamaService: ObservableObject {
             }
             
             let reminders = rawResult.reminders.map { rawReminder in
-                ReminderItem(
-                    text: rawReminder.text,
-                    timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                let timeRef: ReminderItem.TimeReference
+                if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                } else {
+                    timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                }
+
+                return ReminderItem(
+                    text: RecordingNameGenerator.cleanAIOutput(rawReminder.text),
+                    timeReference: timeRef,
                     urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                     confidence: 0.9 // Higher confidence for tool calling results
                 )
@@ -1465,7 +1500,7 @@ class OllamaService: ObservableObject {
             
             let titles = rawResult.titles.map { rawTitle in
                 TitleItem(
-                    text: rawTitle.text,
+                    text: RecordingNameGenerator.cleanStandardizedTitleResponse(rawTitle.text),
                     confidence: rawTitle.confidence,
                     category: TitleItem.TitleCategory(rawValue: rawTitle.category) ?? .general
                 )
@@ -1783,7 +1818,7 @@ class OllamaService: ObservableObject {
             let timeReference = taskData["timeReference"] as? String
             
             return TaskItem(
-                text: text,
+                text: RecordingNameGenerator.cleanAIOutput(text),
                 priority: TaskItem.Priority(rawValue: priorityString) ?? .medium,
                 timeReference: timeReference,
                 category: TaskItem.TaskCategory(rawValue: categoryString) ?? .general,
@@ -1797,9 +1832,19 @@ class OllamaService: ObservableObject {
             let urgencyString = reminderData["urgency"] as? String ?? "Later"
             let timeReference = reminderData["timeReference"] as? String
             
+            let cleanedText = RecordingNameGenerator.cleanAIOutput(text)
+            
+            // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+            let timeRef: ReminderItem.TimeReference
+            if let aiTimeRef = timeReference, !aiTimeRef.isEmpty {
+                timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+            } else {
+                timeRef = ReminderItem.TimeReference.fromReminderText(cleanedText)
+            }
+
             return ReminderItem(
-                text: text,
-                timeReference: ReminderItem.TimeReference(originalText: timeReference ?? ""),
+                text: cleanedText,
+                timeReference: timeRef,
                 urgency: ReminderItem.Urgency(rawValue: urgencyString) ?? .later,
                 confidence: 0.95 // Very high confidence for Qwen tool calling results
             )
@@ -1812,7 +1857,7 @@ class OllamaService: ObservableObject {
             let confidence = titleData["confidence"] as? Double ?? 0.85
             
             return TitleItem(
-                text: text,
+                text: RecordingNameGenerator.cleanStandardizedTitleResponse(text),
                 confidence: confidence,
                 category: TitleItem.TitleCategory(rawValue: categoryString) ?? .general
             )
@@ -2037,7 +2082,7 @@ class OllamaService: ObservableObject {
             let timeReference = taskData["timeReference"] as? String
             
             return TaskItem(
-                text: text,
+                text: RecordingNameGenerator.cleanAIOutput(text),
                 priority: TaskItem.Priority(rawValue: priorityString) ?? .medium,
                 timeReference: timeReference,
                 category: TaskItem.TaskCategory(rawValue: categoryString) ?? .general,
@@ -2050,10 +2095,19 @@ class OllamaService: ObservableObject {
             guard let text = reminderData["text"] as? String else { return nil }
             let urgencyString = reminderData["urgency"] as? String ?? "Later"
             let timeReference = reminderData["timeReference"] as? String
+            let cleanedText = RecordingNameGenerator.cleanAIOutput(text)
             
+            // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+            let timeRef: ReminderItem.TimeReference
+            if let aiTimeRef = timeReference, !aiTimeRef.isEmpty {
+                timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+            } else {
+                timeRef = ReminderItem.TimeReference.fromReminderText(cleanedText)
+            }
+
             return ReminderItem(
-                text: text,
-                timeReference: ReminderItem.TimeReference(originalText: timeReference ?? ""),
+                text: cleanedText,
+                timeReference: timeRef,
                 urgency: ReminderItem.Urgency(rawValue: urgencyString) ?? .later,
                 confidence: 0.92 // High confidence for GPT-OSS tool calling results
             )
@@ -2066,7 +2120,7 @@ class OllamaService: ObservableObject {
             let confidence = titleData["confidence"] as? Double ?? 0.85
             
             return TitleItem(
-                text: text,
+                text: RecordingNameGenerator.cleanStandardizedTitleResponse(text),
                 confidence: confidence,
                 category: TitleItem.TitleCategory(rawValue: categoryString) ?? .general
             )
@@ -2307,7 +2361,7 @@ class OllamaService: ObservableObject {
             let timeReference = taskData["timeReference"] as? String
             
             return TaskItem(
-                text: text,
+                text: RecordingNameGenerator.cleanAIOutput(text),
                 priority: TaskItem.Priority(rawValue: priorityString) ?? .medium,
                 timeReference: timeReference,
                 category: TaskItem.TaskCategory(rawValue: categoryString) ?? .general,
@@ -2320,10 +2374,19 @@ class OllamaService: ObservableObject {
             guard let text = reminderData["text"] as? String else { return nil }
             let urgencyString = reminderData["urgency"] as? String ?? "Later"
             let timeReference = reminderData["timeReference"] as? String
+            let cleanedText = RecordingNameGenerator.cleanAIOutput(text)
             
+            // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+            let timeRef: ReminderItem.TimeReference
+            if let aiTimeRef = timeReference, !aiTimeRef.isEmpty {
+                timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+            } else {
+                timeRef = ReminderItem.TimeReference.fromReminderText(cleanedText)
+            }
+
             return ReminderItem(
-                text: text,
-                timeReference: ReminderItem.TimeReference(originalText: timeReference ?? ""),
+                text: cleanedText,
+                timeReference: timeRef,
                 urgency: ReminderItem.Urgency(rawValue: urgencyString) ?? .later,
                 confidence: 0.93 // Very high confidence for Magistral tool calling results
             )
@@ -2336,7 +2399,7 @@ class OllamaService: ObservableObject {
             let confidence = titleData["confidence"] as? Double ?? 0.85
             
             return TitleItem(
-                text: text,
+                text: RecordingNameGenerator.cleanStandardizedTitleResponse(text),
                 confidence: confidence,
                 category: TitleItem.TitleCategory(rawValue: categoryString) ?? .general
             )
@@ -2724,7 +2787,7 @@ class OllamaService: ObservableObject {
             // Convert raw results to proper objects with higher confidence for structured outputs
             let tasks = validTasks.map { rawTask in
                 TaskItem(
-                    text: rawTask.text,
+                    text: RecordingNameGenerator.cleanAIOutput(rawTask.text),
                     priority: TaskItem.Priority(rawValue: rawTask.priority) ?? .medium,
                     timeReference: rawTask.timeReference,
                     category: TaskItem.TaskCategory(rawValue: rawTask.category) ?? .general,
@@ -2748,9 +2811,17 @@ class OllamaService: ObservableObject {
             }
 
             let reminders = validReminders.map { rawReminder in
-                ReminderItem(
-                    text: rawReminder.text,
-                    timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                let timeRef: ReminderItem.TimeReference
+                if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                } else {
+                    timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                }
+
+                return ReminderItem(
+                    text: RecordingNameGenerator.cleanAIOutput(rawReminder.text),
+                    timeReference: timeRef,
                     urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                     confidence: 0.95  // Higher confidence for structured outputs
                 )
@@ -2758,7 +2829,7 @@ class OllamaService: ObservableObject {
 
             var titles = rawResult.titles.map { rawTitle in
                 TitleItem(
-                    text: rawTitle.text,
+                    text: RecordingNameGenerator.cleanStandardizedTitleResponse(rawTitle.text),
                     confidence: rawTitle.confidence,
                     category: TitleItem.TitleCategory(rawValue: rawTitle.category) ?? .general
                 )
@@ -2797,7 +2868,7 @@ class OllamaService: ObservableObject {
             
             let tasks = rawResult.tasks.map { rawTask in
                 TaskItem(
-                    text: rawTask.text,
+                    text: RecordingNameGenerator.cleanAIOutput(rawTask.text),
                     priority: TaskItem.Priority(rawValue: rawTask.priority) ?? .medium,
                     timeReference: rawTask.timeReference,
                     category: TaskItem.TaskCategory(rawValue: rawTask.category) ?? .general,
@@ -2806,9 +2877,17 @@ class OllamaService: ObservableObject {
             }
             
             let reminders = rawResult.reminders.map { rawReminder in
-                ReminderItem(
-                    text: rawReminder.text,
-                    timeReference: ReminderItem.TimeReference(originalText: rawReminder.timeReference ?? ""),
+                // Use smart fallback: if AI didn't provide time reference, extract from reminder text
+                let timeRef: ReminderItem.TimeReference
+                if let aiTimeRef = rawReminder.timeReference, !aiTimeRef.isEmpty {
+                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                } else {
+                    timeRef = ReminderItem.TimeReference.fromReminderText(rawReminder.text)
+                }
+
+                return ReminderItem(
+                    text: RecordingNameGenerator.cleanAIOutput(rawReminder.text),
+                    timeReference: timeRef,
                     urgency: ReminderItem.Urgency(rawValue: rawReminder.urgency) ?? .later,
                     confidence: 0.95  // Higher confidence for structured outputs
                 )

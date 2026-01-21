@@ -60,7 +60,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.3</string>
+	<string>1.4</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
@@ -101,6 +101,10 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
+	<key>UIApplicationExitsOnSuspend</key>
+	<false/>
+	<key>UIRequiresPersistentWiFi</key>
+	<false/>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

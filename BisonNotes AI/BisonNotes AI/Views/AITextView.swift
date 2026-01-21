@@ -8,6 +8,7 @@ enum AIService {
     case ollama
     case appleIntelligence
     case whisper
+    case onDevice
     
     var description: String {
         switch self {
@@ -23,27 +24,32 @@ enum AIService {
             return "apple"
         case .whisper:
             return "whisper"
+        case .onDevice:
+            return "on-device"
         }
     }
     
-    /// Maps an AI method string to the appropriate AIService
-    static func from(aiMethod: String) -> AIService {
-        let lowercased = aiMethod.lowercased()
+    /// Maps AI engine and model strings to the appropriate AIService
+    static func from(aiEngine: String, aiModel: String) -> AIService {
+        let engineLower = aiEngine.lowercased()
+        let modelLower = aiModel.lowercased()
         
-        if lowercased.contains("google") || lowercased.contains("gemini") {
+        if engineLower.contains("google") || modelLower.contains("gemini") {
             return .googleAI
-        } else if lowercased.contains("openai") || lowercased.contains("gpt") {
+        } else if engineLower.contains("openai") || modelLower.contains("gpt") {
             return .openAI
-        } else if lowercased.contains("bedrock") || lowercased.contains("claude") {
+        } else if engineLower.contains("bedrock") || modelLower.contains("claude") || engineLower.contains("aws") {
             return .bedrock
-        } else if lowercased.contains("ollama") {
+        } else if engineLower.contains("ollama") {
             return .ollama
-        } else if lowercased.contains("apple") || lowercased.contains("intelligence") {
+        } else if engineLower.contains("apple") || modelLower.contains("intelligence") {
             return .appleIntelligence
-        } else if lowercased.contains("whisper") {
+        } else if engineLower.contains("whisper") {
             return .whisper
+        } else if engineLower.contains("device") || modelLower.contains("gemma") || modelLower.contains("phi") || modelLower.contains("qwen") || modelLower.contains("llama") || modelLower.contains("mistral") || modelLower.contains("olmo") || modelLower.contains("alpaca") {
+            return .onDevice
         } else {
-            // Default to standard processor for unknown services
+            // Default to bedrock for unknown services
             return .bedrock
         }
     }
@@ -70,27 +76,30 @@ struct AITextView: View {
     /// Clean text using simplified robust cleaning for MarkdownUI
     private func cleanTextForMarkdown(_ text: String) -> String {
         var cleaned = text
-        
-        // Step 1: Normalize line endings and escape sequences
+
+        // Step 1: Sanitize encoding issues (Unicode replacement chars, smart quotes, etc.)
+        cleaned = cleaned.sanitizedForDisplay()
+
+        // Step 2: Normalize line endings and escape sequences
         cleaned = cleaned.replacingOccurrences(of: "\\n", with: "\n")
         cleaned = cleaned.replacingOccurrences(of: "\\r", with: "\n")
-        
-        // Step 2: Remove JSON wrappers
+
+        // Step 3: Remove JSON wrappers
         cleaned = cleaned.replacingOccurrences(of: "^\"summary\"\\s*:\\s*\"", with: "", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(of: "^\"content\"\\s*:\\s*\"", with: "", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(of: "^\"text\"\\s*:\\s*\"", with: "", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(of: "\"\\s*$", with: "", options: .regularExpression)
-        
-        // Step 3: Basic spacing normalization
+
+        // Step 4: Basic spacing normalization
         cleaned = cleaned.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
-        
+
         #if DEBUG
         print("🔍 MarkdownUI Input Debug:")
-        print("Original length: \\(text.count)")
-        print("Cleaned length: \\(cleaned.count)")
-        print("First 200 chars: \\(cleaned.prefix(200))")
+        print("Original length: \(text.count)")
+        print("Cleaned length: \(cleaned.count)")
+        print("First 200 chars: \(cleaned.prefix(200))")
         #endif
-        
+
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     

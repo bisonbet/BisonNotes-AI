@@ -95,12 +95,14 @@ struct TestHelpers {
     /// Creates a mock enhanced summary data for testing
     static func createMockEnhancedSummaryData(
         summary: String = "Test summary",
-        tasks: [String] = ["Task 1", "Task 2"],
-        reminders: [String] = ["Reminder 1"],
-        titles: [String] = ["Test Title"]
+        tasks: [TaskItem] = [],
+        reminders: [ReminderItem] = [],
+        titles: [TitleItem] = []
     ) -> EnhancedSummaryData {
         return EnhancedSummaryData(
             id: UUID(),
+            recordingId: UUID(),
+            transcriptId: UUID(),
             recordingURL: URL(fileURLWithPath: "/test/recording.m4a"),
             recordingName: "Test Recording",
             recordingDate: Date(),
@@ -109,16 +111,15 @@ struct TestHelpers {
             reminders: reminders,
             titles: titles,
             contentType: .meeting,
-            aiMethod: "GPT-4",
-            generatedAt: Date(),
-            version: "1.0",
-            wordCount: 5,
-            originalLength: 60.0,
-            compressionRatio: 0.1,
-            confidence: 0.95,
+            aiEngine: "Mock Engine",
+            aiModel: "GPT-4",
+            originalLength: 60,
             processingTime: 5.0,
-            deviceIdentifier: "test-device",
-            lastModified: Date()
+            generatedAt: Date(),
+            version: 1,
+            wordCount: 5,
+            compressionRatio: 0.1,
+            confidence: 0.95
         )
     }
     

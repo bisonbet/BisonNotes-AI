@@ -28,6 +28,10 @@ struct RecordingsListView: View {
     @State private var preserveSummaryOnDelete = false
     @State private var showingEnhancedDeleteDialog = false
     @State private var selectedRecordingForPlayer: AudioRecordingFile?
+    @State private var isSelectionMode = false
+    @State private var selectedRecordings: Set<URL> = []
+    @State private var showingCombineView = false
+    @State private var recordingsToCombine: (first: AudioRecordingFile, second: AudioRecordingFile)?
     
     var body: some View {
         NavigationView {
@@ -38,10 +42,36 @@ struct RecordingsListView: View {
                         .font(.largeTitle)
                         .fontWeight(.bold)
                     Spacer()
-                    Button("Done") {
-                        dismiss()
+                    
+                    if isSelectionMode {
+                        HStack(spacing: 12) {
+                            if selectedRecordings.count == 2 {
+                                Button("Combine") {
+                                    handleCombineSelected()
+                                }
+                                .font(.headline)
+                                .foregroundColor(.blue)
+                            }
+                            
+                            Button("Cancel") {
+                                isSelectionMode = false
+                                selectedRecordings.removeAll()
+                            }
+                            .font(.headline)
+                        }
+                    } else {
+                        HStack(spacing: 12) {
+                            Button("Select") {
+                                isSelectionMode = true
+                            }
+                            .font(.headline)
+                            
+                            Button("Done") {
+                                dismiss()
+                            }
+                            .font(.headline)
+                        }
                     }
-                    .font(.headline)
                 }
                 .padding()
                 
@@ -114,6 +144,23 @@ struct RecordingsListView: View {
                         .environmentObject(recorderVM)
                 }
             }
+            .sheet(isPresented: $showingCombineView) {
+                if let recordings = recordingsToCombine {
+                    let combiner = RecordingCombiner.shared
+                    let recommended = combiner.determineFirstRecording(
+                        firstURL: recordings.first.url,
+                        secondURL: recordings.second.url
+                    ).first
+                    let recommendedRecording = recommended == recordings.first.url ? recordings.first : recordings.second
+                    
+                    CombineRecordingsView(
+                        firstRecording: recordings.first,
+                        secondRecording: recordings.second,
+                        recommendedFirst: recommendedRecording
+                    )
+                    .environmentObject(appCoordinator)
+                }
+            }
         }
         .onAppear {
             refreshFileRelationships()
@@ -181,9 +228,25 @@ struct RecordingsListView: View {
     
     private func recordingRow(for recording: AudioRecordingFile) -> some View {
         HStack {
-            // Main content area - clickable for playback
+            // Selection checkbox (if in selection mode)
+            if isSelectionMode {
+                Button(action: {
+                    toggleSelection(for: recording)
+                }) {
+                    Image(systemName: selectedRecordings.contains(recording.url) ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundColor(selectedRecordings.contains(recording.url) ? .blue : .gray)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            
+            // Main content area - clickable for playback (or selection)
             Button(action: {
-                selectedRecordingForPlayer = recording
+                if isSelectionMode {
+                    toggleSelection(for: recording)
+                } else {
+                    selectedRecordingForPlayer = recording
+                }
             }) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(recording.name)
@@ -273,6 +336,11 @@ struct RecordingsListView: View {
         }
 
         for entry in recordingsWithData {
+            // Skip imported transcripts - they appear in the Transcripts tab only
+            if entry.recording.audioQuality == "imported" {
+                continue
+            }
+
             guard let url = appCoordinator.getAbsoluteURL(for: entry.recording) else { continue }
             let key = url.lastPathComponent
             if let existing = bestByFilename[key] {
@@ -324,6 +392,7 @@ struct RecordingsListView: View {
     private func loadLocationDataForRecording(url: URL) -> LocationData? {
         // First try to find the recording in Core Data and use proper URL resolution
         if let recording = appCoordinator.getRecording(url: url) {
+            // loadLocationData now checks Core Data fields first, then file
             return appCoordinator.loadLocationData(for: recording)
         }
         
@@ -440,5 +509,76 @@ struct RecordingsListView: View {
     }
     
     // MARK: - Helper Methods
+    
+    private func toggleSelection(for recording: AudioRecordingFile) {
+        if selectedRecordings.contains(recording.url) {
+            selectedRecordings.remove(recording.url)
+        } else {
+            // Only allow selecting up to 2 recordings
+            if selectedRecordings.count < 2 {
+                selectedRecordings.insert(recording.url)
+            }
+        }
+    }
+    
+    private func handleCombineSelected() {
+        guard selectedRecordings.count == 2 else { return }
+        
+        let selectedURLs = Array(selectedRecordings)
+        guard let firstRecording = recordings.first(where: { $0.url == selectedURLs[0] }),
+              let secondRecording = recordings.first(where: { $0.url == selectedURLs[1] }) else {
+            return
+        }
+        
+        // Check if either recording has transcripts or summaries
+        var issues: [String] = []
+        
+        if let firstEntry = appCoordinator.getRecording(url: firstRecording.url),
+           let firstId = firstEntry.id {
+            if appCoordinator.getTranscript(for: firstId) != nil {
+                issues.append("'\(firstRecording.name)' has a transcript")
+            }
+            if appCoordinator.getSummary(for: firstId) != nil {
+                issues.append("'\(firstRecording.name)' has a summary")
+            }
+        }
+        
+        if let secondEntry = appCoordinator.getRecording(url: secondRecording.url),
+           let secondId = secondEntry.id {
+            if appCoordinator.getTranscript(for: secondId) != nil {
+                issues.append("'\(secondRecording.name)' has a transcript")
+            }
+            if appCoordinator.getSummary(for: secondId) != nil {
+                issues.append("'\(secondRecording.name)' has a summary")
+            }
+        }
+        
+        if !issues.isEmpty {
+            // Show alert explaining why they can't combine
+            let alert = UIAlertController(
+                title: "Cannot Combine Recordings",
+                message: "These recordings cannot be combined because:\n\n\(issues.joined(separator: "\n"))\n\nPlease delete the transcripts and/or summaries from both recordings before combining them.",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootViewController = windowScene.windows.first?.rootViewController {
+                rootViewController.present(alert, animated: true)
+            }
+            
+            // Exit selection mode
+            isSelectionMode = false
+            selectedRecordings.removeAll()
+            return
+        }
+        
+        recordingsToCombine = (first: firstRecording, second: secondRecording)
+        showingCombineView = true
+        
+        // Exit selection mode
+        isSelectionMode = false
+        selectedRecordings.removeAll()
+    }
     
 }

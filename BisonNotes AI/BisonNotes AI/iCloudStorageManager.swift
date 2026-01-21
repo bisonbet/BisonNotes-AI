@@ -255,7 +255,6 @@ class iCloudStorageManager: ObservableObject {
     private func initializeCloudKit() async {
         guard !isInitialized else { return }
         
-        EnhancedLogger.shared.startPerformanceTracking("CloudKit Initialization", context: "iCloud Setup")
         
         // Skip CloudKit initialization in preview environments
         let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
@@ -288,9 +287,6 @@ class iCloudStorageManager: ObservableObject {
         
         isInitialized = true
         
-        if let result = EnhancedLogger.shared.endPerformanceTracking("CloudKit Initialization") {
-            EnhancedLogger.shared.logPerformance("CloudKit initialization completed in \(String(format: "%.2f", result.duration))s", level: .debug)
-        }
     }
     
     // MARK: - Public Interface
@@ -341,7 +337,6 @@ class iCloudStorageManager: ObservableObject {
                     // Don't fail the entire enablement process
                 }
             } else {
-                print("⏭️ Skipping initial full sync - will sync changes as they occur")
             }
             
             await updateSyncStatus(.completed)
@@ -1382,7 +1377,8 @@ class iCloudStorageManager: ObservableObject {
                 reminders: cloudSummary.reminders,
                 titles: cloudSummary.titles,
                 contentType: cloudSummary.contentType,
-                aiMethod: cloudSummary.aiMethod,
+                aiEngine: cloudSummary.aiEngine,
+                aiModel: cloudSummary.aiModel,
                 originalLength: cloudSummary.originalLength,
                 processingTime: cloudSummary.processingTime
             )
@@ -1412,7 +1408,10 @@ class iCloudStorageManager: ObservableObject {
         summaryEntry.recordingId = cloudSummary.recordingId
         summaryEntry.transcriptId = cloudSummary.transcriptId
         summaryEntry.generatedAt = cloudSummary.generatedAt
-        summaryEntry.aiMethod = cloudSummary.aiMethod
+        summaryEntry.aiMethod = SummaryMetadataCodec.encode(
+            aiEngine: cloudSummary.aiEngine,
+            aiModel: cloudSummary.aiModel
+        )
         summaryEntry.processingTime = cloudSummary.processingTime
         summaryEntry.confidence = cloudSummary.confidence
         summaryEntry.summary = cloudSummary.summary
@@ -1573,7 +1572,6 @@ class iCloudStorageManager: ObservableObject {
             }
         }
         
-        print("🔄 Set up periodic sync with \(syncInterval)s interval")
     }
     
     private func calculateAdaptiveSyncInterval() -> TimeInterval {
@@ -1608,14 +1606,12 @@ class iCloudStorageManager: ObservableObject {
         
         // Check if we should skip sync based on current conditions
         if shouldSkipSync() {
-            print("⏭️ Skipping periodic sync due to current conditions")
             return
         }
         
         // Check auto-sync mode
         switch autoSyncMode {
         case .disabled:
-            print("⏭️ Skipping periodic sync - auto-sync disabled")
             return
         case .changesOnly:
             // Use verbose logging instead of regular print to reduce console noise
@@ -1686,7 +1682,6 @@ class iCloudStorageManager: ObservableObject {
     
 
     private func setupCloudKitSchema() async {
-        print("🔧 Setting up CloudKit schema...")
     
         guard let database = database else { return }
     
@@ -1719,7 +1714,6 @@ class iCloudStorageManager: ObservableObject {
         do {
             _ = try await database.save(tempRecord)
             try await database.deleteRecord(withID: tempID)
-            print("✅ CloudKit schema ensured")
         } catch {
             print("⚠️ Failed to set up CloudKit schema: \(error)")
         }
@@ -1739,7 +1733,10 @@ class iCloudStorageManager: ObservableObject {
         record[CloudKitSummaryRecord.recordingDateField] = summary.recordingDate
         record[CloudKitSummaryRecord.summaryField] = summary.summary
         record[CloudKitSummaryRecord.contentTypeField] = summary.contentType.rawValue
-        record[CloudKitSummaryRecord.aiMethodField] = summary.aiMethod
+        record[CloudKitSummaryRecord.aiMethodField] = SummaryMetadataCodec.encode(
+            aiEngine: summary.aiEngine,
+            aiModel: summary.aiModel
+        )
         record[CloudKitSummaryRecord.generatedAtField] = summary.generatedAt
         record[CloudKitSummaryRecord.versionField] = summary.version
         record[CloudKitSummaryRecord.wordCountField] = summary.wordCount
@@ -1775,7 +1772,10 @@ class iCloudStorageManager: ObservableObject {
         record[CloudKitSummaryRecord.recordingDateField] = summary.recordingDate
         record[CloudKitSummaryRecord.summaryField] = summary.summary
         record[CloudKitSummaryRecord.contentTypeField] = summary.contentType.rawValue
-        record[CloudKitSummaryRecord.aiMethodField] = summary.aiMethod
+        record[CloudKitSummaryRecord.aiMethodField] = SummaryMetadataCodec.encode(
+            aiEngine: summary.aiEngine,
+            aiModel: summary.aiModel
+        )
         record[CloudKitSummaryRecord.generatedAtField] = summary.generatedAt
         record[CloudKitSummaryRecord.versionField] = summary.version
         record[CloudKitSummaryRecord.wordCountField] = summary.wordCount
@@ -1852,6 +1852,9 @@ class iCloudStorageManager: ObservableObject {
         // Use the summary ID from the CloudKit record ID, or the recordingId if available
         let summaryId = UUID(uuidString: record.recordID.recordName) ?? UUID()
         
+        let decodedMetadata = SummaryMetadataCodec.decode(aiMethod)
+        let engine = decodedMetadata.engine ?? SummaryMetadataCodec.inferredEngine(from: decodedMetadata.model)
+        
         return EnhancedSummaryData(
             id: summaryId,
             recordingId: recordingId ?? summaryId, // Use recordingId if available, otherwise use summary ID
@@ -1864,7 +1867,8 @@ class iCloudStorageManager: ObservableObject {
             reminders: reminders,
             titles: titles,
             contentType: contentType,
-            aiMethod: aiMethod,
+            aiEngine: engine,
+            aiModel: decodedMetadata.model,
             originalLength: originalLength,
             processingTime: processingTime,
             generatedAt: generatedAt,
@@ -2206,6 +2210,9 @@ class iCloudStorageManager: ObservableObject {
         
         let contentType = ContentType(rawValue: summaryEntry.contentType ?? "general") ?? .general
         
+        let decodedMetadata = SummaryMetadataCodec.decode(aiMethod)
+        let engine = decodedMetadata.engine ?? SummaryMetadataCodec.inferredEngine(from: decodedMetadata.model)
+        
         return EnhancedSummaryData(
             id: summaryId,
             recordingId: recordingId ?? summaryId, // Use recordingId if available, otherwise use summary ID
@@ -2218,7 +2225,8 @@ class iCloudStorageManager: ObservableObject {
             reminders: reminders,
             titles: titles,
             contentType: contentType,
-            aiMethod: aiMethod,
+            aiEngine: engine,
+            aiModel: decodedMetadata.model,
             originalLength: Int(summaryEntry.originalLength),
             processingTime: summaryEntry.processingTime,
             generatedAt: summaryEntry.generatedAt ?? Date(),
@@ -2268,24 +2276,9 @@ extension CKError {
     /// Debug method to check current Core Data state
     @MainActor
     func debugCoreDataState(appCoordinator: AppDataCoordinator) {
-        let recordings = appCoordinator.coreDataManager.getAllRecordings()
-        let summaries = appCoordinator.coreDataManager.getAllSummaries()
-
-        print("🔍 DEBUG: Core Data State")
-        print("📊 Total recordings: \(recordings.count)")
-        print("📊 Total summaries: \(summaries.count)")
-
-        for (index, recording) in recordings.enumerated() {
-            print("   Recording \(index): \(recording.recordingName ?? "Unknown") (ID: \(recording.id?.uuidString ?? "nil"))")
-            print("      - Has summary: \(recording.summary != nil)")
-            print("      - Summary ID: \(recording.summaryId?.uuidString ?? "nil")")
-        }
-
-        for (index, summary) in summaries.enumerated() {
-            print("   Summary \(index): \(summary.recording?.recordingName ?? "Unknown") (ID: \(summary.id?.uuidString ?? "nil"))")
-            print("      - Has recording: \(summary.recording != nil)")
-            print("      - Recording ID: \(summary.recordingId?.uuidString ?? "nil")")
-        }
+        // Debug logging removed - function kept for potential future use
+        let _ = appCoordinator.coreDataManager.getAllRecordings()
+        let _ = appCoordinator.coreDataManager.getAllSummaries()
     }
 
 }

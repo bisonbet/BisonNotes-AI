@@ -261,8 +261,6 @@ class EnhancedFileManager: ObservableObject {
             await MainActor.run {
                 saveFileRelationships()
             }
-            
-            print("🔄 Refreshed relationships for \(allURLs.count) files")
         }
     }
     
@@ -487,7 +485,6 @@ class EnhancedFileManager: ObservableObject {
         do {
             let data = try JSONEncoder().encode(fileRelationships)
             try data.write(to: relationshipsURL)
-            print("✅ Saved file relationships")
         } catch {
             print("❌ Error saving file relationships: \(error)")
         }

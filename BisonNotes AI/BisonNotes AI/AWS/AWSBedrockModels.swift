@@ -129,18 +129,20 @@ struct AWSBedrockConfig: Equatable {
     let useProfile: Bool
     let profileName: String?
     
-    static let `default` = AWSBedrockConfig(
-        region: "us-east-1",
-        accessKeyId: "",
-        secretAccessKey: "",
-        sessionToken: nil,
-        model: .claude45Haiku,
-        temperature: 0.1,
-        maxTokens: 8192,
-        timeout: 60.0,
-        useProfile: false,
-        profileName: nil
-    )
+    static var `default`: AWSBedrockConfig {
+        return AWSBedrockConfig(
+            region: "us-east-1",
+            accessKeyId: "",
+            secretAccessKey: "",
+            sessionToken: nil,
+            model: .claude45Haiku,
+            temperature: 0.1,
+            maxTokens: 8192,
+            timeout: SummarizationTimeouts.current(),
+            useProfile: false,
+            profileName: nil
+        )
+    }
     
     var isValid: Bool {
         if useProfile {

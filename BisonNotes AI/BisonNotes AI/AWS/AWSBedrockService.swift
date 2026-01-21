@@ -318,7 +318,20 @@ class AWSBedrockService: ObservableObject {
                 modelId: config.model.rawValue
             )
             
-            let response = try await client.invokeModel(input: invokeRequest)
+            let response: InvokeModelOutput
+            do {
+                // Wrap SDK call to honor the user-configured timeout even if the SDK has its own limits.
+                response = try await withTimeout(seconds: config.timeout) {
+                    try await client.invokeModel(input: invokeRequest)
+                }
+            } catch let error as SummarizationError {
+                throw error
+            } catch {
+                if (error as? URLError)?.code == .timedOut {
+                    throw SummarizationError.processingTimeout
+                }
+                throw error
+            }
             
             guard let responseBody = response.body else {
                 throw SummarizationError.aiServiceUnavailable(service: "Empty response from AWS Bedrock")
@@ -795,11 +808,13 @@ class AWSBedrockService: ObservableObject {
                trimmed.lowercased().contains("action") ||
                (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
                 
-                let cleanText = trimmed
+                let rawText = trimmed
                     .replacingOccurrences(of: "•", with: "")
                     .replacingOccurrences(of: "-", with: "")
                     .replacingOccurrences(of: "*", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                let cleanText = RecordingNameGenerator.cleanAIOutput(rawText)
                 
                 if !cleanText.isEmpty && cleanText.count > 5 {
                     tasks.append(TaskItem(
@@ -826,16 +841,18 @@ class AWSBedrockService: ObservableObject {
                trimmed.lowercased().contains("remember") ||
                (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
                 
-                let cleanText = trimmed
+                let rawText = trimmed
                     .replacingOccurrences(of: "•", with: "")
                     .replacingOccurrences(of: "-", with: "")
                     .replacingOccurrences(of: "*", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 
+                let cleanText = RecordingNameGenerator.cleanAIOutput(rawText)
+                
                 if !cleanText.isEmpty && cleanText.count > 5 {
                     reminders.append(ReminderItem(
                         text: cleanText,
-                        timeReference: ReminderItem.TimeReference(originalText: "No time specified"),
+                        timeReference: ReminderItem.TimeReference.fromReminderText(cleanText),
                         urgency: .later,
                         confidence: 0.6
                     ))
@@ -855,15 +872,15 @@ class AWSBedrockService: ObservableObject {
             if (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) && 
                trimmed.count > 10 && trimmed.count < 80 {
                 
-                let cleanText = trimmed
+                let rawText = trimmed
                     .replacingOccurrences(of: "•", with: "")
                     .replacingOccurrences(of: "-", with: "")
                     .replacingOccurrences(of: "*", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 
-                if !cleanText.isEmpty {
+                if !rawText.isEmpty {
                     // Apply standardized title cleaning
-                    let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(cleanText)
+                    let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(rawText)
                     if cleanedTitle != "Untitled Conversation" {
                         titles.append(TitleItem(
                             text: cleanedTitle,

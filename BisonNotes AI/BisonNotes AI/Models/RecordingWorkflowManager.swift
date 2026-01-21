@@ -53,11 +53,15 @@ class RecordingWorkflowManager: ObservableObject {
         
         // Store location data if available
         if let locationData = locationData {
+            print("📍 RecordingWorkflowManager: Saving location data - lat: \(locationData.latitude), lon: \(locationData.longitude), address: \(locationData.address ?? "none")")
             recordingEntry.locationLatitude = locationData.latitude
             recordingEntry.locationLongitude = locationData.longitude
             recordingEntry.locationTimestamp = locationData.timestamp
             recordingEntry.locationAccuracy = locationData.accuracy ?? 0.0
             recordingEntry.locationAddress = locationData.address
+            print("📍 RecordingWorkflowManager: Location saved to Core Data entry")
+        } else {
+            print("📍 RecordingWorkflowManager: No location data provided")
         }
         
         // Save to Core Data
@@ -179,7 +183,7 @@ class RecordingWorkflowManager: ObservableObject {
     // MARK: - Summary Workflow
     
     /// Creates a summary linked to both recording and transcript with proper UUID relationships
-    func createSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiMethod: String, originalLength: Int, processingTime: TimeInterval = 0) -> UUID? {
+    func createSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) -> UUID? {
         
         // Get the recording from Core Data
         guard let recordingEntry = getRecordingEntry(id: recordingId) else {
@@ -213,7 +217,8 @@ class RecordingWorkflowManager: ObservableObject {
             reminders: reminders,
             titles: titles,
             contentType: contentType,
-            aiMethod: aiMethod,
+            aiEngine: aiEngine,
+            aiModel: aiModel,
             originalLength: originalLength,
             processingTime: processingTime
         )
@@ -225,7 +230,8 @@ class RecordingWorkflowManager: ObservableObject {
         summaryEntry.recordingId = recordingId
         summaryEntry.transcriptId = transcriptId
         summaryEntry.generatedAt = summaryData.generatedAt
-        summaryEntry.aiMethod = aiMethod
+        summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: aiEngine, aiModel: aiModel)
+        
         summaryEntry.processingTime = processingTime
         summaryEntry.confidence = summaryData.confidence
         summaryEntry.summary = summary

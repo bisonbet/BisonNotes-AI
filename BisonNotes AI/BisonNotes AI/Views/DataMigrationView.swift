@@ -28,13 +28,8 @@ struct DataMigrationView: View {
     @State private var cleanupResults: CleanupResults?
     // Safety confirmations for data-changing operations
     @State private var confirmRecoverCloud = false
-    @State private var confirmRepairDuplicates = false
-    @State private var confirmFixNamesListings = false
     @State private var confirmFullSyncToCloud = false
     @State private var confirmCloudKitReset = false
-    @State private var confirmRemoveImportedFiles = false
-    @State private var confirmFixInvalidURLs = false
-    @State private var confirmCleanupMissingAudio = false
     
     // Orphaned audio file cleanup
     @State private var orphanedAudioFiles: [URL] = []
@@ -42,6 +37,21 @@ struct DataMigrationView: View {
     @State private var showingOrphanedFilesResults = false
     @State private var orphanedFilesResults: (deleted: Int, totalSize: Int64, errors: [String])? = nil
     @State private var totalOrphanedSize: Int64 = 0
+    
+    // Background Processing
+    @State private var showingBackgroundProcessing = false
+    
+    // iCloud Sync Verification
+    @State private var showingSyncVerification = false
+    @State private var syncVerificationResult: SyncVerificationResult?
+    
+    private struct SyncVerificationResult {
+        let localCount: Int
+        let cloudCount: Int
+        let syncedCount: Int
+        let unsyncedLocalCount: Int
+        let cloudOnlyCount: Int
+    }
     
     var body: some View {
         NavigationView {
@@ -79,15 +89,15 @@ struct DataMigrationView: View {
                     }
                 }
             }
-            .alert("⚠️ DESTRUCTIVE ACTION - Clear All Database Data", isPresented: $showingClearDatabaseAlert) {
+            .alert("🛑 CRITICAL - DESTRUCTIVE ACTION", isPresented: $showingClearDatabaseAlert) {
                 Button("Cancel", role: .cancel) { }
-                Button("I Understand - Delete Everything", role: .destructive) {
+                Button("I UNDERSTAND - DELETE EVERYTHING", role: .destructive) {
                     Task {
                         await migrationManager.clearAllCoreData()
                     }
                 }
             } message: {
-                Text("🚨 CRITICAL WARNING 🚨\n\nThis will PERMANENTLY DELETE ALL of your data from the database:\n\n❌ ALL TRANSCRIPTS (cannot be recovered)\n❌ ALL SUMMARIES (cannot be recovered)\n❌ ALL RECORDING METADATA\n\n✅ Your audio files will remain on disk\n\n⚠️ This action CANNOT be undone and you will lose all your transcribed text and AI-generated summaries forever.\n\nOnly proceed if you understand this will destroy all your transcript and summary data.")
+                Text("🚨🚨🚨 EXTREME WARNING 🚨🚨🚨\n\nYou are about to PERMANENTLY DELETE ALL DATABASE DATA:\n\n❌ ALL TRANSCRIPTS will be DELETED FOREVER\n❌ ALL SUMMARIES will be DELETED FOREVER\n❌ ALL RECORDING METADATA will be DELETED FOREVER\n\n✅ Audio files will remain on disk (but without any metadata)\n\n⚠️ THIS ACTION CANNOT BE UNDONE\n⚠️ NO RECOVERY IS POSSIBLE\n⚠️ ALL PROCESSED DATA WILL BE LOST\n\nThis is an extreme troubleshooting measure. DO NOT proceed unless you:\n\n1. Have a backup of your data\n2. Understand you will lose ALL transcripts and summaries\n3. Are prepared to re-transcribe and re-summarize everything\n\nOnly tap 'DELETE EVERYTHING' if you absolutely understand the consequences.")
             }
             .alert("Cleanup Orphaned Data", isPresented: $showingCleanupAlert) {
                 Button("Cancel") {
@@ -132,16 +142,6 @@ struct DataMigrationView: View {
             } message: {
                 Text("🚨 DESTRUCTIVE ACTION 🚨\n\nThis will:\n\n1️⃣ DELETE ALL summaries from iCloud\n2️⃣ Upload fresh copies of all your current summaries\n\nThis is the nuclear option for fixing CloudKit sync issues. Use this when:\n\n• CloudKit has orphaned or duplicate data\n• Sync is completely broken\n• You want a clean slate\n\n⚠️ This cannot be undone and may take several minutes.")
             }
-            .alert("Remove Orphaned Import Files", isPresented: $confirmRemoveImportedFiles) {
-                Button("Cancel", role: .cancel) { }
-                Button("Remove", role: .destructive) {
-                    Task {
-                        await removeOrphanedImportFiles()
-                    }
-                }
-            } message: {
-                Text("This will remove Core Data recordings that:\n\n• Have names starting with 'importedfile-'\n• Have no transcript data\n• Have no summary data\n\nThis fixes duplicate recordings created during import processes. Your real recordings with transcripts and summaries will be preserved.")
-            }
         }
     }
     
@@ -176,271 +176,213 @@ struct DataMigrationView: View {
     
     private var migrationSection: some View {
         VStack(spacing: 16) {
-            // Primary action - Check for issues
-            Button(action: {
-                currentMode = .integrityCheck
-            }) {
-                HStack {
-                    Image(systemName: "magnifyingglass.circle.fill")
-                    Text("Check for Issues")
-                }
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.accentColor)
-                .cornerRadius(12)
-            }
-            
-            // iCloud Recovery
-            Button(action: {
-                confirmRecoverCloud = true
-            }) {
-                HStack {
-                    Image(systemName: "icloud.and.arrow.down")
-                    Text("Recover from iCloud")
-                }
-                .font(.headline)
-                .foregroundColor(.purple)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.purple.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.purple, lineWidth: 1)
-                )
-                .cornerRadius(12)
-            }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
-            // Full sync to cloud (manual upload all)
-            Button(action: {
-                confirmFullSyncToCloud = true
-            }) {
-                HStack {
-                    Image(systemName: "icloud.and.arrow.up")
-                    Text("Upload All Summaries to iCloud")
-                }
-                .font(.headline)
-                .foregroundColor(.blue)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.blue.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.blue, lineWidth: 1)
-                )
-                .cornerRadius(12)
-            }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
-            // Full CloudKit reset and fresh sync
-            Button(action: {
-                confirmCloudKitReset = true
-            }) {
-                HStack {
-                    Image(systemName: "arrow.clockwise.icloud")
-                    Text("Reset CloudKit & Fresh Sync")
-                }
-                .font(.headline)
-                .foregroundColor(.orange)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.orange.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.orange, lineWidth: 1)
-                )
-                .cornerRadius(12)
-            }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
-            // Remove orphaned importedfile entries
-            Button(action: {
-                confirmRemoveImportedFiles = true
-            }) {
-                HStack {
-                    Image(systemName: "trash.fill")
-                    Text("Remove Orphaned Import Files")
-                }
-                .font(.headline)
-                .foregroundColor(.red)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.red.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.red, lineWidth: 1)
-                )
-                .cornerRadius(12)
-            }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
-            // Orphaned audio files cleanup
-            Button(action: {
-                Task {
-                    await scanForOrphanedAudioFiles()
-                }
-            }) {
-                HStack {
-                    Image(systemName: "waveform.badge.xmark")
-                    Text("Find Orphaned Audio Files")
-                }
-                .font(.headline)
-                .foregroundColor(.orange)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.orange.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.orange, lineWidth: 1)
-                )
-                .cornerRadius(12)
-            }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
-            // Show orphaned files if found
-            if !orphanedAudioFiles.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
+            Group {
+                // Primary action - Check for issues
+                Button(action: {
+                    currentMode = .integrityCheck
+                }) {
                     HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(orphanedAudioFiles.count) orphaned audio files found")
-                                .font(.body)
-                                .fontWeight(.medium)
+                        Image(systemName: "magnifyingglass.circle.fill")
+                        Text("Check for Issues")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.accentColor)
+                    .cornerRadius(12)
+                }
+                
+                // iCloud Recovery
+                Button(action: {
+                    confirmRecoverCloud = true
+                }) {
+                    HStack {
+                        Image(systemName: "icloud.and.arrow.down")
+                        Text("Recover from iCloud")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.purple)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.purple.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.purple, lineWidth: 1)
+                    )
+                    .cornerRadius(12)
+                }
+                .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+                
+                // Full sync to cloud (manual upload all)
+                Button(action: {
+                    confirmFullSyncToCloud = true
+                }) {
+                    HStack {
+                        Image(systemName: "icloud.and.arrow.up")
+                        Text("Upload All Summaries to iCloud")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.blue)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.blue.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.blue, lineWidth: 1)
+                    )
+                    .cornerRadius(12)
+                }
+                .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+                
+                // Full CloudKit reset and fresh sync
+                Button(action: {
+                    confirmCloudKitReset = true
+                }) {
+                    HStack {
+                        Image(systemName: "arrow.clockwise.icloud")
+                        Text("Reset CloudKit & Fresh Sync")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.orange)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.orange.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.orange, lineWidth: 1)
+                    )
+                    .cornerRadius(12)
+                }
+                .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+            }
+            
+            Group {
+                // Orphaned audio files cleanup
+                Button(action: {
+                    Task {
+                        await scanForOrphanedAudioFiles()
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "waveform.badge.xmark")
+                        Text("Find Orphaned Audio Files")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.orange)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.orange.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.orange, lineWidth: 1)
+                    )
+                    .cornerRadius(12)
+                }
+                .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+                
+                // Show orphaned files if found
+                if !orphanedAudioFiles.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundColor(.orange)
                             
-                            Text("Total size: \(formatFileSize(totalOrphanedSize))")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(orphanedAudioFiles.count) orphaned audio files found")
+                                    .font(.body)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.orange)
+                                
+                                Text("Total size: \(formatFileSize(totalOrphanedSize))")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
                         }
                         
-                        Spacer()
+                        Button("Delete Orphaned Audio Files") {
+                            showingOrphanedFilesCleanup = true
+                        }
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.red)
+                        )
                     }
-                    
-                    Button("Delete Orphaned Audio Files") {
-                        showingOrphanedFilesCleanup = true
-                    }
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    .padding()
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.red)
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.orange.opacity(0.1))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                            )
                     )
                 }
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.orange.opacity(0.1))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
-                        )
-                )
-            }
-            
-            // Fix invalid URLs
-            Button(action: {
-                confirmFixInvalidURLs = true
-            }) {
-                HStack {
-                    Image(systemName: "link.badge.plus")
-                    Text("Fix Broken File Links")
-                }
-                .font(.headline)
-                .foregroundColor(.blue)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.blue.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.blue, lineWidth: 1)
-                )
-                .cornerRadius(12)
-            }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
-            // Clean up missing audio references
-            Button(action: {
-                confirmCleanupMissingAudio = true
-            }) {
-                HStack {
-                    Image(systemName: "trash.slash")
-                    Text("Clean Up Missing Audio")
-                }
-                .font(.headline)
-                .foregroundColor(.orange)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.orange.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.orange, lineWidth: 1)
-                )
-                .cornerRadius(12)
-            }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
-            // Fix filename/title duplicates (the new advanced repair)
-            Button(action: {
-                confirmRepairDuplicates = true
-            }) {
-                HStack {
-                    Image(systemName: "arrow.triangle.merge")
-                    Text("Repair Duplicates (Keep Summary Title)")
-                }
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.green)
-                .cornerRadius(12)
-            }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-            
-            // Fix current naming and transcript listing issues
-            Button(action: {
-                confirmFixNamesListings = true
-            }) {
-                HStack {
-                    Image(systemName: "textformat")
-                    Text("Fix Names & Transcript Listings")
-                }
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.purple)
-                .cornerRadius(12)
-            }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-
-            // Repair orphaned summaries
-            Button(action: {
-                Task {
-                    await MainActor.run {
-                        let repairedCount = appCoordinator.coreDataManager.repairOrphanedSummaries()
-                        print("🔧 Manual repair completed: \(repairedCount) summaries repaired")
+                
+                // Repair orphaned summaries
+                Button(action: {
+                    Task {
+                        await MainActor.run {
+                            let repairedCount = appCoordinator.coreDataManager.repairOrphanedSummaries()
+                            print("🔧 Manual repair completed: \(repairedCount) summaries repaired")
+                        }
                     }
+                }) {
+                    HStack {
+                        Image(systemName: "wrench.and.screwdriver")
+                        Text("Repair Orphaned Summaries")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.orange)
+                    .cornerRadius(12)
                 }
-            }) {
-                HStack {
-                    Image(systemName: "wrench.and.screwdriver")
-                    Text("Repair Orphaned Summaries")
+                .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+                
+                // Background Processing
+                Button(action: {
+                    showingBackgroundProcessing = true
+                }) {
+                    HStack {
+                        Image(systemName: "gearshape.2")
+                        Text("Background Processing")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.blue)
+                    .cornerRadius(12)
                 }
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.orange)
-                .cornerRadius(12)
+                
+                // Verify iCloud Sync
+                Button(action: {
+                    Task {
+                        await verifyiCloudSync()
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "checkmark.shield")
+                        Text("Verify iCloud Sync")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.green)
+                    .cornerRadius(12)
+                }
+                .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
             }
-            .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
 
             // Cleanup Orphaned Data section
             VStack(spacing: 8) {
@@ -564,46 +506,6 @@ struct DataMigrationView: View {
         } message: {
             Text("This will fetch summaries from iCloud and add any missing entries to your database. It will not overwrite existing local summaries.")
         }
-        .alert("Repair Duplicates", isPresented: $confirmRepairDuplicates) {
-            Button("Cancel", role: .cancel) { }
-            Button("Repair", role: .destructive) {
-                Task {
-                    let _ = await migrationManager.fixSpecificDataIssues()
-                }
-            }
-        } message: {
-            Text("Merges duplicate recordings that point to the same file and deletes the duplicate entries. The summary-generated title will be preserved.")
-        }
-        .alert("Fix Names & Transcript Listings", isPresented: $confirmFixNamesListings) {
-            Button("Cancel", role: .cancel) { }
-            Button("Fix", role: .destructive) {
-                Task {
-                    let _ = await migrationManager.fixCurrentIssues()
-                }
-            }
-        } message: {
-            Text("Renames generic recordings to better titles where available and validates statuses. No files will be deleted.")
-        }
-        .alert("Fix Broken File Links", isPresented: $confirmFixInvalidURLs) {
-            Button("Cancel", role: .cancel) { }
-            Button("Fix Links", role: .destructive) {
-                Task {
-                    let _ = await migrationManager.fixInvalidURLs()
-                }
-            }
-        } message: {
-            Text("This will attempt to reconnect recordings with broken file paths to existing audio files by matching names. This fixes the 'Could not get absolute URL' errors you're seeing.")
-        }
-        .alert("Clean Up Missing Audio", isPresented: $confirmCleanupMissingAudio) {
-            Button("Cancel", role: .cancel) { }
-            Button("Clean Up", role: .destructive) {
-                Task {
-                    let _ = await migrationManager.cleanupMissingAudioReferences()
-                }
-            }
-        } message: {
-            Text("This will clean up recordings with missing audio files:\n\n• Clear broken audio file references\n• DELETE transcripts (useless without audio)\n• PRESERVE summaries (valuable processed data)\n\nRecordings will show as 'Summary Only'.")
-        }
         .alert("Confirm Cleanup", isPresented: $showingOrphanedFilesCleanup) {
             Button("Cancel", role: .cancel) { }
             Button("Delete Files", role: .destructive) {
@@ -627,6 +529,34 @@ struct DataMigrationView: View {
                 } else {
                     Text("Deleted \(results.deleted) files, freeing \(formatFileSize(results.totalSize)) of storage.\n\nErrors: \(results.errors.joined(separator: ", "))")
                 }
+            }
+        }
+        .sheet(isPresented: $showingBackgroundProcessing) {
+            BackgroundProcessingView()
+        }
+        .alert("iCloud Sync Verification", isPresented: $showingSyncVerification) {
+            Button("OK") {
+                showingSyncVerification = false
+            }
+            if let result = syncVerificationResult, result.unsyncedLocalCount > 0 {
+                Button("Sync Missing Summaries") {
+                    Task {
+                        await syncMissingSummaries()
+                    }
+                }
+            }
+        } message: {
+            if let result = syncVerificationResult {
+                Text("""
+                Local Summaries: \(result.localCount)
+                iCloud Summaries: \(result.cloudCount)
+                Synced (in both): \(result.syncedCount)
+                
+                \(result.unsyncedLocalCount > 0 ? "⚠️ \(result.unsyncedLocalCount) local summaries not in iCloud" : "✅ All local summaries are synced")
+                \(result.cloudOnlyCount > 0 ? "ℹ️ \(result.cloudOnlyCount) summaries only in iCloud" : "")
+                """)
+            } else {
+                Text("Verifying sync status...")
             }
         }
     }
@@ -923,39 +853,7 @@ struct DataMigrationView: View {
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
     }
-    
-    private func removeOrphanedImportFiles() async {
-        print("🧹 Starting removal of orphaned import files...")
-        
-        let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
-        var removedCount = 0
-        
-        for recording in allRecordings {
-            // Check if this is an orphaned import file
-            if let recordingName = recording.recordingName,
-               recordingName.hasPrefix("importedfile-") {
-                
-                // Check if it has no transcript and no summary
-                let hasTranscript = recording.transcript != nil
-                let hasSummary = recording.summary != nil
-                
-                if !hasTranscript && !hasSummary {
-                    print("🗑️ Removing orphaned import file: \(recordingName)")
-                    
-                    // Delete from Core Data
-                    if let recordingId = recording.id {
-                        appCoordinator.coreDataManager.deleteRecording(id: recordingId)
-                        removedCount += 1
-                    }
-                } else {
-                    print("ℹ️ Keeping import file with data: \(recordingName) (has transcript: \(hasTranscript), has summary: \(hasSummary))")
-                }
-            }
-        }
-        
-        print("✅ Removed \(removedCount) orphaned import files")
-    }
-    
+
     private func performCleanup() async {
         isPerformingCleanup = true
         
@@ -1131,6 +1029,101 @@ struct DataMigrationView: View {
             orphanedRecordings: orphanedRecordings,
             freedSpaceMB: freedSpaceMB
         )
+    }
+    
+    // MARK: - iCloud Sync Verification
+    
+    private func verifyiCloudSync() async {
+        do {
+            // Fetch local summaries
+            let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+            let localSummaryIds = Set(localSummaries.compactMap { $0.id })
+            
+            // Fetch cloud summaries
+            let cloudSummaries = try await legacyiCloudManager.fetchSummariesFromiCloud(forRecovery: true)
+            let cloudSummaryIds = Set(cloudSummaries.compactMap { $0.id })
+            
+            // Calculate statistics
+            let syncedIds = localSummaryIds.intersection(cloudSummaryIds)
+            let unsyncedLocalIds = localSummaryIds.subtracting(cloudSummaryIds)
+            let cloudOnlyIds = cloudSummaryIds.subtracting(localSummaryIds)
+            
+            let result = SyncVerificationResult(
+                localCount: localSummaries.count,
+                cloudCount: cloudSummaries.count,
+                syncedCount: syncedIds.count,
+                unsyncedLocalCount: unsyncedLocalIds.count,
+                cloudOnlyCount: cloudOnlyIds.count
+            )
+            
+            await MainActor.run {
+                syncVerificationResult = result
+                showingSyncVerification = true
+            }
+            
+            print("✅ Sync verification complete:")
+            print("   Local: \(result.localCount)")
+            print("   Cloud: \(result.cloudCount)")
+            print("   Synced: \(result.syncedCount)")
+            print("   Unsynced local: \(result.unsyncedLocalCount)")
+            print("   Cloud only: \(result.cloudOnlyCount)")
+            
+        } catch {
+            print("❌ Failed to verify iCloud sync: \(error)")
+            await MainActor.run {
+                let alert = UIAlertController(
+                    title: "Verification Failed",
+                    message: "Could not verify iCloud sync: \(error.localizedDescription)",
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                
+                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                   let rootViewController = windowScene.windows.first?.rootViewController {
+                    rootViewController.present(alert, animated: true)
+                }
+            }
+        }
+    }
+    
+    private func syncMissingSummaries() async {
+        do {
+            // Get all local summaries
+            let localSummaryEntries = appCoordinator.coreDataManager.getAllSummaries()
+            
+            // Convert to EnhancedSummaryData using getSummaryData
+            var enhancedSummaries: [EnhancedSummaryData] = []
+            for summaryEntry in localSummaryEntries {
+                if let recordingId = summaryEntry.recordingId,
+                   let enhancedSummary = appCoordinator.coreDataManager.getSummaryData(for: recordingId) {
+                    enhancedSummaries.append(enhancedSummary)
+                }
+            }
+            
+            // Sync all of them to iCloud
+            try await legacyiCloudManager.syncAllSummaries(enhancedSummaries)
+            
+            print("✅ Successfully synced \(enhancedSummaries.count) summaries to iCloud")
+            
+            // Re-verify after syncing
+            await verifyiCloudSync()
+            
+        } catch {
+            print("❌ Failed to sync missing summaries: \(error)")
+            await MainActor.run {
+                let alert = UIAlertController(
+                    title: "Sync Failed",
+                    message: "Could not sync summaries to iCloud: \(error.localizedDescription)",
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                
+                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                   let rootViewController = windowScene.windows.first?.rootViewController {
+                    rootViewController.present(alert, animated: true)
+                }
+            }
+        }
     }
 }
 
