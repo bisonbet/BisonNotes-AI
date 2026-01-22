@@ -214,7 +214,6 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         
         // Check if there's already a pending request for this location
         if Self.pendingGeocodingRequests[cacheKey] != nil {
-            print("📍 LocationManager: Adding to pending request for \(cacheKey)")
             Self.pendingGeocodingRequests[cacheKey]?.append(completion)
             return
         }
@@ -230,8 +229,6 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             Self.lastGeocodingRequest = Date()
-            
-            print("📍 LocationManager: Making geocoding request for \(cacheKey) (delayed \(String(format: "%.1f", delay))s)")
             
             let geocoder = CLGeocoder()
             geocoder.reverseGeocodeLocation(location) { placemarks, error in
@@ -275,8 +272,6 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                     
                     // Cache the result (even if nil)
                     Self.geocodingCache[cacheKey] = finalAddress ?? "Unknown Location"
-                    
-                    print("✅ LocationManager: Cached address for \(cacheKey): \(finalAddress ?? "nil")")
                     
                     // Call all pending completions
                     pendingCompletions.forEach { $0(finalAddress) }

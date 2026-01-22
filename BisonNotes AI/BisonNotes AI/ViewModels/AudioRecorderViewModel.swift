@@ -41,9 +41,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     private var routeChangeObserver: NSObjectProtocol?
     private var willEnterForegroundObserver: NSObjectProtocol?
     private let preferredInputDefaultsKey = "PreferredAudioInputUID"
-    // Failsafe tracking to detect stalled recordings when input disappears
-    private var lastRecordedFileSize: Int64 = -1
-    private var stalledTickCount: Int = 0
     
     // Flag to prevent duplicate recording creation
     private var recordingBeingProcessed = false
@@ -51,11 +48,33 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     // Flag to track if app is backgrounding (to avoid false positive interruptions)
     private var appIsBackgrounding = false
 
+    // Flag to track if we're currently in an interruption (e.g., incoming phone call)
+    private var isInInterruption = false
+
+    // Store the recording URL when interruption begins, in case we need to recover
+    private var interruptionRecordingURL: URL?
+
+    // Track when recorder stopped unexpectedly (to give interruption notifications time to arrive)
+    private var recorderStoppedUnexpectedlyTime: Date?
+
     // Timestamp to track when last recovery was attempted (to prevent rapid duplicates)
     private var lastRecoveryAttempt: Date = Date.distantPast
-    
+
     // Background task identifier for recording continuity
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+
+    // Track last checkpoint time for periodic data flushing
+    private var lastCheckpointTime: Date = Date.distantPast
+    private let checkpointInterval: TimeInterval = 30.0 // Try to checkpoint every 30 seconds
+    private let forceCheckpointInterval: TimeInterval = 90.0 // Force checkpoint after 90 seconds even without silence
+
+    // Audio level monitoring for silence detection
+    private let silenceThreshold: Float = -40.0 // dB threshold for silence (typical voice is -20 to -10 dB)
+
+    // Recording segment management for handling interruptions
+    private var recordingSegments: [URL] = [] // Track all segments of the current recording
+    private var mainRecordingURL: URL? // The final merged recording URL
+    private var currentSegmentIndex: Int = 0 // Track which segment we're on
 
     override init() {
         // Initialize the managers first
@@ -214,11 +233,25 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
             Task { @MainActor in
                 guard let self = self else { return }
                 self.appIsBackgrounding = false // App is coming back to foreground
-                
+
                 EnhancedLogger.shared.logAudioSession("App foregrounded, restoring audio session")
-                
-                // Only handle audio session restoration - let BackgroundProcessingManager handle recording recovery
+
+                // Restore audio session first
+                // This will deactivate/reactivate the session, which stops the recorder
                 try? await self.enhancedAudioSessionManager.restoreAudioSession()
+
+                // CRITICAL: If recording was active, resume the recorder
+                // The session restoration always stops the recorder, so we must restart it
+                if self.isRecording, let recorder = self.audioRecorder {
+                    if !recorder.isRecording {
+                        print("🔄 Recorder stopped by session restoration, resuming immediately")
+                        recorder.record()
+                        // Clear any stale unexpected-stop tracking
+                        self.recorderStoppedUnexpectedlyTime = nil
+                    } else {
+                        print("✅ Recorder still recording after session restoration")
+                    }
+                }
             }
         }
         
@@ -416,25 +449,251 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		
 		switch type {
 		case .began:
-			if isRecording {
-				print("🎙️ Audio interruption began - stopping recording and attempting recovery")
-				handleInterruptedRecording(reason: "Audio session was interrupted by another app")
+			if isRecording && !isInInterruption {
+				print("🎙️ Audio interruption began (e.g., incoming call) - pausing timer, waiting to see if user answers")
+				isInInterruption = true
+				interruptionRecordingURL = recordingURL
+				// Clear the recorder stopped tracking since we now know it's an interruption
+				recorderStoppedUnexpectedlyTime = nil
+				// Pause the timer but don't stop recording yet
+				// The recorder may continue in the background, or iOS may pause it
+				// We'll check the state when interruption ends
+				stopRecordingTimer() // Pause timer during interruption
 			}
 		case .ended:
 			// Check if we should resume recording after interruption ends
+			// We check interruptionRecordingURL to know if we were recording before the interruption
+			// This handles cases where recording was stopped during the interruption or took a long time
+			guard isInInterruption, interruptionRecordingURL != nil else {
+				// Not in an interruption state, or no recording URL to resume
+				print("⚠️ Interruption ended but we weren't in an interruption state or have no recording URL")
+				return
+			}
+			
+			isInInterruption = false
+			
 			if let options = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
 				let interruptionOptions = AVAudioSession.InterruptionOptions(rawValue: options)
+				
 				if interruptionOptions.contains(.shouldResume) {
-					print("🔄 Interruption ended - system suggests resuming")
-					// Note: We don't auto-resume recording as the user should explicitly start again
-					errorMessage = "Microphone is available again. Previous recording was saved."
+					// User declined/ignored the call - definitely resume recording
+					print("🔄 Interruption ended with shouldResume - user declined/ignored call, resuming recording")
+					let urlToResume = interruptionRecordingURL // Capture before clearing
+					interruptionRecordingURL = nil
+					Task { @MainActor in
+						await resumeRecordingAfterInterruption(url: urlToResume)
+					}
 				} else {
-					print("⚠️ Interruption ended but resume not recommended")
-					errorMessage = "Interruption ended. Previous recording was saved."
+					// No .shouldResume flag - this could mean:
+					// 1. Call was answered (should stop)
+					// 2. Call was declined but iOS didn't set the flag (should resume)
+					// 3. Call was answered then hung up (should resume)
+					
+					// Try to resume anyway - if it fails, we'll handle it
+					print("🔄 Interruption ended without shouldResume - attempting to resume (may have been declined or hung up)")
+					let urlToResume = interruptionRecordingURL // Capture before clearing
+					interruptionRecordingURL = nil
+					Task { @MainActor in
+						await resumeRecordingAfterInterruption(url: urlToResume)
+						// If resume fails, it will call handleInterruptedRecording internally
+					}
+				}
+			} else {
+				// No options provided - try to resume anyway (might be a declined call)
+				// iOS sometimes doesn't set .shouldResume for declined calls, but we should try
+				print("🔄 Interruption ended without options - attempting to resume (may have been declined call)")
+				let urlToResume = interruptionRecordingURL // Capture before clearing
+				interruptionRecordingURL = nil
+				Task { @MainActor in
+					await resumeRecordingAfterInterruption(url: urlToResume)
 				}
 			}
 		@unknown default:
 			break
+		}
+	}
+	
+	/// Attempt to resume recording after an unexpected stop (e.g., declined call without interruption notification)
+	@MainActor
+	private func attemptResumeAfterUnexpectedStop() async {
+		print("🔄 Attempting to resume recording after unexpected stop (likely declined call)")
+
+		// Use current recording URL
+		guard let url = recordingURL else {
+			print("❌ No recording URL available to resume")
+			errorMessage = "Could not resume recording: no recording file found"
+			isRecording = false
+			return
+		}
+
+		// Check if the file still exists
+		guard FileManager.default.fileExists(atPath: url.path) else {
+			print("❌ Recording file no longer exists")
+			errorMessage = "Could not resume recording: file was removed"
+			isRecording = false
+			return
+		}
+
+		// Get the current file size to preserve what was already recorded
+		let fileSizeBeforeResume = getFileSize(url: url)
+		print("📊 Current segment file size: \(fileSizeBeforeResume) bytes")
+
+		// Step 1: Finalize the current segment (the recorder has already stopped)
+		// Stop the recorder properly if it's still somehow active
+		audioRecorder?.stop()
+		audioRecorder = nil
+
+		// Add this segment to our list if it's not already there
+		if !recordingSegments.contains(url) {
+			recordingSegments.append(url)
+			print("✅ Saved segment \(recordingSegments.count): \(url.lastPathComponent)")
+		}
+
+		// Add a small delay to give iOS time to fully release the audio session after the call
+		do {
+			try await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
+		} catch {
+			// Sleep was cancelled, but continue anyway
+		}
+
+		// Step 2: Create a new segment file for continuation
+		currentSegmentIndex += 1
+		let newSegmentURL = createSegmentURL(baseURL: mainRecordingURL ?? url, segmentIndex: currentSegmentIndex)
+		print("📝 Creating new segment \(currentSegmentIndex + 1): \(newSegmentURL.lastPathComponent)")
+
+		// Try to restore audio session and start recording to new segment
+		do {
+			try await enhancedAudioSessionManager.restoreAudioSession()
+
+			// Create a new recorder for the new segment
+			let selectedQuality = AudioQuality.whisperOptimized
+			let settings = selectedQuality.settings
+
+			audioRecorder = try AVAudioRecorder(url: newSegmentURL, settings: settings)
+			audioRecorder?.delegate = self
+			audioRecorder?.isMeteringEnabled = true // Enable metering for silence detection
+
+			// Start recording
+			audioRecorder?.record()
+
+			// Verify it's actually recording
+			if let recorder = audioRecorder, recorder.isRecording {
+				print("✅ Recording resumed with new segment - previous audio preserved!")
+				recordingSegments.append(newSegmentURL)
+				recordingURL = newSegmentURL // Update to the new segment
+				isRecording = true
+				lastCheckpointTime = Date() // Reset checkpoint time on resume
+				startRecordingTimer()
+				errorMessage = nil
+				recorderStoppedUnexpectedlyTime = nil
+			} else {
+				print("❌ Failed to resume recording - recorder not active, treating as real interruption")
+				handleInterruptedRecording(reason: "Microphone became unavailable or recording was interrupted")
+			}
+		} catch {
+			print("❌ Failed to resume recording: \(error.localizedDescription), treating as real interruption")
+			handleInterruptedRecording(reason: "Microphone became unavailable: \(error.localizedDescription)")
+		}
+	}
+	
+	@MainActor
+	private func resumeRecordingAfterInterruption(url: URL?) async {
+		print("🔄 Attempting to resume recording after interruption")
+
+		// Check if the recorder is still valid and recording
+		// This is the best case - iOS didn't stop the recorder, just paused the session
+		if let recorder = audioRecorder, recorder.isRecording {
+			print("✅ Recorder is still active, resuming timer")
+			// Recorder is still active, just resume the timer
+			startRecordingTimer()
+			errorMessage = nil
+			isInInterruption = false
+			return
+		}
+
+		// Recorder was stopped by iOS, need to restart it
+		guard let url = url else {
+			print("❌ No recording URL available to resume")
+			errorMessage = "Could not resume recording: no recording file found"
+			isRecording = false
+			isInInterruption = false
+			return
+		}
+
+		// Check if the file still exists
+		guard FileManager.default.fileExists(atPath: url.path) else {
+			print("❌ Recording file no longer exists")
+			errorMessage = "Could not resume recording: file was removed"
+			isRecording = false
+			isInInterruption = false
+			return
+		}
+
+		// Get the current file size before attempting to resume
+		let fileSizeBeforeResume = getFileSize(url: url)
+		print("📊 Current segment file size: \(fileSizeBeforeResume) bytes")
+
+		// Step 1: Finalize the current segment (the recorder has already stopped)
+		// Stop the recorder properly if it's still somehow active
+		audioRecorder?.stop()
+		audioRecorder = nil
+
+		// Add this segment to our list if it's not already there
+		if !recordingSegments.contains(url) {
+			recordingSegments.append(url)
+			print("✅ Saved segment \(recordingSegments.count): \(url.lastPathComponent)")
+		}
+
+		// Add a small delay to give iOS time to fully release the audio session after the interruption
+		do {
+			try await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
+		} catch {
+			// Sleep was cancelled, but continue anyway
+		}
+
+		// Step 2: Create a new segment file for continuation
+		currentSegmentIndex += 1
+		let newSegmentURL = createSegmentURL(baseURL: mainRecordingURL ?? url, segmentIndex: currentSegmentIndex)
+		print("📝 Creating new segment \(currentSegmentIndex + 1): \(newSegmentURL.lastPathComponent)")
+
+		// Try to restore audio session and start recording to new segment
+		do {
+			try await enhancedAudioSessionManager.restoreAudioSession()
+
+			// Create a new recorder for the new segment
+			let selectedQuality = AudioQuality.whisperOptimized
+			let settings = selectedQuality.settings
+
+			audioRecorder = try AVAudioRecorder(url: newSegmentURL, settings: settings)
+			audioRecorder?.delegate = self
+			audioRecorder?.isMeteringEnabled = true // Enable metering for silence detection
+
+			// Start recording
+			audioRecorder?.record()
+
+			// Verify it's actually recording
+			if let recorder = audioRecorder, recorder.isRecording {
+				print("✅ Recording resumed with new segment - previous audio preserved!")
+				recordingSegments.append(newSegmentURL)
+				recordingURL = newSegmentURL // Update to the new segment
+				isRecording = true
+				lastCheckpointTime = Date() // Reset checkpoint time on resume
+				startRecordingTimer()
+				errorMessage = nil
+				isInInterruption = false
+			} else {
+				print("❌ Failed to resume recording - recorder not active")
+				errorMessage = "Could not resume recording: recorder failed to start"
+				isRecording = false
+				audioRecorder = nil
+				isInInterruption = false
+			}
+		} catch {
+			print("❌ Failed to resume recording: \(error.localizedDescription)")
+			errorMessage = "Could not resume recording: \(error.localizedDescription)"
+			isRecording = false
+			audioRecorder = nil
+			isInInterruption = false
 		}
 	}
 
@@ -586,9 +845,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 	}
 	
+	@MainActor
 	private func handleInterruptedRecording(reason: String) {
 		print("🚨 Handling interrupted recording: \(reason)")
-		
+
 		// Prevent duplicate processing
 		guard !recordingBeingProcessed else {
 			print("⚠️ Recording already being processed, skipping duplicate interruption handling")
@@ -596,14 +856,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 		recordingBeingProcessed = true
 		
+		// Clear interruption state
+		isInInterruption = false
+		interruptionRecordingURL = nil
+		recorderStoppedUnexpectedlyTime = nil
+		
 		// Stop the recorder and timer immediately
 		audioRecorder?.stop()
 		isRecording = false
 		stopRecordingTimer()
-		
-		// Clear failsafe tracking
-		lastRecordedFileSize = -1
-		stalledTickCount = 0
 		
 		// Send immediate notification about the interruption (this is a real mic takeover)
 		if let recordingURL = recordingURL {
@@ -620,21 +881,28 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		Task {
 			try? await enhancedAudioSessionManager.deactivateSession()
 		}
-		
+
 		// Clean up recorder
 		audioRecorder = nil
-        
-        // Ensure background task is ended
-        endBackgroundTask()
+
+		// Background task will be managed by recoverInterruptedRecording
 	}
 	
 	private func recoverInterruptedRecording(url: URL, reason: String) async {
 		print("💾 Attempting to recover interrupted recording at: \(url.path)")
-		
+
+		// Start background task to protect file recovery and Core Data save operations
+		await MainActor.run {
+			beginBackgroundTask()
+		}
+
 		// Check if the file exists and has meaningful content
 		guard FileManager.default.fileExists(atPath: url.path) else {
 			print("❌ No recording file found for recovery")
 			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
+			await MainActor.run {
+				endBackgroundTask()
+			}
 			return
 		}
 		
@@ -644,15 +912,21 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			// Clean up the tiny file
 			try? FileManager.default.removeItem(at: url)
 			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
+			await MainActor.run {
+				endBackgroundTask()
+			}
 			return
 		}
-		
+
 		let duration = getRecordingDuration(url: url)
 		guard duration > 1.0 else { // Must be at least 1 second
 			print("❌ Recording duration too short to recover (\(duration) seconds)")
 			// Clean up the short recording
 			try? FileManager.default.removeItem(at: url)
 			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
+			await MainActor.run {
+				endBackgroundTask()
+			}
 			return
 		}
 		
@@ -683,24 +957,29 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					)
 				
 					print("✅ Interrupted recording recovered with workflow manager, ID: \(recordingId)")
-					
+
 					// Post notification to refresh UI
 					NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-					
+
 					// Reset processing flag
 					recordingBeingProcessed = false
 					resetRecordingLocation()
+
+					// End background task after successful recovery and save
+					endBackgroundTask()
 				}
-			
+
 			// Don't send additional notification - already sent immediate notification
-			
+
 		} else {
 			print("❌ WorkflowManager not set - interrupted recording not saved to database!")
 			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
-			
+
 			// Reset processing flag even on failure
 			await MainActor.run {
 				recordingBeingProcessed = false
+				// End background task even on failure
+				endBackgroundTask()
 			}
 		}
 	}
@@ -760,15 +1039,21 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 	
 	private func checkForUnprocessedRecording() async {
-		print("🔍 checkForUnprocessedRecording called - recordingBeingProcessed: \(recordingBeingProcessed)")
-		
+		print("🔍 checkForUnprocessedRecording called - recordingBeingProcessed: \(recordingBeingProcessed), isRecording: \(isRecording)")
+
+		// CRITICAL: Never recover a recording that is still active
+		if isRecording {
+			print("🔍 Recording is still active, skipping recovery check")
+			return
+		}
+
 		// Prevent duplicate recovery attempts (both flag and time-based)
 		let now = Date()
 		if recordingBeingProcessed || now.timeIntervalSince(lastRecoveryAttempt) < 2.0 {
 			print("🔍 Recovery already in progress or attempted recently, skipping duplicate attempt")
 			return
 		}
-		
+
 		lastRecoveryAttempt = now
 		
 		// Check if there's a recording file that exists but wasn't processed
@@ -1151,10 +1436,26 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         backgroundTask = .invalid
     }
 
+    /// Create a URL for a new recording segment
+    /// Segments are named by appending "_seg1", "_seg2", etc. to the base filename
+    private func createSegmentURL(baseURL: URL, segmentIndex: Int) -> URL {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let baseFilename = baseURL.deletingPathExtension().lastPathComponent
+        let fileExtension = baseURL.pathExtension
+        let segmentFilename = "\(baseFilename)_seg\(segmentIndex).\(fileExtension)"
+        return documentsPath.appendingPathComponent(segmentFilename)
+    }
+
     private func setupRecording() {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let audioFilename = documentsPath.appendingPathComponent(generateAppRecordingFilename())
         recordingURL = audioFilename
+
+        // Initialize segment tracking for this new recording
+        mainRecordingURL = audioFilename
+        recordingSegments = [audioFilename] // Start with the first segment
+        currentSegmentIndex = 0
+        print("📝 Starting new recording with segment tracking: \(audioFilename.lastPathComponent)")
 
         // Capture current location before starting recording
         captureCurrentLocation()
@@ -1166,19 +1467,21 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         do {
             audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
             audioRecorder?.delegate = self
-            
+
+            // Enable metering for silence detection (used for smart checkpoints)
+            audioRecorder?.isMeteringEnabled = true
+
             #if targetEnvironment(simulator)
             print("🤖 Running on iOS Simulator - audio recording may have limitations")
             print("💡 For best results, test on a physical device or ensure simulator microphone is enabled")
             #endif
-            
-            // Start background task to ensure recording continues if app is backgrounded
-            beginBackgroundTask()
-            
+
+            // No background task needed here - audio background mode keeps recording alive
             audioRecorder?.record()
-            
+
             isRecording = true
             recordingTime = 0
+            lastCheckpointTime = Date() // Initialize checkpoint time to now
             startRecordingTimer()
             
             // Notify watch of recording state change
@@ -1328,21 +1631,261 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
         isRecording = false
         stopRecordingTimer()
         audioRecorder = nil
-        lastRecordedFileSize = -1
-        stalledTickCount = 0
-        
+
+        // Clear interruption state
+        isInInterruption = false
+        interruptionRecordingURL = nil
+        recorderStoppedUnexpectedlyTime = nil
+
         // Reset processing flag when manually stopping
         recordingBeingProcessed = false
-        
+
+        // Reset checkpoint tracking
+        lastCheckpointTime = Date.distantPast
+
+        // Merge segments if there were interruptions
+        if recordingSegments.count > 1 {
+            print("🔄 Recording has \(recordingSegments.count) segments, merging...")
+            Task {
+                await mergeRecordingSegments()
+            }
+        } else {
+            print("✅ Recording has single segment, no merge needed")
+        }
+
         // Deactivate audio session to restore high-quality music playback
         Task {
             try? await enhancedAudioSessionManager.deactivateSession()
         }
-        
+
         // Notify watch of recording state change
         notifyWatchOfRecordingStateChange()
-        
-        endBackgroundTask()
+
+        // No background task to end here - data saving operations manage their own tasks
+    }
+
+    /// Merge multiple recording segments into a single file after interruptions
+    @MainActor
+    private func mergeRecordingSegments() async {
+        guard recordingSegments.count > 1, let mainURL = mainRecordingURL else {
+            print("⚠️ No segments to merge")
+            return
+        }
+
+        print("🔄 Merging \(recordingSegments.count) segments into: \(mainURL.lastPathComponent)")
+        print("🔄 Merging \(recordingSegments.count) segments into: \(mainURL.lastPathComponent)")
+
+        // Start background task to protect file merging and Core Data save operations
+        beginBackgroundTask()
+
+        do {
+            // Create AVAsset for each segment
+            let composition = AVMutableComposition()
+
+            // Create an audio track in the composition
+            guard let compositionAudioTrack = composition.addMutableTrack(
+                withMediaType: .audio,
+                preferredTrackID: kCMPersistentTrackID_Invalid
+            ) else {
+                print("❌ Failed to create composition audio track")
+                return
+            }
+
+            var currentTime = CMTime.zero
+
+            // Add each segment to the composition
+            for (index, segmentURL) in recordingSegments.enumerated() {
+                let asset = AVURLAsset(url: segmentURL)
+
+                // Get the audio track from the segment
+                guard let assetTrack = try? await asset.loadTracks(withMediaType: .audio).first else {
+                    print("⚠️ Segment \(index + 1) has no audio track, skipping")
+                    continue
+                }
+
+                // Get the duration of this segment
+                let duration = try await asset.load(.duration)
+
+                // Insert the segment at the current time
+                let timeRange = CMTimeRange(start: .zero, duration: duration)
+                try compositionAudioTrack.insertTimeRange(timeRange, of: assetTrack, at: currentTime)
+
+                print("✅ Added segment \(index + 1) at \(currentTime.seconds)s, duration: \(duration.seconds)s")
+
+                // Move forward for the next segment
+                currentTime = CMTimeAdd(currentTime, duration)
+            }
+
+            // Export the merged composition using iOS 18+ API
+            guard let exportSession = AVAssetExportSession(
+                asset: composition,
+                presetName: AVAssetExportPresetAppleM4A
+            ) else {
+                print("❌ Failed to create export session")
+                return
+            }
+
+            // Export to a temporary file first (to avoid overwriting existing segments)
+            let tempURL = mainURL.deletingLastPathComponent().appendingPathComponent("temp_merge_\(UUID().uuidString).m4a")
+
+            // Use the modern export API (iOS 18+)
+            try await exportSession.export(to: tempURL, as: .m4a)
+
+            print("✅ Successfully merged all segments to temporary file")
+
+            // Clean up individual segment files
+            await cleanupSegmentFiles()
+
+            // Move the merged file to the final location
+            let fileManager = FileManager.default
+
+            // Remove the final destination if it exists
+            if fileManager.fileExists(atPath: mainURL.path) {
+                try fileManager.removeItem(at: mainURL)
+            }
+
+            // Move temp file to final location
+            try fileManager.moveItem(at: tempURL, to: mainURL)
+
+            print("✅ Successfully merged all segments into: \(mainURL.lastPathComponent)")
+
+            // Update the recordingURL to point to the merged file
+            recordingURL = mainURL
+
+            // Save the merged recording to the database
+            saveLocationData(for: mainURL)
+
+            print("✅ Merged recording saved in Whisper-optimized format")
+
+            // Add recording using workflow manager
+            if let workflowManager = workflowManager {
+                let fileSize = getFileSize(url: mainURL)
+                let duration = getRecordingDuration(url: mainURL)
+                let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+
+                // Create display name for phone recording
+                let displayName = generateAppRecordingDisplayName()
+
+                // Create recording
+                let recordingId = workflowManager.createRecording(
+                    url: mainURL,
+                    name: displayName,
+                    date: Date(),
+                    fileSize: fileSize,
+                    duration: duration,
+                    quality: quality,
+                    locationData: recordingLocationSnapshot()
+                )
+
+                print("✅ Merged recording created with workflow manager, ID: \(recordingId)")
+
+                self.resetRecordingLocation()
+            } else {
+                print("❌ WorkflowManager not set - merged recording not saved to database!")
+            }
+
+            // End background task after successful merge and save
+            endBackgroundTask()
+
+        } catch {
+            print("❌ Error merging segments: \(error.localizedDescription)")
+            // End background task even on error
+            endBackgroundTask()
+        }
+    }
+
+    /// Clean up individual segment files after successful merge
+    @MainActor
+    private func cleanupSegmentFiles() async {
+        guard recordingSegments.count > 1 else { return }
+
+        let fileManager = FileManager.default
+
+        // Delete all segment files (including the first one, since we're merging to a temp file first)
+        for segmentURL in recordingSegments {
+            do {
+                if fileManager.fileExists(atPath: segmentURL.path) {
+                    try fileManager.removeItem(at: segmentURL)
+                    print("🗑️ Deleted segment: \(segmentURL.lastPathComponent)")
+                }
+            } catch {
+                print("⚠️ Failed to delete segment \(segmentURL.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+
+        // Clear the segment tracking
+        recordingSegments = []
+        mainRecordingURL = nil
+        currentSegmentIndex = 0
+    }
+
+    /// Manually trigger a checkpoint to flush audio buffer to disk
+    /// This ensures recorded audio is written to permanent storage
+    /// Useful before potentially risky operations or to ensure data durability
+    func forceCheckpoint() {
+        guard isRecording, let recorder = audioRecorder, recorder.isRecording else {
+            print("⚠️ Cannot checkpoint: not currently recording")
+            return
+        }
+
+        recorder.pause()
+        recorder.record()
+        lastCheckpointTime = Date()
+        print("💾 Manual checkpoint: Flushed recording buffer to disk")
+    }
+
+    /// Check if the current audio level indicates silence
+    /// Returns true if the audio is below the silence threshold
+    private func isCurrentlySilent() -> Bool {
+        guard let recorder = audioRecorder, recorder.isRecording else {
+            return false
+        }
+
+        // Update metering to get current levels
+        recorder.updateMeters()
+
+        // Get average power for channel 0 (mono recording)
+        let averagePower = recorder.averagePower(forChannel: 0)
+
+        // Check if below silence threshold
+        let isSilent = averagePower < silenceThreshold
+
+        return isSilent
+    }
+
+    /// Perform a smart checkpoint that waits for silence
+    private func performSmartCheckpoint(force: Bool = false) {
+        guard isRecording, let recorder = audioRecorder, recorder.isRecording else {
+            return
+        }
+
+        let now = Date()
+        let timeSinceLastCheckpoint = now.timeIntervalSince(lastCheckpointTime)
+
+        // Check if we need to checkpoint
+        let shouldAttemptCheckpoint = timeSinceLastCheckpoint >= checkpointInterval
+        let shouldForceCheckpoint = force || timeSinceLastCheckpoint >= forceCheckpointInterval
+
+        guard shouldAttemptCheckpoint || shouldForceCheckpoint else {
+            return
+        }
+
+        // If forcing or if we detect silence, do the checkpoint
+        if shouldForceCheckpoint {
+            recorder.pause()
+            recorder.record()
+            lastCheckpointTime = now
+            print("💾 Checkpoint: Forced buffer flush at \(Int(recordingTime))s (no silence detected for \(Int(timeSinceLastCheckpoint))s)")
+        } else if isCurrentlySilent() {
+            recorder.pause()
+            recorder.record()
+            lastCheckpointTime = now
+            print("💾 Checkpoint: Flushed during silence at \(Int(recordingTime))s")
+        } else {
+            // Not silent and not forcing - skip this checkpoint attempt
+            // We'll try again next second
+            return
+        }
     }
     
     func playRecording(url: URL) {
@@ -1419,34 +1962,51 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
     }
     
     private func startRecordingTimer() {
-        // Reset stall tracking at start
-        lastRecordedFileSize = -1
-        stalledTickCount = 0
-
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                // Failsafe: if the underlying recorder stopped, handle interrupted recording
-                // But DON'T trigger if app is backgrounding - recording should continue in background
+                // Failsafe: if the underlying recorder stopped, try to resume before giving up
+                // But DON'T trigger if app is backgrounding or in interruption - recording should continue
+                // This is the only failsafe we need - if iOS actually stops the recorder, this will catch it
+                // We don't check for stalled writes because silence is normal and doesn't mean the mic is unavailable
+                // We add a grace period to allow interruption notifications to arrive first
+                // If no notification arrives (e.g., Bluetooth disconnect), we try to resume recording automatically
+                // For phone calls, iOS sends interruption notifications, so we wait longer (up to 180 seconds)
+                // Note: If we're in an interruption state, we'll wait for the interruption to end
                 if self.isRecording, let recorder = self.audioRecorder, !recorder.isRecording && !self.appIsBackgrounding {
-                    print("🚨 Failsafe: Detected recorder stopped unexpectedly (NOT due to backgrounding)")
-                    self.handleInterruptedRecording(reason: "Microphone became unavailable or recording was interrupted")
-                    return
-                }
-                // Failsafe: detect stalled writes (no bytes changing for several seconds)
-                if self.isRecording, let url = self.recordingURL {
-                    let currentSize = self.getFileSize(url: url)
-                    if self.lastRecordedFileSize >= 0 && currentSize == self.lastRecordedFileSize {
-                        self.stalledTickCount += 1
+                    if self.isInInterruption {
+                        // We're in an interruption - wait for it to end rather than trying to resume now
+                        // The interruption handler will take care of resuming when it ends
+                        if self.recorderStoppedUnexpectedlyTime != nil {
+                            self.recorderStoppedUnexpectedlyTime = nil // Clear since we're waiting for interruption to end
+                        }
                     } else {
-                        self.stalledTickCount = 0
-                        self.lastRecordedFileSize = currentSize
+                        // Not in interruption - track when we first detected the recorder stopped
+                        if self.recorderStoppedUnexpectedlyTime == nil {
+                            self.recorderStoppedUnexpectedlyTime = Date()
+                            print("⚠️ Detected recorder stopped - waiting for interruption notification (grace period: 5 seconds)")
+                        } else if let stoppedTime = self.recorderStoppedUnexpectedlyTime, Date().timeIntervalSince(stoppedTime) >= 5.0 {
+                            // After 5 second grace period, if no interruption notification arrived,
+                            // try to resume recording (might be a Bluetooth disconnect or similar)
+                            // Phone calls ALWAYS send interruption notifications, so if we're here it's not a phone call
+                            print("🔄 No interruption notification received after 5 seconds - attempting to resume recording (likely hardware issue)")
+                            self.recorderStoppedUnexpectedlyTime = nil
+                            Task { @MainActor in
+                                await self.attemptResumeAfterUnexpectedStop()
+                            }
+                            return
+                        }
+                        // Otherwise, continue waiting for interruption notification
                     }
-                    if self.stalledTickCount >= 3 { // ~3 seconds of no data
-                        print("🚨 Failsafe: Detected stalled recording (no new data for 3+ seconds)")
-                        self.handleInterruptedRecording(reason: "No audio data being received (microphone may have been taken by another app)")
-                        return
+                } else {
+                    // Recorder is running or we're in a safe state, clear the stopped tracking
+                    if self.recorderStoppedUnexpectedlyTime != nil {
+                        self.recorderStoppedUnexpectedlyTime = nil
                     }
+
+                    // Perform smart checkpoint that waits for silence
+                    // This minimizes data loss while avoiding mid-word interruptions
+                    self.performSmartCheckpoint()
                 }
                 self.recordingTime += 1
             }
@@ -1549,15 +2109,30 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
     nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
         Task {
             await MainActor.run {
+                // Check if we're still in recording mode - if so, this was an interruption, not a user stop
+                // In this case, don't save as a finished recording - let the interruption handler deal with it
+                if isRecording {
+                    print("⚠️ Recorder finished but still in recording mode - ignoring (interruption will be handled)")
+                    return
+                }
+
                 // Check if recording is already being processed by interruption handler
                 // But allow processing if app is backgrounding (normal completion scenario)
                 if recordingBeingProcessed && !appIsBackgrounding {
                     print("⚠️ Recording already processed by interruption handler, skipping normal completion")
                     recordingBeingProcessed = false // Reset flag
-                    self.endBackgroundTask()
                     return
                 }
-                
+
+                // Check if we have multiple segments - if so, the merge will handle saving
+                if recordingSegments.count > 1 {
+                    print("⚠️ Multiple segments detected - merge process will handle saving")
+                    return
+                }
+
+                // Start background task to protect Core Data save operations
+                beginBackgroundTask()
+
                 if flag {
                     if appIsBackgrounding {
                         print("Recording finished successfully during backgrounding - processing normally")
@@ -1565,7 +2140,7 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                         print("Recording finished successfully")
                     }
                     recordingBeingProcessed = true // Set flag to prevent duplicate processing
-                    
+
                     if let recordingURL = recordingURL {
                         saveLocationData(for: recordingURL)
                         
@@ -1617,8 +2192,8 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
                         try? await enhancedAudioSessionManager.deactivateSession()
                     }
                 }
-                
-                // End background task
+
+                // End background task that protected the Core Data save operation
                 self.endBackgroundTask()
             }
         }

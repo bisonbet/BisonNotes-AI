@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		143196D12F128D16003BA61E /* llama.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 143196D02F128D16003BA61E /* llama.xcframework */; };
 		143196D22F128D16003BA61E /* llama.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 143196D02F128D16003BA61E /* llama.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		1435711D2F2137E1000BFF00 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 1435711C2F2137E1000BFF00 /* Textual */; };
 		14748E1C2F145C0D0016C521 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 14748E1B2F145C0D0016C521 /* WhisperKit */; };
 		14748E1E2F145C0D0016C521 /* whisperkit-cli in Frameworks */ = {isa = PBXBuildFile; productRef = 14748E1D2F145C0D0016C521 /* whisperkit-cli */; };
 		1485FEC52E526FB30044121F /* BisonNotes AI Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -20,7 +21,6 @@
 		1485FEDF2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */; };
 		1485FEE02E5272FA0044121F /* WatchAudioChunk.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED82E5272FA0044121F /* WatchAudioChunk.swift */; };
 		1485FEE12E5272FA0044121F /* WatchRecordingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */; };
-		148A7AC62E593E1D00666860 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 148A7AC52E593E1D00666860 /* MarkdownUI */; };
 		14EA428D2E7F5ECA0059271B /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428C2E7F5ECA0059271B /* WidgetKit.framework */; };
 		14EA428F2E7F5ECA0059271B /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428E2E7F5ECA0059271B /* SwiftUI.framework */; };
 		14EA42A92E7F66370059271B /* BisonNotes AI ControlsExtension.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 14EA428B2E7F5ECA0059271B /* BisonNotes AI ControlsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -237,7 +237,7 @@
 				14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */,
 				14748E1C2F145C0D0016C521 /* WhisperKit in Frameworks */,
 				14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */,
-				148A7AC62E593E1D00666860 /* MarkdownUI in Frameworks */,
+				1435711D2F2137E1000BFF00 /* Textual in Frameworks */,
 				14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */,
 				143196D12F128D16003BA61E /* llama.xcframework in Frameworks */,
 				1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */,
@@ -424,9 +424,9 @@
 				14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */,
 				14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */,
 				14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */,
-				148A7AC52E593E1D00666860 /* MarkdownUI */,
 				14748E1B2F145C0D0016C521 /* WhisperKit */,
 				14748E1D2F145C0D0016C521 /* whisperkit-cli */,
+				1435711C2F2137E1000BFF00 /* Textual */,
 			);
 			productName = "BisonNotes AI";
 			productReference = 14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */;
@@ -548,8 +548,8 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
-				148A7AC42E593E1D00666860 /* XCRemoteSwiftPackageReference "MarkdownUI" */,
 				14748E1A2F145C0D0016C521 /* XCRemoteSwiftPackageReference "WhisperKit" */,
+				1435711B2F2137E1000BFF00 /* XCRemoteSwiftPackageReference "textual" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 14DBC83E2E34F7B500DAD442 /* Products */;
@@ -1293,6 +1293,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		1435711B2F2137E1000BFF00 /* XCRemoteSwiftPackageReference "textual" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/bisonbet/textual";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 		14748E1A2F145C0D0016C521 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/bisonbet/WhisperKit.git";
@@ -1301,25 +1309,22 @@
 				kind = branch;
 			};
 		};
-		148A7AC42E593E1D00666860 /* XCRemoteSwiftPackageReference "MarkdownUI" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/gonzalezreal/MarkdownUI";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.4.1;
-			};
-		};
 		14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/awslabs/aws-sdk-swift";
 			requirement = {
-				kind = upToNextMinorVersion;
+				kind = upToNextMajorVersion;
 				minimumVersion = 1.5.12;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		1435711C2F2137E1000BFF00 /* Textual */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1435711B2F2137E1000BFF00 /* XCRemoteSwiftPackageReference "textual" */;
+			productName = Textual;
+		};
 		14748E1B2F145C0D0016C521 /* WhisperKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 14748E1A2F145C0D0016C521 /* XCRemoteSwiftPackageReference "WhisperKit" */;
@@ -1329,11 +1334,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 14748E1A2F145C0D0016C521 /* XCRemoteSwiftPackageReference "WhisperKit" */;
 			productName = "whisperkit-cli";
-		};
-		148A7AC52E593E1D00666860 /* MarkdownUI */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 148A7AC42E593E1D00666860 /* XCRemoteSwiftPackageReference "MarkdownUI" */;
-			productName = MarkdownUI;
 		};
 		14FDF9072E3F8D5600BBD2FA /* AWSBedrock */ = {
 			isa = XCSwiftPackageProductDependency;
