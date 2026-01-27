@@ -122,6 +122,7 @@ struct TranscriptsView: View {
     }
     
     private var recordingsListView: some View {
+        // For preview mode, show only first 3 items total across all sections
         let recentRecordings = Array(recordings.prefix(3))
         let recentImportedTranscripts = Array(importedTranscripts.prefix(3))
 
@@ -129,6 +130,7 @@ struct TranscriptsView: View {
             // Audio Recordings with Transcripts
             if !recordings.isEmpty {
                 Section(header: Text("Audio Recordings")) {
+                    // Show first 3 items with their section headers
                     ForEach(recentRecordings, id: \.recording.id) { recordingData in
                         recordingRowView(recordingData)
                     }
@@ -170,21 +172,60 @@ struct TranscriptsView: View {
     }
 
     private var audioRecordingsFullListView: some View {
-        List {
-            ForEach(recordings, id: \.recording.id) { recordingData in
-                recordingRowView(recordingData)
+        struct RecordingWithDate {
+            let recording: RecordingEntry
+            let transcript: TranscriptData?
+            let date: Date
+        }
+
+        let recordingsWithDates: [RecordingWithDate] = recordings.compactMap { item in
+            guard let date = item.recording.recordingDate else { return nil }
+            return RecordingWithDate(recording: item.recording, transcript: item.transcript, date: date)
+        }
+
+        let sectioned = DateSectionHelper.groupBySection(recordingsWithDates, dateKeyPath: \.date)
+
+        return List {
+            ForEach(sectioned, id: \.section) { sectionData in
+                Section(header: Text(sectionData.section.title)) {
+                    ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
+                        recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
+                    }
+                }
             }
         }
         .navigationTitle("Audio Recordings")
     }
 
     private var importedTranscriptsFullListView: some View {
-        List {
-            ForEach(importedTranscripts, id: \.recording.id) { recordingData in
-                importedTranscriptRowView(recordingData)
-            }
-            .onDelete { indexSet in
-                deleteImportedTranscripts(at: indexSet, in: importedTranscripts)
+        struct ImportedWithDate {
+            let recording: RecordingEntry
+            let transcript: TranscriptData?
+            let date: Date
+        }
+
+        let importedWithDates: [ImportedWithDate] = importedTranscripts.compactMap { item in
+            guard let date = item.recording.recordingDate else { return nil }
+            return ImportedWithDate(recording: item.recording, transcript: item.transcript, date: date)
+        }
+
+        let sectioned = DateSectionHelper.groupBySection(importedWithDates, dateKeyPath: \.date)
+
+        return List {
+            ForEach(sectioned, id: \.section) { sectionData in
+                Section(header: Text(sectionData.section.title)) {
+                    ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
+                        importedTranscriptRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
+                    }
+                    .onDelete { indexSet in
+                        // Map local indexSet to global importedTranscripts array
+                        let itemsToDelete = indexSet.map { sectionData.items[$0] }
+                        for item in itemsToDelete {
+                            deleteImportedTranscript((recording: item.recording, transcript: item.transcript))
+                        }
+                        loadRecordings()
+                    }
+                }
             }
         }
         .navigationTitle("Imported Transcripts")

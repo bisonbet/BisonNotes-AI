@@ -215,9 +215,34 @@ struct SummariesView: View {
     // MARK: - Recordings List View
     
     private var recordingsListView: some View {
-        List {
-            ForEach(recordings, id: \.recording.objectID) { recordingData in
-                recordingRowView(recordingData)
+        // Filter out recordings with nil dates and create wrapper struct with non-optional dates
+        struct RecordingWithDate {
+            let recording: RecordingEntry
+            let transcript: TranscriptData?
+            let summary: EnhancedSummaryData?
+            let date: Date
+        }
+
+        let recordingsWithDates: [RecordingWithDate] = recordings.compactMap { item in
+            guard let date = item.recording.recordingDate else { return nil }
+            return RecordingWithDate(
+                recording: item.recording,
+                transcript: item.transcript,
+                summary: item.summary,
+                date: date
+            )
+        }
+
+        // Group by date section
+        let sectioned = DateSectionHelper.groupBySection(recordingsWithDates, dateKeyPath: \.date)
+
+        return List {
+            ForEach(sectioned, id: \.section) { sectionData in
+                Section(header: Text(sectionData.section.title)) {
+                    ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
+                        recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
+                    }
+                }
             }
         }
         .listStyle(PlainListStyle())

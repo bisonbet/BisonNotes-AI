@@ -70,6 +70,7 @@ struct AITextView: View {
 
         StructuredText(
             markdown: cleanedText,
+            baseURL: nil,
             patternOptions: .init(emoji: EmojiManager.shared.emojiSet)
         )
         .textual.textSelection(.enabled)

@@ -26,7 +26,9 @@ struct GoogleAIStudioSettingsView: View {
     
     private let availableModels = [
         "gemini-2.5-flash",
-        "gemini-2.5-flash-lite"
+        "gemini-2.5-flash-lite",
+        "gemini-3-pro-preview",
+        "gemini-3-flash-preview"
     ]
     
     var body: some View {

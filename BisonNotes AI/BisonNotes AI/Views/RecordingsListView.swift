@@ -61,11 +61,13 @@ struct RecordingsListView: View {
                         }
                     } else {
                         HStack(spacing: 12) {
-                            Button("Select") {
-                                isSelectionMode = true
+                            if recordings.count >= 2 {
+                                Button("Select") {
+                                    isSelectionMode = true
+                                }
+                                .font(.headline)
                             }
-                            .font(.headline)
-                            
+
                             Button("Done") {
                                 dismiss()
                             }
@@ -219,9 +221,15 @@ struct RecordingsListView: View {
     }
     
     private var recordingsListView: some View {
-        List {
-            ForEach(recordings) { recording in
-                recordingRow(for: recording)
+        let sectioned = DateSectionHelper.groupBySection(recordings, dateKeyPath: \.date)
+
+        return List {
+            ForEach(sectioned, id: \.section) { sectionData in
+                Section(header: Text(sectionData.section.title)) {
+                    ForEach(sectionData.items) { recording in
+                        recordingRow(for: recording)
+                    }
+                }
             }
         }
     }
@@ -253,7 +261,7 @@ struct RecordingsListView: View {
                         .font(.headline)
                         .foregroundColor(.primary)
                         .multilineTextAlignment(.leading)
-                    
+
                     HStack {
                         Text(recording.dateString)
                             .font(.caption)
@@ -262,6 +270,12 @@ struct RecordingsListView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                         Text(recording.durationString)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("•")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(recording.fileSizeString)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }

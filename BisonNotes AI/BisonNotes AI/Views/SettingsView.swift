@@ -623,8 +623,32 @@ struct SettingsView: View {
                 .font(.headline)
                 .foregroundColor(.primary)
                 .padding(.horizontal, 24)
-            
+
             VStack(alignment: .leading, spacing: 8) {
+                // Storage Information
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Total Recordings Storage")
+                            .font(.body)
+                            .foregroundColor(.primary)
+                        Text("Space used by audio recordings")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Text(totalRecordingsStorageString)
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+                .background(
+                    Rectangle()
+                        .fill(Color(.systemGray6))
+                        .opacity(0.3)
+                )
+
                 // Background Processing
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -822,6 +846,30 @@ struct SettingsView: View {
     private func refreshEngineStatuses() {
         // Set the engine to the currently selected one from settings
         regenerationManager.setEngine(selectedAIEngine)
+    }
+
+    private var totalRecordingsStorageString: String {
+        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        var totalSize: Int64 = 0
+
+        for entry in recordingsWithData {
+            // Skip imported transcripts
+            if entry.recording.audioQuality == "imported" {
+                continue
+            }
+
+            guard let url = appCoordinator.getAbsoluteURL(for: entry.recording),
+                  FileManager.default.fileExists(atPath: url.path) else {
+                continue
+            }
+
+            if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+               let size = attributes[.size] as? Int64 {
+                totalSize += size
+            }
+        }
+
+        return ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
     }
 
 }
