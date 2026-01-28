@@ -290,7 +290,11 @@
                 </li>
                 <li><a href="#ai-engine-configuration">🤖 AI Engine Configuration</a></li>
                 <li><a href="#transcription-configuration">📝 Transcription Configuration</a></li>
-                <li><a href="#working-with-summaries">📊 Working with Summaries</a></li>
+                <li><a href="#working-with-summaries">📊 Working with Summaries</a>
+                    <ul style="margin-left: 1.5em; margin-top: 0.5em;">
+                        <li><a href="#search-and-filtering">Search and Filtering</a></li>
+                    </ul>
+                </li>
                 <li><a href="#audio-playback">🎵 Audio Playback</a></li>
                 <li><a href="#settings-configuration">⚙️ Settings & Configuration</a>
                     <ul style="margin-left: 1.5em; margin-top: 0.5em;">
@@ -662,10 +666,22 @@
                 </p>
                 <p><strong>Available Models</strong>:
                     <ul>
-                        <li><strong>Gemma 3n E4B</strong> (Default): 3.09 GB download, 32K context</li>
-                        <li><strong>Qwen3 4B</strong>: 2.72 GB download, 32K context</li>
-                        <li><strong>Phi-4 Mini</strong>: 2.49 GB download, 16K context</li>
-                        <li><strong>Ministral 3B</strong>: ~2.15 GB download, 32K context</li>
+                        <li><strong>Recommended Models</strong> (by device RAM):
+                            <ul>
+                                <li><strong>8GB+ RAM</strong>: Granite 4.0 H Tiny (4.3 GB) - Recommended for best quality</li>
+                                <li><strong>6GB+ RAM</strong>: Granite 4.0 Micro (2.1 GB) - Recommended for fast processing</li>
+                                <li><strong>6GB+ RAM</strong>: Gemma 3n E2B (3.0 GB) - Good quality, smaller size</li>
+                                <li><strong>8GB+ RAM</strong>: Gemma 3n E4B (4.5 GB) - Best overall quality</li>
+                                <li><strong>6GB+ RAM</strong>: Ministral 3B (2.1 GB) - Best for tasks and reminders</li>
+                            </ul>
+                        </li>
+                        <li><strong>Experimental Models</strong> (enable in settings):
+                            <ul>
+                                <li><strong>4GB+ RAM</strong>: LFM 2.5 1.2B (731 MB) - Fast, minimal summaries (summary only)</li>
+                                <li><strong>4GB+ RAM</strong>: Qwen3 1.7B (1.1 GB) - Latest Qwen3 model (summary only)</li>
+                                <li><strong>8GB+ RAM</strong>: Qwen3 4B (2.7 GB) - Excellent detail extraction</li>
+                            </ul>
+                        </li>
                     </ul>
                 </p>
                 <p><strong>Best for</strong>: Privacy-conscious users, offline use, recordings under 60 minutes</p>
@@ -813,25 +829,62 @@
                     <th>Model</th>
                     <th>Type</th>
                     <th>Best For</th>
+                    <th>Tier</th>
                 </tr>
             </thead>
             <tbody>
                 <tr>
                     <td><strong>GPT-4.1</strong></td>
                     <td>Summarization</td>
-                    <td>Most powerful, best quality</td>
+                    <td>Most robust and comprehensive analysis with advanced reasoning capabilities</td>
+                    <td>Premium</td>
                 </tr>
                 <tr>
                     <td><strong>GPT-4.1 Mini</strong></td>
                     <td>Summarization</td>
-                    <td>Fast and economical</td>
+                    <td>Balanced performance and cost, suitable for most summarization tasks (Default)</td>
+                    <td>Standard</td>
                 </tr>
                 <tr>
                     <td><strong>GPT-4.1 Nano</strong></td>
                     <td>Summarization</td>
-                    <td>Fastest and most economical</td>
+                    <td>Fastest and most economical for basic summarization needs</td>
+                    <td>Economy</td>
                 </tr>
-
+                <tr>
+                    <td><strong>GPT-5 Mini</strong></td>
+                    <td>Summarization</td>
+                    <td>Next-generation model with enhanced reasoning and efficiency</td>
+                    <td>Premium</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <h4>OpenAI Transcription Models</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Type</th>
+                    <th>Best For</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>GPT-4o Transcribe</strong></td>
+                    <td>Transcription</td>
+                    <td>Most robust transcription with GPT-4o model. Supports streaming.</td>
+                </tr>
+                <tr>
+                    <td><strong>GPT-4o Mini Transcribe</strong></td>
+                    <td>Transcription</td>
+                    <td>Cheapest and fastest transcription with GPT-4o Mini model. Supports streaming. Recommended for most use cases.</td>
+                </tr>
+                <tr>
+                    <td><strong>Whisper-1</strong></td>
+                    <td>Transcription</td>
+                    <td>Legacy transcription with Whisper V2 model. Does not support streaming.</td>
+                </tr>
             </tbody>
         </table>
 
@@ -993,7 +1046,13 @@ ollama pull mistral-small3.2</code></pre>
                     <li>Go to Settings → AI Settings → AWS Bedrock</li>
                     <li>Enter AWS credentials</li>
                     <li>Select region</li>
-                    <li>Choose foundation model</li>
+                    <li>Choose foundation model:
+                        <ul>
+                            <li><strong>Claude 4.5 Haiku</strong> (Default): Fast and efficient model optimized for quick responses (Standard tier)</li>
+                            <li><strong>Claude Sonnet 4.5</strong>: Latest Claude Sonnet with advanced reasoning, coding, and analysis capabilities (Premium tier)</li>
+                            <li><strong>Llama 4 Maverick 17B Instruct</strong>: Meta's latest Llama 4 model with enhanced reasoning and performance (Economy tier)</li>
+                        </ul>
+                    </li>
                     <li>Test the connection</li>
                 </ul>
             </li>
@@ -1069,10 +1128,22 @@ docker run -d -p 9000:9000 \
                     <li>Select one or more AI summary models to download</li>
                     <li>Available models:
                         <ul>
-                            <li><strong>Gemma 3n E4B</strong> (Default): 3.09 GB, 32K context window</li>
-                            <li><strong>Qwen3 4B</strong>: 2.72 GB, 32K context window</li>
-                            <li><strong>Phi-4 Mini</strong>: 2.49 GB, 16K context window</li>
-                            <li><strong>Ministral 3B</strong>: ~2.15 GB, 32K context window</li>
+                            <li><strong>Recommended Models</strong> (by device RAM):
+                                <ul>
+                                    <li><strong>8GB+ RAM</strong>: Granite 4.0 H Tiny (4.3 GB) - Recommended for best quality</li>
+                                    <li><strong>6GB+ RAM</strong>: Granite 4.0 Micro (2.1 GB) - Recommended for fast processing</li>
+                                    <li><strong>6GB+ RAM</strong>: Gemma 3n E2B (3.0 GB) - Good quality, smaller size</li>
+                                    <li><strong>8GB+ RAM</strong>: Gemma 3n E4B (4.5 GB) - Best overall quality</li>
+                                    <li><strong>6GB+ RAM</strong>: Ministral 3B (2.1 GB) - Best for tasks and reminders</li>
+                                </ul>
+                            </li>
+                            <li><strong>Experimental Models</strong> (enable in settings):
+                                <ul>
+                                    <li><strong>4GB+ RAM</strong>: LFM 2.5 1.2B (731 MB) - Fast, minimal summaries (summary only)</li>
+                                    <li><strong>4GB+ RAM</strong>: Qwen3 1.7B (1.1 GB) - Latest Qwen3 model (summary only)</li>
+                                    <li><strong>8GB+ RAM</strong>: Qwen3 4B (2.7 GB) - Excellent detail extraction</li>
+                                </ul>
+                            </li>
                         </ul>
                     </li>
                     <li>Download progress is shown with speed and time remaining</li>
@@ -1110,7 +1181,13 @@ docker run -d -p 9000:9000 \
         <h3>Available Transcription Engines</h3>
         <ul>
             <li><strong>On Device</strong>: High-quality on-device transcription. Your audio never leaves your device, ensuring complete privacy. Requires model download (~150-520MB). Best for privacy-conscious users.</li>
-            <li><strong>OpenAI</strong>: Cloud-based, requires API key, high-quality transcription</li>
+            <li><strong>OpenAI</strong>: Cloud-based transcription using OpenAI's GPT-4o models and Whisper API. Supports multiple models:
+                <ul>
+                    <li><strong>GPT-4o Transcribe</strong>: Most robust transcription with GPT-4o model. Supports streaming for real-time transcription.</li>
+                    <li><strong>GPT-4o Mini Transcribe</strong>: Cheapest and fastest transcription with GPT-4o Mini model. Supports streaming. Recommended for most use cases.</li>
+                    <li><strong>Whisper-1</strong>: Legacy transcription with Whisper V2 model. Does not support streaming.</li>
+                </ul>
+            </li>
             <li><strong>Whisper (Local Server)</strong>: High-quality transcription using OpenAI's Whisper model on your local server (REST API or Wyoming protocol)</li>
             <li><strong>AWS Transcribe</strong>: Cloud-based transcription service with support for long audio files</li>
         </ul>
@@ -1262,6 +1339,47 @@ docker run -d -p 9000:9000 \
             <li><strong>Priority Indicators</strong>: Color-coded task priorities</li>
             <li><strong>Location Maps</strong>: Interactive maps showing recording location</li>
         </ul>
+
+        <h3 id="search-and-filtering">Search and Filtering</h3>
+        <p>BisonNotes AI includes powerful search and filtering capabilities to help you find your recordings, transcripts, and summaries quickly.</p>
+        
+        <h4>Search Functionality</h4>
+        <p>Search is available in three main views:</p>
+        <ul>
+            <li><strong>Summaries View</strong>: Search across summary content, tasks, reminders, titles, and recording names</li>
+            <li><strong>Transcripts View</strong>: Search through transcript text and recording names</li>
+            <li><strong>Recordings View</strong>: Search by recording name</li>
+        </ul>
+        <p><strong>How to use:</strong></p>
+        <ol class="step-list">
+            <li>Tap the search bar at the top of any view</li>
+            <li>Type your search terms</li>
+            <li>Results filter in real-time as you type</li>
+            <li>Search is case-insensitive and matches partial text</li>
+        </ol>
+
+        <h4>Date Filters</h4>
+        <p>Date range filtering helps you find content from specific time periods:</p>
+        <ul>
+            <li><strong>Available in</strong>: Summaries, Transcripts, and Recordings views</li>
+            <li><strong>How to use</strong>:
+                <ol class="step-list">
+                    <li>Tap the filter icon (three horizontal lines with circle) in the navigation bar</li>
+                    <li>Select a start date and end date</li>
+                    <li>Tap "Apply" to filter results</li>
+                    <li>The active filter is shown with a banner at the top of the list</li>
+                    <li>Tap the X on the banner to clear the filter</li>
+                </ol>
+            </li>
+        </ul>
+        <div class="info-box">
+            <h4>💡 Filter Behavior</h4>
+            <ul>
+                <li>Filters can be combined with search for precise results</li>
+                <li>Date range includes the full day (00:00:00 to 23:59:59) for both start and end dates</li>
+                <li>Filters persist until manually cleared</li>
+            </ul>
+        </div>
 
         <h3>Editing Recording Metadata</h3>
 
@@ -1416,7 +1534,6 @@ docker run -d -p 9000:9000 \
             <li><strong>Model Configuration</strong>: Adjust settings for selected engine (temperature, max tokens, etc.)</li>
             <li><strong>Connection Testing</strong>: Verify API connectivity</li>
             <li><strong>Batch Regeneration</strong>: Update all summaries with new engine</li>
-            <li><strong>Note</strong>: Apple Intelligence is no longer available as an AI engine option. Use On-Device AI for local processing.</li>
         </ul>
 
         <h3>Background Processing</h3>

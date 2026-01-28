@@ -32,7 +32,12 @@ struct RecordingsListView: View {
     @State private var selectedRecordings: Set<URL> = []
     @State private var showingCombineView = false
     @State private var recordingsToCombine: (first: AudioRecordingFile, second: AudioRecordingFile)?
-    
+    @State private var searchText = ""
+    @State private var showDateFilter = false
+    @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
+    @State private var dateFilterEnd: Date = Date()
+    @State private var isDateFilterActive = false
+
     var body: some View {
         NavigationView {
             VStack {
@@ -42,7 +47,7 @@ struct RecordingsListView: View {
                         .font(.largeTitle)
                         .fontWeight(.bold)
                     Spacer()
-                    
+
                     if isSelectionMode {
                         HStack(spacing: 12) {
                             if selectedRecordings.count == 2 {
@@ -52,7 +57,7 @@ struct RecordingsListView: View {
                                 .font(.headline)
                                 .foregroundColor(.blue)
                             }
-                            
+
                             Button("Cancel") {
                                 isSelectionMode = false
                                 selectedRecordings.removeAll()
@@ -61,6 +66,11 @@ struct RecordingsListView: View {
                         }
                     } else {
                         HStack(spacing: 12) {
+                            Button(action: { showDateFilter = true }) {
+                                Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                                    .font(.title2)
+                            }
+
                             if recordings.count >= 2 {
                                 Button("Select") {
                                     isSelectionMode = true
@@ -76,8 +86,12 @@ struct RecordingsListView: View {
                     }
                 }
                 .padding()
-                
+
                 recordingsContent
+            }
+            .searchable(text: $searchText, prompt: "Search recordings...")
+            .sheet(isPresented: $showDateFilter) {
+                dateFilterSheet
             }
             .sheet(isPresented: $showingEnhancedDeleteDialog) {
                 if let recording = deletionData.recordingToDelete, let relationships = deletionData.fileRelationships {
@@ -191,11 +205,19 @@ struct RecordingsListView: View {
 
     
     private var recordingsContent: some View {
-        Group {
+        let filtered = filteredRecordings
+        return Group {
             if recordings.isEmpty {
                 emptyStateView
+            } else if filtered.isEmpty {
+                noResultsView
             } else {
-                recordingsListView
+                VStack(spacing: 0) {
+                    if isDateFilterActive {
+                        activeDateFilterBanner
+                    }
+                    recordingsListView(filtered)
+                }
             }
         }
     }
@@ -205,12 +227,12 @@ struct RecordingsListView: View {
             Image(systemName: "waveform")
                 .font(.system(size: 60))
                 .foregroundColor(.secondary)
-            
+
             Text("No Recordings")
                 .font(.title2)
                 .fontWeight(.medium)
                 .foregroundColor(.primary)
-            
+
             Text("Start recording or import audio files to see them here")
                 .font(.body)
                 .foregroundColor(.secondary)
@@ -219,9 +241,109 @@ struct RecordingsListView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    
-    private var recordingsListView: some View {
-        let sectioned = DateSectionHelper.groupBySection(recordings, dateKeyPath: \.date)
+
+    private var noResultsView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: isDateFilterActive ? "calendar.badge.exclamationmark" : "magnifyingglass")
+                .font(.system(size: 48))
+                .foregroundColor(.secondary)
+
+            Text("No Results")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Text(noResultsMessage)
+                .multilineTextAlignment(.center)
+                .foregroundColor(.secondary)
+                .padding(.horizontal)
+
+            if isDateFilterActive || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button("Clear Filters") {
+                    searchText = ""
+                    isDateFilterActive = false
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var noResultsMessage: String {
+        let hasSearch = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        if hasSearch && isDateFilterActive {
+            return "No recordings match \"\(searchText)\" in the selected date range."
+        } else if hasSearch {
+            return "No recordings match \"\(searchText)\"."
+        } else if isDateFilterActive {
+            return "No recordings found between \(dateFilterStart.formatted(date: .abbreviated, time: .omitted)) and \(dateFilterEnd.formatted(date: .abbreviated, time: .omitted))."
+        } else {
+            return "No recordings found."
+        }
+    }
+
+    private var activeDateFilterBanner: some View {
+        HStack {
+            Image(systemName: "calendar")
+                .foregroundColor(.blue)
+            Text("\(dateFilterStart, format: .dateTime.month().day()) - \(dateFilterEnd, format: .dateTime.month().day())")
+                .font(.subheadline)
+            Spacer()
+            Button(action: {
+                isDateFilterActive = false
+            }) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color(.systemGray6))
+    }
+
+    private var dateFilterSheet: some View {
+        NavigationView {
+            Form {
+                Section {
+                    DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
+                    DatePicker("To", selection: $dateFilterEnd, in: dateFilterStart...Date(), displayedComponents: .date)
+                }
+
+                if isDateFilterActive {
+                    Section {
+                        Button(role: .destructive) {
+                            isDateFilterActive = false
+                            showDateFilter = false
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Text("Clear Filter")
+                                Spacer()
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Filter by Date")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        showDateFilter = false
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") {
+                        isDateFilterActive = true
+                        showDateFilter = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func recordingsListView(_ filtered: [AudioRecordingFile]) -> some View {
+        let sectioned = DateSectionHelper.groupBySection(filtered, dateKeyPath: \.date)
 
         return List {
             ForEach(sectioned, id: \.section) { sectionData in
@@ -232,6 +354,7 @@ struct RecordingsListView: View {
                 }
             }
         }
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
     }
     
     private func recordingRow(for recording: AudioRecordingFile) -> some View {
@@ -333,6 +456,33 @@ struct RecordingsListView: View {
         .padding(.vertical, 4)
     }
     
+    // MARK: - Search and Date Filtering
+
+    private var filteredRecordings: [AudioRecordingFile] {
+        var result = recordings
+
+        // Apply date filter if active
+        if isDateFilterActive {
+            let startOfDay = Calendar.current.startOfDay(for: dateFilterStart)
+            let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: dateFilterEnd) ?? dateFilterEnd
+
+            result = result.filter { recording in
+                return recording.date >= startOfDay && recording.date <= endOfDay
+            }
+        }
+
+        // Apply search filter if not empty
+        let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedSearch.isEmpty {
+            let searchTerms = trimmedSearch.lowercased()
+            result = result.filter { recording in
+                recording.name.lowercased().contains(searchTerms)
+            }
+        }
+
+        return result
+    }
+
     private func loadRecordings() {
         // Use the app coordinator to get recordings with proper database names
         let recordingsWithData = appCoordinator.getAllRecordingsWithData()

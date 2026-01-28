@@ -43,7 +43,8 @@ The project uses Swift Package Manager for dependency management. Major dependen
   - GitHub: https://github.com/bisonbet/LocalLLMClient-iOS
   - Supports GGUF model format with Q4_K_M quantization (optimal for mobile)
   - Built-in download management for Hugging Face models
-  - Available models: Gemma 3n E4B, Qwen3 4B, Phi-4 Mini, Ministral 3B
+  - Available models: Gemma 3n E4B/E2B, Granite 4.0 H Tiny/Micro, Ministral 3B, Qwen3 4B/1.7B, LFM 2.5 1.2B
+  - Models filtered by device RAM (6GB+ for most, 8GB+ for larger models)
 
 ### **UI & Formatting**
 - **MarkdownUI**: Professional markdown rendering for AI-generated summaries, headers, lists, and formatted text
@@ -74,11 +75,13 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - **Multiple AI Engines**: Support for OpenAI, AWS Bedrock, Google AI Studio, Mistral AI, Ollama, and On-Device AI
 - **On-Device Processing**: Complete privacy with WhisperKit transcription and On-Device AI summarization
 - **Background Processing**: Long recordings and complex processing handled automatically in the background
+- **Search Functionality**: Powerful search across recordings, transcripts, and summaries. Search by recording name, transcript text, summary content, tasks, reminders, and titles.
+- **Date Filters**: Filter recordings, transcripts, and summaries by date range. Select start and end dates to quickly find content from specific time periods.
 
 ## Key Modules
 - Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel`
 - Transcription: `WhisperKitManager` (On Device), `OpenAITranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`
-- Summarization: `OpenAISummarizationService`, `MistralAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `EnhancedAppleIntelligenceEngine`, `OnDeviceLLMService`
+- Summarization: `OpenAISummarizationService`, `MistralAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `OnDeviceLLMService`
 - UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI)
 - Persistence: `Persistence`, `CoreDataManager`, models under `Models/`
 - Background: `BackgroundProcessingManager`
@@ -92,9 +95,17 @@ The app supports multiple transcription engines for converting audio to text:
 | Engine | Description | Requirements |
 |--------|-------------|--------------|
 | **On Device** | High-quality on-device transcription. Your audio never leaves your device, ensuring complete privacy. | iOS 17.0+, 4GB+ RAM, model download (150-520MB) |
-| **OpenAI** | Cloud-based transcription using OpenAI's Whisper API | API key, internet |
+| **OpenAI** | Cloud-based transcription using OpenAI's GPT-4o models and Whisper API | API key, internet |
 | **Whisper (Local Server)** | High-quality transcription using OpenAI's Whisper model on your local server | Whisper server running (REST API or Wyoming protocol) |
 | **AWS Transcribe** | Cloud-based transcription service with support for long audio files | AWS credentials, internet |
+
+### OpenAI Transcription Models
+
+OpenAI transcription supports multiple models:
+
+- **GPT-4o Transcribe**: Most robust transcription with GPT-4o model. Supports streaming for real-time transcription.
+- **GPT-4o Mini Transcribe**: Cheapest and fastest transcription with GPT-4o Mini model. Supports streaming. Recommended for most use cases.
+- **Whisper-1**: Legacy transcription with Whisper V2 model. Does not support streaming.
 
 ### On Device Transcription
 
@@ -123,29 +134,55 @@ The app supports multiple AI engines for summarization and content analysis:
 
 | Engine | Description | Requirements |
 |--------|-------------|--------------|
-| **OpenAI** | GPT-4.1 models (GPT-4.1, Mini, Nano) | API key, internet |
+| **OpenAI** | GPT-4.1 models (GPT-4.1, GPT-4.1 Mini, GPT-4.1 Nano) and GPT-5 Mini | API key, internet |
 | **OpenAI Compatible** | Any OpenAI-compatible API (Nebius, Groq, LiteLLM, llama.cpp, etc.) | API key, internet |
 | **Mistral AI** | Mistral Large/Medium, Magistral (25.08-25.12) | API key, internet |
 | **Google AI Studio** | Gemini models | API key, internet |
-| **AWS Bedrock** | Claude 4.5 Haiku, Sonnet 4/4.5, Llama 4 Maverick | AWS credentials |
+| **AWS Bedrock** | Claude 4.5 Haiku, Claude Sonnet 4.5, Llama 4 Maverick 17B Instruct | AWS credentials |
 | **Ollama** | Local LLM server (recommended: qwen3:30b, gpt-oss:20b, mistral-small3.2) | Ollama server running |
-| **On-Device AI** | Fully offline, privacy-focused | iPhone 15 Pro+, model (2-3 GB) |
+| **On-Device AI** | Fully offline, privacy-focused | iPhone 15 Pro+, model (2-4.5 GB) |
+
+### OpenAI Models
+
+OpenAI summarization supports multiple models:
+
+- **GPT-4.1**: Most robust and comprehensive analysis with advanced reasoning capabilities (Premium tier)
+- **GPT-4.1 Mini**: Balanced performance and cost, suitable for most summarization tasks (Standard tier) - Default
+- **GPT-4.1 Nano**: Fastest and most economical for basic summarization needs (Economy tier)
+- **GPT-5 Mini**: Next-generation model with enhanced reasoning and efficiency (Premium tier)
+
+### AWS Bedrock Models
+
+AWS Bedrock provides access to multiple foundation models:
+
+- **Claude 4.5 Haiku**: Fast and efficient model optimized for quick responses (Standard tier) - Default
+- **Claude Sonnet 4.5**: Latest Claude Sonnet with advanced reasoning, coding, and analysis capabilities (Premium tier)
+- **Llama 4 Maverick 17B Instruct**: Meta's latest Llama 4 model with enhanced reasoning and performance (Economy tier)
 
 ### On-Device AI
 
 The on-device AI feature enables completely private, offline AI processing:
 
-- **Models**:
-  - Gemma 3n E4B (Default) - 3.09 GB, 32K context
-  - Qwen3 4B - 2.72 GB, 32K context
-  - Phi-4 Mini - 2.49 GB, 16K context
-  - Ministral 3B - ~2.15 GB, 32K context
+- **Recommended Models** (by device RAM):
+  - **8GB+ RAM**: Granite 4.0 H Tiny (4.3 GB) - Recommended for best quality
+  - **6GB+ RAM**: Granite 4.0 Micro (2.1 GB) - Recommended for fast processing
+  - **6GB+ RAM**: Gemma 3n E2B (3.0 GB) - Good quality, smaller size
+  - **8GB+ RAM**: Gemma 3n E4B (4.5 GB) - Best overall quality
+  - **6GB+ RAM**: Ministral 3B (2.1 GB) - Best for tasks and reminders
+
+- **Experimental Models** (enable in settings):
+  - **4GB+ RAM**: LFM 2.5 1.2B (731 MB) - Fast, minimal summaries (summary only)
+  - **4GB+ RAM**: Qwen3 1.7B (1.1 GB) - Latest Qwen3 model (summary only)
+  - **8GB+ RAM**: Qwen3 4B (2.7 GB) - Excellent detail extraction
+
 - **Quantization**: Q4_K_M only (optimal balance of quality and memory usage)
-- **Storage**: Models stored in Application Support (2-3 GB each)
+- **Storage**: Models stored in Application Support (731 MB - 4.5 GB each)
+- **Context Window**: 16K tokens (automatically adjusted based on device RAM)
 - **Requirements**:
   - **Transcription**: iOS 17.0+, 4GB+ RAM (most modern iPhones and iPads). Uses On Device transcription (requires model download: 150-520MB)
   - **AI Summary**: iPhone 15 Pro, iPhone 16 or newer, iOS 18.1+ (requires more processing power)
   - Device capability check prevents downloads on unsupported devices
+  - Models are filtered based on available RAM (6GB+ for most models, 8GB+ for larger models)
 - **Downloads**: WiFi by default with optional cellular download support
 
 **Adding LocalLLMClient to the project:**
@@ -176,6 +213,41 @@ If you have an iPhone 15 Pro, iPhone 15 Pro Max, iPhone 16 Pro, iPhone 16 Pro Ma
 - Recording continues in the background if you switch apps or lock your phone
 
 The Action Button works even when your phone is locked, making it perfect for quick voice notes!
+
+## Search and Filtering
+
+The app includes powerful search and filtering capabilities to help you find your recordings, transcripts, and summaries quickly.
+
+### Search Functionality
+
+Search is available in three main views:
+
+- **Summaries View**: Search across summary content, tasks, reminders, titles, and recording names
+- **Transcripts View**: Search through transcript text and recording names
+- **Recordings View**: Search by recording name
+
+**How to use:**
+- Tap the search bar at the top of any view
+- Type your search terms
+- Results filter in real-time as you type
+- Search is case-insensitive and matches partial text
+
+### Date Filters
+
+Date range filtering helps you find content from specific time periods:
+
+- **Available in**: Summaries, Transcripts, and Recordings views
+- **How to use**:
+  1. Tap the filter icon (three horizontal lines with circle) in the navigation bar
+  2. Select a start date and end date
+  3. Tap "Apply" to filter results
+  4. The active filter is shown with a banner at the top of the list
+  5. Tap the X on the banner to clear the filter
+
+**Filter Behavior:**
+- Filters can be combined with search for precise results
+- Date range includes the full day (00:00:00 to 23:59:59) for both start and end dates
+- Filters persist until manually cleared
 
 ## Contributing
 See AGENTS.md for repository guidelines (style, structure, commands, testing, PRs). Follow the Local Dev Setup above to run and validate changes before opening a PR.

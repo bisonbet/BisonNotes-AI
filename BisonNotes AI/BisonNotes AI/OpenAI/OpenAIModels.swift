@@ -110,19 +110,21 @@ struct OpenAIChatCompletionRequest: Codable {
     let frequencyPenalty: Double?
     let presencePenalty: Double?
     let responseFormat: ResponseFormat?
-    
+    let reasoningEffort: String?  // For GPT-5 and o-series reasoning models: "low", "medium", "high"
+
     enum CodingKeys: String, CodingKey {
         case model
         case messages
         case temperature
-        case maxCompletionTokens = "max_tokens"
+        case maxCompletionTokens = "max_completion_tokens"
         case topP = "top_p"
         case frequencyPenalty = "frequency_penalty"
         case presencePenalty = "presence_penalty"
         case responseFormat = "response_format"
+        case reasoningEffort = "reasoning_effort"
     }
-    
-    init(model: String, messages: [ChatMessage], temperature: Double? = nil, maxCompletionTokens: Int? = nil, topP: Double? = nil, frequencyPenalty: Double? = nil, presencePenalty: Double? = nil, responseFormat: ResponseFormat? = nil) {
+
+    init(model: String, messages: [ChatMessage], temperature: Double? = nil, maxCompletionTokens: Int? = nil, topP: Double? = nil, frequencyPenalty: Double? = nil, presencePenalty: Double? = nil, responseFormat: ResponseFormat? = nil, reasoningEffort: String? = nil) {
         self.model = model
         self.messages = messages
         self.temperature = temperature
@@ -131,6 +133,7 @@ struct OpenAIChatCompletionRequest: Codable {
         self.frequencyPenalty = frequencyPenalty
         self.presencePenalty = presencePenalty
         self.responseFormat = responseFormat
+        self.reasoningEffort = reasoningEffort
     }
 }
 

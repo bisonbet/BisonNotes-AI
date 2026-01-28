@@ -101,8 +101,6 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
-	<key>UIApplicationExitsOnSuspend</key>
-	<false/>
 	<key>UIRequiresPersistentWiFi</key>
 	<false/>
 	<key>UIFileSharingEnabled</key>

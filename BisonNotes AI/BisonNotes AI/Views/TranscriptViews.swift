@@ -28,7 +28,12 @@ struct TranscriptsView: View {
     @State private var refreshTrigger = false
     @State private var refreshTimer: Timer?
     @State private var isShowingAlert = false
-    
+    @State private var searchText = ""
+    @State private var showDateFilter = false
+    @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
+    @State private var dateFilterEnd: Date = Date()
+    @State private var isDateFilterActive = false
+
     var body: some View {
         NavigationView {
             mainContentView
@@ -58,15 +63,34 @@ struct TranscriptsView: View {
     }
     
     private var mainContentView: some View {
-        VStack {
+        let filtered = filteredRecordings
+        let filteredImported = filteredImportedTranscripts
+        return VStack {
             if recordings.isEmpty && importedTranscripts.isEmpty {
                 emptyStateView
+            } else if filtered.isEmpty && filteredImported.isEmpty {
+                noResultsView
             } else {
-                recordingsListView
+                VStack(spacing: 0) {
+                    if isDateFilterActive {
+                        activeDateFilterBanner
+                    }
+                    transcriptsListView(filtered, filteredImported)
+                }
             }
         }
         .navigationTitle("Transcripts")
-        // Toolbar status checker removed per request
+        .searchable(text: $searchText, prompt: "Search transcripts...")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showDateFilter = true }) {
+                    Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                }
+            }
+        }
+        .sheet(isPresented: $showDateFilter) {
+            dateFilterSheet
+        }
         .onAppear {
             loadRecordings()
             setupTranscriptionCompletionCallback()
@@ -106,12 +130,12 @@ struct TranscriptsView: View {
             Image(systemName: "text.bubble")
                 .font(.system(size: 60))
                 .foregroundColor(.secondary)
-            
+
             Text("No Recordings Found")
                 .font(.title2)
                 .fontWeight(.medium)
                 .foregroundColor(.primary)
-            
+
             Text("Record some audio first to generate transcripts")
                 .font(.body)
                 .foregroundColor(.secondary)
@@ -120,36 +144,140 @@ struct TranscriptsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    
-    private var recordingsListView: some View {
+
+    private var noResultsView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: isDateFilterActive ? "calendar.badge.exclamationmark" : "magnifyingglass")
+                .font(.system(size: 48))
+                .foregroundColor(.secondary)
+
+            Text("No Results")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Text(noResultsMessage)
+                .multilineTextAlignment(.center)
+                .foregroundColor(.secondary)
+                .padding(.horizontal)
+
+            if isDateFilterActive || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button("Clear Filters") {
+                    searchText = ""
+                    isDateFilterActive = false
+                    refreshTrigger.toggle()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var noResultsMessage: String {
+        let hasSearch = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        if hasSearch && isDateFilterActive {
+            return "No transcripts match \"\(searchText)\" in the selected date range."
+        } else if hasSearch {
+            return "No transcripts match \"\(searchText)\"."
+        } else if isDateFilterActive {
+            return "No transcripts found between \(dateFilterStart.formatted(date: .abbreviated, time: .omitted)) and \(dateFilterEnd.formatted(date: .abbreviated, time: .omitted))."
+        } else {
+            return "No transcripts found."
+        }
+    }
+
+    private var activeDateFilterBanner: some View {
+        HStack {
+            Image(systemName: "calendar")
+                .foregroundColor(.blue)
+            Text("\(dateFilterStart, format: .dateTime.month().day()) - \(dateFilterEnd, format: .dateTime.month().day())")
+                .font(.subheadline)
+            Spacer()
+            Button(action: {
+                isDateFilterActive = false
+                refreshTrigger.toggle()
+            }) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color(.systemGray6))
+    }
+
+    private var dateFilterSheet: some View {
+        NavigationView {
+            Form {
+                Section {
+                    DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
+                    DatePicker("To", selection: $dateFilterEnd, in: dateFilterStart...Date(), displayedComponents: .date)
+                }
+
+                if isDateFilterActive {
+                    Section {
+                        Button(role: .destructive) {
+                            isDateFilterActive = false
+                            showDateFilter = false
+                            refreshTrigger.toggle()
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Text("Clear Filter")
+                                Spacer()
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Filter by Date")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        showDateFilter = false
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") {
+                        isDateFilterActive = true
+                        showDateFilter = false
+                        refreshTrigger.toggle()
+                    }
+                }
+            }
+        }
+    }
+
+    private func transcriptsListView(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?)], _ filteredImported: [(recording: RecordingEntry, transcript: TranscriptData?)]) -> some View {
         // For preview mode, show only first 3 items total across all sections
-        let recentRecordings = Array(recordings.prefix(3))
-        let recentImportedTranscripts = Array(importedTranscripts.prefix(3))
+        let recentRecordings = Array(filtered.prefix(3))
+        let recentImportedTranscripts = Array(filteredImported.prefix(3))
 
         return List {
             // Audio Recordings with Transcripts
-            if !recordings.isEmpty {
+            if !filtered.isEmpty {
                 Section(header: Text("Audio Recordings")) {
                     // Show first 3 items with their section headers
                     ForEach(recentRecordings, id: \.recording.id) { recordingData in
                         recordingRowView(recordingData)
                     }
 
-                    if recordings.count > recentRecordings.count {
+                    if filtered.count > recentRecordings.count {
                         NavigationLink(destination: audioRecordingsFullListView) {
-                            moreRowView(remainingCount: recordings.count - recentRecordings.count)
+                            moreRowView(remainingCount: filtered.count - recentRecordings.count)
                         }
                     }
                 }
             }
 
             // Imported Transcripts (with delete functionality)
-            if !importedTranscripts.isEmpty {
+            if !filteredImported.isEmpty {
                 Section(header:
                     HStack {
                         Text("Imported Transcripts")
                         Spacer()
-                        Text("\(importedTranscripts.count)")
+                        Text("\(filteredImported.count)")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -161,14 +289,15 @@ struct TranscriptsView: View {
                         deleteImportedTranscripts(at: indexSet, in: recentImportedTranscripts)
                     }
 
-                    if importedTranscripts.count > recentImportedTranscripts.count {
+                    if filteredImported.count > recentImportedTranscripts.count {
                         NavigationLink(destination: importedTranscriptsFullListView) {
-                            moreRowView(remainingCount: importedTranscripts.count - recentImportedTranscripts.count)
+                            moreRowView(remainingCount: filteredImported.count - recentImportedTranscripts.count)
                         }
                     }
                 }
             }
         }
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
     }
 
     private var audioRecordingsFullListView: some View {
@@ -360,8 +489,61 @@ struct TranscriptsView: View {
         .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(hasTranscript)-\(isGeneratingTranscript)-\(refreshTrigger)")
     }
     
+    // MARK: - Search and Date Filtering
+
+    private var filteredRecordings: [(recording: RecordingEntry, transcript: TranscriptData?)] {
+        applyFilters(to: recordings)
+    }
+
+    private var filteredImportedTranscripts: [(recording: RecordingEntry, transcript: TranscriptData?)] {
+        applyFilters(to: importedTranscripts)
+    }
+
+    private func applyFilters(to items: [(recording: RecordingEntry, transcript: TranscriptData?)]) -> [(recording: RecordingEntry, transcript: TranscriptData?)] {
+        var result = items
+
+        // Apply date filter if active
+        if isDateFilterActive {
+            let startOfDay = Calendar.current.startOfDay(for: dateFilterStart)
+            let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: dateFilterEnd) ?? dateFilterEnd
+
+            result = result.filter { recordingData in
+                guard let date = recordingData.recording.recordingDate else { return false }
+                return date >= startOfDay && date <= endOfDay
+            }
+        }
+
+        // Apply search filter if not empty
+        let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedSearch.isEmpty {
+            let searchTerms = trimmedSearch.lowercased()
+            result = result.filter { recordingData in
+                matchesSearch(recordingData, searchTerms: searchTerms)
+            }
+        }
+
+        return result
+    }
+
+    private func matchesSearch(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?), searchTerms: String) -> Bool {
+        // Check recording name
+        if let name = recordingData.recording.recordingName?.lowercased(),
+           name.contains(searchTerms) {
+            return true
+        }
+
+        // Check transcript text
+        if let transcript = recordingData.transcript {
+            if transcript.plainText.lowercased().contains(searchTerms) {
+                return true
+            }
+        }
+
+        return false
+    }
+
     private func loadRecordings() {
-		// Use Core Data to get recordings
+        // Use Core Data to get recordings
 		let recordingsWithData = appCoordinator.getAllRecordingsWithData()
 
 		// Deduplicate by resolved filename; prefer items with transcript and non-generic titles
