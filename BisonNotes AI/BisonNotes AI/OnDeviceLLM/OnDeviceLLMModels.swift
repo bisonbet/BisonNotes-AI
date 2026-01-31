@@ -282,15 +282,15 @@ extension OnDeviceLLMModelInfo {
         maker: "IBM"
     )
 
-    /// LFM 2.5 1.2B Instruct - Liquid AI's ultra-compact edge model
-    /// A highly efficient 1.2B model optimized for agentic tasks and data extraction
+    /// LFM 2.5 1.2B Thinking - Liquid AI's ultra-compact edge model with chain-of-thought
+    /// A highly efficient 1.2B model with thinking/reasoning for agentic tasks and data extraction
     /// EXPERIMENTAL: Only available for devices with 4-6GB RAM
     public static let lfm25 = OnDeviceLLMModelInfo(
         id: "lfm-2.5-1.2b",
-        displayName: "LFM 2.5",
-        description: "Experimental • Fast, minimal summaries • 731MB • Summary only",
-        filename: "LFM2.5-1.2B-Instruct-Q4_K_M",
-        downloadURL: "https://huggingface.co/unsloth/LFM2.5-1.2B-Instruct-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Q4_K_M.gguf?download=true",
+        displayName: "LFM 2.5 Thinking",
+        description: "Experimental • Thinking model, minimal summaries • 731MB • Summary only",
+        filename: "LFM2.5-1.2B-Thinking-Q4_K_M",
+        downloadURL: "https://huggingface.co/unsloth/LFM2.5-1.2B-Thinking-GGUF/resolve/main/LFM2.5-1.2B-Thinking-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 731_000_000, // ~731 MB for Q4_K_M
         requiredRAM: 4.0,
         templateType: .lfm,

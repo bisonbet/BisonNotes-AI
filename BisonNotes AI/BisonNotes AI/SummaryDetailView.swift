@@ -259,18 +259,18 @@ struct SummaryDetailView: View {
             Button {
                 export(format: .pdf)
             } label: {
-                Text("PDF - Includes maps, best for viewing")
+                Text("PDF – Full summary with map (best for printing & sharing)")
             }
 
             Button {
                 export(format: .rtf)
             } label: {
-                Text("RTF (Word) - Editable text (no maps)")
+                Text("RTF (Word/Pages) – Editable, no map")
             }
 
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Select the format you'd like to export this summary in.")
+            Text("Export includes summary, tasks, reminders, and processing details.")
         }
     }
     

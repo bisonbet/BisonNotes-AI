@@ -71,7 +71,7 @@ struct AITextView: View {
         StructuredText(
             markdown: cleanedText,
             baseURL: nil,
-            patternOptions: .init(emoji: EmojiManager.shared.emojiSet)
+            syntaxExtensions: []
         )
         .textual.textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)

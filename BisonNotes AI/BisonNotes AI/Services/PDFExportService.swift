@@ -10,6 +10,7 @@ import UIKit
 import PDFKit
 import MapKit
 import CoreLocation
+import CoreText
 
 class PDFExportService {
     static let shared = PDFExportService()
@@ -70,6 +71,11 @@ class PDFExportService {
 
     // MARK: - PDF Creation
 
+    private static let headerHeight: CGFloat = 28
+    private static let footerHeight: CGFloat = 24
+    private static let contentTop: CGFloat = 50
+    private static let contentBottomOffset: CGFloat = 50 + footerHeight  // margin + footer
+
     private func createPDF(
         summaryData: EnhancedSummaryData,
         locationData: LocationData?,
@@ -78,14 +84,18 @@ class PDFExportService {
         let pageSize = CGSize(width: 612, height: 792) // US Letter size
         let margins = UIEdgeInsets(top: 50, left: 50, bottom: 50, right: 50)
         let contentWidth = pageSize.width - margins.left - margins.right
+        let contentBottom = pageSize.height - Self.contentBottomOffset
+        let exportDate = summaryData.generatedAt
 
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: pageSize))
 
         return renderer.pdfData { context in
-            var currentY: CGFloat = margins.top
+            var currentY: CGFloat = Self.contentTop
+            var pageNumber = 1
 
-            // Start first page
+            // Start first page and draw branding header
             context.beginPage()
+            drawPageHeader(context: context, pageSize: pageSize, margins: margins, exportDate: exportDate)
 
             // Title
             currentY = drawTitle(summaryData.recordingName, at: currentY, contentWidth: contentWidth, margins: margins, context: context)
@@ -101,19 +111,79 @@ class PDFExportService {
                 context: context
             )
 
-            // Summary section
+            // Summary section (attributed, with proper wrapping and pagination)
             currentY = drawSummarySection(
                 summaryData: summaryData,
                 at: currentY,
                 contentWidth: contentWidth,
                 margins: margins,
                 context: context,
-                pageSize: pageSize
+                pageSize: pageSize,
+                contentBottom: contentBottom,
+                pageNumber: &pageNumber,
+                exportDate: exportDate
             )
 
-            // Location information is now shown in the header with the map
-            // No need for redundant location section at the bottom
+            // Tasks
+            if !summaryData.tasks.isEmpty {
+                currentY = drawTasksSection(
+                    summaryData.tasks,
+                    at: currentY,
+                    contentWidth: contentWidth,
+                    margins: margins,
+                    context: context,
+                    pageSize: pageSize,
+                    contentBottom: contentBottom,
+                    pageNumber: &pageNumber,
+                    exportDate: exportDate
+                )
+            }
+
+            // Reminders
+            if !summaryData.reminders.isEmpty {
+                currentY = drawRemindersSection(
+                    summaryData.reminders,
+                    at: currentY,
+                    contentWidth: contentWidth,
+                    margins: margins,
+                    context: context,
+                    pageSize: pageSize,
+                    contentBottom: contentBottom,
+                    pageNumber: &pageNumber,
+                    exportDate: exportDate
+                )
+            }
+
+            // Footer on last page
+            drawPageFooter(context: context, pageSize: pageSize, margins: margins, pageNumber: pageNumber)
         }
+    }
+
+    private func drawPageHeader(context: UIGraphicsPDFRendererContext, pageSize: CGSize, margins: UIEdgeInsets, exportDate: Date) {
+        let font = UIFont.systemFont(ofSize: 9)
+        let color = UIColor.darkGray
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .short
+        let contentWidth = pageSize.width - margins.left - margins.right
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: style]
+        let line1 = "\(SummaryExportFormatter.exportAppName) · Summary Export"
+        let line2 = dateFormatter.string(from: exportDate)
+        line1.draw(in: CGRect(x: margins.left, y: 14, width: contentWidth, height: 12), withAttributes: attrs)
+        line2.draw(in: CGRect(x: margins.left, y: 24, width: contentWidth, height: 12), withAttributes: attrs)
+    }
+
+    private func drawPageFooter(context: UIGraphicsPDFRendererContext, pageSize: CGSize, margins: UIEdgeInsets, pageNumber: Int) {
+        let font = UIFont.systemFont(ofSize: 9)
+        let color = UIColor.darkGray
+        let contentWidth = pageSize.width - margins.left - margins.right
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let text = "— \(pageNumber) —"
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: style]
+        text.draw(in: CGRect(x: margins.left, y: pageSize.height - 20, width: contentWidth, height: 12), withAttributes: attrs)
     }
 
     // MARK: - Drawing Functions
@@ -337,44 +407,133 @@ class PDFExportService {
         contentWidth: CGFloat,
         margins: UIEdgeInsets,
         context: UIGraphicsPDFRendererContext,
-        pageSize: CGSize
+        pageSize: CGSize,
+        contentBottom: CGFloat,
+        pageNumber: inout Int,
+        exportDate: Date
     ) -> CGFloat {
         var currentY = y
 
-        // Section title
-        currentY = drawSectionTitle("📄 Summary", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
+        currentY = checkAndStartNewPageWithBranding(
+            currentY: currentY,
+            requiredHeight: 80,
+            pageSize: pageSize,
+            margins: margins,
+            context: context,
+            contentBottom: contentBottom,
+            pageNumber: &pageNumber,
+            exportDate: exportDate
+        )
 
-        let cleanedSummary = SummaryExportFormatter.cleanMarkdown(summaryData.summary)
-        let flattenedSummary = SummaryExportFormatter.flattenMarkdown(cleanedSummary)
+        // Section title (text-only)
+        currentY = drawSectionTitle("Summary", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
 
-        currentY = drawMultilineText(
-            flattenedSummary,
+        let attributed = SummaryExportFormatter.attributedSummary(
+            for: summaryData.summary,
+            baseFontSize: 12,
+            textColor: .black
+        )
+        currentY = drawAttributedSummary(
+            attributed,
             at: currentY,
             contentWidth: contentWidth,
             margins: margins,
             context: context,
-            pageSize: pageSize
+            pageSize: pageSize,
+            contentBottom: contentBottom,
+            pageNumber: &pageNumber,
+            exportDate: exportDate
         )
 
         return currentY + 20
     }
 
-    private func drawTasksSection(
-        tasks: [TaskItem],
+    private func drawAttributedSummary(
+        _ attributed: NSAttributedString,
         at y: CGFloat,
         contentWidth: CGFloat,
         margins: UIEdgeInsets,
         context: UIGraphicsPDFRendererContext,
-        pageSize: CGSize
+        pageSize: CGSize,
+        contentBottom: CGFloat,
+        pageNumber: inout Int,
+        exportDate: Date
+    ) -> CGFloat {
+        guard attributed.length > 0 else { return y }
+
+        let cgContext = context.cgContext
+        let framesetter = CTFramesetterCreateWithAttributedString(attributed as CFAttributedString)
+        var currentY = y
+        var range = CFRange(location: 0, length: attributed.length)
+
+        while range.length > 0 {
+            let availableHeight = contentBottom - currentY
+            let pathRect = CGRect(x: 0, y: 0, width: contentWidth, height: availableHeight)
+            let path = CGPath(rect: pathRect, transform: nil)
+            let frame = CTFramesetterCreateFrame(framesetter, range, path, nil)
+            let visibleRange = CTFrameGetVisibleStringRange(frame)
+            let drawnCount = visibleRange.length
+            if drawnCount == 0 { break }
+
+            cgContext.saveGState()
+            // Flip context so path origin is at bottom-left of rect (Core Text convention).
+            cgContext.translateBy(x: margins.left, y: currentY + availableHeight)
+            cgContext.scaleBy(x: 1, y: -1)
+            // Set text matrix to identity so glyphs render right-side up after context flip.
+            cgContext.textMatrix = .identity
+            CTFrameDraw(frame, cgContext)
+            cgContext.restoreGState()
+
+            currentY += availableHeight
+
+            range = CFRange(location: range.location + drawnCount, length: range.length - drawnCount)
+            if range.length > 0 {
+                drawPageFooter(context: context, pageSize: pageSize, margins: margins, pageNumber: pageNumber)
+                pageNumber += 1
+                context.beginPage()
+                drawPageHeader(context: context, pageSize: pageSize, margins: margins, exportDate: exportDate)
+                currentY = Self.contentTop
+            }
+        }
+        return currentY
+    }
+
+    private func drawTasksSection(
+        _ tasks: [TaskItem],
+        at y: CGFloat,
+        contentWidth: CGFloat,
+        margins: UIEdgeInsets,
+        context: UIGraphicsPDFRendererContext,
+        pageSize: CGSize,
+        contentBottom: CGFloat,
+        pageNumber: inout Int,
+        exportDate: Date
     ) -> CGFloat {
         var currentY = y
 
-        // Section title
-        currentY = drawSectionTitle("✅ Tasks (\(tasks.count))", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
+        currentY = checkAndStartNewPageWithBranding(
+            currentY: currentY,
+            requiredHeight: 80,
+            pageSize: pageSize,
+            margins: margins,
+            context: context,
+            contentBottom: contentBottom,
+            pageNumber: &pageNumber,
+            exportDate: exportDate
+        )
+        currentY = drawSectionTitle("Tasks (\(tasks.count))", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
 
         for task in tasks {
-            // Check if we need a new page
-            currentY = checkAndStartNewPage(currentY: currentY, requiredHeight: 40, pageSize: pageSize, margins: margins, context: context)
+            currentY = checkAndStartNewPageWithBranding(
+                currentY: currentY,
+                requiredHeight: 40,
+                pageSize: pageSize,
+                margins: margins,
+                context: context,
+                contentBottom: contentBottom,
+                pageNumber: &pageNumber,
+                exportDate: exportDate
+            )
 
             let priorityColor = colorForPriority(task.priority)
             let bullet = "•"
@@ -394,21 +553,41 @@ class PDFExportService {
     }
 
     private func drawRemindersSection(
-        reminders: [ReminderItem],
+        _ reminders: [ReminderItem],
         at y: CGFloat,
         contentWidth: CGFloat,
         margins: UIEdgeInsets,
         context: UIGraphicsPDFRendererContext,
-        pageSize: CGSize
+        pageSize: CGSize,
+        contentBottom: CGFloat,
+        pageNumber: inout Int,
+        exportDate: Date
     ) -> CGFloat {
         var currentY = y
 
-        // Section title
-        currentY = drawSectionTitle("⏰ Reminders (\(reminders.count))", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
+        currentY = checkAndStartNewPageWithBranding(
+            currentY: currentY,
+            requiredHeight: 80,
+            pageSize: pageSize,
+            margins: margins,
+            context: context,
+            contentBottom: contentBottom,
+            pageNumber: &pageNumber,
+            exportDate: exportDate
+        )
+        currentY = drawSectionTitle("Reminders (\(reminders.count))", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
 
         for reminder in reminders {
-            // Check if we need a new page
-            currentY = checkAndStartNewPage(currentY: currentY, requiredHeight: 40, pageSize: pageSize, margins: margins, context: context)
+            currentY = checkAndStartNewPageWithBranding(
+                currentY: currentY,
+                requiredHeight: 40,
+                pageSize: pageSize,
+                margins: margins,
+                context: context,
+                contentBottom: contentBottom,
+                pageNumber: &pageNumber,
+                exportDate: exportDate
+            )
 
             let urgencyColor = colorForUrgency(reminder.urgency)
             let bullet = "•"
@@ -428,21 +607,41 @@ class PDFExportService {
     }
 
     private func drawTitlesSection(
-        titles: [TitleItem],
+        _ titles: [TitleItem],
         at y: CGFloat,
         contentWidth: CGFloat,
         margins: UIEdgeInsets,
         context: UIGraphicsPDFRendererContext,
-        pageSize: CGSize
+        pageSize: CGSize,
+        contentBottom: CGFloat,
+        pageNumber: inout Int,
+        exportDate: Date
     ) -> CGFloat {
         var currentY = y
 
-        // Section title
-        currentY = drawSectionTitle("🏷️ Suggested Titles", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
+        currentY = checkAndStartNewPageWithBranding(
+            currentY: currentY,
+            requiredHeight: 80,
+            pageSize: pageSize,
+            margins: margins,
+            context: context,
+            contentBottom: contentBottom,
+            pageNumber: &pageNumber,
+            exportDate: exportDate
+        )
+        currentY = drawSectionTitle("Suggested Titles", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
 
         for (index, title) in titles.enumerated() {
-            // Check if we need a new page
-            currentY = checkAndStartNewPage(currentY: currentY, requiredHeight: 30, pageSize: pageSize, margins: margins, context: context)
+            currentY = checkAndStartNewPageWithBranding(
+                currentY: currentY,
+                requiredHeight: 30,
+                pageSize: pageSize,
+                margins: margins,
+                context: context,
+                contentBottom: contentBottom,
+                pageNumber: &pageNumber,
+                exportDate: exportDate
+            )
 
             let titleText = "\(index + 1). \(title.text)"
 
@@ -465,15 +664,24 @@ class PDFExportService {
         contentWidth: CGFloat,
         margins: UIEdgeInsets,
         context: UIGraphicsPDFRendererContext,
-        pageSize: CGSize
+        pageSize: CGSize,
+        contentBottom: CGFloat,
+        pageNumber: inout Int,
+        exportDate: Date
     ) -> CGFloat {
         var currentY = y
 
-        // Check if we need a new page
-        currentY = checkAndStartNewPage(currentY: currentY, requiredHeight: 100, pageSize: pageSize, margins: margins, context: context)
-
-        // Section title
-        currentY = drawSectionTitle("📊 Processing Details", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
+        currentY = checkAndStartNewPageWithBranding(
+            currentY: currentY,
+            requiredHeight: 100,
+            pageSize: pageSize,
+            margins: margins,
+            context: context,
+            contentBottom: contentBottom,
+            pageNumber: &pageNumber,
+            exportDate: exportDate
+        )
+        currentY = drawSectionTitle("Processing Details", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
 
         let metadataText = """
         AI Engine: \(summaryData.aiEngine)
@@ -485,7 +693,7 @@ class PDFExportService {
         Quality: \(summaryData.qualityDescription)
         """
 
-        currentY = drawMultilineText(
+        currentY = drawMultilineTextWithBranding(
             metadataText,
             at: currentY,
             contentWidth: contentWidth,
@@ -493,7 +701,10 @@ class PDFExportService {
             context: context,
             pageSize: pageSize,
             font: UIFont.systemFont(ofSize: 10),
-            color: UIColor.darkGray
+            color: UIColor.darkGray,
+            contentBottom: contentBottom,
+            pageNumber: &pageNumber,
+            exportDate: exportDate
         )
 
         return currentY
@@ -558,7 +769,6 @@ class PDFExportService {
         let maxHeightPerPage = pageSize.height - margins.top - margins.bottom - 50
 
         if boundingRect.height > maxHeightPerPage {
-            // Split text across multiple pages
             let lines = text.components(separatedBy: .newlines)
 
             for line in lines {
@@ -566,7 +776,6 @@ class PDFExportService {
                 let lineRect = CGRect(x: margins.left, y: currentY, width: contentWidth, height: CGFloat.greatestFiniteMagnitude)
                 let lineBoundingRect = lineAttributedString.boundingRect(with: lineRect.size, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
 
-                // Check if we need a new page
                 if currentY + lineBoundingRect.height > pageSize.height - margins.bottom {
                     context.beginPage()
                     currentY = margins.top
@@ -577,7 +786,6 @@ class PDFExportService {
                 currentY += lineBoundingRect.height + 4
             }
         } else {
-            // Draw all text at once
             let drawRect = CGRect(x: margins.left, y: currentY, width: contentWidth, height: boundingRect.height)
             attributedString.draw(in: drawRect)
             currentY += boundingRect.height
@@ -586,10 +794,95 @@ class PDFExportService {
         return currentY
     }
 
-    private func checkAndStartNewPage(currentY: CGFloat, requiredHeight: CGFloat, pageSize: CGSize, margins: UIEdgeInsets, context: UIGraphicsPDFRendererContext) -> CGFloat {
+    private func drawMultilineTextWithBranding(
+        _ text: String,
+        at y: CGFloat,
+        contentWidth: CGFloat,
+        margins: UIEdgeInsets,
+        context: UIGraphicsPDFRendererContext,
+        pageSize: CGSize,
+        font: UIFont,
+        color: UIColor,
+        contentBottom: CGFloat,
+        pageNumber: inout Int,
+        exportDate: Date
+    ) -> CGFloat {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 4
+        paragraphStyle.paragraphSpacing = 6
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraphStyle
+        ]
+
+        let attributedString = NSAttributedString(string: text, attributes: attributes)
+        let textRect = CGRect(x: margins.left, y: y, width: contentWidth, height: CGFloat.greatestFiniteMagnitude)
+        let boundingRect = attributedString.boundingRect(with: textRect.size, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
+
+        var currentY = y
+        let maxHeightPerPage = contentBottom - margins.top - 50
+
+        if boundingRect.height > maxHeightPerPage {
+            let lines = text.components(separatedBy: .newlines)
+
+            for line in lines {
+                let lineAttributedString = NSAttributedString(string: line, attributes: attributes)
+                let lineRect = CGRect(x: margins.left, y: currentY, width: contentWidth, height: CGFloat.greatestFiniteMagnitude)
+                let lineBoundingRect = lineAttributedString.boundingRect(with: lineRect.size, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
+
+                if currentY + lineBoundingRect.height > contentBottom {
+                    drawPageFooter(context: context, pageSize: pageSize, margins: margins, pageNumber: pageNumber)
+                    pageNumber += 1
+                    context.beginPage()
+                    drawPageHeader(context: context, pageSize: pageSize, margins: margins, exportDate: exportDate)
+                    currentY = Self.contentTop
+                }
+
+                let drawRect = CGRect(x: margins.left, y: currentY, width: contentWidth, height: lineBoundingRect.height)
+                lineAttributedString.draw(in: drawRect)
+                currentY += lineBoundingRect.height + 4
+            }
+        } else {
+            let drawRect = CGRect(x: margins.left, y: currentY, width: contentWidth, height: boundingRect.height)
+            attributedString.draw(in: drawRect)
+            currentY += boundingRect.height
+        }
+
+        return currentY
+    }
+
+    private func checkAndStartNewPage(
+        currentY: CGFloat,
+        requiredHeight: CGFloat,
+        pageSize: CGSize,
+        margins: UIEdgeInsets,
+        context: UIGraphicsPDFRendererContext
+    ) -> CGFloat {
         if currentY + requiredHeight > pageSize.height - margins.bottom {
             context.beginPage()
             return margins.top
+        }
+        return currentY
+    }
+
+    private func checkAndStartNewPageWithBranding(
+        currentY: CGFloat,
+        requiredHeight: CGFloat,
+        pageSize: CGSize,
+        margins: UIEdgeInsets,
+        context: UIGraphicsPDFRendererContext,
+        contentBottom: CGFloat,
+        pageNumber: inout Int,
+        exportDate: Date
+    ) -> CGFloat {
+        if currentY + requiredHeight > contentBottom {
+            drawPageFooter(context: context, pageSize: pageSize, margins: margins, pageNumber: pageNumber)
+            pageNumber += 1
+            context.beginPage()
+            drawPageHeader(context: context, pageSize: pageSize, margins: margins, exportDate: exportDate)
+            return Self.contentTop
         }
         return currentY
     }

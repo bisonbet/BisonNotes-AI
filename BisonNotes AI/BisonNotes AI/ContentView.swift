@@ -167,7 +167,11 @@ struct ContentView: View {
         // Check if this is first launch
         let hasCompletedSetup = UserDefaults.standard.bool(forKey: "hasCompletedFirstSetup")
         isFirstLaunch = !hasCompletedSetup
-        
+
+        // Phase 6: Set AppDelegate reference to AudioRecorderViewModel for notification handling
+        AppDelegate.recorderViewModel = recorderVM
+        print("✅ AppDelegate.recorderViewModel reference set")
+
         // Use a longer delay to ensure the app is fully loaded
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             Task { @MainActor in

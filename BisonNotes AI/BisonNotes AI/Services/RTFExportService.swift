@@ -72,6 +72,9 @@ final class RTFExportService {
             // Always include processing details
             appendProcessingDetails(for: summaryData, to: document)
 
+            // Branding footer
+            appendBrandingFooter(generatedAt: summaryData.generatedAt, to: document)
+
             // Check document size before conversion
             let documentLength = document.length
             guard documentLength > 0 else {
@@ -219,7 +222,7 @@ final class RTFExportService {
         locationAddress: String?,
         to document: NSMutableAttributedString
     ) {
-        appendSectionTitle("📍 Location", to: document)
+        appendSectionTitle("Location", to: document)
 
         // Note: Map images are not included in RTF export as they have unreliable support
         // across different RTF readers. Use PDF export for map visualization.
@@ -301,32 +304,20 @@ final class RTFExportService {
     }
 
     private func appendSummarySection(for summaryData: EnhancedSummaryData, to document: NSMutableAttributedString) {
-        appendSectionTitle("📄 Summary", to: document)
+        appendSectionTitle("Summary", to: document)
 
-        let cleaned = SummaryExportFormatter.cleanMarkdown(summaryData.summary)
-        let flattened = SummaryExportFormatter.flattenMarkdown(cleaned)
-
-        let summaryStyle = NSMutableParagraphStyle()
-        summaryStyle.lineSpacing = 5
-        summaryStyle.paragraphSpacing = 10
-        summaryStyle.firstLineHeadIndent = 0
-        summaryStyle.alignment = .left
-
-        let summary = NSAttributedString(
-            string: flattened + "\n\n",
-            attributes: [
-                .font: UIFont.systemFont(ofSize: 13),
-                .foregroundColor: UIColor.label,
-                .paragraphStyle: summaryStyle,
-                .kern: 0.2  // Slight letter spacing for better readability
-            ]
+        let attributed = SummaryExportFormatter.attributedSummary(
+            for: summaryData.summary,
+            baseFontSize: 13,
+            textColor: .black
         )
-
-        document.append(summary)
+        let withSpacing = NSMutableAttributedString(attributedString: attributed)
+        withSpacing.append(NSAttributedString(string: "\n\n"))
+        document.append(withSpacing)
     }
 
     private func appendTasksSection(tasks: [TaskItem], to document: NSMutableAttributedString) {
-        appendSectionTitle("✅ Tasks (\(tasks.count))", to: document)
+        appendSectionTitle("Tasks (\(tasks.count))", to: document)
 
         let style = NSMutableParagraphStyle()
         style.paragraphSpacing = 4
@@ -361,7 +352,7 @@ final class RTFExportService {
     }
 
     private func appendRemindersSection(reminders: [ReminderItem], to document: NSMutableAttributedString) {
-        appendSectionTitle("⏰ Reminders (\(reminders.count))", to: document)
+        appendSectionTitle("Reminders (\(reminders.count))", to: document)
 
         let style = NSMutableParagraphStyle()
         style.paragraphSpacing = 4
@@ -397,7 +388,7 @@ final class RTFExportService {
     }
 
     private func appendTitlesSection(titles: [TitleItem], to document: NSMutableAttributedString) {
-        appendSectionTitle("🏷️ Suggested Titles", to: document)
+        appendSectionTitle("Suggested Titles", to: document)
 
         let style = NSMutableParagraphStyle()
         style.paragraphSpacing = 4
@@ -423,7 +414,7 @@ final class RTFExportService {
     }
 
     private func appendProcessingDetails(for summaryData: EnhancedSummaryData, to document: NSMutableAttributedString) {
-        appendSectionTitle("📊 Processing Details", to: document)
+        appendSectionTitle("Processing Details", to: document)
 
         let detailStyle = NSMutableParagraphStyle()
         detailStyle.paragraphSpacing = 4
@@ -462,6 +453,28 @@ final class RTFExportService {
 
     // MARK: - Helpers
 
+    private func appendBrandingFooter(generatedAt: Date, to document: NSMutableAttributedString) {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        style.paragraphSpacingBefore = 24
+        style.paragraphSpacing = 4
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .short
+        let dateStr = dateFormatter.string(from: generatedAt)
+
+        let footer = NSAttributedString(
+            string: "Summary export · \(SummaryExportFormatter.exportAppName)\nExported \(dateStr)\n",
+            attributes: [
+                .font: UIFont.systemFont(ofSize: 10),
+                .foregroundColor: UIColor.darkGray,
+                .paragraphStyle: style
+            ]
+        )
+        document.append(footer)
+    }
+
     private func appendSectionTitle(_ title: String, to document: NSMutableAttributedString) {
         let style = NSMutableParagraphStyle()
         style.paragraphSpacing = 8
@@ -479,15 +492,15 @@ final class RTFExportService {
 
         document.append(titleString)
 
-        // Add a subtle separator line using underline character
+        // Subtle rule separator
         let separatorStyle = NSMutableParagraphStyle()
         separatorStyle.paragraphSpacing = 6
 
         let separator = NSAttributedString(
-            string: "—————————————————————————————————————\n",
+            string: "— — —\n",
             attributes: [
                 .font: UIFont.systemFont(ofSize: 10),
-                .foregroundColor: UIColor.systemGray3,
+                .foregroundColor: UIColor.darkGray,
                 .paragraphStyle: separatorStyle
             ]
         )

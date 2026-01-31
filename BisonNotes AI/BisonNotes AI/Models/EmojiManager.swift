@@ -66,10 +66,8 @@ struct EmojiManager {
 /*
  Usage in AITextView:
 
- StructuredText(
-     markdown: cleanedText,
-     patternOptions: .init(emoji: EmojiManager.shared.emojiSet)
- )
+ StructuredText(markdown: cleanedText, baseURL: nil, syntaxExtensions: [])
+ (Custom emoji syntax extensions are not currently used; Textual expects [AttributedStringMarkdownParser.SyntaxExtension].)
 
  AI engines can include emoji in summaries like:
 

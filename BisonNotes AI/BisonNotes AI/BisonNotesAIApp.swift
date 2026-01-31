@@ -20,6 +20,9 @@ struct BisonNotesAIApp: App {
     let persistenceController = PersistenceController.shared
     @StateObject private var appCoordinator = AppDataCoordinator()
 
+    // Phase 6: Register AppDelegate for notification handling
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
     /// Performs one-time migration of AWS Bedrock settings from legacy model identifiers
     /// This ensures UserDefaults is updated rather than migrating on every access
     private func migrateAWSBedrockSettings() {
