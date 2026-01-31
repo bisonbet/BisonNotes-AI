@@ -3,13 +3,12 @@ import Textual
 
 enum AIService {
     case googleAI
-    case openAI  
+    case openAI
     case bedrock
     case ollama
-    case appleIntelligence
     case whisper
     case onDevice
-    
+
     var description: String {
         switch self {
         case .googleAI:
@@ -20,20 +19,18 @@ enum AIService {
             return "bedrock"
         case .ollama:
             return "ollama"
-        case .appleIntelligence:
-            return "apple"
         case .whisper:
             return "whisper"
         case .onDevice:
             return "on-device"
         }
     }
-    
+
     /// Maps AI engine and model strings to the appropriate AIService
     static func from(aiEngine: String, aiModel: String) -> AIService {
         let engineLower = aiEngine.lowercased()
         let modelLower = aiModel.lowercased()
-        
+
         if engineLower.contains("google") || modelLower.contains("gemini") {
             return .googleAI
         } else if engineLower.contains("openai") || modelLower.contains("gpt") {
@@ -42,11 +39,9 @@ enum AIService {
             return .bedrock
         } else if engineLower.contains("ollama") {
             return .ollama
-        } else if engineLower.contains("apple") || modelLower.contains("intelligence") {
-            return .appleIntelligence
         } else if engineLower.contains("whisper") {
             return .whisper
-        } else if engineLower.contains("device") || modelLower.contains("gemma") || modelLower.contains("phi") || modelLower.contains("qwen") || modelLower.contains("llama") || modelLower.contains("mistral") || modelLower.contains("olmo") || modelLower.contains("alpaca") {
+        } else if engineLower.contains("device") || engineLower.contains("apple") || modelLower.contains("intelligence") || modelLower.contains("gemma") || modelLower.contains("phi") || modelLower.contains("qwen") || modelLower.contains("llama") || modelLower.contains("mistral") || modelLower.contains("olmo") || modelLower.contains("alpaca") {
             return .onDevice
         } else {
             // Default to bedrock for unknown services

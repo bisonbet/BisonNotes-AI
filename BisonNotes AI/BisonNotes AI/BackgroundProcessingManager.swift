@@ -1131,28 +1131,23 @@ class BackgroundProcessingManager: ObservableObject {
             reminders = try await service.extractReminders(from: transcriptText)
             titles = try await service.extractTitles(from: transcriptText)
             
-        case "Apple Intelligence", "apple intelligence", "apple":
-            let appleEngine = EnhancedAppleIntelligenceEngine()
-            
-            // Generate summary
-            summary = try await appleEngine.generateSummary(from: transcriptText, contentType: contentType)
-            
-            // Extract tasks, reminders, and titles
-            tasks = try await appleEngine.extractTasks(from: transcriptText)
-            reminders = try await appleEngine.extractReminders(from: transcriptText)
-            titles = try await appleEngine.extractTitles(from: transcriptText)
-            
         case "Local LLM (Ollama)", "ollama", "local":
             // TODO: Integrate with Ollama service when available
             summary = "Summary generated using local Ollama service (not yet implemented)"
-            
+
         default:
-            // Fallback to Apple Intelligence
-            let appleEngine = EnhancedAppleIntelligenceEngine()
-            summary = try await appleEngine.generateSummary(from: transcriptText, contentType: contentType)
-            tasks = try await appleEngine.extractTasks(from: transcriptText)
-            reminders = try await appleEngine.extractReminders(from: transcriptText)
-            titles = try await appleEngine.extractTitles(from: transcriptText)
+            // Use the SummaryManager's currently selected engine
+            let summaryManager = SummaryManager.shared
+            let result = try await summaryManager.generateEnhancedSummary(
+                from: transcriptText,
+                for: recordingURL,
+                recordingName: recordingName,
+                recordingDate: Date()
+            )
+            summary = result.summary
+            tasks = result.tasks
+            reminders = result.reminders
+            titles = result.titles
         }
         
         let processingTime = Date().timeIntervalSince(startTime)
@@ -1166,8 +1161,8 @@ class BackgroundProcessingManager: ObservableObject {
             engineType = "AWS Bedrock"
         } else if lowerEngine.contains("google") || lowerEngine.contains("gemini") {
             engineType = "Google AI"
-        } else if lowerEngine.contains("apple") {
-            engineType = "Apple Intelligence"
+        } else if lowerEngine.contains("device") {
+            engineType = "On-Device AI"
         } else if lowerEngine.contains("ollama") {
             engineType = "Ollama"
         } else {
@@ -1246,9 +1241,11 @@ class BackgroundProcessingManager: ObservableObject {
     
     private func generateAndSaveTitle(for recordingURL: URL, from transcriptText: String) async {
         do {
-            // Use Apple Intelligence for title generation as it's always available
-            let appleEngine = EnhancedAppleIntelligenceEngine()
-            let titles = try await appleEngine.extractTitles(from: transcriptText)
+            // Use the currently selected engine for title generation
+            let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+            let engineType = AIEngineType.allCases.first(where: { $0.rawValue == selectedEngineName }) ?? .onDeviceLLM
+            let engine = AIEngineFactory.createEngine(type: engineType)
+            let titles = try await engine.extractTitles(from: transcriptText)
             
             if let bestTitle = titles.first {
                 await saveGeneratedTitle(bestTitle.text, for: recordingURL)
@@ -1616,7 +1613,7 @@ class BackgroundProcessingManager: ObservableObject {
             let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
             type = .transcription(engine: engine)
         } else {
-            type = .summarization(engine: jobEntry.engine ?? "Apple Intelligence")
+            type = .summarization(engine: jobEntry.engine ?? "On-Device AI")
         }
         
         // Convert status string back to JobProcessingStatus enum

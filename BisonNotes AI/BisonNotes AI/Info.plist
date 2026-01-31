@@ -7,11 +7,24 @@
 		<string>com.bisonai.audio-processing</string>
 		<string>com.bisonai.app-refresh</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.bisonai.bisonnotes</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>bisonnotes</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>Audio File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
@@ -19,12 +32,17 @@
 				<string>public.audio</string>
 				<string>public.mp3</string>
 				<string>public.mpeg-4-audio</string>
+				<string>com.apple.m4a-audio</string>
 				<string>com.microsoft.waveform-audio</string>
+				<string>com.apple.coreaudio-format</string>
+				<string>public.aiff-audio</string>
 			</array>
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>Text Document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
@@ -38,6 +56,8 @@
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>Word Document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
@@ -60,7 +80,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.4</string>
+	<string>1.5</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>ITSAppUsesNonExemptEncryption</key>

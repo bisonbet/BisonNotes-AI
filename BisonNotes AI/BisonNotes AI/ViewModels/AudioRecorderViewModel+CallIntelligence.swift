@@ -47,6 +47,16 @@ extension AudioRecorderViewModel: CXCallObserverDelegate {
 		let callDuration = Date().timeIntervalSince(callInterruptionStartTime ?? startedAt)
 		print("📞 Call ended after \(callDuration) seconds")
 
+		// Don't attempt to resume while the app is backgrounded — the audio session is
+		// owned by the Phone app and any resume attempt will produce a bad segment.
+		// The interruption .ended handler or foreground handler will do the actual resume.
+		if appIsBackgrounding {
+			print("📞 App is backgrounded — deferring resume to interruption/foreground handler (duration: \(callDuration)s)")
+			deferredCallDuration = callDuration
+			callInterruptionStartTime = nil
+			return
+		}
+
 		if callDuration < SHORT_CALL_THRESHOLD {
 			// Short call (< 3 minutes) - auto resume
 			print("✅ Short call detected (<3 min), auto-resuming recording")
@@ -65,7 +75,7 @@ extension AudioRecorderViewModel: CXCallObserverDelegate {
 	}
 
 	@MainActor
-	private func promptUserForResumeDecision(callDuration: TimeInterval) async {
+	func promptUserForResumeDecision(callDuration: TimeInterval) async {
 		// Create notification content
 		let content = UNMutableNotificationContent()
 		content.title = "Resume Recording?"

@@ -250,7 +250,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         
         if let recognizer = speechRecognizer {
             print("✅ Speech recognizer created with locale: \(recognizer.locale.identifier)")
-            // Note: Speech authorization will be requested when user actually tries to use Apple Intelligence transcription
+            // Note: Speech authorization will be requested when user actually tries to use native speech recognition transcription
         } else {
             print("❌ Failed to create speech recognizer with any locale")
             print("🔧 This may be due to simulator limitations or device restrictions")
@@ -459,9 +459,9 @@ return try await transcribeWithAWS(url: url, config: config)
             
             // Validate Whisper configuration and availability
             if !isWhisperProperlyConfigured() {
-                print("⚠️ Whisper not properly configured, falling back to Apple Intelligence")
-                switchToAppleTranscription()
-                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+                print("⚠️ Whisper not properly configured, falling back to native speech recognition")
+                switchToNativeSpeechTranscription()
+                return try await transcribeWithNativeSpeech(url: url, duration: duration)
             }
             
             let isWhisperAvailable = await validateWhisperService()
@@ -469,16 +469,16 @@ if isWhisperAvailable {
                 if let config = whisperConfig {
                     return try await transcribeWithWhisper(url: url, config: config)
                 } else {
-                    switchToAppleTranscription()
-                    return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+                    switchToNativeSpeechTranscription()
+                    return try await transcribeWithNativeSpeech(url: url, duration: duration)
                 }
             } else {
-                switchToAppleTranscription()
-                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+                switchToNativeSpeechTranscription()
+                return try await transcribeWithNativeSpeech(url: url, duration: duration)
             }
             
         case .openAI:
-            switchToAppleTranscription() // OpenAI doesn't need background checking
+            switchToNativeSpeechTranscription() // OpenAI doesn't need background checking
             
             // Validate OpenAI configuration
 if let config = openAIConfig {
@@ -489,24 +489,24 @@ if let config = openAIConfig {
                     throw TranscriptionError.speechRecognizerUnavailable
                 }
                 
-                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+                return try await transcribeWithNativeSpeech(url: url, duration: duration)
             }
             
         case .openAIAPICompatible:
-// These are not implemented yet, fall back to Apple Intelligence
-            switchToAppleTranscription()
-            return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+// These are not implemented yet, fall back to native speech recognition
+            switchToNativeSpeechTranscription()
+            return try await transcribeWithNativeSpeech(url: url, duration: duration)
         }
     }
     
-    private func transcribeWithAppleIntelligence(url: URL, duration: TimeInterval) async throws -> TranscriptionResult {
+    private func transcribeWithNativeSpeech(url: URL, duration: TimeInterval) async throws -> TranscriptionResult {
         // Ensure transcription state is properly initialized
         await MainActor.run {
             isTranscribing = true
-            currentStatus = "Initializing Apple Intelligence transcription..."
+            currentStatus = "Initializing native speech recognition transcription..."
         }
         
-        print("🎤 Starting Apple Intelligence transcription for file: \(url.lastPathComponent)")
+        print("🎤 Starting native speech recognition transcription for file: \(url.lastPathComponent)")
         print("⏱️ Duration: \(duration) seconds")
 
         // Request speech recognition authorization if needed
@@ -552,7 +552,7 @@ if let config = openAIConfig {
             throw TranscriptionError.speechRecognizerUnavailable
         }
         
-        // Use the existing logic for Apple Intelligence transcription
+        // Use the existing logic for native speech recognition transcription
         if !enableEnhancedTranscription || duration <= maxChunkDuration {
             print("📝 Using single chunk transcription (duration: \(duration)s <= \(maxChunkDuration)s)")
             return try await transcribeSingleChunk(url: url)
@@ -1706,7 +1706,7 @@ private func stopBackgroundChecking() {
     
     // MARK: - Engine Management
     
-func switchToAppleTranscription() {
+func switchToNativeSpeechTranscription() {
         stopBackgroundChecking()
         
         // Clear any pending AWS jobs since we're not using AWS anymore
@@ -1773,7 +1773,7 @@ func switchToWhisperTranscription() {
         switch engine {
         case .notConfigured:
             // For unconfigured state, default to Apple Transcription which is always available
-            switchToAppleTranscription()
+            switchToNativeSpeechTranscription()
         case .whisperKit:
             switchToWhisperKitTranscription()
         case .awsTranscribe:
@@ -1781,7 +1781,7 @@ func switchToWhisperTranscription() {
         case .whisper:
             switchToWhisperTranscription()
         case .openAI, .openAIAPICompatible:
-            switchToAppleTranscription()
+            switchToNativeSpeechTranscription()
         }
     }
     
@@ -1935,7 +1935,7 @@ enum TranscriptionError: LocalizedError {
         case .speechRecognizerUnavailable:
             return "Speech recognition is not available. This may be due to simulator limitations, missing permissions, or device restrictions. Try running on a physical device or check Settings > Privacy & Security > Speech Recognition."
         case .speechRecognitionNotAuthorized:
-            return "Speech recognition permission denied. Please enable Speech Recognition in Settings > Privacy & Security > Speech Recognition to use Apple Intelligence transcription."
+            return "Speech recognition permission denied. Please enable Speech Recognition in Settings > Privacy & Security > Speech Recognition to use native speech recognition transcription."
         case .recognitionFailed(let error):
             return "Recognition failed: \(error.localizedDescription)"
         case .noSpeechDetected:

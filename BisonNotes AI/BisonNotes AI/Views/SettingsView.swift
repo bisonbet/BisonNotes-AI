@@ -26,7 +26,7 @@ struct SettingsView: View {
     @State private var showingPreferences = false
     @State private var showingTroubleshootingWarning = false
 
-    @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "Apple Intelligence"
+    @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "On-Device AI"
     @AppStorage("WatchIntegrationEnabled") private var watchIntegrationEnabled: Bool = true
     @AppStorage("WatchAutoSync") private var watchAutoSync: Bool = true
     @AppStorage("WatchBatteryAware") private var watchBatteryAware: Bool = true

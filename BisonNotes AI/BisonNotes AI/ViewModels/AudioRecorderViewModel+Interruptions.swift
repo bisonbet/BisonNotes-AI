@@ -54,6 +54,19 @@ extension AudioRecorderViewModel {
 
 			isInInterruption = false
 
+			// Check if CallKit deferred a long-call decision while we were backgrounded.
+			// If so, prompt the user instead of auto-resuming.
+			if let callDuration = deferredCallDuration, callDuration >= SHORT_CALL_THRESHOLD {
+				print("📞 Deferred long call detected (\(callDuration)s ≥ \(SHORT_CALL_THRESHOLD)s threshold) — asking user whether to resume")
+				deferredCallDuration = nil
+				recordingState = .waitingForUserDecision(callDuration: callDuration)
+				Task { @MainActor in
+					await promptUserForResumeDecision(callDuration: callDuration)
+				}
+				return
+			}
+			deferredCallDuration = nil // Clear for short or no-duration calls
+
 			if let options = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
 				let interruptionOptions = AVAudioSession.InterruptionOptions(rawValue: options)
 
@@ -98,6 +111,13 @@ extension AudioRecorderViewModel {
 	/// Attempt to resume recording after an unexpected stop (e.g., declined call without interruption notification)
 	@MainActor
 	func attemptResumeAfterUnexpectedStop() async {
+		guard !isResuming else {
+			print("⏳ Resume already in progress, skipping duplicate attemptResumeAfterUnexpectedStop")
+			return
+		}
+		isResuming = true
+		defer { isResuming = false }
+
 		print("🔄 Attempting to resume recording after unexpected stop (likely declined call)")
 
 		// Use current recording URL
@@ -116,14 +136,13 @@ extension AudioRecorderViewModel {
 			return
 		}
 
-		// Get the current file size to preserve what was already recorded
-		let fileSizeBeforeResume = getFileSize(url: url)
-		print("📊 Current segment file size: \(fileSizeBeforeResume) bytes")
-
-		// Step 1: Finalize the current segment (the recorder has already stopped)
-		// Stop the recorder properly if it's still somehow active
+		// Step 1: Finalize the current segment — stop the recorder to flush audio buffers to disk.
+		// Must stop BEFORE reading file size, otherwise the file may appear nearly empty.
 		audioRecorder?.stop()
 		audioRecorder = nil
+
+		let fileSizeAfterStop = getFileSize(url: url)
+		print("📊 Current segment file size after finalization: \(fileSizeAfterStop) bytes")
 
 		// Add this segment to our list if it's not already there
 		if !recordingSegments.contains(url) {
@@ -158,12 +177,16 @@ extension AudioRecorderViewModel {
 			// Start recording
 			audioRecorder?.record()
 
+			// Brief delay to let the session stabilize before verifying
+			try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
+
 			// Verify it's actually recording
 			if let recorder = audioRecorder, recorder.isRecording {
 				print("✅ Recording resumed with new segment - previous audio preserved!")
 				recordingSegments.append(newSegmentURL)
 				recordingURL = newSegmentURL // Update to the new segment
 				isRecording = true
+				recordingState = .recording
 				lastCheckpointTime = Date() // Reset checkpoint time on resume
 				startRecordingTimer()
 				errorMessage = nil
@@ -180,18 +203,25 @@ extension AudioRecorderViewModel {
 
 	@MainActor
 	func resumeRecordingAfterInterruption(url: URL?) async {
-		print("🔄 Attempting to resume recording after interruption")
-
-		// Check if the recorder is still valid and recording
-		// This is the best case - iOS didn't stop the recorder, just paused the session
+		// Check if the recorder is still valid and recording (best case — iOS just paused the session)
 		if let recorder = audioRecorder, recorder.isRecording {
 			print("✅ Recorder is still active, resuming timer")
-			// Recorder is still active, just resume the timer
 			startRecordingTimer()
 			errorMessage = nil
 			isInInterruption = false
+			recordingState = .recording
 			return
 		}
+
+		// From here we need to create a new segment — guard against concurrent attempts
+		guard !isResuming else {
+			print("⏳ Resume already in progress, skipping duplicate resumeRecordingAfterInterruption")
+			return
+		}
+		isResuming = true
+		defer { isResuming = false }
+
+		print("🔄 Attempting to resume recording after interruption")
 
 		// Recorder was stopped by iOS, need to restart it
 		guard let url = url else {
@@ -211,14 +241,13 @@ extension AudioRecorderViewModel {
 			return
 		}
 
-		// Get the current file size before attempting to resume
-		let fileSizeBeforeResume = getFileSize(url: url)
-		print("📊 Current segment file size: \(fileSizeBeforeResume) bytes")
-
-		// Step 1: Finalize the current segment (the recorder has already stopped)
-		// Stop the recorder properly if it's still somehow active
+		// Step 1: Finalize the current segment — stop the recorder to flush audio buffers to disk.
+		// Must stop BEFORE reading file size, otherwise the file may appear nearly empty.
 		audioRecorder?.stop()
 		audioRecorder = nil
+
+		let fileSizeAfterStop = getFileSize(url: url)
+		print("📊 Current segment file size after finalization: \(fileSizeAfterStop) bytes")
 
 		// Add this segment to our list if it's not already there
 		if !recordingSegments.contains(url) {
@@ -253,12 +282,16 @@ extension AudioRecorderViewModel {
 			// Start recording
 			audioRecorder?.record()
 
+			// Brief delay to let the session stabilize before verifying
+			try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
+
 			// Verify it's actually recording
 			if let recorder = audioRecorder, recorder.isRecording {
 				print("✅ Recording resumed with new segment - previous audio preserved!")
 				recordingSegments.append(newSegmentURL)
 				recordingURL = newSegmentURL // Update to the new segment
 				isRecording = true
+				recordingState = .recording
 				lastCheckpointTime = Date() // Reset checkpoint time on resume
 				startRecordingTimer()
 				errorMessage = nil

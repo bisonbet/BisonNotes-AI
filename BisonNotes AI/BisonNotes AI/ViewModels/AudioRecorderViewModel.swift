@@ -58,6 +58,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// Flag to track if we're currently in an interruption (e.g., incoming phone call)
 	var isInInterruption = false
 
+	// Guard against concurrent resume attempts from CallKit / interruption handler / foreground handler
+	var isResuming = false
+
 	// Store the recording URL when interruption begins, in case we need to recover
 	var interruptionRecordingURL: URL?
 
@@ -86,6 +89,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// Call interruption intelligence (Phase 1)
 	var callObserver: CXCallObserver?
 	var callInterruptionStartTime: Date?
+	var deferredCallDuration: TimeInterval? // Set when CallKit defers during background
 	let SHORT_CALL_THRESHOLD: TimeInterval = 180 // 3 minutes
 
 	// Microphone reconnection monitoring (Phase 2)
@@ -96,8 +100,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var backgroundTimeMonitor: Timer?
 
 	// Recording limits and warning thresholds (Phase 3)
-	let MAX_RECORDING_DURATION: TimeInterval = 14400 // 4 hours (AWS Transcribe limit)
-	let DURATION_WARNING_THRESHOLD: TimeInterval = 13500 // 3h 45m (15 min warning)
+	let MAX_RECORDING_DURATION: TimeInterval = 10800 // 3 hours
+	let DURATION_WARNING_THRESHOLD: TimeInterval = 9900 // 2h 45m (15 min warning)
 	let MIN_STORAGE_REQUIRED_MB: Int64 = 100 // Stop recording at 100 MB free
 	let STORAGE_WARNING_THRESHOLD_MB: Int64 = 200 // Warn at 200 MB free
 	let MIN_BATTERY_LEVEL: Float = 0.05 // Stop at 5%
@@ -223,18 +227,20 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			object: nil,
 			queue: .main
 		) { [weak self] notification in
-			// Capture the notification data we need before entering Task
-			let userInfo = notification.userInfo
-			let interruptionType = userInfo?[AVAudioSessionInterruptionTypeKey] as? AVAudioSession.InterruptionType
+			// Capture ALL userInfo before entering Task - including InterruptionOptionKey
+			// which contains .shouldResume (critical for declined call detection)
+			var capturedUserInfo: [String: Any] = [:]
+			if let typeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt {
+				capturedUserInfo[AVAudioSessionInterruptionTypeKey] = typeValue
+			}
+			if let optionsValue = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt {
+				capturedUserInfo[AVAudioSessionInterruptionOptionKey] = optionsValue
+			}
 
 			Task { @MainActor in
-				guard let self = self else { return }
-				// Create a new notification with only the data we need
-				if let type = interruptionType {
-					let newUserInfo: [String: Any] = [AVAudioSessionInterruptionTypeKey: type.rawValue]
-					let newNotification = Notification(name: AVAudioSession.interruptionNotification, object: nil, userInfo: newUserInfo)
-					self.handleAudioInterruption(newNotification)
-				}
+				guard let self = self, !capturedUserInfo.isEmpty else { return }
+				let newNotification = Notification(name: AVAudioSession.interruptionNotification, object: nil, userInfo: capturedUserInfo)
+				self.handleAudioInterruption(newNotification)
 			}
 		}
 
@@ -266,24 +272,62 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				guard let self = self else { return }
 				self.appIsBackgrounding = false // App is coming back to foreground
 
-				EnhancedLogger.shared.logAudioSession("App foregrounded, restoring audio session")
+				EnhancedLogger.shared.logAudioSession("App foregrounded, checking audio session state")
 
-				// Restore audio session first
-				// This will deactivate/reactivate the session, which stops the recorder
+				// If actively recording and the recorder is still running, don't touch the session.
+				// Deactivating/reactivating would kill a perfectly good background recording.
+				// Stop background monitoring now that we're in the foreground
+				self.stopBackgroundTimeMonitoring()
+
+				if self.isRecording, let recorder = self.audioRecorder, recorder.isRecording {
+					print("✅ Recorder still active after backgrounding — no session restoration needed")
+					self.recorderStoppedUnexpectedlyTime = nil
+					self.endBackgroundTask()
+					return
+				}
+
+				// If we're in a phone call interruption, the Phone app owns the audio session.
+				// Don't try to restore — it will fail repeatedly and waste time.
+				// The interruption .ended notification will fire when the call ends and handle resume.
+				if self.isInInterruption {
+					if case .interrupted(.phoneCall, _) = self.recordingState {
+						print("📞 Phone call still active — skipping session restoration, will resume when call ends")
+					} else {
+						print("⏳ In interruption — skipping session restoration, will resume when interruption ends")
+					}
+					return
+				}
+
+				// Recorder is NOT active — but if another handler is already resuming, let it finish
+				if self.isResuming {
+					print("⏳ Resume already in progress from another handler, skipping foreground restore")
+					self.endBackgroundTask()
+					return
+				}
+
+				// Restore the session and try to resume
+				EnhancedLogger.shared.logAudioSession("Recorder stopped during background, restoring audio session")
 				try? await self.enhancedAudioSessionManager.restoreAudioSession()
 
-				// CRITICAL: If recording was active, resume the recorder
-				// The session restoration always stops the recorder, so we must restart it
 				if self.isRecording, let recorder = self.audioRecorder {
 					if !recorder.isRecording {
-						print("🔄 Recorder stopped by session restoration, resuming immediately")
+						print("🔄 Recorder stopped during background, resuming after session restore")
 						recorder.record()
-						// Clear any stale unexpected-stop tracking
+
+						// Verify it actually started
+						try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+						if let r = self.audioRecorder, r.isRecording {
+							print("✅ Recorder successfully resumed after foreground restore")
+							self.recordingState = .recording
+						} else {
+							print("⚠️ Recorder.record() didn't start, attempting full resume")
+							await self.attemptResumeAfterUnexpectedStop()
+						}
 						self.recorderStoppedUnexpectedlyTime = nil
-					} else {
-						print("✅ Recorder still recording after session restoration")
 					}
 				}
+
+				self.endBackgroundTask()
 			}
 		}
 
@@ -293,8 +337,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			object: nil,
 			queue: .main
 		) { [weak self] _ in
-			self?.appIsBackgrounding = true
-			// Don't send notification here - backgrounding is normal and recording continues
+			guard let self = self else { return }
+			self.appIsBackgrounding = true
+			// Start a background task as a safety net while recording in the background.
+			// UIBackgroundModes:audio keeps the app alive for active audio, but this gives
+			// extra time for recovery if the recorder is interrupted (e.g., declined call).
+			if self.isRecording {
+				self.beginBackgroundTask()
+				self.startBackgroundTimeMonitoring()
+			}
 		}
 
 		// Listen for BackgroundProcessingManager's request to check for unprocessed recordings
@@ -427,9 +478,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			hasShownStorageWarning = false
 			hasShownBatteryWarning = false
 
-			// Phase 4: Start background task to ensure recording continues
-			beginBackgroundTask()
-			startBackgroundTimeMonitoring()
+			// Phase 4: Background task is started when the app enters background
+			// (see didEnterBackgroundNotification observer), not at recording start.
+			// Starting it here would trigger iOS warnings about long-lived background tasks.
 
 			startRecordingTimer()
 
@@ -493,8 +544,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			DispatchQueue.main.async {
 				guard let self = self else { return }
 				// Failsafe: if the underlying recorder stopped, try to resume before giving up
-				// But DON'T trigger if app is backgrounding or in interruption - recording should continue
-				if self.isRecording, let recorder = self.audioRecorder, !recorder.isRecording && !self.appIsBackgrounding {
+				// This also runs during backgrounding — a declined call can stop the recorder
+				// while the app is in the background, and we need to detect that.
+				if self.isRecording, let recorder = self.audioRecorder, !recorder.isRecording {
 					if self.isInInterruption {
 						// We're in an interruption - wait for it to end rather than trying to resume now
 						if self.recorderStoppedUnexpectedlyTime != nil {

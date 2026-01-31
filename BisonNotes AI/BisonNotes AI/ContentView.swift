@@ -22,6 +22,7 @@ struct ContentView: View {
     @State private var showingOnDeviceLLMSettings = false
     @State private var showingWhisperKitMigrationAlert = false
     @State private var showingWhisperKitSettings = false
+    @State private var showingUnsupportedFileAlert = false
     @StateObject private var downloadMonitor = OnDeviceAIDownloadMonitor.shared
     
     var body: some View {
@@ -112,6 +113,11 @@ struct ContentView: View {
                 } message: {
                     Text(downloadMonitor.completionMessage)
                 }
+                .alert("Unsupported File Type", isPresented: $showingUnsupportedFileAlert) {
+                    Button("OK", role: .cancel) { }
+                } message: {
+                    Text("This file type cannot be imported as a recording or transcript.")
+                }
             }
         } else {
             // Loading state
@@ -146,6 +152,12 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RequestLocationPermission"))) { _ in
             showingLocationPermission = true
             UserDefaults.standard.set(true, forKey: "hasAskedLocationPermission")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SwitchToRecordTabForImport"))) { _ in
+            selectedTab = 0
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("UnsupportedFileTypeFromShare"))) { _ in
+            showingUnsupportedFileAlert = true
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
@@ -296,5 +308,7 @@ struct ContentView: View {
 #Preview {
     ContentView()
         .environmentObject(AppDataCoordinator())
+        .environmentObject(FileImportManager())
+        .environmentObject(TranscriptImportManager())
         .environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
 }

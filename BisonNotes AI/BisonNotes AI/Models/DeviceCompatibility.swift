@@ -47,48 +47,49 @@ struct DeviceCompatibility {
         return hasEnoughRAM
     }
 
-    // MARK: - Apple Intelligence Support
+    // MARK: - Native Speech Recognition Support
 
-    /// Check if device supports Apple Intelligence transcription (3GB+ RAM, iOS 18.1+)
-    static var isAppleIntelligenceTranscriptionSupported: Bool {
+    /// Check if device supports native speech recognition transcription (3GB+ RAM, iOS 18.1+)
+    static var isNativeSpeechTranscriptionSupported: Bool {
         guard isCorrectOSVersionForTranscription else {
             return false
         }
-        
+
         #if targetEnvironment(simulator)
-        print("✅ DeviceCompatibility: Simulator detected - enabling Apple Intelligence transcription support")
+        print("✅ DeviceCompatibility: Simulator detected - enabling native speech transcription support")
         return true
         #else
         // Check RAM (3GB minimum)
         let totalMemory = ProcessInfo.processInfo.physicalMemory
         let totalMemoryGB = Double(totalMemory) / 1_073_741_824.0
         let hasEnoughRAM = totalMemoryGB >= 3.0
-        
+
         if hasEnoughRAM {
-            print("✅ DeviceCompatibility: Apple Intelligence transcription supported (RAM: \(String(format: "%.1f", totalMemoryGB))GB)")
+            print("✅ DeviceCompatibility: Native speech transcription supported (RAM: \(String(format: "%.1f", totalMemoryGB))GB)")
             return true
         } else {
-            print("❌ DeviceCompatibility: Apple Intelligence transcription requires 3GB+ RAM (Device has \(String(format: "%.1f", totalMemoryGB))GB)")
+            print("❌ DeviceCompatibility: Native speech transcription requires 3GB+ RAM (Device has \(String(format: "%.1f", totalMemoryGB))GB)")
             return false
         }
         #endif
     }
-    
+
     private static var isCorrectOSVersionForTranscription: Bool {
-        // Apple Intelligence transcription requires iOS 18.1+ for full functionality
+        // Native speech transcription requires iOS 18.1+ for full functionality
         if #available(iOS 18.1, *) {
             print("✅ DeviceCompatibility: iOS 18.1+ detected - transcription support")
             return true
         }
-        
-        print("❌ DeviceCompatibility: iOS 18.1+ required for Apple Intelligence transcription")
+
+        print("❌ DeviceCompatibility: iOS 18.1+ required for native speech transcription")
         return false
     }
 
+    // MARK: - On-Device AI Support
+
     /// Check if device supports on-device AI (summarization)
     /// Requires 6GB+ RAM (uses DeviceCapabilities for consistency)
-    static var isAppleIntelligenceSupported: Bool {
-        // Use DeviceCapabilities which already checks for 6GB+ RAM
+    static var isOnDeviceAISupported: Bool {
         return DeviceCapabilities.supportsOnDeviceLLM
     }
 }

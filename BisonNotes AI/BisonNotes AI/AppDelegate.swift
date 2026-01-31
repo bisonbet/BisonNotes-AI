@@ -19,9 +19,15 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
         // Set notification delegate
         UNUserNotificationCenter.current().delegate = self
-        print("✅ AppDelegate initialized - notification delegate set")
+        NSLog("✅ AppDelegate initialized - notification delegate set")
+
         return true
     }
+
+    // NOTE: application(_:open:url:options:) is intentionally NOT implemented.
+    // In scene-based SwiftUI apps, iOS delivers file URLs through the scene delegate,
+    // which SwiftUI translates to .onOpenURL on the WindowGroup. Implementing the
+    // AppDelegate method can intercept the URL and prevent .onOpenURL from firing.
 
     // MARK: - UNUserNotificationCenterDelegate
 

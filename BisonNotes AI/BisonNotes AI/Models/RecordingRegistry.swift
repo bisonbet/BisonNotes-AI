@@ -586,19 +586,18 @@ public class RecordingRegistryManager: ObservableObject {
         print("🔧 Initializing AI engines...")
         
         // Initialize available engines
-        availableEngines["Apple Intelligence"] = EnhancedAppleIntelligenceEngine()
         availableEngines["OpenAI"] = OpenAISummarizationEngine()
-        availableEngines["Local LLM (Ollama)"] = LocalLLMEngine()
+        availableEngines["Ollama"] = LocalLLMEngine()
         availableEngines["OpenAI API Compatible"] = OpenAICompatibleEngine()
         availableEngines["Google AI Studio"] = GoogleAIStudioEngine()
         availableEngines["Mistral AI"] = MistralAIEngine()
-        // AWS Bedrock is coming soon, so we'll add it when available
-        // availableEngines["AWS Bedrock"] = AWSBedrockEngine()
-        
+        availableEngines["On-Device AI"] = OnDeviceLLMEngine()
+
         print("✅ Available engines: \(availableEngines.keys.joined(separator: ", "))")
-        
-        // Set default engine
-        currentEngine = availableEngines["Apple Intelligence"]
+
+        // Set default engine based on user's selection
+        let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        currentEngine = availableEngines[selectedEngineName] ?? availableEngines["On-Device AI"]
         
         if let engine = currentEngine {
             print("✅ Current engine set to: \(engine.name)")

@@ -45,10 +45,10 @@ extension AudioRecorderViewModel {
 	func checkRecordingLimitsAndWarnings() async {
 		// 1. DURATION CHECK
 		if recordingTime >= MAX_RECORDING_DURATION {
-			print("⏱️ Maximum recording duration (4 hours) reached")
+			print("⏱️ Maximum recording duration (3 hours) reached")
 			await sendWarningNotification(
 				title: "Recording Limit Reached",
-				body: "Maximum recording duration (4 hours) reached. Stopping recording.",
+				body: "Maximum recording duration (3 hours) reached. Stopping recording.",
 				isCritical: true
 			)
 			stopRecording()

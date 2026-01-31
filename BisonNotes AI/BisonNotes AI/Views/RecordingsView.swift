@@ -10,8 +10,8 @@ import SafariServices
 
 struct RecordingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
-    @StateObject private var importManager = FileImportManager()
-    @StateObject private var transcriptImportManager = TranscriptImportManager()
+    @EnvironmentObject var importManager: FileImportManager
+    @EnvironmentObject var transcriptImportManager: TranscriptImportManager
     @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
     @StateObject private var textDocumentPickerCoordinator = DocumentPickerCoordinator()
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
@@ -226,6 +226,13 @@ struct RecordingsView: View {
             .sheet(isPresented: $showingHelpDocumentation) {
                 if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
                     SafariView(url: url)
+                }
+            }
+            .alert("Audio Import Results", isPresented: $importManager.showingImportAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                if let results = importManager.importResults {
+                    Text(results.summary)
                 }
             }
             .alert("Transcript Import Results", isPresented: $transcriptImportManager.showingImportAlert) {
