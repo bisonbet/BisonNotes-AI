@@ -969,19 +969,31 @@ struct EditableTranscriptView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
     @State private var editedSegments: [TranscriptSegment]
+    @State private var speakerMappings: [String: String]
     @State private var isRerunningTranscription = false
     @State private var showingRerunAlert = false
     @State private var showingSaveSuccessAlert = false
     @State private var showingSaveErrorAlert = false
+    @State private var showingSpeakerEditor = false
     @State private var saveErrorMessage = ""
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
-    
+
+    private var uniqueSpeakers: [String] {
+        var seen = Set<String>()
+        return editedSegments.compactMap { seg in
+            let s = seg.speaker
+            guard !s.isEmpty, s != "Speaker", s != "Unknown", seen.insert(s).inserted else { return nil }
+            return s
+        }
+    }
+
     init(recording: RecordingEntry, transcript: TranscriptData, transcriptManager: TranscriptManager) {
         self.recording = recording
         self.transcript = transcript
         self.transcriptManager = transcriptManager
         self._editedSegments = State(initialValue: transcript.segments)
+        self._speakerMappings = State(initialValue: transcript.speakerMappings)
     }
     
     var body: some View {
@@ -1006,8 +1018,27 @@ struct EditableTranscriptView: View {
                         .padding()
                     } else {
                         LazyVStack(alignment: .leading, spacing: 16) {
+                            if !uniqueSpeakers.isEmpty {
+                                Button(action: { showingSpeakerEditor = true }) {
+                                    HStack {
+                                        Image(systemName: "person.2.fill")
+                                        Text("Edit Speakers (\(uniqueSpeakers.count))")
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                    }
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 10)
+                                    .background(Color.purple.opacity(0.1))
+                                    .foregroundColor(.purple)
+                                    .cornerRadius(10)
+                                }
+                            }
+
                             ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, segment in
-                                TranscriptSegmentView(segment: $editedSegments[index])
+                                TranscriptSegmentView(segment: $editedSegments[index], speakerMappings: speakerMappings)
                             }
                         }
                         .padding(.horizontal, 16)
@@ -1092,6 +1123,12 @@ struct EditableTranscriptView: View {
             } message: {
                 Text(saveErrorMessage)
             }
+            .sheet(isPresented: $showingSpeakerEditor) {
+                SpeakerEditingView(
+                    speakerIds: uniqueSpeakers,
+                    speakerMappings: $speakerMappings
+                )
+            }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionRerunCompleted"))) { notification in
                 // Handle transcription rerun completion
                 if let userInfo = notification.userInfo,
@@ -1137,7 +1174,7 @@ struct EditableTranscriptView: View {
         let transcriptId = appCoordinator.addTranscript(
             for: recordingId,
             segments: editedSegments,
-            speakerMappings: transcript.speakerMappings,
+            speakerMappings: speakerMappings,
             engine: transcript.engine,
             processingTime: transcript.processingTime,
             confidence: transcript.confidence
@@ -1356,7 +1393,8 @@ struct EditableTranscriptView: View {
             
             // Force SwiftUI to detect the change by clearing first, then setting
             editedSegments = []
-            
+            speakerMappings = updatedTranscript.speakerMappings
+
             // Small delay to ensure UI updates
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self.editedSegments = updatedTranscript.segments
@@ -1367,7 +1405,36 @@ struct EditableTranscriptView: View {
 
 struct TranscriptSegmentView: View {
     @Binding var segment: TranscriptSegment
-    
+    var speakerMappings: [String: String] = [:]
+
+    private var hasSpeakerLabel: Bool {
+        let s = segment.speaker
+        return !s.isEmpty && s != "Speaker" && s != "Unknown"
+    }
+
+    private var displaySpeaker: String {
+        // Check mappings first (user-assigned names), then format raw ID
+        if let mapped = speakerMappings[segment.speaker], !mapped.isEmpty {
+            return mapped
+        }
+        let s = segment.speaker
+        if s.hasPrefix("speaker_") {
+            let num = s.dropFirst("speaker_".count)
+            return "Speaker \(num)"
+        }
+        return s
+    }
+
+    private static let speakerColors: [Color] = [
+        .blue, .purple, .orange, .teal, .pink, .indigo, .mint, .cyan, .brown, .green
+    ]
+
+    private var speakerColor: Color {
+        // Use original speaker ID for consistent color even after renaming
+        let hash = abs(segment.speaker.hashValue)
+        return Self.speakerColors[hash % Self.speakerColors.count]
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -1378,7 +1445,18 @@ struct TranscriptSegmentView: View {
                     .padding(.vertical, 4)
                     .background(Color(.systemGray5))
                     .cornerRadius(6)
-                
+
+                if hasSpeakerLabel {
+                    Text(displaySpeaker)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(speakerColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(speakerColor.opacity(0.12))
+                        .cornerRadius(6)
+                }
+
                 Spacer()
             }
             
@@ -1430,6 +1508,106 @@ struct TranscriptSegmentView: View {
     }
 }
 
+// MARK: - Speaker Editing View
+
+struct SpeakerEditingView: View {
+    let speakerIds: [String]
+    @Binding var speakerMappings: [String: String]
+    @Environment(\.dismiss) private var dismiss
+    @State private var editingNames: [String: String] = [:]
+
+    private static let speakerColors: [Color] = [
+        .blue, .purple, .orange, .teal, .pink, .indigo, .mint, .cyan, .brown, .green
+    ]
+
+    init(speakerIds: [String], speakerMappings: Binding<[String: String]>) {
+        self.speakerIds = speakerIds
+        self._speakerMappings = speakerMappings
+
+        // Initialize editing state from existing mappings
+        var initial: [String: String] = [:]
+        for id in speakerIds {
+            initial[id] = speakerMappings.wrappedValue[id] ?? ""
+        }
+        self._editingNames = State(initialValue: initial)
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Rename Speakers"), footer: Text("Enter a name for each speaker. Changes apply to the entire transcript and are used in AI summaries.")) {
+                    ForEach(speakerIds, id: \.self) { speakerId in
+                        HStack(spacing: 12) {
+                            let hash = abs(speakerId.hashValue)
+                            let color = Self.speakerColors[hash % Self.speakerColors.count]
+
+                            Circle()
+                                .fill(color)
+                                .frame(width: 10, height: 10)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(defaultName(for: speakerId))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+
+                                TextField(defaultName(for: speakerId), text: binding(for: speakerId))
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .autocapitalization(.words)
+                            }
+                        }
+                    }
+                }
+
+                if speakerMappings.values.contains(where: { !$0.isEmpty }) {
+                    Section {
+                        Button("Clear All Names", role: .destructive) {
+                            for id in speakerIds {
+                                editingNames[id] = ""
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Edit Speakers")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Apply") {
+                        // Write non-empty names to speakerMappings
+                        var newMappings: [String: String] = [:]
+                        for (id, name) in editingNames {
+                            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !trimmed.isEmpty {
+                                newMappings[id] = trimmed
+                            }
+                        }
+                        speakerMappings = newMappings
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    private func defaultName(for speakerId: String) -> String {
+        if speakerId.hasPrefix("speaker_") {
+            let num = speakerId.dropFirst("speaker_".count)
+            return "Speaker \(num)"
+        }
+        return speakerId
+    }
+
+    private func binding(for speakerId: String) -> Binding<String> {
+        Binding(
+            get: { editingNames[speakerId] ?? "" },
+            set: { editingNames[speakerId] = $0 }
+        )
+    }
+}
 
 struct TranscriptDetailView: View {
     let recording: RecordingEntry

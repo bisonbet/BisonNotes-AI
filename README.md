@@ -18,6 +18,7 @@ Quick links: [Usage Quick Start](USAGE.md) • [Full User Guide](HOW_TO_USE.md) 
   - Notable folders: `Models/`, `Views/`, `ViewModels/`, `OpenAI/`, `AWS/`, `Wyoming/`, `WatchConnectivity/`, `OnDeviceLLM/`, `WhisperKit/`
   - Assets: `Assets.xcassets`; config: `Info.plist`, `.entitlements`
   - Uses Xcode's file-system synchronized groups, so dropping new Swift files into these folders automatically adds them to the project—no manual `.xcodeproj` edits are necessary.
+- `BisonNotes Share/`: Share Extension target for importing audio from other apps
 - `BisonNotes AI Watch App/`: watchOS companion app
 - Tests: `BisonNotes AITests/` (unit), `BisonNotes AIUITests/` (UI), plus watch tests
 
@@ -33,7 +34,7 @@ The project uses Swift Package Manager for dependency management. Major dependen
 
 ### **Cloud Services**
 - **AWS SDK for Swift**: Cloud transcription and AI processing
-  - `AWSBedrock` & `AWSBedrockRuntime`: Claude AI models (Claude 4.5 Haiku, Sonnet 4/4.5, Llama 4 Maverick)
+  - `AWSBedrock` & `AWSBedrockRuntime`: Claude AI models (Claude 4.5 Haiku, Claude Sonnet 4.5, Llama 4 Maverick)
   - `AWSTranscribe` & `AWSTranscribeStreaming`: Speech-to-text
   - `AWSS3`: File storage and retrieval
   - `AWSClientRuntime`: Core AWS functionality
@@ -73,19 +74,25 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - **iPhone Action Button Support**: Quick-start recording from the Action Button on iPhone 15 Pro/Pro Max, iPhone 16 Pro/Pro Max, and future Pro models. Press the Action Button to launch the app and start recording instantly, even when your phone is locked.
 - **Watch App**: Full recording control from Apple Watch with automatic sync via WatchConnectivity
 - **Multiple AI Engines**: Support for OpenAI, AWS Bedrock, Google AI Studio, Mistral AI, Ollama, and On-Device AI
-- **On-Device Processing**: Complete privacy with WhisperKit transcription and On-Device AI summarization
+- **Mistral AI Transcription**: Cloud transcription via Voxtral Mini with speaker diarization support ($0.003/min)
+- **On-Device Processing**: Complete privacy with WhisperKit transcription and On-Device AI summarization (default for new installs)
+- **Share Extension**: Import audio files directly from Voice Memos, Files, and other apps via the iOS share sheet
+- **Combine Recordings**: Merge two separate recordings into a single continuous audio file
+- **PDF Export**: Professional PDF reports with three-pane header (metadata, local map, regional map), pagination, and dedicated tasks/reminders sections
 - **Background Processing**: Long recordings and complex processing handled automatically in the background
 - **Search Functionality**: Powerful search across recordings, transcripts, and summaries. Search by recording name, transcript text, summary content, tasks, reminders, and titles.
 - **Date Filters**: Filter recordings, transcripts, and summaries by date range. Select start and end dates to quickly find content from specific time periods.
 
 ## Key Modules
-- Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel`
-- Transcription: `WhisperKitManager` (On Device), `OpenAITranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`
+- Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel`, `RecordingCombiner`
+- Transcription: `WhisperKitManager` (On Device), `OpenAITranscribeService`, `MistralTranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`
 - Summarization: `OpenAISummarizationService`, `MistralAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `OnDeviceLLMService`
-- UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI)
+- Export: `PDFExportService`, `SummaryExportFormatter`
+- UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI), `CombineRecordingsView`
 - Persistence: `Persistence`, `CoreDataManager`, models under `Models/`
 - Background: `BackgroundProcessingManager`
 - Watch: `WatchConnectivityManager` (both targets)
+- Share Extension: `ShareViewController` (imports audio from other apps via share sheet)
 - Action Button: `StartRecordingIntent`, `ActionButtonLaunchManager`, `AppShortcuts`
 
 ## Transcription Engines
@@ -96,6 +103,7 @@ The app supports multiple transcription engines for converting audio to text:
 |--------|-------------|--------------|
 | **On Device** | High-quality on-device transcription. Your audio never leaves your device, ensuring complete privacy. | iOS 17.0+, 4GB+ RAM, model download (150-520MB) |
 | **OpenAI** | Cloud-based transcription using OpenAI's GPT-4o models and Whisper API | API key, internet |
+| **Mistral AI** | Cloud transcription using Voxtral Mini with speaker diarization ($0.003/min) | API key, internet |
 | **Whisper (Local Server)** | High-quality transcription using OpenAI's Whisper model on your local server | Whisper server running (REST API or Wyoming protocol) |
 | **AWS Transcribe** | Cloud-based transcription service with support for long audio files | AWS credentials, internet |
 
@@ -128,6 +136,18 @@ On Device transcription provides completely private, offline transcription:
 - **Noisy Environment** → Use "Higher Quality" (Faster Processing will fail to separate voice from noise)
 - **Long Battery Life Needed** → Use "Faster Processing" (Higher Quality uses significantly more power)
 
+### Mistral AI Transcription
+
+Mistral AI transcription uses the Voxtral Mini model for cloud-based speech-to-text:
+
+- **Model**: Voxtral Mini Transcribe (`voxtral-mini-latest`)
+- **Cost**: $0.003 per minute of audio
+- **Speaker Diarization**: Optional — identifies and labels different speakers in the audio
+- **Language**: Automatic detection or explicit language code (e.g., `en`, `fr`, `es`)
+- **Supported Formats**: MP3, MP4, M4A, WAV, FLAC, OGG, WebM
+- **Chunking**: Automatic chunking for files over 24MB or ~22 minutes (combined size/duration strategy)
+- **Setup**: Uses the same API key as Mistral AI summarization. Configure in Settings → AI Settings → Mistral AI, then select Mistral AI as your transcription engine in Transcription Settings.
+
 ## AI Engines
 
 The app supports multiple AI engines for summarization and content analysis:
@@ -136,8 +156,8 @@ The app supports multiple AI engines for summarization and content analysis:
 |--------|-------------|--------------|
 | **OpenAI** | GPT-4.1 models (GPT-4.1, GPT-4.1 Mini, GPT-4.1 Nano) and GPT-5 Mini | API key, internet |
 | **OpenAI Compatible** | Any OpenAI-compatible API (Nebius, Groq, LiteLLM, llama.cpp, etc.) | API key, internet |
-| **Mistral AI** | Mistral Large/Medium, Magistral (25.08-25.12) | API key, internet |
-| **Google AI Studio** | Gemini models | API key, internet |
+| **Mistral AI** | Mistral Large (25.12), Medium (25.08), Magistral Medium (25.09) | API key, internet |
+| **Google AI Studio** | Gemini 2.5 Flash, 2.5 Flash Lite, 3 Pro Preview, 3 Flash Preview | API key, internet |
 | **AWS Bedrock** | Claude 4.5 Haiku, Claude Sonnet 4.5, Llama 4 Maverick 17B Instruct | AWS credentials |
 | **Ollama** | Local LLM server (recommended: qwen3:30b, gpt-oss:20b, mistral-small3.2) | Ollama server running |
 | **On-Device AI** | Fully offline, privacy-focused | iPhone 15 Pro+, model (2-4.5 GB) |
@@ -158,6 +178,23 @@ AWS Bedrock provides access to multiple foundation models:
 - **Claude 4.5 Haiku**: Fast and efficient model optimized for quick responses (Standard tier) - Default
 - **Claude Sonnet 4.5**: Latest Claude Sonnet with advanced reasoning, coding, and analysis capabilities (Premium tier)
 - **Llama 4 Maverick 17B Instruct**: Meta's latest Llama 4 model with enhanced reasoning and performance (Economy tier)
+
+### Mistral AI Models
+
+Mistral AI summarization supports multiple models:
+
+- **Mistral Large (25.12)**: Most capable Mistral model with 128K context window (Premium tier)
+- **Mistral Medium (25.08)**: Balanced performance and cost with 128K context (Standard tier)
+- **Magistral Medium (25.09)**: Economy option with 40K context window (Economy tier)
+
+### Google AI Studio Models
+
+Google AI Studio provides access to Gemini models:
+
+- **Gemini 2.5 Flash**: Fast and efficient, good for most summarization tasks - Default
+- **Gemini 2.5 Flash Lite**: Lightweight variant for quick processing
+- **Gemini 3 Pro Preview**: Advanced reasoning and analysis capabilities (Preview)
+- **Gemini 3 Flash Preview**: Fast next-generation model (Preview)
 
 ### On-Device AI
 
@@ -248,6 +285,33 @@ Date range filtering helps you find content from specific time periods:
 - Filters can be combined with search for precise results
 - Date range includes the full day (00:00:00 to 23:59:59) for both start and end dates
 - Filters persist until manually cleared
+
+## Share Extension
+
+Import audio files from other apps directly into BisonNotes AI using the iOS share sheet:
+
+- **Supported audio formats**: M4A, MP3, WAV, CAF, AIFF, AIF
+- **Supported document formats**: TXT, MD, PDF, DOC, DOCX
+- **How it works**:
+  1. Open Voice Memos, Files, or any app with audio files
+  2. Tap the share button and select "BisonNotes AI"
+  3. The file is saved to the shared container
+  4. BisonNotes AI opens automatically and imports the file
+- **Background import**: If the main app is already running, a Darwin notification wakes it to scan for new files immediately
+- **File naming**: Imported files are prefixed with a UUID to prevent name collisions
+
+## Combine Recordings
+
+Merge two separate recordings into a single continuous audio file:
+
+1. Open the Recordings tab
+2. Enter selection mode and tap the checkbox next to two recordings
+3. Tap "Combine" to open the combination interface
+4. Choose the playback order (which recording comes first)
+5. Preview the combined duration, then tap "Combine Recordings"
+6. The new combined recording appears in your list; optionally delete the originals
+
+**Requirements**: Both recordings must have no existing transcripts or summaries. Delete any transcripts/summaries first, then combine. After combining, generate new transcripts and summaries for the merged file.
 
 ## Contributing
 See AGENTS.md for repository guidelines (style, structure, commands, testing, PRs). Follow the Local Dev Setup above to run and validate changes before opening a PR.

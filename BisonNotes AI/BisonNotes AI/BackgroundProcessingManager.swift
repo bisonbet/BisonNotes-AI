@@ -851,6 +851,20 @@ class BackgroundProcessingManager: ObservableObject {
                 }
                 result = try await whisperKitManager.transcribe(audioURL: chunk.chunkURL)
 
+            case .mistralAI:
+                print("🤖 Using Mistral AI for transcription")
+                let config = getMistralTranscribeConfig()
+                let service = MistralTranscribeService(config: config, chunkingService: chunkingService)
+                let mistralResult = try await service.transcribeAudioFile(at: chunk.chunkURL, recordingId: recordingId)
+                result = TranscriptionResult(
+                    fullText: mistralResult.transcriptText,
+                    segments: mistralResult.segments,
+                    processingTime: mistralResult.processingTime,
+                    chunkCount: 1,
+                    success: mistralResult.success,
+                    error: mistralResult.error
+                )
+
             case .openAIAPICompatible:
                 throw BackgroundProcessingError.processingFailed("OpenAI API Compatible integration not yet implemented")
             }
@@ -917,6 +931,24 @@ class BackgroundProcessingManager: ObservableObject {
         )
     }
     
+    private func getMistralTranscribeConfig() -> MistralTranscribeConfig {
+        let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+        let modelString = UserDefaults.standard.string(forKey: "mistralTranscribeModel") ?? MistralTranscribeModel.voxtralMiniLatest.rawValue
+        let baseURL = UserDefaults.standard.string(forKey: "mistralBaseURL") ?? "https://api.mistral.ai/v1"
+        let diarize = UserDefaults.standard.bool(forKey: "mistralTranscribeDiarize")
+        let language = UserDefaults.standard.string(forKey: "mistralTranscribeLanguage") ?? ""
+
+        let model = MistralTranscribeModel(rawValue: modelString) ?? .voxtralMiniLatest
+
+        return MistralTranscribeConfig(
+            apiKey: apiKey,
+            model: model,
+            baseURL: baseURL,
+            diarize: diarize,
+            language: language.isEmpty ? nil : language
+        )
+    }
+
     private func getWhisperConfig() -> WhisperConfig {
         let serverURL = UserDefaults.standard.string(forKey: "whisperServerURL") ?? "localhost"
         let port = UserDefaults.standard.integer(forKey: "whisperPort")

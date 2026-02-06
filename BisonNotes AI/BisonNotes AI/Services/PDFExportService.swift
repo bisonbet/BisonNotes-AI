@@ -17,6 +17,11 @@ class PDFExportService {
 
     private init() {}
 
+    private struct HeaderMapImages {
+        let close: UIImage?
+        let wide: UIImage?
+    }
+
     // MARK: - Helper Methods
 
     private func createLocationSignature(for locationData: LocationData) -> String {
@@ -25,7 +30,7 @@ class PDFExportService {
         return String(format: "%.5f_%.5f", safeLatitude, safeLongitude)
     }
 
-    private func loadStoredMapImage(for summaryId: UUID, locationData: LocationData, size: CGFloat) -> UIImage? {
+    private func loadStoredMapImage(for summaryId: UUID, locationData: LocationData, size: CGSize) -> UIImage? {
         let locationSignature = createLocationSignature(for: locationData)
         let scale = UIScreen.main.scale
 
@@ -41,7 +46,7 @@ class PDFExportService {
 
         // If no stored image found, create a fallback with the requested size
         print("❌ PDFExportService: No stored map image found, creating fallback")
-        return createSmallFallbackMapImage(for: locationData, size: CGSize(width: size, height: size * 0.75))
+        return createSmallFallbackMapImage(for: locationData, size: size)
     }
 
     // MARK: - Configuration
@@ -61,11 +66,13 @@ class PDFExportService {
         summaryData: EnhancedSummaryData,
         locationData: LocationData?,
         locationAddress: String?
-    ) throws -> Data {
+    ) async throws -> Data {
+        let headerMaps = await buildHeaderMapImages(summaryData: summaryData, locationData: locationData)
         return try createPDF(
             summaryData: summaryData,
             locationData: locationData,
-            locationAddress: locationAddress
+            locationAddress: locationAddress,
+            headerMaps: headerMaps
         )
     }
 
@@ -79,7 +86,8 @@ class PDFExportService {
     private func createPDF(
         summaryData: EnhancedSummaryData,
         locationData: LocationData?,
-        locationAddress: String?
+        locationAddress: String?,
+        headerMaps: HeaderMapImages?
     ) throws -> Data {
         let pageSize = CGSize(width: 612, height: 792) // US Letter size
         let margins = UIEdgeInsets(top: 50, left: 50, bottom: 50, right: 50)
@@ -105,6 +113,7 @@ class PDFExportService {
                 summaryData: summaryData,
                 locationData: locationData,
                 locationAddress: locationAddress,
+                headerMaps: headerMaps,
                 at: currentY,
                 contentWidth: contentWidth,
                 margins: margins,
@@ -210,136 +219,149 @@ class PDFExportService {
         summaryData: EnhancedSummaryData,
         locationData: LocationData?,
         locationAddress: String?,
+        headerMaps: HeaderMapImages?,
         at y: CGFloat,
         contentWidth: CGFloat,
         margins: UIEdgeInsets,
         context: UIGraphicsPDFRendererContext
     ) -> CGFloat {
-        // Adjusted proportions for better map display:
-        // Left: 30% for date, Middle: 40% for map, Right: 30% for location info
-        let leftWidth = contentWidth * 0.3
-        let middleWidth = contentWidth * 0.4
-        let rightWidth = contentWidth * 0.3
-        let headerHeight: CGFloat = 180 // Height accommodates map and location details
+        let headerHeight: CGFloat = 210
+        let gap: CGFloat = 10
+        let paneWidth = (contentWidth - (gap * 2)) / 3
 
-        // Left third: Date and AI Info
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .full
-        dateFormatter.timeStyle = .short
-        let dateText = "Recording Date: \(dateFormatter.string(from: summaryData.recordingDate))"
-        let dateFont = UIFont.systemFont(ofSize: 12)
-        let dateColor = UIColor.darkGray
+        let leftRect = CGRect(x: margins.left, y: y, width: paneWidth, height: headerHeight)
+        let middleRect = CGRect(x: leftRect.maxX + gap, y: y, width: paneWidth, height: headerHeight)
+        let rightRect = CGRect(x: middleRect.maxX + gap, y: y, width: paneWidth, height: headerHeight)
 
-        var currentLeftY = y
-        let dateRect = CGRect(x: margins.left, y: currentLeftY, width: leftWidth, height: 30)
-        let dateAttributes: [NSAttributedString.Key: Any] = [
-            .font: dateFont,
-            .foregroundColor: dateColor
+        drawCard(in: leftRect, context: context, fillColor: UIColor(red: 0.95, green: 0.97, blue: 1.0, alpha: 1.0))
+        drawCard(in: middleRect, context: context, fillColor: UIColor.white)
+        drawCard(in: rightRect, context: context, fillColor: UIColor(red: 0.96, green: 0.98, blue: 0.96, alpha: 1.0))
+
+        // Left pane: location + metadata
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+
+        let labelAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 9, weight: .semibold),
+            .foregroundColor: UIColor.darkGray
         ]
-        dateText.draw(in: dateRect, withAttributes: dateAttributes)
-        currentLeftY += 30
+        let valueAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: UIColor.black
+        ]
 
-        // AI Provider
-        let aiProviderText = "AI Provider: \(summaryData.aiEngine)"
-        let aiProviderRect = CGRect(x: margins.left, y: currentLeftY, width: leftWidth, height: 20)
-        aiProviderText.draw(in: aiProviderRect, withAttributes: dateAttributes)
-        currentLeftY += 20
+        let titleAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: UIColor.darkGray
+        ]
+        "LOCATION".draw(
+            in: CGRect(x: leftRect.minX + 12, y: leftRect.minY + 14, width: leftRect.width - 24, height: 14),
+            withAttributes: titleAttributes
+        )
 
-        // AI Model
-        let aiModelText = "AI Model: \(summaryData.aiModel)"
-        let aiModelRect = CGRect(x: margins.left, y: currentLeftY, width: leftWidth, height: 20)
-        aiModelText.draw(in: aiModelRect, withAttributes: dateAttributes)
-
-        // Middle section: Map (fits better in rectangular area) or empty if no location
-        if let locationData = locationData {
-            let mapOrigin = CGPoint(
-                x: margins.left + leftWidth + 5, // Start after left section
-                y: y + 5
-            )
-
-            // Load stored map image or create fallback
-            if let mapImage = loadStoredMapImage(for: summaryData.id, locationData: locationData, size: middleWidth) {
-                // Draw the image maintaining its aspect ratio, centered in the available space
-                let imageSize = mapImage.size
-                let aspectRatio = imageSize.width / imageSize.height
-                let availableHeight = headerHeight - 10
-                var drawWidth = middleWidth
-                var drawHeight = middleWidth / aspectRatio
-
-                // If the image is too tall, scale it down
-                if drawHeight > availableHeight {
-                    drawHeight = availableHeight
-                    drawWidth = availableHeight * aspectRatio
-                }
-
-                let drawOrigin = CGPoint(
-                    x: mapOrigin.x + (middleWidth - drawWidth) / 2, // Center horizontally
-                    y: mapOrigin.y + (availableHeight - drawHeight) / 2 // Center vertically
-                )
-
-                mapImage.draw(in: CGRect(origin: drawOrigin, size: CGSize(width: drawWidth, height: drawHeight)))
-            }
-        }
-
-        // Right section: Location information or "No Location Data" message
-        let locationX = margins.left + leftWidth + middleWidth + 5
-        let locationWidth = rightWidth - 10
-        let locationY = y + 5
-
-        let locationFont = UIFont.systemFont(ofSize: 11, weight: .medium)
-        let locationColor = UIColor.black
-
-        if let locationData = locationData {
-            var currentY = locationY
-
-            // Location name/address
-            if let address = locationAddress, !address.isEmpty {
-                // Use multiline text for address to allow wrapping
-                let addressText = drawMultilineText(
-                    address,
-                    at: currentY,
-                    contentWidth: locationWidth,
-                    margins: UIEdgeInsets(top: 0, left: locationX, bottom: 0, right: margins.right),
-                    context: context,
-                    pageSize: CGSize(width: contentWidth + margins.left + margins.right, height: headerHeight + margins.top + margins.bottom),
-                    font: locationFont,
-                    color: locationColor
-                )
-                currentY = addressText + 5
-            }
-
-            // Coordinates
-            let coordText = "\(String(format: "%.4f", locationData.latitude)), \(String(format: "%.4f", locationData.longitude))"
-            let coordAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 10),
-                .foregroundColor: UIColor.darkGray
+        let preferredLocation = formatHighLevelLocation(from: locationAddress ?? locationData?.address)
+            ?? (locationData != nil ? "Recorded location available" : "No location attached to this recording.")
+        let locationTextRect = CGRect(
+            x: leftRect.minX + 12,
+            y: leftRect.minY + 34,
+            width: leftRect.width - 24,
+            height: 42
+        )
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 3
+        preferredLocation.draw(
+            in: locationTextRect,
+            withAttributes: [
+                .font: UIFont.systemFont(ofSize: 13, weight: .medium),
+                .foregroundColor: UIColor.black,
+                .paragraphStyle: paragraphStyle
             ]
-            let coordRect = CGRect(x: locationX, y: currentY, width: locationWidth, height: 20)
-            coordText.draw(in: coordRect, withAttributes: coordAttributes)
-            currentY += 25
+        )
 
-            // Accuracy
-            if let accuracy = locationData.accuracy {
-                let accuracyText = "±\(Int(accuracy))m"
-                let accuracyRect = CGRect(x: locationX, y: currentY, width: locationWidth, height: 20)
-                accuracyText.draw(in: accuracyRect, withAttributes: coordAttributes)
-            }
+        var leftY = locationTextRect.maxY + 4
+        drawMetadataCompactRow(
+            label: "DATE",
+            value: formatter.string(from: summaryData.recordingDate),
+            x: leftRect.minX + 12,
+            y: &leftY,
+            width: leftRect.width - 24,
+            labelAttributes: labelAttributes,
+            valueAttributes: valueAttributes
+        )
+        drawMetadataCompactRow(
+            label: "AI PROVIDER",
+            value: summaryData.aiEngine,
+            x: leftRect.minX + 12,
+            y: &leftY,
+            width: leftRect.width - 24,
+            labelAttributes: labelAttributes,
+            valueAttributes: valueAttributes
+        )
+        drawMetadataCompactRow(
+            label: "MODEL",
+            value: summaryData.aiModel,
+            x: leftRect.minX + 12,
+            y: &leftY,
+            width: leftRect.width - 24,
+            labelAttributes: labelAttributes,
+            valueAttributes: valueAttributes
+        )
+
+        // Middle pane: local map
+        let mapLabelHeight: CGFloat = 14
+        let localMapLabelRect = CGRect(
+            x: middleRect.minX + 12,
+            y: middleRect.minY + 8,
+            width: middleRect.width - 24,
+            height: mapLabelHeight
+        )
+        let localMapRect = CGRect(
+            x: middleRect.minX + 12,
+            y: localMapLabelRect.maxY + 2,
+            width: middleRect.width - 24,
+            height: middleRect.height - 26
+        )
+        let mapLabelAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: UIColor.darkGray
+        ]
+        "Local View".draw(in: localMapLabelRect, withAttributes: mapLabelAttributes)
+
+        if headerMaps?.close != nil {
+            drawMapImageAspectFill(headerMaps?.close, in: localMapRect, context: context)
         } else {
-            // No location data - show message
-            let noLocationText = "No Location Data"
-            let noLocationAttributes: [NSAttributedString.Key: Any] = [
-                .font: locationFont,
-                .foregroundColor: UIColor.gray
-            ]
-            let noLocationRect = CGRect(x: locationX, y: locationY, width: locationWidth, height: 30)
-            noLocationText.draw(in: noLocationRect, withAttributes: noLocationAttributes)
+            drawMapPlaceholder("No Location Data", in: localMapRect, context: context)
         }
 
-        // Draw separator line
-        let lineY = y + headerHeight
-        drawLine(from: CGPoint(x: margins.left, y: lineY), to: CGPoint(x: margins.left + contentWidth, y: lineY), context: context)
+        // Right pane: regional map
+        let regionalMapLabelRect = CGRect(
+            x: rightRect.minX + 12,
+            y: rightRect.minY + 8,
+            width: rightRect.width - 24,
+            height: mapLabelHeight
+        )
+        let regionalMapRect = CGRect(
+            x: rightRect.minX + 12,
+            y: regionalMapLabelRect.maxY + 2,
+            width: rightRect.width - 24,
+            height: rightRect.height - 26
+        )
+        "Regional View".draw(in: regionalMapLabelRect, withAttributes: mapLabelAttributes)
 
-        return lineY + 20
+        if headerMaps?.wide != nil || headerMaps?.close != nil {
+            drawMapImageAspectFill(headerMaps?.wide ?? headerMaps?.close, in: regionalMapRect, context: context)
+        } else {
+            drawMapPlaceholder("No Location Data", in: regionalMapRect, context: context)
+        }
+
+        let lineY = y + headerHeight + 8
+        drawLine(
+            from: CGPoint(x: margins.left, y: lineY),
+            to: CGPoint(x: margins.left + contentWidth, y: lineY),
+            context: context
+        )
+        return lineY + 18
     }
 
     private func drawSimplifiedHeader(summaryData: EnhancedSummaryData, at y: CGFloat, contentWidth: CGFloat, margins: UIEdgeInsets, context: UIGraphicsPDFRendererContext) -> CGFloat {
@@ -348,6 +370,7 @@ class PDFExportService {
             summaryData: summaryData,
             locationData: nil,
             locationAddress: nil,
+            headerMaps: nil,
             at: y,
             contentWidth: contentWidth,
             margins: margins,
@@ -713,6 +736,215 @@ class PDFExportService {
     // MARK: - Data Structures
 
     // MARK: - Helper Functions
+
+    @MainActor
+    private func buildHeaderMapImages(summaryData: EnhancedSummaryData, locationData: LocationData?) async -> HeaderMapImages? {
+        guard let locationData else { return nil }
+
+        let closeSize = CGSize(width: 680, height: 360)
+        let wideSize = CGSize(width: 680, height: 360)
+
+        let closeImage = loadStoredMapImage(
+            for: summaryData.id,
+            locationData: locationData,
+            size: closeSize
+        ) ?? createSmallFallbackMapImage(for: locationData, size: closeSize)
+
+        let wideImage = await createZoomedOutMapImage(
+            for: locationData,
+            size: wideSize,
+            latitudeDelta: 18,
+            longitudeDelta: 18
+        ) ?? closeImage
+
+        return HeaderMapImages(close: closeImage, wide: wideImage)
+    }
+
+    @MainActor
+    private func createZoomedOutMapImage(
+        for locationData: LocationData,
+        size: CGSize,
+        latitudeDelta: CLLocationDegrees,
+        longitudeDelta: CLLocationDegrees
+    ) async -> UIImage? {
+        guard locationData.latitude.isFinite,
+              locationData.longitude.isFinite,
+              size.width > 10,
+              size.height > 10 else {
+            return nil
+        }
+
+        let options = MKMapSnapshotter.Options()
+        options.region = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude),
+            span: MKCoordinateSpan(latitudeDelta: latitudeDelta, longitudeDelta: longitudeDelta)
+        )
+        options.size = size
+        options.scale = UIScreen.main.scale
+        options.showsBuildings = false
+        options.pointOfInterestFilter = .excludingAll
+
+        let snapshotter = MKMapSnapshotter(options: options)
+
+        do {
+            let snapshot: MKMapSnapshotter.Snapshot = try await withCheckedThrowingContinuation { continuation in
+                snapshotter.start { snapshot, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                        return
+                    }
+                    guard let snapshot else {
+                        continuation.resume(throwing: NSError(domain: "PDFExportService", code: -1, userInfo: nil))
+                        return
+                    }
+                    continuation.resume(returning: snapshot)
+                }
+            }
+
+            let renderer = UIGraphicsImageRenderer(size: snapshot.image.size)
+            let pinImage = UIImage(systemName: "mappin.circle.fill")?
+                .withTintColor(.systemRed, renderingMode: .alwaysOriginal)
+
+            return renderer.image { _ in
+                snapshot.image.draw(at: .zero)
+                if let pinImage {
+                    let point = snapshot.point(for: CLLocationCoordinate2D(
+                        latitude: locationData.latitude,
+                        longitude: locationData.longitude
+                    ))
+                    let pinSize = CGSize(width: 26, height: 26)
+                    let pinRect = CGRect(
+                        x: point.x - pinSize.width / 2,
+                        y: point.y - pinSize.height,
+                        width: pinSize.width,
+                        height: pinSize.height
+                    )
+                    pinImage.draw(in: pinRect)
+                }
+            }
+        } catch {
+            print("⚠️ PDFExportService: Regional map generation failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func drawCard(in rect: CGRect, context: UIGraphicsPDFRendererContext, fillColor: UIColor) {
+        let path = UIBezierPath(roundedRect: rect, cornerRadius: 10)
+        fillColor.setFill()
+        path.fill()
+
+        context.cgContext.saveGState()
+        context.cgContext.setStrokeColor(UIColor(white: 0.82, alpha: 1).cgColor)
+        context.cgContext.setLineWidth(1.0)
+        context.cgContext.addPath(path.cgPath)
+        context.cgContext.strokePath()
+        context.cgContext.restoreGState()
+    }
+
+    private func drawMetadataRow(
+        label: String,
+        value: String,
+        x: CGFloat,
+        y: inout CGFloat,
+        width: CGFloat,
+        labelAttributes: [NSAttributedString.Key: Any],
+        valueAttributes: [NSAttributedString.Key: Any]
+    ) {
+        label.draw(in: CGRect(x: x, y: y, width: width, height: 13), withAttributes: labelAttributes)
+        y += 13
+
+        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        cleanedValue.draw(in: CGRect(x: x, y: y, width: width, height: 36), withAttributes: valueAttributes)
+        y += 44
+    }
+
+    private func drawMetadataCompactRow(
+        label: String,
+        value: String,
+        x: CGFloat,
+        y: inout CGFloat,
+        width: CGFloat,
+        labelAttributes: [NSAttributedString.Key: Any],
+        valueAttributes: [NSAttributedString.Key: Any]
+    ) {
+        label.draw(in: CGRect(x: x, y: y, width: width, height: 12), withAttributes: labelAttributes)
+        y += 12
+
+        let compactAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 10.5),
+            .foregroundColor: valueAttributes[.foregroundColor] ?? UIColor.black
+        ]
+        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        cleanedValue.draw(in: CGRect(x: x, y: y, width: width, height: 16), withAttributes: compactAttributes)
+        y += 20
+    }
+
+    private func drawMapImageAspectFill(_ image: UIImage?, in rect: CGRect, context: UIGraphicsPDFRendererContext) {
+        let cgContext = context.cgContext
+        let clippingPath = UIBezierPath(roundedRect: rect, cornerRadius: 8)
+
+        cgContext.saveGState()
+        cgContext.addPath(clippingPath.cgPath)
+        cgContext.clip()
+
+        if let image {
+            let imageSize = image.size
+            let scale = max(rect.width / imageSize.width, rect.height / imageSize.height)
+            let drawSize = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+            let drawOrigin = CGPoint(
+                x: rect.minX + (rect.width - drawSize.width) / 2,
+                y: rect.minY + (rect.height - drawSize.height) / 2
+            )
+            image.draw(in: CGRect(origin: drawOrigin, size: drawSize))
+        } else {
+            UIColor.systemGray5.setFill()
+            cgContext.fill(rect)
+        }
+
+        cgContext.restoreGState()
+
+        cgContext.saveGState()
+        cgContext.setStrokeColor(UIColor(white: 0.85, alpha: 1).cgColor)
+        cgContext.setLineWidth(0.8)
+        cgContext.addPath(clippingPath.cgPath)
+        cgContext.strokePath()
+        cgContext.restoreGState()
+    }
+
+    private func drawMapPlaceholder(_ text: String, in rect: CGRect, context: UIGraphicsPDFRendererContext) {
+        drawMapImageAspectFill(nil, in: rect, context: context)
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: UIColor.gray,
+            .paragraphStyle: style
+        ]
+        text.draw(in: rect.insetBy(dx: 10, dy: 10), withAttributes: attrs)
+    }
+
+    private func formatHighLevelLocation(from rawAddress: String?) -> String? {
+        guard let rawAddress else { return nil }
+
+        let components = rawAddress
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !components.isEmpty else { return nil }
+
+        let filtered = components.filter { component in
+            // Drop likely postal codes-only segments
+            let digits = component.filter { $0.isNumber }.count
+            return !(digits > 0 && digits == component.count)
+        }
+
+        let source = filtered.isEmpty ? components : filtered
+        let scoped = source.count > 3 ? Array(source.suffix(3)) : source
+        let cleaned = scoped.map { $0.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression) }
+
+        return cleaned.joined(separator: ", ")
+    }
 
     private func drawSectionTitle(_ title: String, at y: CGFloat, contentWidth: CGFloat, margins: UIEdgeInsets, context: UIGraphicsPDFRendererContext) -> CGFloat {
         let titleFont = UIFont.boldSystemFont(ofSize: 16)

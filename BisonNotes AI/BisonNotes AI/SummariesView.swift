@@ -571,7 +571,7 @@ struct SummariesView: View {
                     print("🤖 Using AI engine: \(selectedEngine)")
 
                     // Prepare for background tracking
-                    let transcriptText = transcript.plainText
+                    let transcriptText = transcript.textForSummarization
                     let recordingURL = URL(string: recording.recordingURL ?? "") ?? URL(fileURLWithPath: "")
                     let recordingName = recording.recordingName ?? "Unknown Recording"
                     let recordingDate = recording.recordingDate ?? Date()

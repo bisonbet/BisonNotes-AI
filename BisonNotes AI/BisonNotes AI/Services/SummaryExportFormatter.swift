@@ -154,8 +154,8 @@ enum SummaryExportFormatter {
         let boldItalicFont = UIFont.systemFont(ofSize: baseFontSize, weight: .semibold).with(traits: .traitItalic)
 
         let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 5
-        paragraphStyle.paragraphSpacing = 8
+        paragraphStyle.lineSpacing = 1.5
+        paragraphStyle.paragraphSpacing = 2
 
         for (_, rawLine) in lines.enumerated() {
             let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
@@ -177,7 +177,7 @@ enum SummaryExportFormatter {
                 let headerText = (trimmed as NSString).substring(from: headerMatch.range.length).trimmingCharacters(in: .whitespaces)
                 let headerFontSize = baseFontSize + CGFloat(7 - level)  // 18pt for #, 17 for ##, ...
                 let headerFont = UIFont.boldSystemFont(ofSize: headerFontSize)
-                if result.length > 0 { result.append(NSAttributedString(string: "\n\n", attributes: [.font: baseFont])) }
+                if result.length > 0 { result.append(NSAttributedString(string: "\n", attributes: [.font: baseFont])) }
                 let headerAttr = NSAttributedString(string: headerText + "\n", attributes: [
                     .font: headerFont,
                     .foregroundColor: textColor

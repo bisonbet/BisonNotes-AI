@@ -90,6 +90,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
     case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
     case openAI = "OpenAI"
+    case mistralAI = "Mistral AI"
     case openAIAPICompatible = "OpenAI API Compatible"
 
     /// Returns all available engine types based on device capabilities
@@ -109,6 +110,8 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             return "High-quality transcription using OpenAI's Whisper model on your local server (REST API or Wyoming protocol)"
         case .openAI:
             return "High-quality transcription using OpenAI's GPT-4o models and Whisper via API"
+        case .mistralAI:
+            return "High-quality transcription using Mistral's Voxtral Mini model with speaker diarization ($0.003/min)"
         case .openAIAPICompatible:
             return "Connect to OpenAI-compatible API endpoints for flexible transcription options (Coming Soon)"
         }
@@ -121,7 +124,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
         case .whisperKit:
             // Only show WhisperKit if device is compatible
             return DeviceCompatibility.isWhisperKitSupported
-        case .awsTranscribe, .whisper, .openAI:
+        case .awsTranscribe, .whisper, .openAI, .mistralAI:
             return true
         case .openAIAPICompatible:
             return false
@@ -134,7 +137,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             return true
         case .whisperKit:
             return true  // Requires model download
-        case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible:
+        case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible, .mistralAI:
             return true
         }
     }

@@ -182,34 +182,118 @@ class ShareViewController: UIViewController {
 
     // MARK: - Open Main App
 
-    /// Opens the main app via its custom URL scheme using the responder chain.
-    /// Share Extensions don't have access to UIApplication.shared, but the host
-    /// app's UIApplication is reachable through the responder chain.
+    /// Attempts to open the main app via its custom URL scheme so it imports
+    /// shared files immediately.
+    ///
+    /// Strategy:
+    /// 1. Access UIApplication.shared directly via ObjC runtime and call
+    ///    the modern `open(_:options:completionHandler:)` with proper arg passing.
+    /// 2. Fall back to the responder chain (in case direct access fails).
+    /// 3. Post a Darwin notification (works when app is already backgrounded).
+    /// 4. (Implicit) The main app scans the shared container on `didBecomeActive`.
     private func openMainApp(completion: @escaping () -> Void) {
         guard let url = URL(string: "bisonnotes://share-import") else {
             completion()
             return
         }
 
-        // Walk the responder chain to find an object that can open URLs.
-        // In an extension, the chain goes up to the host app's UIApplication.
+        // Tier 1: Direct access to UIApplication.shared via ObjC runtime.
+        // This bypasses the responder chain which may not include UIApplication
+        // in a share extension's view hierarchy.
+        if openURLViaSharedApplication(url) {
+            NSLog("📎 Share Extension: opened main app via UIApplication.shared")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                completion()
+            }
+            return
+        }
+
+        // Tier 2: Walk the responder chain as a fallback.
+        if openURLViaResponderChain(url) {
+            NSLog("📎 Share Extension: opened main app via responder chain")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                completion()
+            }
+            return
+        }
+
+        // Tier 3: Darwin notification for when the app is already running.
+        postDarwinNotification()
+        NSLog("📎 Share Extension: posted Darwin notification as fallback")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            completion()
+        }
+    }
+
+    /// Accesses UIApplication.shared directly through the ObjC runtime
+    /// (bypassing the responder chain) and calls open(_:options:completionHandler:)
+    /// using method(for:) + unsafeBitCast for correct 3-argument invocation.
+    private func openURLViaSharedApplication(_ url: URL) -> Bool {
+        // UIApplication class is available in extensions; only .shared is
+        // compile-time restricted, so we reach it through the runtime.
+        guard let appClass = NSClassFromString("UIApplication") else {
+            NSLog("📎 Share Extension: UIApplication class not found")
+            return false
+        }
+
+        let sharedSel = NSSelectorFromString("sharedApplication")
+        guard let unmanaged = (appClass as AnyObject).perform(sharedSel),
+              let application = unmanaged.takeUnretainedValue() as? NSObject else {
+            NSLog("📎 Share Extension: could not get UIApplication.shared")
+            return false
+        }
+
+        let openSel = NSSelectorFromString("openURL:options:completionHandler:")
+        guard application.responds(to: openSel) else {
+            NSLog("📎 Share Extension: UIApplication does not respond to open:options:completionHandler:")
+            return false
+        }
+
+        // Use method(for:) + unsafeBitCast to properly pass all 3 arguments.
+        // perform(_:with:with:) only supports 2 args, leaving the third
+        // (completionHandler) undefined — which can crash on ARM64.
+        let imp = application.method(for: openSel)
+        typealias OpenURLFunc = @convention(c) (NSObject, Selector, URL, NSDictionary, Any?) -> Void
+        let openURL = unsafeBitCast(imp, to: OpenURLFunc.self)
+        openURL(application, openSel, url, NSDictionary(), nil)
+        return true
+    }
+
+    /// Walks the responder chain to find UIApplication and calls
+    /// open(_:options:completionHandler:). Fallback for Tier 1.
+    private func openURLViaResponderChain(_ url: URL) -> Bool {
+        guard let applicationClass = NSClassFromString("UIApplication") else {
+            return false
+        }
+
         var responder: UIResponder? = self
         while let current = responder {
-            let selector = NSSelectorFromString("openURL:")
-            if current.responds(to: selector) {
-                current.perform(selector, with: url)
-                NSLog("📎 Share Extension: requested main app open via URL scheme")
-                // Small delay to let the URL open propagate before completing the extension.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    completion()
+            if current.isKind(of: applicationClass) {
+                let openSel = NSSelectorFromString("openURL:options:completionHandler:")
+                if current.responds(to: openSel) {
+                    let imp = current.method(for: openSel)
+                    typealias OpenURLFunc = @convention(c) (NSObject, Selector, URL, NSDictionary, Any?) -> Void
+                    let openURL = unsafeBitCast(imp, to: OpenURLFunc.self)
+                    openURL(current, openSel, url, NSDictionary(), nil)
+                    return true
                 }
-                return
             }
             responder = current.next
         }
 
-        NSLog("📎 Share Extension: could not find URL opener in responder chain")
-        completion()
+        NSLog("📎 Share Extension: could not find UIApplication in responder chain")
+        return false
+    }
+
+    /// Posts a system-wide Darwin notification that the main app can observe
+    /// when it is suspended or in background.
+    private func postDarwinNotification() {
+        let name = "com.bisonnotesai.shareExtensionDidSaveFile" as CFString
+        CFNotificationCenterPostNotification(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName(name), nil, nil, true
+        )
     }
 
     // MARK: - Complete

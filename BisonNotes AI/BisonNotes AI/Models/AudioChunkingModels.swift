@@ -70,6 +70,7 @@ enum ChunkingStrategy {
     static let whisper = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let aws = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let onDeviceAI = ChunkingStrategy.duration(maxSeconds: 15 * 60) // 15 minutes
+    static let mistralAI = ChunkingStrategy.combined(maxBytes: 24 * 1024 * 1024, maxSeconds: 1300) // 24MB and 1300 seconds
     
     var description: String {
         switch self {
@@ -108,6 +109,8 @@ struct ChunkingConfig {
             return ChunkingConfig(strategy: .aws)
         case .whisperKit:
             return ChunkingConfig(strategy: .whisper) // WhisperKit uses similar limits to Whisper
+        case .mistralAI:
+            return ChunkingConfig(strategy: .mistralAI)
         case .openAIAPICompatible:
             return ChunkingConfig(strategy: .openAI) // Default to OpenAI limits
         }

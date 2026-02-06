@@ -1122,7 +1122,7 @@ struct SummaryDetailView: View {
             
             // Generate new summary using the current AI engine
             let newEnhancedSummary = try await SummaryManager.shared.generateEnhancedSummary(
-                from: transcript.plainText,
+                from: transcript.textForSummarization,
                 for: summaryData.recordingURL,
                 recordingName: summaryData.recordingName,
                 recordingDate: summaryData.recordingDate
@@ -1450,7 +1450,7 @@ struct SummaryDetailView: View {
                 let exportData: Data
                 switch format {
                 case .pdf:
-                    exportData = try PDFExportService.shared.generatePDF(
+                    exportData = try await PDFExportService.shared.generatePDF(
                         summaryData: summaryData,
                         locationData: recording.locationData,
                         locationAddress: locationAddress

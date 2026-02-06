@@ -252,6 +252,29 @@ struct BisonNotesAIApp: App {
         migrateAppleTranscriptionToWhisperKit()
         migrateWhisperKitNameIfNeeded()
         migrateOnDeviceLLMNameToOnDeviceAI()
+        setupDarwinNotificationObserver()
+    }
+
+    /// Registers a Darwin notification observer so the Share Extension can signal
+    /// the main app to scan the shared container immediately (works when the app
+    /// is suspended or backgrounded).
+    private func setupDarwinNotificationObserver() {
+        let name = "com.bisonnotesai.shareExtensionDidSaveFile" as CFString
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            nil,
+            { _, _, _, _, _ in
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ShareExtensionDidSaveFile"),
+                        object: nil
+                    )
+                }
+            },
+            name,
+            nil,
+            .deliverImmediately
+        )
     }
 
     /// Logs device capabilities on app startup
@@ -281,6 +304,10 @@ struct BisonNotesAIApp: App {
                     scanSharedContainerForImports()
                     // Also scan Documents/Inbox/ for files from "Open In" / document interaction.
                     scanInboxForImportableFiles()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShareExtensionDidSaveFile"))) { _ in
+                    NSLog("📎 Darwin notification received from Share Extension")
+                    scanSharedContainerForImports()
                 }
         }
     }
