@@ -40,10 +40,9 @@ The project uses Swift Package Manager for dependency management. Major dependen
   - `AWSClientRuntime`: Core AWS functionality
 
 ### **On-Device AI**
-- **LocalLLMClient**: Swift wrapper for llama.cpp enabling on-device LLM inference
-  - GitHub: https://github.com/bisonbet/LocalLLMClient-iOS
+- **llama.cpp**: Embedded as a pre-compiled xcframework (`Frameworks/llama.xcframework`) for Metal-accelerated on-device LLM inference
+  - GitHub: https://github.com/ggerganov/llama.cpp
   - Supports GGUF model format with Q4_K_M quantization (optimal for mobile)
-  - Built-in download management for Hugging Face models
   - Available models: Gemma 3n E4B/E2B, Granite 4.0 H Tiny/Micro, Ministral 3B, Qwen3 4B/1.7B, LFM 2.5 1.2B
   - Models filtered by device RAM (6GB+ for most, 8GB+ for larger models)
 
@@ -222,12 +221,6 @@ The on-device AI feature enables completely private, offline AI processing:
   - Models are filtered based on available RAM (6GB+ for most models, 8GB+ for larger models)
 - **Downloads**: WiFi by default with optional cellular download support
 
-**Adding LocalLLMClient to the project:**
-1. In Xcode, go to File → Add Package Dependencies
-2. Enter: `https://github.com/bisonbet/LocalLLMClient-iOS`
-3. Set version rule to "Branch" → `main`
-4. Add `LocalLLMClient` to your target
-
 ## Configuration
 - Secrets are entered in‑app via settings views (OpenAI, Mistral AI, Google, AWS, Ollama, Whisper). Do not commit API keys.
 - Enable required capabilities in Xcode (Microphone, Background Modes, iCloud if used). Keep `Info.plist` and `.entitlements` aligned with features.
@@ -312,6 +305,41 @@ Merge two separate recordings into a single continuous audio file:
 6. The new combined recording appears in your list; optionally delete the originals
 
 **Requirements**: Both recordings must have no existing transcripts or summaries. Delete any transcripts/summaries first, then combine. After combining, generate new transcripts and summaries for the merged file.
+
+## Acknowledgments
+
+BisonNotes AI is built on the shoulders of several outstanding open-source projects. We gratefully acknowledge the following:
+
+### Direct Dependencies
+
+| Project | Description | License | Link |
+|---------|-------------|---------|------|
+| **WhisperKit** | On-device speech recognition using OpenAI Whisper models. We maintain a fork for iOS-specific fixes and optimizations. | MIT | [argmaxinc/WhisperKit](https://github.com/argmaxinc/whisperkit) |
+| **Textual** (swift-markdown-ui) | Markdown rendering library used to display AI-generated summaries, transcripts, and formatted content. We maintain a fork with custom styling adjustments. | MIT | [gonzalezreal/swift-markdown-ui](https://github.com/gonzalezreal/swift-markdown-ui) |
+| **llama.cpp** | C/C++ inference engine for on-device LLM processing. Embedded as a pre-compiled xcframework for Metal-accelerated local AI summarization. | MIT | [ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp) |
+| **AWS SDK for Swift** | Cloud services SDK powering AWS Bedrock (Claude, Llama), Transcribe, and S3 integrations. | Apache 2.0 | [awslabs/aws-sdk-swift](https://github.com/awslabs/aws-sdk-swift) |
+| **Swift Transformers** | Hugging Face tokenizers and transformer utilities for local ML model pipelines. | Apache 2.0 | [huggingface/swift-transformers](https://github.com/huggingface/swift-transformers) |
+
+### Forked Repositories
+
+We maintain forks of the following projects at [github.com/bisonbet](https://github.com/bisonbet):
+
+- **[bisonbet/WhisperKit](https://github.com/bisonbet/WhisperKit)** — Fork of argmaxinc/WhisperKit
+- **[bisonbet/textual](https://github.com/bisonbet/textual)** — Fork of gonzalezreal/swift-markdown-ui
+
+### Transitive Dependencies
+
+The AWS SDK and other direct dependencies bring in a number of excellent open-source libraries from the Apple Swift ecosystem and broader community:
+
+- **Apple Swift Server libraries**: [Swift NIO](https://github.com/apple/swift-nio), [Swift Crypto](https://github.com/apple/swift-crypto), [Swift Protobuf](https://github.com/apple/swift-protobuf), [Swift Collections](https://github.com/apple/swift-collections), [Swift Algorithms](https://github.com/apple/swift-algorithms), [Swift Log](https://github.com/apple/swift-log), [Swift Metrics](https://github.com/apple/swift-metrics), [Swift Atomics](https://github.com/apple/swift-atomics), [Swift System](https://github.com/apple/swift-system), [Swift Async Algorithms](https://github.com/apple/swift-async-algorithms), [Swift Argument Parser](https://github.com/apple/swift-argument-parser), [Swift Numerics](https://github.com/apple/swift-numerics), [Swift Certificates](https://github.com/apple/swift-certificates), [Swift ASN1](https://github.com/apple/swift-asn1), [Swift HTTP Types](https://github.com/apple/swift-http-types), [Swift Distributed Tracing](https://github.com/apple/swift-distributed-tracing), [Swift Service Context](https://github.com/apple/swift-service-context), and related networking/TLS packages
+- **Swift Server community**: [Async HTTP Client](https://github.com/swift-server/async-http-client), [Swift Service Lifecycle](https://github.com/swift-server/swift-service-lifecycle)
+- **gRPC**: [gRPC Swift](https://github.com/grpc/grpc-swift)
+- **Observability**: [OpenTelemetry Swift](https://github.com/open-telemetry/opentelemetry-swift)
+- **AWS infrastructure**: [AWS CRT Swift](https://github.com/awslabs/aws-crt-swift), [Smithy Swift](https://github.com/smithy-lang/smithy-swift)
+- **Hugging Face**: [Swift Jinja](https://github.com/huggingface/swift-jinja)
+- **Point-Free**: [Swift Concurrency Extras](https://github.com/pointfreeco/swift-concurrency-extras)
+
+All dependencies are MIT or Apache 2.0 licensed. See each project's repository for full license terms.
 
 ## Contributing
 See AGENTS.md for repository guidelines (style, structure, commands, testing, PRs). Follow the Local Dev Setup above to run and validate changes before opening a PR.
