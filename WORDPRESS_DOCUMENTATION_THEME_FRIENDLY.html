@@ -268,15 +268,18 @@
         
         <p>Welcome to BisonNotes AI! This comprehensive guide will walk you through every aspect of using the app, from basic recording to advanced AI configuration.</p>
         
-        <!-- Recent Updates Section - Add content here when needed
         <div class="info-box">
-            <h3>🆕 Recent Updates</h3>
-            <h4>Update Title (Date)</h4>
+            <h3>🆕 Recent Updates — Version 1.5</h3>
             <ul>
-                <li><strong>Feature</strong>: Description</li>
+                <li><strong>Mistral AI Transcription</strong>: New cloud transcription engine using Voxtral Mini with speaker diarization support ($0.003/min)</li>
+                <li><strong>Share Extension</strong>: Import audio files directly from Voice Memos, Files, and other apps via the iOS share sheet</li>
+                <li><strong>Combine Recordings</strong>: Merge two separate recordings into a single continuous audio file</li>
+                <li><strong>PDF Export Redesign</strong>: Professional three-pane header with metadata, local map, and regional map views; pagination with page numbers; dedicated tasks and reminders sections</li>
+                <li><strong>On-Device AI Default</strong>: On-Device AI is now the default for new installs on supported devices (6GB+ RAM)</li>
+                <li><strong>Updated AI Models</strong>: Gemini 3 Pro/Flash Preview, Mistral Large 25.12, Claude Sonnet 4.5 (auto-migrated from Sonnet 4)</li>
+                <li><strong>Share Extension Wake-Up</strong>: Darwin notification integration ensures the main app imports shared files immediately, even when backgrounded</li>
             </ul>
         </div>
-        -->
         
         <div class="toc">
             <h3>📋 Table of Contents</h3>
@@ -286,11 +289,16 @@
                     <ul style="margin-left: 1.5em; margin-top: 0.5em;">
                         <li><a href="#action-button">iPhone Action Button Integration</a></li>
                         <li><a href="#combining-recordings">Combining Recordings</a></li>
+                        <li><a href="#share-extension">Import via Share Extension</a></li>
                     </ul>
                 </li>
                 <li><a href="#ai-engine-configuration">🤖 AI Engine Configuration</a></li>
                 <li><a href="#transcription-configuration">📝 Transcription Configuration</a></li>
-                <li><a href="#working-with-summaries">📊 Working with Summaries</a></li>
+                <li><a href="#working-with-summaries">📊 Working with Summaries</a>
+                    <ul style="margin-left: 1.5em; margin-top: 0.5em;">
+                        <li><a href="#search-and-filtering">Search and Filtering</a></li>
+                    </ul>
+                </li>
                 <li><a href="#audio-playback">🎵 Audio Playback</a></li>
                 <li><a href="#settings-configuration">⚙️ Settings & Configuration</a>
                     <ul style="margin-left: 1.5em; margin-top: 0.5em;">
@@ -554,6 +562,24 @@
             <li>Files are automatically added to your recordings library</li>
         </ol>
 
+        <h3 id="share-extension">Import via Share Extension</h3>
+        <div class="info-box">
+            <p><strong>📎 Share from Other Apps</strong>: You can import audio files directly from Voice Memos, Files, and other apps using the iOS share sheet — no need to export and re-import manually.</p>
+        </div>
+        <ol class="step-list">
+            <li><strong>Open the Source App</strong>: Open Voice Memos, Files, or any app containing the audio file you want to import</li>
+            <li><strong>Tap Share</strong>: Use the standard iOS share button and select "BisonNotes AI" from the share sheet</li>
+            <li><strong>Automatic Import</strong>: The file is saved to a shared container and BisonNotes AI opens automatically to import it</li>
+            <li><strong>Background Import</strong>: If BisonNotes AI is already running in the background, it will detect the new file immediately via a Darwin notification and import it without you needing to switch apps</li>
+        </ol>
+        <div class="info-box">
+            <h4>📋 Supported File Types</h4>
+            <ul>
+                <li><strong>Audio</strong>: M4A, MP3, WAV, CAF, AIFF, AIF</li>
+                <li><strong>Documents</strong>: TXT, MD, PDF, DOC, DOCX</li>
+            </ul>
+        </div>
+
         <h3 id="combining-recordings">Combining Recordings</h3>
         <div class="info-box">
             <p><strong>🔗 When to Combine</strong>: Use this feature to merge two separate recordings into one continuous file. This is especially useful if your recording was interrupted (e.g., microphone disconnected) and you want to create a single combined recording.</p>
@@ -662,10 +688,22 @@
                 </p>
                 <p><strong>Available Models</strong>:
                     <ul>
-                        <li><strong>Gemma 3n E4B</strong> (Default): 3.09 GB download, 32K context</li>
-                        <li><strong>Qwen3 4B</strong>: 2.72 GB download, 32K context</li>
-                        <li><strong>Phi-4 Mini</strong>: 2.49 GB download, 16K context</li>
-                        <li><strong>Ministral 3B</strong>: ~2.15 GB download, 32K context</li>
+                        <li><strong>Recommended Models</strong> (by device RAM):
+                            <ul>
+                                <li><strong>8GB+ RAM</strong>: Granite 4.0 H Tiny (4.3 GB) - Recommended for best quality</li>
+                                <li><strong>6GB+ RAM</strong>: Granite 4.0 Micro (2.1 GB) - Recommended for fast processing</li>
+                                <li><strong>6GB+ RAM</strong>: Gemma 3n E2B (3.0 GB) - Good quality, smaller size</li>
+                                <li><strong>8GB+ RAM</strong>: Gemma 3n E4B (4.5 GB) - Best overall quality</li>
+                                <li><strong>6GB+ RAM</strong>: Ministral 3B (2.1 GB) - Best for tasks and reminders</li>
+                            </ul>
+                        </li>
+                        <li><strong>Experimental Models</strong> (enable in settings):
+                            <ul>
+                                <li><strong>4GB+ RAM</strong>: LFM 2.5 1.2B (731 MB) - Fast, minimal summaries (summary only)</li>
+                                <li><strong>4GB+ RAM</strong>: Qwen3 1.7B (1.1 GB) - Latest Qwen3 model (summary only)</li>
+                                <li><strong>8GB+ RAM</strong>: Qwen3 4B (2.7 GB) - Excellent detail extraction</li>
+                            </ul>
+                        </li>
                     </ul>
                 </p>
                 <p><strong>Best for</strong>: Privacy-conscious users, offline use, recordings under 60 minutes</p>
@@ -697,7 +735,15 @@
                 <strong>Cost</strong>: Free tier available, then pay-per-use<br>
                 <strong>Privacy</strong>: Data sent to Google<br>
                 <strong>Internet</strong>: Required</p>
-                <p><strong>Best for</strong>: Balanced performance and cost</p>
+                <p><strong>Available Models</strong>:
+                    <ul>
+                        <li><strong>Gemini 2.5 Flash</strong> (Default): Fast and efficient for most tasks</li>
+                        <li><strong>Gemini 2.5 Flash Lite</strong>: Lightweight variant for quick processing</li>
+                        <li><strong>Gemini 3 Pro Preview</strong>: Advanced reasoning and analysis (Preview)</li>
+                        <li><strong>Gemini 3 Flash Preview</strong>: Fast next-generation model (Preview)</li>
+                    </ul>
+                </p>
+                <p><strong>Best for</strong>: Balanced performance and cost, with free tier for getting started</p>
             </div>
 
             <div class="engine-card">
@@ -740,19 +786,34 @@
                 <h4>5. Mistral AI</h4>
                 <span class="engine-type type-cloud">Cloud-based</span>
                 <span class="engine-type type-paid">Pay-per-use</span>
-                <p><strong>Type</strong>: Cloud-based AI processing<br>
-                <strong>Cost</strong>: Pay-per-use<br>
+                <p><strong>Type</strong>: Cloud-based AI processing and transcription<br>
+                <strong>Cost</strong>: Pay-per-use (summarization varies by model; transcription $0.003/min)<br>
                 <strong>Privacy</strong>: Data sent to Mistral AI<br>
                 <strong>Internet</strong>: Required</p>
+                <p><strong>Summarization Models</strong>:
+                    <ul>
+                        <li><strong>Mistral Large (25.12)</strong>: Most capable model, 128K context window (Premium tier)</li>
+                        <li><strong>Mistral Medium (25.08)</strong>: Balanced performance and cost, 128K context (Standard tier)</li>
+                        <li><strong>Magistral Medium (25.09)</strong>: Economy option, 40K context window (Economy tier)</li>
+                    </ul>
+                </p>
+                <p><strong>Transcription</strong>:
+                    <ul>
+                        <li><strong>Voxtral Mini Transcribe</strong>: Speech-to-text at $0.003/min with optional speaker diarization</li>
+                        <li>Supports MP3, MP4, M4A, WAV, FLAC, OGG, WebM</li>
+                        <li>Automatic language detection or explicit language code</li>
+                    </ul>
+                </p>
                 <p><strong>Setup</strong>:
                     <ul>
                         <li>Go to Settings → AI Settings → Mistral AI</li>
                         <li>Enter your Mistral API key</li>
-                        <li>Select model (Mistral Medium, Large, etc.)</li>
+                        <li>Select summarization model (Large, Medium, or Magistral)</li>
+                        <li>For transcription: go to Settings → Transcription Settings and select "Mistral AI"</li>
                         <li>Test the connection</li>
                     </ul>
                 </p>
-                <p><strong>Best for</strong>: Fast, high-quality summaries using Mistral's optimized models</p>
+                <p><strong>Best for</strong>: Fast, high-quality summaries and affordable cloud transcription with speaker diarization</p>
             </div>
 
             <div class="engine-card">
@@ -813,25 +874,62 @@
                     <th>Model</th>
                     <th>Type</th>
                     <th>Best For</th>
+                    <th>Tier</th>
                 </tr>
             </thead>
             <tbody>
                 <tr>
                     <td><strong>GPT-4.1</strong></td>
                     <td>Summarization</td>
-                    <td>Most powerful, best quality</td>
+                    <td>Most robust and comprehensive analysis with advanced reasoning capabilities</td>
+                    <td>Premium</td>
                 </tr>
                 <tr>
                     <td><strong>GPT-4.1 Mini</strong></td>
                     <td>Summarization</td>
-                    <td>Fast and economical</td>
+                    <td>Balanced performance and cost, suitable for most summarization tasks (Default)</td>
+                    <td>Standard</td>
                 </tr>
                 <tr>
                     <td><strong>GPT-4.1 Nano</strong></td>
                     <td>Summarization</td>
-                    <td>Fastest and most economical</td>
+                    <td>Fastest and most economical for basic summarization needs</td>
+                    <td>Economy</td>
                 </tr>
-
+                <tr>
+                    <td><strong>GPT-5 Mini</strong></td>
+                    <td>Summarization</td>
+                    <td>Next-generation model with enhanced reasoning and efficiency</td>
+                    <td>Premium</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <h4>OpenAI Transcription Models</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Type</th>
+                    <th>Best For</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>GPT-4o Transcribe</strong></td>
+                    <td>Transcription</td>
+                    <td>Most robust transcription with GPT-4o model. Supports streaming.</td>
+                </tr>
+                <tr>
+                    <td><strong>GPT-4o Mini Transcribe</strong></td>
+                    <td>Transcription</td>
+                    <td>Cheapest and fastest transcription with GPT-4o Mini model. Supports streaming. Recommended for most use cases.</td>
+                </tr>
+                <tr>
+                    <td><strong>Whisper-1</strong></td>
+                    <td>Transcription</td>
+                    <td>Legacy transcription with Whisper V2 model. Does not support streaming.</td>
+                </tr>
             </tbody>
         </table>
 
@@ -844,7 +942,14 @@
                 <ul>
                     <li>Go to Settings → AI Settings → Google AI Studio</li>
                     <li>Enter your API key</li>
-                    <li>Select model (Gemini 2.5 Flash or Flash Lite)</li>
+                    <li>Select model:
+                        <ul>
+                            <li><strong>Gemini 2.5 Flash</strong> (Default): Fast and efficient for most tasks</li>
+                            <li><strong>Gemini 2.5 Flash Lite</strong>: Lightweight variant for quick processing</li>
+                            <li><strong>Gemini 3 Pro Preview</strong>: Advanced reasoning and analysis (Preview)</li>
+                            <li><strong>Gemini 3 Flash Preview</strong>: Fast next-generation model (Preview)</li>
+                        </ul>
+                    </li>
                     <li>Test the connection</li>
                 </ul>
             </li>
@@ -936,16 +1041,42 @@
             <li><strong>Get API Key</strong>: Visit <a href="https://console.mistral.ai" target="_blank">console.mistral.ai</a></li>
             <li><strong>Create Account</strong>: Sign up for a Mistral AI account</li>
             <li><strong>Generate API Key</strong>: Create a new API key in your account settings</li>
-            <li><strong>Configure in App</strong>:
+            <li><strong>Configure Summarization</strong>:
                 <ul>
                     <li>Go to Settings → AI Settings → Mistral AI</li>
                     <li>Enter your API key</li>
-                    <li>Select model (Mistral Medium, Large, etc.)</li>
+                    <li>Select summarization model:
+                        <ul>
+                            <li><strong>Mistral Large (25.12)</strong>: Most capable, 128K context (Premium)</li>
+                            <li><strong>Mistral Medium (25.08)</strong>: Balanced performance, 128K context (Standard)</li>
+                            <li><strong>Magistral Medium (25.09)</strong>: Economy option, 40K context</li>
+                        </ul>
+                    </li>
                     <li>Configure temperature and other parameters</li>
                     <li>Test the connection</li>
                 </ul>
             </li>
+            <li><strong>Configure Transcription (Optional)</strong>:
+                <ul>
+                    <li>Go to Settings → Transcription Settings</li>
+                    <li>Select "Mistral AI" as your transcription engine</li>
+                    <li>Tap "Configure" to open Mistral transcription settings</li>
+                    <li>The same API key is shared between summarization and transcription</li>
+                    <li>Enable speaker diarization if you want speaker labels</li>
+                    <li>Optionally set a language code for better accuracy</li>
+                </ul>
+            </li>
         </ol>
+        <div class="info-box">
+            <h4>💡 Mistral Transcription Tips</h4>
+            <ul>
+                <li><strong>Cost</strong>: Voxtral Mini transcription costs $0.003 per minute of audio</li>
+                <li><strong>Diarization</strong>: When enabled, the transcription identifies and labels different speakers</li>
+                <li><strong>Language</strong>: Leave empty for auto-detection, or specify a code (e.g., "en", "fr", "es") for better accuracy</li>
+                <li><strong>Supported Formats</strong>: MP3, MP4, M4A, WAV, FLAC, OGG, WebM</li>
+                <li><strong>Large Files</strong>: Files over 24MB are automatically chunked for processing</li>
+            </ul>
+        </div>
 
         <h4>Ollama Integration</h4>
         <ol class="step-list">
@@ -993,7 +1124,13 @@ ollama pull mistral-small3.2</code></pre>
                     <li>Go to Settings → AI Settings → AWS Bedrock</li>
                     <li>Enter AWS credentials</li>
                     <li>Select region</li>
-                    <li>Choose foundation model</li>
+                    <li>Choose foundation model:
+                        <ul>
+                            <li><strong>Claude 4.5 Haiku</strong> (Default): Fast and efficient model optimized for quick responses (Standard tier)</li>
+                            <li><strong>Claude Sonnet 4.5</strong>: Latest Claude Sonnet with advanced reasoning, coding, and analysis capabilities (Premium tier)</li>
+                            <li><strong>Llama 4 Maverick 17B Instruct</strong>: Meta's latest Llama 4 model with enhanced reasoning and performance (Economy tier)</li>
+                        </ul>
+                    </li>
                     <li>Test the connection</li>
                 </ul>
             </li>
@@ -1069,10 +1206,22 @@ docker run -d -p 9000:9000 \
                     <li>Select one or more AI summary models to download</li>
                     <li>Available models:
                         <ul>
-                            <li><strong>Gemma 3n E4B</strong> (Default): 3.09 GB, 32K context window</li>
-                            <li><strong>Qwen3 4B</strong>: 2.72 GB, 32K context window</li>
-                            <li><strong>Phi-4 Mini</strong>: 2.49 GB, 16K context window</li>
-                            <li><strong>Ministral 3B</strong>: ~2.15 GB, 32K context window</li>
+                            <li><strong>Recommended Models</strong> (by device RAM):
+                                <ul>
+                                    <li><strong>8GB+ RAM</strong>: Granite 4.0 H Tiny (4.3 GB) - Recommended for best quality</li>
+                                    <li><strong>6GB+ RAM</strong>: Granite 4.0 Micro (2.1 GB) - Recommended for fast processing</li>
+                                    <li><strong>6GB+ RAM</strong>: Gemma 3n E2B (3.0 GB) - Good quality, smaller size</li>
+                                    <li><strong>8GB+ RAM</strong>: Gemma 3n E4B (4.5 GB) - Best overall quality</li>
+                                    <li><strong>6GB+ RAM</strong>: Ministral 3B (2.1 GB) - Best for tasks and reminders</li>
+                                </ul>
+                            </li>
+                            <li><strong>Experimental Models</strong> (enable in settings):
+                                <ul>
+                                    <li><strong>4GB+ RAM</strong>: LFM 2.5 1.2B (731 MB) - Fast, minimal summaries (summary only)</li>
+                                    <li><strong>4GB+ RAM</strong>: Qwen3 1.7B (1.1 GB) - Latest Qwen3 model (summary only)</li>
+                                    <li><strong>8GB+ RAM</strong>: Qwen3 4B (2.7 GB) - Excellent detail extraction</li>
+                                </ul>
+                            </li>
                         </ul>
                     </li>
                     <li>Download progress is shown with speed and time remaining</li>
@@ -1110,7 +1259,21 @@ docker run -d -p 9000:9000 \
         <h3>Available Transcription Engines</h3>
         <ul>
             <li><strong>On Device</strong>: High-quality on-device transcription. Your audio never leaves your device, ensuring complete privacy. Requires model download (~150-520MB). Best for privacy-conscious users.</li>
-            <li><strong>OpenAI</strong>: Cloud-based, requires API key, high-quality transcription</li>
+            <li><strong>OpenAI</strong>: Cloud-based transcription using OpenAI's GPT-4o models and Whisper API. Supports multiple models:
+                <ul>
+                    <li><strong>GPT-4o Transcribe</strong>: Most robust transcription with GPT-4o model. Supports streaming for real-time transcription.</li>
+                    <li><strong>GPT-4o Mini Transcribe</strong>: Cheapest and fastest transcription with GPT-4o Mini model. Supports streaming. Recommended for most use cases.</li>
+                    <li><strong>Whisper-1</strong>: Legacy transcription with Whisper V2 model. Does not support streaming.</li>
+                </ul>
+            </li>
+            <li><strong>Mistral AI</strong>: Cloud-based transcription using Mistral's Voxtral Mini model ($0.003/min). Features:
+                <ul>
+                    <li><strong>Speaker Diarization</strong>: Optional — identifies and labels different speakers in the audio</li>
+                    <li><strong>Language Support</strong>: Automatic detection or explicit language code for better accuracy</li>
+                    <li><strong>Supported Formats</strong>: MP3, MP4, M4A, WAV, FLAC, OGG, WebM</li>
+                    <li><strong>Large Files</strong>: Automatic chunking for files over 24MB</li>
+                </ul>
+            </li>
             <li><strong>Whisper (Local Server)</strong>: High-quality transcription using OpenAI's Whisper model on your local server (REST API or Wyoming protocol)</li>
             <li><strong>AWS Transcribe</strong>: Cloud-based transcription service with support for long audio files</li>
         </ul>
@@ -1262,6 +1425,47 @@ docker run -d -p 9000:9000 \
             <li><strong>Priority Indicators</strong>: Color-coded task priorities</li>
             <li><strong>Location Maps</strong>: Interactive maps showing recording location</li>
         </ul>
+
+        <h3 id="search-and-filtering">Search and Filtering</h3>
+        <p>BisonNotes AI includes powerful search and filtering capabilities to help you find your recordings, transcripts, and summaries quickly.</p>
+        
+        <h4>Search Functionality</h4>
+        <p>Search is available in three main views:</p>
+        <ul>
+            <li><strong>Summaries View</strong>: Search across summary content, tasks, reminders, titles, and recording names</li>
+            <li><strong>Transcripts View</strong>: Search through transcript text and recording names</li>
+            <li><strong>Recordings View</strong>: Search by recording name</li>
+        </ul>
+        <p><strong>How to use:</strong></p>
+        <ol class="step-list">
+            <li>Tap the search bar at the top of any view</li>
+            <li>Type your search terms</li>
+            <li>Results filter in real-time as you type</li>
+            <li>Search is case-insensitive and matches partial text</li>
+        </ol>
+
+        <h4>Date Filters</h4>
+        <p>Date range filtering helps you find content from specific time periods:</p>
+        <ul>
+            <li><strong>Available in</strong>: Summaries, Transcripts, and Recordings views</li>
+            <li><strong>How to use</strong>:
+                <ol class="step-list">
+                    <li>Tap the filter icon (three horizontal lines with circle) in the navigation bar</li>
+                    <li>Select a start date and end date</li>
+                    <li>Tap "Apply" to filter results</li>
+                    <li>The active filter is shown with a banner at the top of the list</li>
+                    <li>Tap the X on the banner to clear the filter</li>
+                </ol>
+            </li>
+        </ul>
+        <div class="info-box">
+            <h4>💡 Filter Behavior</h4>
+            <ul>
+                <li>Filters can be combined with search for precise results</li>
+                <li>Date range includes the full day (00:00:00 to 23:59:59) for both start and end dates</li>
+                <li>Filters persist until manually cleared</li>
+            </ul>
+        </div>
 
         <h3>Editing Recording Metadata</h3>
 
@@ -1416,7 +1620,6 @@ docker run -d -p 9000:9000 \
             <li><strong>Model Configuration</strong>: Adjust settings for selected engine (temperature, max tokens, etc.)</li>
             <li><strong>Connection Testing</strong>: Verify API connectivity</li>
             <li><strong>Batch Regeneration</strong>: Update all summaries with new engine</li>
-            <li><strong>Note</strong>: Apple Intelligence is no longer available as an AI engine option. Use On-Device AI for local processing.</li>
         </ul>
 
         <h3>Background Processing</h3>
@@ -1487,8 +1690,10 @@ docker run -d -p 9000:9000 \
 
         <h3>File Management</h3>
         <ul>
-            <li><strong>Import/Export</strong>: Support for various audio formats</li>
+            <li><strong>Import/Export</strong>: Support for various audio formats (M4A, MP3, WAV, CAF, AIFF, AIF)</li>
+            <li><strong>Share Extension</strong>: Import audio directly from Voice Memos, Files, and other apps via the iOS share sheet (see <a href="#share-extension">Share Extension</a> section)</li>
             <li><strong>Combining Recordings</strong>: Merge two recordings into one continuous file (see <a href="#combining-recordings">Combining Recordings</a> section)</li>
+            <li><strong>PDF Export</strong>: Professional PDF reports with three-pane header (metadata, local map, regional map), page numbers, and dedicated tasks/reminders sections</li>
             <li><strong>File Relationships</strong>: Maintains connections between audio, transcripts, and summaries</li>
             <li><strong>Orphaned File Detection</strong>: Identifies and manages disconnected files</li>
             <li><strong>Selective Deletion</strong>: Choose what to keep when deleting recordings</li>

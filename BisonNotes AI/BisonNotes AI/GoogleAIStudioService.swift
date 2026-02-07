@@ -595,10 +595,12 @@ class GoogleAIStudioService: ObservableObject {
     // MARK: - Model Loading
     
     func loadAvailableModels() async throws -> [String] {
-        // Return only the two specific Gemini models
+        // Return only the specific Gemini models
         return [
             "gemini-2.5-flash",
-            "gemini-2.5-flash-lite"
+            "gemini-2.5-flash-lite",
+            "gemini-3-pro-preview",
+            "gemini-3-flash-preview"
         ]
     }
 } 

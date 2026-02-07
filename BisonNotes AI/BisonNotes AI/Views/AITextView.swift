@@ -1,15 +1,14 @@
 import SwiftUI
-import MarkdownUI
+import Textual
 
 enum AIService {
     case googleAI
-    case openAI  
+    case openAI
     case bedrock
     case ollama
-    case appleIntelligence
     case whisper
     case onDevice
-    
+
     var description: String {
         switch self {
         case .googleAI:
@@ -20,20 +19,18 @@ enum AIService {
             return "bedrock"
         case .ollama:
             return "ollama"
-        case .appleIntelligence:
-            return "apple"
         case .whisper:
             return "whisper"
         case .onDevice:
             return "on-device"
         }
     }
-    
+
     /// Maps AI engine and model strings to the appropriate AIService
     static func from(aiEngine: String, aiModel: String) -> AIService {
         let engineLower = aiEngine.lowercased()
         let modelLower = aiModel.lowercased()
-        
+
         if engineLower.contains("google") || modelLower.contains("gemini") {
             return .googleAI
         } else if engineLower.contains("openai") || modelLower.contains("gpt") {
@@ -42,11 +39,9 @@ enum AIService {
             return .bedrock
         } else if engineLower.contains("ollama") {
             return .ollama
-        } else if engineLower.contains("apple") || modelLower.contains("intelligence") {
-            return .appleIntelligence
         } else if engineLower.contains("whisper") {
             return .whisper
-        } else if engineLower.contains("device") || modelLower.contains("gemma") || modelLower.contains("phi") || modelLower.contains("qwen") || modelLower.contains("llama") || modelLower.contains("mistral") || modelLower.contains("olmo") || modelLower.contains("alpaca") {
+        } else if engineLower.contains("device") || engineLower.contains("apple") || modelLower.contains("intelligence") || modelLower.contains("gemma") || modelLower.contains("phi") || modelLower.contains("qwen") || modelLower.contains("llama") || modelLower.contains("mistral") || modelLower.contains("olmo") || modelLower.contains("alpaca") {
             return .onDevice
         } else {
             // Default to bedrock for unknown services
@@ -65,15 +60,19 @@ struct AITextView: View {
     }
     
     var body: some View {
-        // Use MarkdownUI with our text cleaning pipeline
+        // Use Textual with our text cleaning pipeline and emoji support
         let cleanedText = cleanTextForMarkdown(text)
-        
-        Markdown(cleanedText)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+        StructuredText(
+            markdown: cleanedText,
+            baseURL: nil,
+            syntaxExtensions: []
+        )
+        .textual.textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
     
-    /// Clean text using simplified robust cleaning for MarkdownUI
+    /// Clean text using simplified robust cleaning for Textual markdown rendering
     private func cleanTextForMarkdown(_ text: String) -> String {
         var cleaned = text
 
@@ -94,7 +93,7 @@ struct AITextView: View {
         cleaned = cleaned.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
 
         #if DEBUG
-        print("🔍 MarkdownUI Input Debug:")
+        print("🔍 Textual Input Debug:")
         print("Original length: \(text.count)")
         print("Cleaned length: \(cleaned.count)")
         print("First 200 chars: \(cleaned.prefix(200))")
@@ -108,10 +107,17 @@ struct AITextView: View {
 #Preview {
     ScrollView {
         VStack(spacing: 20) {
-            Text("Enhanced Markdown Renderer Tests")
+            Text("Textual Markdown Renderer Tests")
                 .font(.title2)
                 .fontWeight(.bold)
-            
+
+            Divider()
+
+            Text("Emoji Support Test:")
+                .font(.headline)
+
+            AITextView(text: "### Summary with Emoji\n\n:checkmark: Task completed successfully\n:warning: Important note to review\n:info: Additional information\n:rocket: Quick start guide\n:lightbulb: Helpful tips\n:star: Key highlights", aiService: .googleAI)
+
             Divider()
             
             Text("Complex Headers Test:")

@@ -19,6 +19,7 @@ struct TranscriptionSettingsView: View {
     @State private var showingWhisperSettings = false
     @State private var showingWhisperKitSettings = false
     @State private var showingOpenAISettings = false
+    @State private var showingMistralTranscribeSettings = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -52,6 +53,9 @@ struct TranscriptionSettingsView: View {
             }
             .sheet(isPresented: $showingOpenAISettings) {
                 OpenAISettingsView()
+            }
+            .sheet(isPresented: $showingMistralTranscribeSettings) {
+                MistralTranscribeSettingsView()
             }
             .onChange(of: selectedTranscriptionEngine) { _, newValue in
                 handleEngineSelection(newValue)
@@ -140,6 +144,8 @@ struct TranscriptionSettingsView: View {
                                     showingWhisperSettings = true
                                 case .openAI:
                                     showingOpenAISettings = true
+                                case .mistralAI:
+                                    showingMistralTranscribeSettings = true
                                 case .openAIAPICompatible:
                                     // Coming soon - no settings yet
                                     break
@@ -180,6 +186,8 @@ struct TranscriptionSettingsView: View {
             return .green
         case .openAI:
             return .blue
+        case .mistralAI:
+            return .purple
         case .openAIAPICompatible:
             return .gray
         }
@@ -244,6 +252,8 @@ struct TranscriptionSettingsView: View {
         case .whisper:
             return "Local AI"
         case .openAI:
+            return "Cloud AI"
+        case .mistralAI:
             return "Cloud AI"
         case .openAIAPICompatible:
             return "Coming Soon"

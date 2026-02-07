@@ -167,7 +167,31 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         
         return config
     }
-    
+
+    // Mistral Transcribe Configuration
+    private var mistralTranscribeConfig: MistralTranscribeConfig? {
+        let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+        let modelString = UserDefaults.standard.string(forKey: "mistralTranscribeModel") ?? MistralTranscribeModel.voxtralMiniLatest.rawValue
+        let baseURL = UserDefaults.standard.string(forKey: "mistralBaseURL") ?? "https://api.mistral.ai/v1"
+        let diarize = UserDefaults.standard.bool(forKey: "mistralTranscribeDiarize")
+        let language = UserDefaults.standard.string(forKey: "mistralTranscribeLanguage") ?? ""
+
+        guard !apiKey.isEmpty else {
+            print("⚠️ Mistral API key is not configured for transcription")
+            return nil
+        }
+
+        let model = MistralTranscribeModel(rawValue: modelString) ?? .voxtralMiniLatest
+
+        return MistralTranscribeConfig(
+            apiKey: apiKey,
+            model: model,
+            baseURL: baseURL,
+            diarize: diarize,
+            language: language.isEmpty ? nil : language
+        )
+    }
+
     // MARK: - Whisper Validation
     
     func isWhisperProperlyConfigured() -> Bool {
@@ -250,7 +274,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         
         if let recognizer = speechRecognizer {
             print("✅ Speech recognizer created with locale: \(recognizer.locale.identifier)")
-            // Note: Speech authorization will be requested when user actually tries to use Apple Intelligence transcription
+            // Note: Speech authorization will be requested when user actually tries to use native speech recognition transcription
         } else {
             print("❌ Failed to create speech recognizer with any locale")
             print("🔧 This may be due to simulator limitations or device restrictions")
@@ -459,9 +483,9 @@ return try await transcribeWithAWS(url: url, config: config)
             
             // Validate Whisper configuration and availability
             if !isWhisperProperlyConfigured() {
-                print("⚠️ Whisper not properly configured, falling back to Apple Intelligence")
-                switchToAppleTranscription()
-                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+                print("⚠️ Whisper not properly configured, falling back to native speech recognition")
+                switchToNativeSpeechTranscription()
+                return try await transcribeWithNativeSpeech(url: url, duration: duration)
             }
             
             let isWhisperAvailable = await validateWhisperService()
@@ -469,16 +493,16 @@ if isWhisperAvailable {
                 if let config = whisperConfig {
                     return try await transcribeWithWhisper(url: url, config: config)
                 } else {
-                    switchToAppleTranscription()
-                    return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+                    switchToNativeSpeechTranscription()
+                    return try await transcribeWithNativeSpeech(url: url, duration: duration)
                 }
             } else {
-                switchToAppleTranscription()
-                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+                switchToNativeSpeechTranscription()
+                return try await transcribeWithNativeSpeech(url: url, duration: duration)
             }
             
         case .openAI:
-            switchToAppleTranscription() // OpenAI doesn't need background checking
+            switchToNativeSpeechTranscription() // OpenAI doesn't need background checking
             
             // Validate OpenAI configuration
 if let config = openAIConfig {
@@ -489,24 +513,38 @@ if let config = openAIConfig {
                     throw TranscriptionError.speechRecognizerUnavailable
                 }
                 
-                return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+                return try await transcribeWithNativeSpeech(url: url, duration: duration)
             }
             
+        case .mistralAI:
+            switchToNativeSpeechTranscription() // Mistral doesn't need background checking
+
+            // Validate Mistral configuration
+            if let config = mistralTranscribeConfig {
+                return try await transcribeWithMistral(url: url, config: config)
+            } else {
+                // Ensure speech recognizer is available for fallback
+                guard let recognizer = speechRecognizer, recognizer.isAvailable else {
+                    throw TranscriptionError.speechRecognizerUnavailable
+                }
+                return try await transcribeWithNativeSpeech(url: url, duration: duration)
+            }
+
         case .openAIAPICompatible:
-// These are not implemented yet, fall back to Apple Intelligence
-            switchToAppleTranscription()
-            return try await transcribeWithAppleIntelligence(url: url, duration: duration)
+// These are not implemented yet, fall back to native speech recognition
+            switchToNativeSpeechTranscription()
+            return try await transcribeWithNativeSpeech(url: url, duration: duration)
         }
     }
     
-    private func transcribeWithAppleIntelligence(url: URL, duration: TimeInterval) async throws -> TranscriptionResult {
+    private func transcribeWithNativeSpeech(url: URL, duration: TimeInterval) async throws -> TranscriptionResult {
         // Ensure transcription state is properly initialized
         await MainActor.run {
             isTranscribing = true
-            currentStatus = "Initializing Apple Intelligence transcription..."
+            currentStatus = "Initializing native speech recognition transcription..."
         }
         
-        print("🎤 Starting Apple Intelligence transcription for file: \(url.lastPathComponent)")
+        print("🎤 Starting native speech recognition transcription for file: \(url.lastPathComponent)")
         print("⏱️ Duration: \(duration) seconds")
 
         // Request speech recognition authorization if needed
@@ -552,7 +590,7 @@ if let config = openAIConfig {
             throw TranscriptionError.speechRecognizerUnavailable
         }
         
-        // Use the existing logic for Apple Intelligence transcription
+        // Use the existing logic for native speech recognition transcription
         if !enableEnhancedTranscription || duration <= maxChunkDuration {
             print("📝 Using single chunk transcription (duration: \(duration)s <= \(maxChunkDuration)s)")
             return try await transcribeSingleChunk(url: url)
@@ -1613,6 +1651,93 @@ return transcriptionResult
         }
     }
 
+    // MARK: - Mistral Transcription
+
+    private func transcribeWithMistral(url: URL, config: MistralTranscribeConfig) async throws -> TranscriptionResult {
+        let mistralService = MistralTranscribeService(config: config, chunkingService: chunkingService)
+
+        do {
+            // Test connection first
+            try await mistralService.testConnection()
+
+            // Use chunking for large files
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let fileSize = fileAttributes[.size] as? Int64 ?? 0
+            let maxSize: Int64 = 24 * 1024 * 1024 // 24MB conservative limit
+
+            if fileSize > maxSize {
+                return try await transcribeWithChunkedMistral(url: url)
+            }
+
+            let mistralResult = try await mistralService.transcribeAudioFile(at: url)
+
+            // Convert Mistral result to our TranscriptionResult format
+            return TranscriptionResult(
+                fullText: mistralResult.transcriptText,
+                segments: mistralResult.segments,
+                processingTime: mistralResult.processingTime,
+                chunkCount: 1,
+                success: mistralResult.success,
+                error: mistralResult.error
+            )
+        } catch {
+            print("❌ Mistral transcription failed: \(error)")
+            throw TranscriptionError.mistralTranscriptionFailed(error)
+        }
+    }
+
+    private func transcribeWithChunkedMistral(url: URL) async throws -> TranscriptionResult {
+        guard let mistralConfig = mistralTranscribeConfig else {
+            throw TranscriptionError.mistralTranscriptionFailed(TranscriptionError.engineNotConfigured)
+        }
+
+        do {
+            let mistralService = MistralTranscribeService(config: mistralConfig, chunkingService: chunkingService)
+
+            // Use the chunking service
+            let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .mistralAI)
+            let chunks = chunkingResult.chunks
+
+            var allTranscripts: [String] = []
+            var allSegments: [TranscriptSegment] = []
+            var totalProcessingTime: TimeInterval = 0
+
+            for chunk in chunks {
+                let startTime = Date()
+                let mistralResult = try await mistralService.transcribeAudioFile(at: chunk.chunkURL)
+                let processingTime = Date().timeIntervalSince(startTime)
+                totalProcessingTime += processingTime
+
+                allTranscripts.append(mistralResult.transcriptText)
+
+                // Adjust segment timestamps to account for chunk start time
+                let adjustedSegments = mistralResult.segments.map { segment in
+                    TranscriptSegment(
+                        speaker: segment.speaker,
+                        text: segment.text,
+                        startTime: segment.startTime + chunk.startTime,
+                        endTime: segment.endTime + chunk.startTime
+                    )
+                }
+                allSegments.append(contentsOf: adjustedSegments)
+            }
+
+            let fullTranscript = allTranscripts.joined(separator: " ")
+
+            return TranscriptionResult(
+                fullText: fullTranscript,
+                segments: allSegments,
+                processingTime: totalProcessingTime,
+                chunkCount: chunks.count,
+                success: true,
+                error: nil
+            )
+        } catch {
+            print("❌ Chunked Mistral transcription failed: \(error)")
+            throw TranscriptionError.mistralTranscriptionFailed(error)
+        }
+    }
+
     // MARK: - Job Tracking Helpers
     
 /// Update pending jobs when recording files are renamed
@@ -1706,7 +1831,7 @@ private func stopBackgroundChecking() {
     
     // MARK: - Engine Management
     
-func switchToAppleTranscription() {
+func switchToNativeSpeechTranscription() {
         stopBackgroundChecking()
         
         // Clear any pending AWS jobs since we're not using AWS anymore
@@ -1773,15 +1898,15 @@ func switchToWhisperTranscription() {
         switch engine {
         case .notConfigured:
             // For unconfigured state, default to Apple Transcription which is always available
-            switchToAppleTranscription()
+            switchToNativeSpeechTranscription()
         case .whisperKit:
             switchToWhisperKitTranscription()
         case .awsTranscribe:
             switchToAWSTranscription()
         case .whisper:
             switchToWhisperTranscription()
-        case .openAI, .openAIAPICompatible:
-            switchToAppleTranscription()
+        case .openAI, .openAIAPICompatible, .mistralAI:
+            switchToNativeSpeechTranscription()
         }
     }
     
@@ -1927,6 +2052,7 @@ enum TranscriptionError: LocalizedError {
     case whisperKitNotReady
     case whisperKitTranscriptionFailed(Error)
     case engineNotConfigured
+    case mistralTranscriptionFailed(Error)
 
     var errorDescription: String? {
         switch self {
@@ -1935,7 +2061,7 @@ enum TranscriptionError: LocalizedError {
         case .speechRecognizerUnavailable:
             return "Speech recognition is not available. This may be due to simulator limitations, missing permissions, or device restrictions. Try running on a physical device or check Settings > Privacy & Security > Speech Recognition."
         case .speechRecognitionNotAuthorized:
-            return "Speech recognition permission denied. Please enable Speech Recognition in Settings > Privacy & Security > Speech Recognition to use Apple Intelligence transcription."
+            return "Speech recognition permission denied. Please enable Speech Recognition in Settings > Privacy & Security > Speech Recognition to use native speech recognition transcription."
         case .recognitionFailed(let error):
             return "Recognition failed: \(error.localizedDescription)"
         case .noSpeechDetected:
@@ -1964,6 +2090,8 @@ enum TranscriptionError: LocalizedError {
             return "File too large for processing (\(Int(duration/60)) minutes, max \(Int(maxDuration/60)) minutes)"
         case .engineNotConfigured:
             return "Transcription engine not configured. Please configure a transcription engine in Settings."
+        case .mistralTranscriptionFailed(let error):
+            return "Mistral transcription failed: \(error.localizedDescription)"
         }
     }
 }

@@ -124,3 +124,22 @@ struct MistralAIConfig: Equatable {
         return baseURL.contains("api.mistral.ai")
     }
 }
+
+// MARK: - Mistral Chat Completion Request
+
+/// Mistral-specific chat completion request that uses `max_tokens` instead of OpenAI's `max_completion_tokens`
+struct MistralChatCompletionRequest: Codable {
+    let model: String
+    let messages: [ChatMessage]
+    let temperature: Double?
+    let maxTokens: Int?
+    let responseFormat: ResponseFormat?
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case messages
+        case temperature
+        case maxTokens = "max_tokens"
+        case responseFormat = "response_format"
+    }
+}

@@ -22,6 +22,11 @@ struct SummariesView: View {
     @State private var refreshTrigger = false
     @State private var showingFirstTimeiCloudPrompt = false
     @State private var showingiCloudDataFoundPrompt = false
+    @State private var searchText = ""
+    @State private var showDateFilter = false
+    @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
+    @State private var dateFilterEnd: Date = Date()
+    @State private var isDateFilterActive = false
 
     @AppStorage("hasSeeniCloudPrompt") private var hasSeeniCloudPrompt = false
 
@@ -32,6 +37,14 @@ struct SummariesView: View {
         NavigationView {
             mainContentView
                 .navigationTitle("Summaries")
+                .searchable(text: $searchText, prompt: "Search summaries, tasks, reminders...")
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: { showDateFilter = true }) {
+                            Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                        }
+                    }
+                }
                 .onAppear {
                     // First refresh file relationships
                     enhancedFileManager.refreshAllRelationships()
@@ -177,18 +190,49 @@ struct SummariesView: View {
         } message: {
             Text("We detected summaries in your iCloud account, but iCloud sync is currently disabled. Would you like to enable iCloud sync to download your cloud summaries? This will allow you to access all your data across devices.")
         }
+        .sheet(isPresented: $showDateFilter) {
+            dateFilterSheet
+        }
     } // End of body variable
 
     // MARK: - Main Content View
     
     private var mainContentView: some View {
-        Group {
+        let filtered = filteredRecordings
+        return Group {
             if recordings.isEmpty {
                 emptyStateView
+            } else if filtered.isEmpty {
+                noResultsView
             } else {
-                recordingsListView
+                VStack(spacing: 0) {
+                    if isDateFilterActive {
+                        activeDateFilterBanner
+                    }
+                    recordingsListView(filtered)
+                }
             }
         }
+    }
+
+    private var activeDateFilterBanner: some View {
+        HStack {
+            Image(systemName: "calendar")
+                .foregroundColor(.blue)
+            Text("\(dateFilterStart, format: .dateTime.month().day()) - \(dateFilterEnd, format: .dateTime.month().day())")
+                .font(.subheadline)
+            Spacer()
+            Button(action: {
+                isDateFilterActive = false
+                refreshTrigger.toggle()
+            }) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color(.systemGray6))
     }
     
     
@@ -211,19 +255,133 @@ struct SummariesView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    
+
+    // MARK: - No Results View
+
+    private var noResultsView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: isDateFilterActive ? "calendar.badge.exclamationmark" : "magnifyingglass")
+                .font(.system(size: 48))
+                .foregroundColor(.secondary)
+
+            Text("No Results")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Text(noResultsMessage)
+                .multilineTextAlignment(.center)
+                .foregroundColor(.secondary)
+                .padding(.horizontal)
+
+            if isDateFilterActive || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button("Clear Filters") {
+                    searchText = ""
+                    isDateFilterActive = false
+                    refreshTrigger.toggle()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var noResultsMessage: String {
+        let hasSearch = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        if hasSearch && isDateFilterActive {
+            return "No summaries match \"\(searchText)\" in the selected date range."
+        } else if hasSearch {
+            return "No summaries match \"\(searchText)\"."
+        } else if isDateFilterActive {
+            return "No summaries found between \(dateFilterStart.formatted(date: .abbreviated, time: .omitted)) and \(dateFilterEnd.formatted(date: .abbreviated, time: .omitted))."
+        } else {
+            return "No summaries found."
+        }
+    }
+
+    // MARK: - Date Filter Sheet
+
+    private var dateFilterSheet: some View {
+        NavigationView {
+            Form {
+                Section {
+                    DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
+                    DatePicker("To", selection: $dateFilterEnd, in: dateFilterStart...Date(), displayedComponents: .date)
+                }
+
+                if isDateFilterActive {
+                    Section {
+                        Button(role: .destructive) {
+                            isDateFilterActive = false
+                            showDateFilter = false
+                            refreshTrigger.toggle()
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Text("Clear Filter")
+                                Spacer()
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Filter by Date")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        showDateFilter = false
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") {
+                        isDateFilterActive = true
+                        showDateFilter = false
+                        refreshTrigger.toggle()
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Recordings List View
-    
-    private var recordingsListView: some View {
-        List {
-            ForEach(recordings, id: \.recording.objectID) { recordingData in
-                recordingRowView(recordingData)
+
+    private func recordingsListView(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]) -> some View {
+        // Filter out recordings with nil dates and create wrapper struct with non-optional dates
+        struct RecordingWithDate {
+            let recording: RecordingEntry
+            let transcript: TranscriptData?
+            let summary: EnhancedSummaryData?
+            let date: Date
+        }
+
+        let recordingsWithDates: [RecordingWithDate] = filtered.compactMap { item in
+            guard let date = item.recording.recordingDate else { return nil }
+            return RecordingWithDate(
+                recording: item.recording,
+                transcript: item.transcript,
+                summary: item.summary,
+                date: date
+            )
+        }
+
+        // Group by date section
+        let sectioned = DateSectionHelper.groupBySection(recordingsWithDates, dateKeyPath: \.date)
+
+        return List {
+            ForEach(sectioned, id: \.section) { sectionData in
+                Section(header: Text(sectionData.section.title)) {
+                    ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
+                        recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
+                    }
+                }
             }
         }
         .listStyle(PlainListStyle())
         .refreshable {
             loadRecordings()
         }
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
     }
     
     // MARK: - Recording Row View
@@ -409,11 +567,11 @@ struct SummariesView: View {
                     print("🔧 Generating summary for recording: \(recording.recordingName ?? "Unknown")")
                     
                     // Get the selected AI engine
-                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Apple Intelligence"
+                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
                     print("🤖 Using AI engine: \(selectedEngine)")
 
                     // Prepare for background tracking
-                    let transcriptText = transcript.plainText
+                    let transcriptText = transcript.textForSummarization
                     let recordingURL = URL(string: recording.recordingURL ?? "") ?? URL(fileURLWithPath: "")
                     let recordingName = recording.recordingName ?? "Unknown Recording"
                     let recordingDate = recording.recordingDate ?? Date()
@@ -481,7 +639,7 @@ struct SummariesView: View {
                     print("❌ No transcript found for recording: \(recording.recordingName ?? "Unknown")")
                     
                     // Create a job for tracking even when there's no transcript
-                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Apple Intelligence"
+                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
                     let recordingURL = URL(string: recording.recordingURL ?? "") ?? URL(fileURLWithPath: "")
                     let recordingName = recording.recordingName ?? "Unknown Recording"
                     
@@ -519,6 +677,67 @@ struct SummariesView: View {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    // MARK: - Search and Date Filtering
+
+    private var filteredRecordings: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
+        var result = recordings
+
+        // Apply date filter if active
+        if isDateFilterActive {
+            let startOfDay = Calendar.current.startOfDay(for: dateFilterStart)
+            let endOfDay = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: dateFilterEnd) ?? dateFilterEnd
+
+            result = result.filter { recordingData in
+                guard let date = recordingData.recording.recordingDate else { return false }
+                return date >= startOfDay && date <= endOfDay
+            }
+        }
+
+        // Apply search filter if not empty
+        let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedSearch.isEmpty {
+            let searchTerms = trimmedSearch.lowercased()
+            result = result.filter { recordingData in
+                matchesSearch(recordingData, searchTerms: searchTerms)
+            }
+        }
+
+        return result
+    }
+
+    private func matchesSearch(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?), searchTerms: String) -> Bool {
+        // Check recording name
+        if let name = recordingData.recording.recordingName?.lowercased(),
+           name.contains(searchTerms) {
+            return true
+        }
+
+        // Check summary content
+        if let summary = recordingData.summary {
+            // Check main summary text
+            if summary.summary.lowercased().contains(searchTerms) {
+                return true
+            }
+
+            // Check tasks
+            if summary.tasks.contains(where: { $0.text.lowercased().contains(searchTerms) }) {
+                return true
+            }
+
+            // Check reminders
+            if summary.reminders.contains(where: { $0.text.lowercased().contains(searchTerms) }) {
+                return true
+            }
+
+            // Check titles
+            if summary.titles.contains(where: { $0.text.lowercased().contains(searchTerms) }) {
+                return true
+            }
+        }
+
+        return false
     }
     
     private func checkForFirstTimeiCloudPrompt() {

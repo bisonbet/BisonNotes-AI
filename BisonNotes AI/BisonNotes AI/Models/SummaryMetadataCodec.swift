@@ -14,7 +14,7 @@ struct AIEngineTypeConstants {
     static let openAICompatible = "OpenAI API Compatible"
     static let mistralAI = "Mistral AI"
     static let ollama = "Ollama"
-    static let appleIntelligence = "Apple Intelligence"
+    static let appleIntelligence = "Apple Intelligence" // Kept for legacy metadata parsing
     static let onDeviceAI = "On-Device AI"
     static let aiAssistant = "AI Assistant"
 }

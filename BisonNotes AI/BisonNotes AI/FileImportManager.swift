@@ -22,7 +22,7 @@ class FileImportManager: NSObject, ObservableObject {
     @Published var importResults: ImportResults?
     @Published var showingImportAlert = false
     
-    private let supportedExtensions = ["m4a", "mp3", "wav"]
+    private let supportedExtensions = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
     
@@ -178,6 +178,9 @@ class FileImportManager: NSObject, ObservableObject {
         importResults = results
         isImporting = false
         showingImportAlert = true
+        if results.successful > 0 {
+            NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+        }
     }
     
     // MARK: - Progress Tracking
@@ -300,7 +303,7 @@ enum ImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat(let format):
-            return "Unsupported audio format: \(format). Supported formats: m4a, mp3, wav"
+            return "Unsupported audio format: \(format). Supported formats: m4a, mp3, wav, caf, aiff"
         case .fileAlreadyExists(let filename):
             return "File already exists: \(filename)"
         case .invalidAudioFile(let reason):

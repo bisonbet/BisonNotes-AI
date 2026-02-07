@@ -10,8 +10,8 @@ import SafariServices
 
 struct RecordingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
-    @StateObject private var importManager = FileImportManager()
-    @StateObject private var transcriptImportManager = TranscriptImportManager()
+    @EnvironmentObject var importManager: FileImportManager
+    @EnvironmentObject var transcriptImportManager: TranscriptImportManager
     @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
     @StateObject private var textDocumentPickerCoordinator = DocumentPickerCoordinator()
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
@@ -178,18 +178,18 @@ struct RecordingsView: View {
                         }
                         
                         if recorderVM.isRecording {
-                            VStack(spacing: 8) {
-                                HStack {
-                                    Circle()
-                                        .fill(Color.red)
-                                        .frame(width: 12, height: 12)
-                                        .scaleEffect(recorderVM.isRecording ? 1.2 : 1.0)
-                                        .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: recorderVM.isRecording)
-                                    Text("Recording...")
+                            VStack(spacing: 12) {
+                                // Phase 5: State-aware status indicator
+                                HStack(spacing: 8) {
+                                    statusIndicator(for: recorderVM.recordingState)
+                                    Text(statusText(for: recorderVM.recordingState))
                                         .foregroundColor(.secondary)
                                         .font(.subheadline)
                                 }
-                                
+
+                                // Phase 5: Warning banners
+                                warningBannersView()
+
                                 // Background recording indicator
                                 if recorderVM.isRecording {
                                     HStack {
@@ -226,6 +226,13 @@ struct RecordingsView: View {
             .sheet(isPresented: $showingHelpDocumentation) {
                 if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
                     SafariView(url: url)
+                }
+            }
+            .alert("Audio Import Results", isPresented: $importManager.showingImportAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                if let results = importManager.importResults {
+                    Text(results.summary)
                 }
             }
             .alert("Transcript Import Results", isPresented: $transcriptImportManager.showingImportAlert) {
@@ -276,6 +283,117 @@ struct RecordingsView: View {
             .padding(.horizontal, 40)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+
+    // MARK: - Phase 5: UI Helper Methods
+
+    @State private var animationActive = true
+
+    @ViewBuilder
+    private func statusIndicator(for state: AudioRecorderViewModel.RecordingState) -> some View {
+        Group {
+            switch state {
+            case .recording:
+                // Animated pulsing red dot
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 12, height: 12)
+                    .scaleEffect(animationActive ? 1.2 : 1.0)
+                    .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: animationActive)
+
+            case .waitingForMicrophone:
+                // Orange warning dot
+                Circle()
+                    .fill(Color.orange)
+                    .frame(width: 12, height: 12)
+
+            case .interrupted:
+                // Yellow paused dot
+                Circle()
+                    .fill(Color.yellow)
+                    .frame(width: 12, height: 12)
+
+            case .waitingForUserDecision:
+                // Blue waiting dot
+                Circle()
+                    .fill(Color.blue)
+                    .frame(width: 12, height: 12)
+
+            default:
+                // Gray inactive dot
+                Circle()
+                    .fill(Color.gray)
+                    .frame(width: 12, height: 12)
+            }
+        }
+        .onAppear {
+            animationActive = true
+        }
+    }
+
+    private func statusText(for state: AudioRecorderViewModel.RecordingState) -> String {
+        switch state {
+        case .recording:
+            return "Recording..."
+
+        case .waitingForMicrophone(let disconnectedAt):
+            let elapsed = Date().timeIntervalSince(disconnectedAt)
+            return "Waiting for microphone (\(Int(elapsed))s)"
+
+        case .interrupted(.phoneCall, _):
+            return "Paused for phone call"
+
+        case .interrupted(.microphoneDisconnected, _):
+            return "Microphone disconnected"
+
+        case .interrupted(.systemInterruption, _):
+            return "Paused by system"
+
+        case .interrupted(.backgroundTimeExpiring, _):
+            return "Background time expiring"
+
+        case .waitingForUserDecision(let duration):
+            return "Call ended (\(Int(duration/60))m \(Int(duration.truncatingRemainder(dividingBy: 60)))s) - Choose action"
+
+        case .merging:
+            return "Merging segments..."
+
+        case .error(let message):
+            return "Error: \(message)"
+
+        default:
+            return "Recording..."
+        }
+    }
+
+    @ViewBuilder
+    private func warningBannersView() -> some View {
+        VStack(spacing: 8) {
+            // Duration warning
+            if recorderVM.recordingTime >= 13500 { // DURATION_WARNING_THRESHOLD
+                let remainingMinutes = Int((14400 - recorderVM.recordingTime) / 60) // MAX - current
+                warningBanner(
+                    icon: "clock.fill",
+                    message: "\(remainingMinutes) min until 4-hour limit",
+                    color: .orange
+                )
+            }
+        }
+    }
+
+    private func warningBanner(icon: String, message: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundColor(color)
+                .font(.caption)
+            Text(message)
+                .font(.caption)
+                .foregroundColor(color)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(color.opacity(0.15))
+        .cornerRadius(8)
     }
 }
 

@@ -53,8 +53,9 @@ class OpenAISummarizationService: ObservableObject {
         let request = OpenAIChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
-            temperature: config.temperature,
-            maxCompletionTokens: config.maxTokens
+            temperature: effectiveTemperature(config.temperature),
+            maxCompletionTokens: config.maxTokens,
+            reasoningEffort: reasoningEffort()
         )
 
         let response = try await makeAPICall(request: request)
@@ -79,8 +80,9 @@ class OpenAISummarizationService: ObservableObject {
         let request = OpenAIChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
-            temperature: 0.1,
-            maxCompletionTokens: 1024
+            temperature: effectiveTemperature(0.1),
+            maxCompletionTokens: 1024,
+            reasoningEffort: reasoningEffort()
         )
 
         let response = try await makeAPICall(request: request)
@@ -105,8 +107,9 @@ class OpenAISummarizationService: ObservableObject {
         let request = OpenAIChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
-            temperature: 0.1,
-            maxCompletionTokens: 1024
+            temperature: effectiveTemperature(0.1),
+            maxCompletionTokens: 1024,
+            reasoningEffort: reasoningEffort()
         )
 
         let response = try await makeAPICall(request: request)
@@ -156,9 +159,10 @@ class OpenAISummarizationService: ObservableObject {
         let request = OpenAIChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
-            temperature: config.temperature,
+            temperature: effectiveTemperature(config.temperature),
             maxCompletionTokens: config.maxTokens,
-            responseFormat: cachedShouldUseResponseFormat ? ResponseFormat.json : nil
+            responseFormat: cachedShouldUseResponseFormat ? ResponseFormat.json : nil,
+            reasoningEffort: reasoningEffort()
         )
 
         #if DEBUG
@@ -310,6 +314,29 @@ class OpenAISummarizationService: ObservableObject {
 
         // Must be exactly "api.openai.com" or a subdomain of "openai.com"
         return host == "api.openai.com" || host == "openai.com" || host.hasSuffix(".openai.com")
+    }
+
+    /// Check if the current model is a GPT-5 variant (reasoning model)
+    /// GPT-5 models (gpt-5, gpt-5-mini, gpt-5-nano) don't support temperature or other
+    /// sampling parameters. They use reasoning.effort and verbosity instead.
+    private func isReasoningModel() -> Bool {
+        let modelId = config.effectiveModelId.lowercased()
+        // GPT-5 family and o-series are reasoning models
+        return modelId.hasPrefix("gpt-5") || modelId.hasPrefix("gpt5") ||
+               modelId.hasPrefix("o1") || modelId.hasPrefix("o3") || modelId.hasPrefix("o4")
+    }
+
+    /// Returns temperature value appropriate for the current model
+    /// Reasoning models (GPT-5, o1, o3, o4) don't support custom temperature, returns nil for those
+    private func effectiveTemperature(_ temperature: Double) -> Double? {
+        return isReasoningModel() ? nil : temperature
+    }
+
+    /// Returns reasoning effort for reasoning models, nil for others
+    /// GPT-5 models use reasoning_effort instead of temperature
+    /// Values: "low" (faster, fewer tokens), "medium" (balanced), "high" (more thorough)
+    private func reasoningEffort() -> String? {
+        return isReasoningModel() ? "low" : nil
     }
 
     private func makeAPICall(request: OpenAIChatCompletionRequest) async throws -> OpenAIChatCompletionResponse {

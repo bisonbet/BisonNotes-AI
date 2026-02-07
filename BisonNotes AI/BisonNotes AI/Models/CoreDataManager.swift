@@ -527,8 +527,12 @@ class CoreDataManager: ObservableObject {
             segments = (try? JSONDecoder().decode([TranscriptSegment].self, from: segmentsData)) ?? []
         }
         
-        // Speaker mappings no longer used (diarization disabled)
-        let speakerMappings: [String: String] = [:]
+        // Decode speaker mappings from JSON
+        var speakerMappings: [String: String] = [:]
+        if let mappingsString = transcriptEntry.speakerMappings,
+           let mappingsData = mappingsString.data(using: .utf8) {
+            speakerMappings = (try? JSONDecoder().decode([String: String].self, from: mappingsData)) ?? [:]
+        }
         
         // Convert engine string to enum
         let engine = transcriptEntry.engine.flatMap { TranscriptionEngine(rawValue: $0) }

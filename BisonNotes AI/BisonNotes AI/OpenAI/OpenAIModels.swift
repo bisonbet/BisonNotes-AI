@@ -13,7 +13,8 @@ enum OpenAISummarizationModel: String, CaseIterable {
     case gpt41 = "gpt-4.1"
     case gpt41Mini = "gpt-4.1-mini"
     case gpt41Nano = "gpt-4.1-nano"
-    
+    case gpt5Mini = "gpt-5-mini"
+
     var displayName: String {
         switch self {
         case .gpt41:
@@ -22,9 +23,11 @@ enum OpenAISummarizationModel: String, CaseIterable {
             return "GPT-4.1 Mini"
         case .gpt41Nano:
             return "GPT-4.1 Nano"
+        case .gpt5Mini:
+            return "GPT-5 Mini"
         }
     }
-    
+
     var description: String {
         switch self {
         case .gpt41:
@@ -33,9 +36,11 @@ enum OpenAISummarizationModel: String, CaseIterable {
             return "Balanced performance and cost, suitable for most summarization tasks"
         case .gpt41Nano:
             return "Fastest and most economical for basic summarization needs"
+        case .gpt5Mini:
+            return "Next-generation model with enhanced reasoning and efficiency"
         }
     }
-    
+
     var maxTokens: Int {
         switch self {
         case .gpt41:
@@ -44,9 +49,11 @@ enum OpenAISummarizationModel: String, CaseIterable {
             return 2048
         case .gpt41Nano:
             return 1024
+        case .gpt5Mini:
+            return 8192
         }
     }
-    
+
     var costTier: String {
         switch self {
         case .gpt41:
@@ -55,6 +62,8 @@ enum OpenAISummarizationModel: String, CaseIterable {
             return "Standard"
         case .gpt41Nano:
             return "Economy"
+        case .gpt5Mini:
+            return "Premium"
         }
     }
 }
@@ -101,19 +110,21 @@ struct OpenAIChatCompletionRequest: Codable {
     let frequencyPenalty: Double?
     let presencePenalty: Double?
     let responseFormat: ResponseFormat?
-    
+    let reasoningEffort: String?  // For GPT-5 and o-series reasoning models: "low", "medium", "high"
+
     enum CodingKeys: String, CodingKey {
         case model
         case messages
         case temperature
-        case maxCompletionTokens = "max_tokens"
+        case maxCompletionTokens = "max_completion_tokens"
         case topP = "top_p"
         case frequencyPenalty = "frequency_penalty"
         case presencePenalty = "presence_penalty"
         case responseFormat = "response_format"
+        case reasoningEffort = "reasoning_effort"
     }
-    
-    init(model: String, messages: [ChatMessage], temperature: Double? = nil, maxCompletionTokens: Int? = nil, topP: Double? = nil, frequencyPenalty: Double? = nil, presencePenalty: Double? = nil, responseFormat: ResponseFormat? = nil) {
+
+    init(model: String, messages: [ChatMessage], temperature: Double? = nil, maxCompletionTokens: Int? = nil, topP: Double? = nil, frequencyPenalty: Double? = nil, presencePenalty: Double? = nil, responseFormat: ResponseFormat? = nil, reasoningEffort: String? = nil) {
         self.model = model
         self.messages = messages
         self.temperature = temperature
@@ -122,6 +133,7 @@ struct OpenAIChatCompletionRequest: Codable {
         self.frequencyPenalty = frequencyPenalty
         self.presencePenalty = presencePenalty
         self.responseFormat = responseFormat
+        self.reasoningEffort = reasoningEffort
     }
 }
 

@@ -65,7 +65,7 @@ struct SimpleSettingsView: View {
                     if selectedOption == .openai {
                         apiKeySection
                     } else if selectedOption == .onDeviceLLM {
-                        appleIntelligenceInfoSection
+                        onDeviceAIInfoSection
                     } else if selectedOption == .chooseLater {
                         chooseLaterSection
                     }
@@ -278,7 +278,7 @@ struct SimpleSettingsView: View {
         )
     }
     
-    private var appleIntelligenceInfoSection: some View {
+    private var onDeviceAIInfoSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("On-Device AI Setup")

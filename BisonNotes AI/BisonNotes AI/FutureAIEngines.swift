@@ -1731,8 +1731,6 @@ class NoOpEngine: SummarizationEngine {
 class AIEngineFactory {
     static func createEngine(type: AIEngineType) -> SummarizationEngine {
         switch type {
-        case .enhancedAppleIntelligence:
-            return EnhancedAppleIntelligenceEngine()
         case .openAI:
             return OpenAISummarizationEngine()
         case .mistralAI:
@@ -1763,7 +1761,6 @@ class AIEngineFactory {
 }
 
 enum AIEngineType: String, CaseIterable {
-    case enhancedAppleIntelligence = "Apple Intelligence"
     case openAI = "OpenAI"
     case mistralAI = "Mistral AI"
     case awsBedrock = "AWS Bedrock"
@@ -1785,8 +1782,6 @@ enum AIEngineType: String, CaseIterable {
 
     var description: String {
         switch self {
-        case .enhancedAppleIntelligence:
-            return "Advanced natural language processing using Apple's frameworks"
         case .openAI:
             return "Advanced AI-powered summaries using OpenAI's GPT models"
         case .mistralAI:
@@ -1806,15 +1801,13 @@ enum AIEngineType: String, CaseIterable {
 
     var isComingSoon: Bool {
         switch self {
-        case .enhancedAppleIntelligence, .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM:
+        case .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM:
             return false
         }
     }
 
     var requirements: [String] {
         switch self {
-        case .enhancedAppleIntelligence:
-            return ["iOS 15.0+", "Built-in frameworks"]
         case .openAI:
             return ["OpenAI API Key", "Internet Connection", "Usage Credits"]
         case .mistralAI:

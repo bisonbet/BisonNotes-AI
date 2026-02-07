@@ -19,6 +19,11 @@ import Darwin
 struct BisonNotesAIApp: App {
     let persistenceController = PersistenceController.shared
     @StateObject private var appCoordinator = AppDataCoordinator()
+    @StateObject private var fileImportManager = FileImportManager()
+    @StateObject private var transcriptImportManager = TranscriptImportManager()
+
+    // Phase 6: Register AppDelegate for notification handling
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     /// Performs one-time migration of AWS Bedrock settings from legacy model identifiers
     /// This ensures UserDefaults is updated rather than migrating on every access
@@ -44,7 +49,7 @@ struct BisonNotesAIApp: App {
     }
 
     /// Migrates legacy "None" and "Not Configured" AI engine selections to intelligent defaults
-    /// Defaults to Apple Intelligence on supported devices, OpenAI with dummy key on older devices
+    /// Defaults to On-Device AI on supported devices, OpenAI with dummy key on older devices
     private func migrateAIEngineSelection() {
         let aiEngineKey = "SelectedAIEngine"
         let transcriptionEngineKey = "selectedTranscriptionEngine"
@@ -247,6 +252,29 @@ struct BisonNotesAIApp: App {
         migrateAppleTranscriptionToWhisperKit()
         migrateWhisperKitNameIfNeeded()
         migrateOnDeviceLLMNameToOnDeviceAI()
+        setupDarwinNotificationObserver()
+    }
+
+    /// Registers a Darwin notification observer so the Share Extension can signal
+    /// the main app to scan the shared container immediately (works when the app
+    /// is suspended or backgrounded).
+    private func setupDarwinNotificationObserver() {
+        let name = "com.bisonnotesai.shareExtensionDidSaveFile" as CFString
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            nil,
+            { _, _, _, _, _ in
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ShareExtensionDidSaveFile"),
+                        object: nil
+                    )
+                }
+            },
+            name,
+            nil,
+            .deliverImmediately
+        )
     }
 
     /// Logs device capabilities on app startup
@@ -260,6 +288,8 @@ struct BisonNotesAIApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(appCoordinator)
+                .environmentObject(fileImportManager)
+                .environmentObject(transcriptImportManager)
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didFinishLaunchingNotification)) { _ in
                     requestBackgroundAppRefreshPermission()
@@ -268,7 +298,237 @@ struct BisonNotesAIApp: App {
                     // Initialize download monitor for on-device AI models
                     _ = OnDeviceAIDownloadMonitor.shared
                 }
+                .onOpenURL(perform: handleOpenURL)
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                    // Scan for files placed by the Share Extension (Voice Memos, etc.)
+                    scanSharedContainerForImports()
+                    // Also scan Documents/Inbox/ for files from "Open In" / document interaction.
+                    scanInboxForImportableFiles()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShareExtensionDidSaveFile"))) { _ in
+                    NSLog("📎 Darwin notification received from Share Extension")
+                    scanSharedContainerForImports()
+                }
         }
+    }
+
+    /// Tracks the last URL processed by handleOpenURL to prevent double imports
+    /// (e.g. if both .onOpenURL and AppDelegate fallback fire for the same URL).
+    @State private var lastProcessedURL: URL?
+    /// True while handleOpenURL is actively importing; prevents Inbox scan from interfering.
+    @State private var isHandlingOpenURL = false
+
+    /// Handles files opened from the share sheet (e.g. Voice Memos, Files). Imports audio as recordings, text as transcripts.
+    /// Also handles the `bisonnotes://share-import` URL scheme from the Share Extension.
+    private func handleOpenURL(_ url: URL) {
+        NSLog("📎 handleOpenURL called with: \(url.absoluteString) (scheme: \(url.scheme ?? "nil"))")
+
+        // Handle custom URL scheme from Share Extension → scan shared container
+        if url.scheme == "bisonnotes" {
+            NSLog("📎 handleOpenURL: Share Extension triggered import via URL scheme")
+            scanSharedContainerForImports()
+            return
+        }
+
+        guard url.isFileURL else { return }
+
+        // Deduplicate: skip if we just processed this exact URL
+        if lastProcessedURL == url {
+            NSLog("📎 handleOpenURL: skipping duplicate URL")
+            return
+        }
+        lastProcessedURL = url
+
+        let needsStopAccess = url.startAccessingSecurityScopedResource()
+        NSLog("📎 Security-scoped access: \(needsStopAccess ? "started" : "not needed")")
+
+        NotificationCenter.default.post(name: Notification.Name("SwitchToRecordTabForImport"), object: nil)
+
+        isHandlingOpenURL = true
+
+        Task { @MainActor in
+            defer {
+                if needsStopAccess {
+                    url.stopAccessingSecurityScopedResource()
+                }
+                isHandlingOpenURL = false
+            }
+
+            await importFileByExtension(url)
+
+            // Clean up the Inbox copy (iOS places shared files in Documents/Inbox/)
+            cleanupInboxFileIfNeeded(url)
+
+            // Clear dedup guard after a delay so re-sharing the same file still works
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+                if lastProcessedURL == url {
+                    lastProcessedURL = nil
+                }
+            }
+        }
+    }
+
+    // MARK: - Share Extension Import (App Group Container)
+
+    private let appGroupID = "group.bisonnotesai.shared"
+    private let shareInboxFolder = "ShareInbox"
+
+    /// Scans the App Group shared container for files placed by the Share Extension
+    /// (e.g. from Voice Memos share sheet). Imports them and cleans up.
+    private func scanSharedContainerForImports() {
+        guard let containerURL = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
+            .appendingPathComponent(shareInboxFolder) else { return }
+
+        guard FileManager.default.fileExists(atPath: containerURL.path) else { return }
+
+        let files: [URL]
+        do {
+            files = try FileManager.default.contentsOfDirectory(at: containerURL, includingPropertiesForKeys: nil)
+        } catch {
+            return
+        }
+
+        guard !files.isEmpty else { return }
+        NSLog("📎 Shared container scan: found \(files.count) file(s) from Share Extension")
+
+        NotificationCenter.default.post(name: Notification.Name("SwitchToRecordTabForImport"), object: nil)
+
+        Task { @MainActor in
+            var audioFiles: [URL] = []
+            var textFiles: [URL] = []
+
+            let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
+            let textExtensions: Set<String> = ["txt", "text", "md", "markdown", "pdf", "doc", "docx"]
+
+            for file in files {
+                // Strip UUID prefix to get the original extension
+                let ext = file.pathExtension.lowercased()
+                if audioExtensions.contains(ext) {
+                    audioFiles.append(file)
+                } else if textExtensions.contains(ext) {
+                    textFiles.append(file)
+                }
+            }
+
+            if !audioFiles.isEmpty {
+                NSLog("📎 Shared container: importing \(audioFiles.count) audio file(s)")
+                await fileImportManager.importAudioFiles(from: audioFiles)
+            }
+
+            if !textFiles.isEmpty {
+                NSLog("📎 Shared container: importing \(textFiles.count) text file(s)")
+                await transcriptImportManager.importTranscriptFiles(from: textFiles)
+            }
+
+            // Clean up all files from the shared container after import
+            for file in files {
+                try? FileManager.default.removeItem(at: file)
+            }
+
+            NSLog("📎 Shared container: cleanup complete")
+        }
+    }
+
+    // MARK: - Inbox Scanning (Share Sheet Fallback)
+
+    /// Scans Documents/Inbox/ for files silently placed by iOS share sheet and imports them.
+    /// On modern iOS, the share sheet's "Copy to [App]" action copies files to the Inbox
+    /// without opening the app. This method picks them up when the user returns to the app.
+    private func scanInboxForImportableFiles() {
+        // Don't scan while handleOpenURL is actively importing (it handles its own Inbox cleanup).
+        guard !isHandlingOpenURL else { return }
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let inboxURL = documentsURL.appendingPathComponent("Inbox")
+
+        guard FileManager.default.fileExists(atPath: inboxURL.path) else { return }
+
+        let files: [URL]
+        do {
+            files = try FileManager.default.contentsOfDirectory(at: inboxURL, includingPropertiesForKeys: nil)
+        } catch {
+            return
+        }
+
+        guard !files.isEmpty else { return }
+        NSLog("📎 Inbox scan: found \(files.count) file(s) to import")
+
+        // Switch to Record tab so the user sees import feedback
+        NotificationCenter.default.post(name: Notification.Name("SwitchToRecordTabForImport"), object: nil)
+
+        Task { @MainActor in
+            var audioFiles: [URL] = []
+            var textFiles: [URL] = []
+            var unsupported: [URL] = []
+
+            let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
+            let textExtensions: Set<String> = ["txt", "text", "md", "markdown", "pdf", "doc", "docx"]
+
+            for file in files {
+                let ext = file.pathExtension.lowercased()
+                if audioExtensions.contains(ext) {
+                    audioFiles.append(file)
+                } else if textExtensions.contains(ext) {
+                    textFiles.append(file)
+                } else {
+                    unsupported.append(file)
+                }
+            }
+
+            if !audioFiles.isEmpty {
+                NSLog("📎 Inbox scan: importing \(audioFiles.count) audio file(s)")
+                await fileImportManager.importAudioFiles(from: audioFiles)
+            }
+
+            if !textFiles.isEmpty {
+                NSLog("📎 Inbox scan: importing \(textFiles.count) text file(s)")
+                await transcriptImportManager.importTranscriptFiles(from: textFiles)
+            }
+
+            // Clean up all Inbox files after import (including unsupported ones)
+            for file in files {
+                try? FileManager.default.removeItem(at: file)
+            }
+
+            // Remove Inbox directory if empty
+            let remaining = (try? FileManager.default.contentsOfDirectory(at: inboxURL, includingPropertiesForKeys: nil)) ?? []
+            if remaining.isEmpty {
+                try? FileManager.default.removeItem(at: inboxURL)
+            }
+
+            if !unsupported.isEmpty {
+                NSLog("📎 Inbox scan: \(unsupported.count) unsupported file(s) cleaned up")
+            }
+        }
+    }
+
+    // MARK: - Import Helpers
+
+    /// Classifies a file by extension and imports via the appropriate manager.
+    private func importFileByExtension(_ url: URL) async {
+        let ext = url.pathExtension.lowercased()
+        let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
+        let textExtensions: Set<String> = ["txt", "text", "md", "markdown", "pdf", "doc", "docx"]
+
+        if audioExtensions.contains(ext) {
+            NSLog("📎 Importing audio file: \(url.lastPathComponent)")
+            await fileImportManager.importAudioFiles(from: [url])
+        } else if textExtensions.contains(ext) {
+            NSLog("📎 Importing text file: \(url.lastPathComponent)")
+            await transcriptImportManager.importTranscriptFiles(from: [url])
+        } else {
+            NSLog("📎 Unsupported file type: \(ext)")
+            NotificationCenter.default.post(name: Notification.Name("UnsupportedFileTypeFromShare"), object: nil)
+        }
+    }
+
+    /// Removes the file from Documents/Inbox/ if that's where iOS placed it during share.
+    private func cleanupInboxFileIfNeeded(_ url: URL) {
+        let inboxPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Inbox")
+        guard let inboxPath = inboxPath,
+              url.path.hasPrefix(inboxPath.path) else { return }
+        try? FileManager.default.removeItem(at: url)
     }
     
     private func setupBackgroundTasks() {

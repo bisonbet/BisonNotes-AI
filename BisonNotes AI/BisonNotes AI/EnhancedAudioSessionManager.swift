@@ -138,16 +138,42 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             try await configureMixedAudioSession()
             return
         }
-        
-        do {
-            try await applyConfiguration(config)
-            print("✅ Audio session restored successfully")
-            
-        } catch {
-            let audioError = AudioProcessingError.audioSessionConfigurationFailed("Session restoration failed: \(error.localizedDescription)")
-            lastError = audioError
-            throw audioError
+
+        // Try to restore the session with retry logic for phone call scenarios
+        // We need to be patient - phone calls can take time to fully release the audio session
+        // We'll try up to 10 times with increasing delays (total ~20 seconds)
+        var lastAttemptError: Error?
+        let maxAttempts = 10
+
+        for attempt in 1...maxAttempts {
+            do {
+                // First, try to deactivate the session to clear any lingering state from interruption
+                // Use best-effort deactivation (don't throw if it fails)
+                try? session.setActive(false, options: .notifyOthersOnDeactivation)
+
+                // Wait with exponential backoff, capped at 2 seconds per attempt
+                // Attempt 1: 0.5s, 2: 1s, 3: 1.5s, 4: 2s, 5-10: 2s each
+                let delaySeconds = min(Double(attempt) * 0.5, 2.0)
+                try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+
+                // Now try to reactivate with the previous configuration
+                try await applyConfiguration(config)
+                print("✅ Audio session restored successfully on attempt \(attempt)")
+                return
+
+            } catch {
+                lastAttemptError = error
+                print("⚠️ Failed to restore audio session on attempt \(attempt): \(error.localizedDescription)")
+                if attempt < maxAttempts {
+                    print("🔄 Retrying session restoration...")
+                }
+            }
         }
+
+        // If all attempts failed, throw the last error
+        let audioError = AudioProcessingError.audioSessionConfigurationFailed("Session restoration failed after \(maxAttempts) attempts: \(lastAttemptError?.localizedDescription ?? "unknown error")")
+        lastError = audioError
+        throw audioError
     }
     
     /// Configure standard recording session (fallback for compatibility)

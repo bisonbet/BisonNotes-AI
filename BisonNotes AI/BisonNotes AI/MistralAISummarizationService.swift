@@ -55,11 +55,12 @@ class MistralAISummarizationService {
             ChatMessage(role: "user", content: userPrompt)
         ]
 
-        let request = OpenAIChatCompletionRequest(
+        let request = MistralChatCompletionRequest(
             model: config.model.rawValue,
             messages: messages,
             temperature: config.temperature,
-            maxCompletionTokens: config.maxTokens
+            maxTokens: config.maxTokens,
+            responseFormat: nil
         )
 
         let response = try await makeAPICall(request: request)
@@ -80,11 +81,12 @@ class MistralAISummarizationService {
             ChatMessage(role: "user", content: userPrompt)
         ]
 
-        let request = OpenAIChatCompletionRequest(
+        let request = MistralChatCompletionRequest(
             model: config.model.rawValue,
             messages: messages,
             temperature: 0.1,
-            maxCompletionTokens: 1024
+            maxTokens: 1024,
+            responseFormat: nil
         )
 
         let response = try await makeAPICall(request: request)
@@ -105,11 +107,12 @@ class MistralAISummarizationService {
             ChatMessage(role: "user", content: userPrompt)
         ]
 
-        let request = OpenAIChatCompletionRequest(
+        let request = MistralChatCompletionRequest(
             model: config.model.rawValue,
             messages: messages,
             temperature: 0.1,
-            maxCompletionTokens: 1024
+            maxTokens: 1024,
+            responseFormat: nil
         )
 
         let response = try await makeAPICall(request: request)
@@ -141,11 +144,11 @@ class MistralAISummarizationService {
             ChatMessage(role: "user", content: userPrompt)
         ]
 
-        let request = OpenAIChatCompletionRequest(
+        let request = MistralChatCompletionRequest(
             model: config.model.rawValue,
             messages: messages,
             temperature: config.temperature,
-            maxCompletionTokens: config.maxTokens,
+            maxTokens: config.maxTokens,
             responseFormat: config.supportsJsonResponseFormat ? ResponseFormat.json : nil
         )
 
@@ -164,7 +167,7 @@ class MistralAISummarizationService {
 
     // MARK: - Private Helper Methods
 
-    private func makeAPICall(request: OpenAIChatCompletionRequest) async throws -> OpenAIChatCompletionResponse {
+    private func makeAPICall(request: MistralChatCompletionRequest) async throws -> OpenAIChatCompletionResponse {
         guard !config.apiKey.isEmpty else {
             logger.error("Mistral AI API key is empty")
             throw SummarizationError.aiServiceUnavailable(service: "Mistral AI API key not configured")

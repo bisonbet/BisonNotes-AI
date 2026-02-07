@@ -259,18 +259,18 @@ struct SummaryDetailView: View {
             Button {
                 export(format: .pdf)
             } label: {
-                Text("PDF - Includes maps, best for viewing")
+                Text("PDF – Full summary with map (best for printing & sharing)")
             }
 
             Button {
                 export(format: .rtf)
             } label: {
-                Text("RTF (Word) - Editable text (no maps)")
+                Text("RTF (Word/Pages) – Editable, no map")
             }
 
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Select the format you'd like to export this summary in.")
+            Text("Export includes summary, tasks, reminders, and processing details.")
         }
     }
     
@@ -1122,7 +1122,7 @@ struct SummaryDetailView: View {
             
             // Generate new summary using the current AI engine
             let newEnhancedSummary = try await SummaryManager.shared.generateEnhancedSummary(
-                from: transcript.plainText,
+                from: transcript.textForSummarization,
                 for: summaryData.recordingURL,
                 recordingName: summaryData.recordingName,
                 recordingDate: summaryData.recordingDate
@@ -1450,7 +1450,7 @@ struct SummaryDetailView: View {
                 let exportData: Data
                 switch format {
                 case .pdf:
-                    exportData = try PDFExportService.shared.generatePDF(
+                    exportData = try await PDFExportService.shared.generatePDF(
                         summaryData: summaryData,
                         locationData: recording.locationData,
                         locationAddress: locationAddress

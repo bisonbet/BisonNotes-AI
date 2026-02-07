@@ -94,8 +94,6 @@ final class AISettingsViewModel: ObservableObject {
         case .onDeviceLLM:
             UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             print("🔧 Auto-enabled On-Device AI engine")
-        default:
-            break
         }
 
         // Sync UserDefaults immediately
@@ -110,8 +108,6 @@ final class AISettingsViewModel: ObservableObject {
     
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
-        case .enhancedAppleIntelligence:
-            return true // Always available on iOS 15+
         case .openAI:
             let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
             return !apiKey.isEmpty
@@ -166,7 +162,6 @@ struct AISettingsView: View {
     @State private var showingGoogleAIStudioSettings = false
     @State private var showingMistralAISettings = false
     @State private var showingAWSBedrockSettings = false
-    @State private var showingAppleIntelligenceSettings = false
     @State private var showingOnDeviceLLMSettings = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
@@ -220,8 +215,6 @@ struct AISettingsView: View {
     
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
-        case .enhancedAppleIntelligence:
-            return true // Always available on iOS 15+
         case .openAI:
             let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
             return !apiKey.isEmpty
@@ -257,11 +250,9 @@ struct AISettingsView: View {
             return isEnabled && isModelReady
         }
     }
-    
+
     private func getEngineVersion(_ engineType: AIEngineType) -> String {
         switch engineType {
-        case .enhancedAppleIntelligence:
-            return "iOS 15.0+"
         case .openAI:
             return "GPT-4"
         case .openAICompatible:
@@ -364,7 +355,7 @@ struct AISettingsView: View {
             )
             // Align regeneration manager with the user's currently selected engine instead of forcing OpenAI
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ??
-                AIEngineType.enhancedAppleIntelligence.rawValue
+                AIEngineType.onDeviceLLM.rawValue
             viewModel.regenerationManager.setEngine(currentEngine)
             self.refreshEngineStatuses()
         }
@@ -402,9 +393,6 @@ struct AISettingsView: View {
         }
         .sheet(isPresented: $showingAWSBedrockSettings) {
             AWSBedrockSettingsView()
-        }
-        .sheet(isPresented: $showingAppleIntelligenceSettings) {
-            AppleIntelligenceSettingsView()
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
@@ -444,7 +432,7 @@ private extension AISettingsView {
         let effectiveTimeout = SummarizationTimeouts.clamp(
             summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
         )
-        let isUnlimitedEngine = currentEngineType == .enhancedAppleIntelligence
+        let isUnlimitedEngine = currentEngineType == .onDeviceLLM
         
         return VStack(alignment: .leading, spacing: 16) {
             Text("Summary Request Timeout")
@@ -457,7 +445,7 @@ private extension AISettingsView {
                     .fontWeight(.medium)
                 
                 if isUnlimitedEngine {
-                    Text("Apple Intelligence runs on-device with no timeout. It will continue processing until complete.")
+                    Text("On-Device AI runs locally with no timeout. It will continue processing until complete.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
@@ -528,7 +516,7 @@ private extension AISettingsView {
                         }
                     }
                 )) {
-                    ForEach(AIEngineType.availableCases.filter { !$0.isComingSoon && $0 != .enhancedAppleIntelligence }, id: \.self) { engineType in
+                    ForEach(AIEngineType.availableCases.filter { !$0.isComingSoon }, id: \.self) { engineType in
                         VStack(alignment: .leading) {
                             Text(engineType.rawValue)
                                 .font(.body)
@@ -570,8 +558,6 @@ private extension AISettingsView {
         return Group {
             if let currentEngine = AIEngineType.allCases.first(where: { $0.rawValue == currentEngineName }) {
                 switch currentEngine {
-                case .enhancedAppleIntelligence:
-                    appleIntelligenceConfigurationSection
                 case .openAI:
                     openAIConfigurationSection
                 case .openAICompatible:
@@ -595,84 +581,6 @@ private extension AISettingsView {
         }
     }
 
-    var appleIntelligenceConfigurationSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Apple Intelligence Configuration")
-                .font(.headline)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Apple Intelligence Settings")
-                            .font(.body)
-                        Text("Enhanced on-device processing using Apple's machine learning frameworks")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button(action: { showingAppleIntelligenceSettings = true }) {
-                        HStack {
-                            Image(systemName: "gear")
-                            Text("Configure")
-                        }
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                    }
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Status:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(Color.green)
-                                .frame(width: 8, height: 8)
-                            Text("Available")
-                                .font(.caption)
-                                .foregroundColor(.green)
-                        }
-                    }
-                    
-                    HStack {
-                        Text("Processing:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text("On-Device")
-                            .font(.body)
-                            .fontWeight(.medium)
-                    }
-                    
-                    HStack {
-                        Text("Privacy:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text("Fully Private")
-                            .font(.body)
-                            .fontWeight(.medium)
-                            .foregroundColor(.green)
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.blue.opacity(0.1))
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-    
     var ollamaConfigurationSection: some View {
         // FIX: Logic moved outside the ViewBuilder closure.
         let serverURL = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaServerURL) ?? AppSettingsKeys.Defaults.ollamaServerURL

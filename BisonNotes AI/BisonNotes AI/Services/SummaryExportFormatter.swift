@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 enum SummaryExportFormatter {
     // MARK: - Cached Regex Patterns
@@ -130,5 +131,179 @@ enum SummaryExportFormatter {
         }
 
         return String(mutable)
+    }
+
+    // MARK: - Attributed Summary (structured export with bold, italic, headers)
+
+    /// Export-friendly app name for header/footer branding
+    static let exportAppName = "BisonNotes AI"
+
+    /// Builds an attributed string from markdown with headers, bold, and italic preserved.
+    /// Uses black/darkGray for export (readable on white).
+    static func attributedSummary(
+        for markdown: String,
+        baseFontSize: CGFloat = 13,
+        textColor: UIColor = .black
+    ) -> NSAttributedString {
+        let cleaned = cleanMarkdown(markdown)
+        let lines = cleaned.components(separatedBy: .newlines)
+        let result = NSMutableAttributedString()
+        let baseFont = UIFont.systemFont(ofSize: baseFontSize)
+        let boldFont = UIFont.boldSystemFont(ofSize: baseFontSize)
+        let italicFont = UIFont.italicSystemFont(ofSize: baseFontSize)
+        let boldItalicFont = UIFont.systemFont(ofSize: baseFontSize, weight: .semibold).with(traits: .traitItalic)
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 1.5
+        paragraphStyle.paragraphSpacing = 2
+
+        for (_, rawLine) in lines.enumerated() {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                if result.length > 0 {
+                    result.append(NSAttributedString(string: "\n", attributes: [.font: baseFont, .foregroundColor: textColor]))
+                }
+                continue
+            }
+
+            // Skip image lines
+            if trimmed.hasPrefix("![") { continue }
+
+            // Headers: # ... ## ...
+            let headerMatches = headerRegex.matches(in: trimmed, options: [], range: NSRange(location: 0, length: trimmed.utf16.count))
+            if let headerMatch = headerMatches.first, headerMatch.range.location == 0 {
+                let matchStr = (trimmed as NSString).substring(with: headerMatch.range)
+                let level = min(max(matchStr.filter { $0 == "#" }.count, 1), 6)
+                let headerText = (trimmed as NSString).substring(from: headerMatch.range.length).trimmingCharacters(in: .whitespaces)
+                let headerFontSize = baseFontSize + CGFloat(7 - level)  // 18pt for #, 17 for ##, ...
+                let headerFont = UIFont.boldSystemFont(ofSize: headerFontSize)
+                if result.length > 0 { result.append(NSAttributedString(string: "\n", attributes: [.font: baseFont])) }
+                let headerAttr = NSAttributedString(string: headerText + "\n", attributes: [
+                    .font: headerFont,
+                    .foregroundColor: textColor
+                ])
+                result.append(headerAttr)
+                continue
+            }
+
+            // Blockquote
+            var line = trimmed
+            if line.hasPrefix(">") {
+                line = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
+                line = "\u{201C}\(line)\u{201D}"  // curly quotes
+            }
+
+            // Bullet
+            let bulletMatches = bulletRegex.matches(in: line, options: [], range: NSRange(location: 0, length: line.utf16.count))
+            if let bulletMatch = bulletMatches.first, bulletMatch.range.location == 0 {
+                let rest = (line as NSString).substring(from: bulletMatch.range.length)
+                line = "\u{2022} " + rest  // bullet
+            }
+
+            // Ordered list
+            let orderedMatches = orderedListRegex.matches(in: line, options: [], range: NSRange(location: 0, length: line.utf16.count))
+            if let orderedMatch = orderedMatches.first, orderedMatch.range.location == 0 {
+                let prefix = (line as NSString).substring(with: orderedMatch.range)
+                let normalized = orderedListSpaceRegex.stringByReplacingMatches(in: prefix, options: [], range: NSRange(location: 0, length: prefix.utf16.count), withTemplate: " ")
+                line = normalized + (line as NSString).substring(from: orderedMatch.range.length)
+            }
+
+            line = replaceMarkdownLinks(in: line)
+
+            let inline = parseInlineStyles(
+                line,
+                baseFont: baseFont,
+                boldFont: boldFont,
+                italicFont: italicFont,
+                boldItalicFont: boldItalicFont,
+                textColor: textColor
+            )
+            if result.length > 0 {
+                result.append(NSAttributedString(string: "\n", attributes: [.font: baseFont]))
+            }
+            result.append(inline)
+        }
+
+        // Apply paragraph style to full result
+        result.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: result.length))
+        return result
+    }
+
+    private static func parseInlineStyles(
+        _ line: String,
+        baseFont: UIFont,
+        boldFont: UIFont,
+        italicFont: UIFont,
+        boldItalicFont: UIFont,
+        textColor: UIColor
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        var i = line.startIndex
+        var bold = false
+        var italic = false
+        var runStart = i
+
+        func flushRun() {
+            guard runStart < i else { return }
+            let s = String(line[runStart..<i])
+            if s.isEmpty { return }
+            let font: UIFont
+            if bold && italic { font = boldItalicFont }
+            else if bold { font = boldFont }
+            else if italic { font = italicFont }
+            else { font = baseFont }
+            result.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: textColor]))
+            runStart = i
+        }
+
+        while i < line.endIndex {
+            let rest = line[i...]
+            if rest.hasPrefix("**") {
+                flushRun()
+                bold.toggle()
+                i = line.index(i, offsetBy: 2)
+                runStart = i
+                continue
+            }
+            if rest.hasPrefix("__") {
+                flushRun()
+                bold.toggle()
+                i = line.index(i, offsetBy: 2)
+                runStart = i
+                continue
+            }
+            if rest.hasPrefix("*") || rest.hasPrefix("_") {
+                flushRun()
+                italic.toggle()
+                i = line.index(after: i)
+                runStart = i
+                continue
+            }
+            if rest.hasPrefix("`") {
+                flushRun()
+                i = line.index(after: i)
+                var end = i
+                while end < line.endIndex && line[end] != "`" { end = line.index(after: end) }
+                if end < line.endIndex {
+                    let code = String(line[i..<end])
+                    let mono = UIFont.monospacedSystemFont(ofSize: baseFont.pointSize, weight: .regular)
+                    result.append(NSAttributedString(string: code, attributes: [.font: mono, .foregroundColor: textColor]))
+                    i = line.index(after: end)
+                    runStart = i
+                    continue
+                }
+            }
+            i = line.index(after: i)
+        }
+        flushRun()
+        return result
+    }
+}
+
+// UIFont trait helper
+private extension UIFont {
+    func with(traits: UIFontDescriptor.SymbolicTraits) -> UIFont {
+        guard let descriptor = fontDescriptor.withSymbolicTraits(traits) else { return self }
+        return UIFont(descriptor: descriptor, size: pointSize)
     }
 }

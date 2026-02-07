@@ -29,7 +29,7 @@ class ConfigurationWarningHelper {
 
     /// Check if AI engine is configured
     static func isAIEngineConfigured() -> Bool {
-        let engine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Apple Intelligence"
+        let engine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
         return engine != "Not Configured"
     }
 

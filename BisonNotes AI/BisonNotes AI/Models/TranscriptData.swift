@@ -90,6 +90,31 @@ public struct TranscriptData: Codable, Identifiable {
     var plainText: String {
         return segments.map { $0.text }.joined(separator: " ")
     }
+
+    /// Text formatted for AI summarization: includes speaker labels when multiple speakers are present.
+    var textForSummarization: String {
+        let uniqueSpeakers = Set(segments.map { $0.speaker })
+        let hasMultipleSpeakers = uniqueSpeakers.count > 1
+            || (uniqueSpeakers.count == 1 && uniqueSpeakers.first != "Speaker" && uniqueSpeakers.first != "Unknown")
+
+        guard hasMultipleSpeakers else {
+            return plainText
+        }
+
+        return segments.map { segment in
+            let name = speakerMappings[segment.speaker] ?? formatSpeakerName(segment.speaker)
+            return "\(name): \(segment.text)"
+        }.joined(separator: "\n")
+    }
+
+    private func formatSpeakerName(_ raw: String) -> String {
+        // "speaker_1" → "Speaker 1", "speaker_2" → "Speaker 2"
+        if raw.hasPrefix("speaker_") {
+            let num = raw.dropFirst("speaker_".count)
+            return "Speaker \(num)"
+        }
+        return raw
+    }
     
     var wordCount: Int {
         return plainText.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count

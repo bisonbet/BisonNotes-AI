@@ -124,10 +124,16 @@ class RecordingWorkflowManager: ObservableObject {
            let segmentsString = String(data: segmentsData, encoding: .utf8) {
             transcriptEntry.segments = segmentsString
         }
-        
-        // Clear speaker mappings (no longer used)
-        transcriptEntry.speakerMappings = nil
-        
+
+        // Store speaker mappings as JSON
+        if !speakerMappings.isEmpty,
+           let mappingsData = try? JSONEncoder().encode(speakerMappings),
+           let mappingsString = String(data: mappingsData, encoding: .utf8) {
+            transcriptEntry.speakerMappings = mappingsString
+        } else {
+            transcriptEntry.speakerMappings = nil
+        }
+
         // Link to recording
         transcriptEntry.recording = recordingEntry
         recordingEntry.transcript = transcriptEntry
@@ -162,9 +168,15 @@ class RecordingWorkflowManager: ObservableObject {
            let segmentsString = String(data: segmentsData, encoding: .utf8) {
             existingTranscript.segments = segmentsString
         }
-        
-        // Clear speaker mappings (no longer used)
-        existingTranscript.speakerMappings = nil
+
+        // Store speaker mappings as JSON
+        if !speakerMappings.isEmpty,
+           let mappingsData = try? JSONEncoder().encode(speakerMappings),
+           let mappingsString = String(data: mappingsData, encoding: .utf8) {
+            existingTranscript.speakerMappings = mappingsString
+        } else {
+            existingTranscript.speakerMappings = nil
+        }
         
         // Update the recording's last modified date
         existingTranscript.recording?.lastModified = Date()

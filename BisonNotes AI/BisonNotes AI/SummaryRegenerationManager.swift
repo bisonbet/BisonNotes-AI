@@ -72,7 +72,7 @@ class SummaryRegenerationManager: ObservableObject {
             do {
                 // Generate new summary using the current AI engine
                 let newEnhancedSummary = try await summaryManager.generateEnhancedSummary(
-                    from: transcript.plainText,
+                    from: transcript.textForSummarization,
                     for: summary.recordingURL,
                     recordingName: summary.recordingName,
                     recordingDate: summary.recordingDate
@@ -160,7 +160,7 @@ class SummaryRegenerationManager: ObservableObject {
             
             // Generate new summary using the current AI engine
             let newEnhancedSummary = try await summaryManager.generateEnhancedSummary(
-                from: transcript.plainText,
+                from: transcript.textForSummarization,
                 for: recordingURL,
                 recordingName: summary.recordingName,
                 recordingDate: summary.recordingDate
