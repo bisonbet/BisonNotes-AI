@@ -14,7 +14,7 @@ struct SettingsView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var regenerationManager: SummaryRegenerationManager
     @StateObject private var errorHandler = ErrorHandler()
-    @ObservedObject private var iCloudManager: iCloudStorageManager
+    @StateObject private var iCloudManager = iCloudStorageManager()
     @StateObject private var importManager = FileImportManager()
     @State private var showingEngineChangePrompt = false
     @State private var previousEngine = ""
@@ -24,13 +24,20 @@ struct SettingsView: View {
     @State private var showingBackgroundProcessing = false
     @State private var showingDataMigration = false
     @State private var showingPreferences = false
+    @State private var showingAcknowledgements = false
     @State private var showingTroubleshootingWarning = false
 
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "On-Device AI"
     @AppStorage("WatchIntegrationEnabled") private var watchIntegrationEnabled: Bool = true
     @AppStorage("WatchAutoSync") private var watchAutoSync: Bool = true
     @AppStorage("WatchBatteryAware") private var watchBatteryAware: Bool = true
+    @AppStorage("iCloudBackupIncludeAudioFiles") private var iCloudBackupIncludeAudioFiles: Bool = false
+    @AppStorage("iCloudBackupIncludeSettings") private var iCloudBackupIncludeSettings: Bool = true
+    @AppStorage("iCloudBackupIncludeSensitiveSettings") private var iCloudBackupIncludeSensitiveSettings: Bool = true
     @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels) private var enableExperimentalModels = false
+    @State private var isRunningCloudBackupAction = false
+    @State private var cloudBackupActionMessage = ""
+    @State private var cloudBackupActionIsError = false
     
     init() {
         // Initialize regeneration manager with the coordinator's registry manager
@@ -39,7 +46,6 @@ struct SettingsView: View {
             transcriptManager: TranscriptManager.shared,
             appCoordinator: AppDataCoordinator()
         ))
-        self.iCloudManager = iCloudStorageManager()
     }
     
     var body: some View {
@@ -54,9 +60,11 @@ struct SettingsView: View {
                     debugSection
                     databaseMaintenanceSection
 
-                    
+
                     Spacer(minLength: 40)
                 }
+                .frame(maxWidth: 700)
+                .frame(maxWidth: .infinity)
             }
         .alert("Regeneration Complete", isPresented: $regenerationManager.showingRegenerationAlert) {
             Button("OK") {
@@ -111,6 +119,9 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showingPreferences) {
             PreferencesView()
+        }
+        .sheet(isPresented: $showingAcknowledgements) {
+            AcknowledgementsView()
         }
     }
     
@@ -426,7 +437,7 @@ struct SettingsView: View {
                             Text("iCloud Sync")
                                 .font(.body)
                                 .foregroundColor(.primary)
-                            Text("Sync summaries to iCloud for access across devices")
+                            Text("Sync summaries, transcripts, and settings across your devices")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -451,6 +462,75 @@ struct SettingsView: View {
                         }
                     }
                     .padding(.top, 4)
+
+                    if iCloudManager.isEnabled {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
+                                .font(.caption)
+
+                            Toggle("Include app settings", isOn: $iCloudBackupIncludeSettings)
+                                .font(.caption)
+
+                            Toggle("Include API keys and credentials (iCloud encrypted)", isOn: $iCloudBackupIncludeSensitiveSettings)
+                                .font(.caption)
+                                .disabled(!iCloudBackupIncludeSettings)
+
+                            if isRunningCloudBackupAction {
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .scaleEffect(0.8)
+                            }
+
+                            HStack(spacing: 8) {
+                                Button(action: {
+                                    Task {
+                                        await backupAllDataToiCloud()
+                                    }
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "icloud.and.arrow.up")
+                                        Text("Backup Now")
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.blue)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.blue.opacity(0.1))
+                                    )
+                                }
+                                .disabled(isRunningCloudBackupAction)
+
+                                Button(action: {
+                                    Task {
+                                        await restoreAllDataFromiCloud()
+                                    }
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "arrow.down.doc")
+                                        Text("Restore")
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.green.opacity(0.1))
+                                    )
+                                }
+                                .disabled(isRunningCloudBackupAction)
+                            }
+
+                            if !cloudBackupActionMessage.isEmpty {
+                                Text(cloudBackupActionMessage)
+                                    .font(.caption2)
+                                    .foregroundColor(cloudBackupActionIsError ? .red : .secondary)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
 
                     // Show conflicts if any exist
                     if !iCloudManager.pendingConflicts.isEmpty {
@@ -724,7 +804,39 @@ struct SettingsView: View {
     }
     
     private var databaseMaintenanceSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("About")
+                .font(.headline)
+                .foregroundColor(.primary)
+
+            Button(action: {
+                showingAcknowledgements = true
+            }) {
+                HStack {
+                    Image(systemName: "hand.raised.fill")
+                        .foregroundColor(.indigo)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Acknowledgements")
+                            .font(.body)
+                            .foregroundColor(.primary)
+                        Text("Open-source projects and licenses")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.indigo.opacity(0.1))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+
             Button(action: {
                 showingTroubleshootingWarning = true
             }) {
@@ -839,6 +951,96 @@ struct SettingsView: View {
             print("❌ Sync error: \(error)")
             await MainActor.run {
                 errorHandler.handle(AppError.from(error, context: "iCloud Sync"), context: "Sync", showToUser: true)
+            }
+        }
+    }
+
+    private func backupAllDataToiCloud() async {
+        await MainActor.run {
+            isRunningCloudBackupAction = true
+            cloudBackupActionMessage = ""
+            cloudBackupActionIsError = false
+        }
+
+        let options = CloudBackupOptions(
+            includeAudioFiles: iCloudBackupIncludeAudioFiles,
+            includeSettings: iCloudBackupIncludeSettings,
+            includeSensitiveSettings: iCloudBackupIncludeSettings && iCloudBackupIncludeSensitiveSettings
+        )
+
+        do {
+            let result = try await iCloudManager.backupAllDataToiCloud(
+                appCoordinator: appCoordinator,
+                options: options
+            )
+
+            if result.wasSkippedNoChanges {
+                await MainActor.run {
+                    cloudBackupActionMessage = "Backup skipped: no local changes since the last successful backup."
+                    cloudBackupActionIsError = false
+                    isRunningCloudBackupAction = false
+                }
+                return
+            }
+
+            let settingsText: String
+            if result.settingsBackedUp {
+                settingsText = result.includedSensitiveSettings ? "settings + encrypted keys" : "settings"
+            } else {
+                settingsText = "no settings"
+            }
+
+            await MainActor.run {
+                let unchangedAudioText = iCloudBackupIncludeAudioFiles
+                    ? ", \(result.audioFilesSkippedUnchanged) audio unchanged"
+                    : ""
+                cloudBackupActionMessage =
+                    "Backup complete: \(result.recordingsBackedUp) recordings, \(result.transcriptsBackedUp) transcripts, \(result.summariesBackedUp) summaries, \(result.audioFilesBackedUp) audio uploaded\(unchangedAudioText), \(settingsText)."
+                cloudBackupActionIsError = false
+                isRunningCloudBackupAction = false
+            }
+        } catch {
+            await MainActor.run {
+                cloudBackupActionMessage = "Backup failed: \(error.localizedDescription)"
+                cloudBackupActionIsError = true
+                isRunningCloudBackupAction = false
+            }
+        }
+    }
+
+    private func restoreAllDataFromiCloud() async {
+        await MainActor.run {
+            isRunningCloudBackupAction = true
+            cloudBackupActionMessage = ""
+            cloudBackupActionIsError = false
+        }
+
+        do {
+            let result = try await iCloudManager.restoreAllDataFromiCloud(
+                appCoordinator: appCoordinator,
+                includeAudioFiles: iCloudBackupIncludeAudioFiles,
+                restoreSettings: iCloudBackupIncludeSettings
+            )
+            appCoordinator.syncRecordingURLs()
+
+            let settingsText: String
+            if result.settingsRestored {
+                settingsText = result.includedSensitiveSettings ? "settings + encrypted keys" : "settings"
+            } else {
+                settingsText = "no settings"
+            }
+
+            await MainActor.run {
+                cloudBackupActionMessage =
+                    "Restore complete: \(result.recordingsRestored) recordings, \(result.transcriptsRestored) transcripts, \(result.summariesRestored) summaries, \(result.audioFilesRestored) audio files, \(settingsText)."
+                cloudBackupActionIsError = false
+                isRunningCloudBackupAction = false
+            }
+        } catch {
+            await MainActor.run {
+                cloudBackupActionMessage = "Restore failed: \(error.localizedDescription)"
+                cloudBackupActionIsError = true
+                isRunningCloudBackupAction = false
             }
         }
     }

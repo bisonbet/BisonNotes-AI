@@ -6,10 +6,29 @@
 //
 
 import Foundation
+#if !targetEnvironment(macCatalyst)
 @preconcurrency import WatchConnectivity
+#endif
 import Combine
 import UIKit
 
+#if targetEnvironment(macCatalyst)
+// MARK: - Mac Catalyst Stub
+/// Minimal stub for Mac Catalyst where WatchConnectivity is not available
+@MainActor
+class WatchConnectivityManager: NSObject, ObservableObject {
+    @Published var connectionState: WatchConnectionState = .disconnected
+    @Published var isWatchAppInstalled: Bool = false
+    @Published var watchRecordingState: WatchRecordingState = .idle
+
+    var onWatchSyncRecordingReceived: ((Data, WatchSyncRequest) -> Void)?
+    var onWatchRecordingSyncCompleted: ((UUID, Bool) -> Void)?
+
+    static let shared = WatchConnectivityManager()
+
+    func confirmSyncComplete(recordingId: UUID, success: Bool, coreDataId: String? = nil) {}
+}
+#else
 /// Manages WatchConnectivity session and communication with Apple Watch
 @MainActor
 class WatchConnectivityManager: NSObject, ObservableObject {
@@ -28,6 +47,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     @Published var stateConflictDetected: Bool = false
     
     // MARK: - Private Properties
+    #if !targetEnvironment(macCatalyst)
     private var session: WCSession? {
         didSet {
             if let session = session {
@@ -36,6 +56,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         }
     }
     private var audioChunkManager = WatchAudioChunkManager()
+    #endif
     private var cancellables = Set<AnyCancellable>()
     
     // Sync operation tracking
@@ -1319,6 +1340,7 @@ enum StateConflictResolution {
     case mostRecentWins
     case smartResolution
 }
+#endif // !targetEnvironment(macCatalyst)
 
 // MARK: - Extensions
 

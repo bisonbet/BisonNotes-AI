@@ -5,12 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Audio Journal - Complete User Guide</title>
     <style>
+        /* Override WordPress Twenty Twenty theme container constraints */
+        /* Twenty Twenty sets .entry-content > * { max-width: 58rem } on ALL children */
+        /* This forces children to 928px max — we need to override it */
+        .entry-content > *,
+        .entry-content > .audio-journal-guide {
+            max-width: none !important;
+            width: 100% !important;
+        }
+
+        /* Also override the parent containers */
+        .entry-content,
+        .section-inner,
+        .section-inner.thin,
+        .section-inner.small,
+        .section-inner.medium,
+        .post-inner {
+            max-width: none !important;
+            width: calc(100% - 4rem) !important;
+            box-sizing: border-box !important;
+        }
+
         /* Minimal theme-friendly styles that adapt to any WordPress theme */
         .audio-journal-guide {
             /* Inherit theme's font and colors */
             line-height: 1.6;
             width: 100%;
-            max-width: none;
+            max-width: 1400px;
             margin: 0 auto;
             padding: 0.5em;
             box-sizing: border-box;
@@ -248,16 +269,33 @@
         
         /* Responsive design */
         @media (max-width: 768px) {
+            .entry-content,
+            .post-inner,
+            .section-inner,
+            .page-content,
+            .wp-block-post-content,
+            .site-content .content-area,
+            article .entry-content {
+                padding-left: 1em !important;
+                padding-right: 1em !important;
+            }
+
             .audio-journal-guide .engine-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .audio-journal-guide h1 {
                 font-size: 1.8em;
             }
-            
+
             .audio-journal-guide h2 {
                 font-size: 1.4em;
+            }
+
+            .audio-journal-guide table {
+                display: block;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
             }
         }
     </style>

@@ -11,6 +11,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var recorderVM = AudioRecorderViewModel()
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var selectedTab = 0
     @State private var isInitialized = false
@@ -28,120 +29,18 @@ struct ContentView: View {
     var body: some View {
         Group {
             if isInitialized {
-            if isFirstLaunch {
-                SimpleSettingsView()
-                    .environmentObject(recorderVM)
-                    .environmentObject(appCoordinator)
-                    .onAppear {
-                        // Mark first launch as complete when they finish setup
-                        UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
-                    }
+                if isFirstLaunch {
+                    firstLaunchView
+                } else {
+                    mainContentView
+                }
             } else {
-                    TabView(selection: $selectedTab) {
-                    RecordingsView()
-                        .environmentObject(recorderVM)
-                        .environmentObject(appCoordinator)
-                        .tabItem {
-                            Image(systemName: "mic.fill")
-                            Text("Record")
-                        }
-                        .tag(0)
-                    
-                    SummariesView()
-                        .environmentObject(recorderVM)
-                        .environmentObject(appCoordinator)
-                        .tabItem {
-                            Image(systemName: "doc.text.magnifyingglass")
-                            Text("Summaries")
-                        }
-                        .tag(1)
-                    
-                    TranscriptsView()
-                        .environmentObject(recorderVM)
-                        .environmentObject(appCoordinator)
-                        .tabItem {
-                            Image(systemName: "text.bubble.fill")
-                            Text("Transcripts")
-                        }
-                        .tag(2)
-                    
-                    SimpleSettingsView()
-                        .environmentObject(recorderVM)
-                        .environmentObject(appCoordinator)
-                        .tabItem {
-                            Image(systemName: "gearshape.fill")
-                            Text("Settings")
-                        }
-                        .tag(3)
-                }
-                .alert("Enable Location Services", isPresented: $showingLocationPermission) {
-                    Button("Continue") {
-                        recorderVM.locationManager.requestLocationPermission()
-                    }
-                } message: {
-                    Text("We use your location to log where each recording happens, helping you organize and revisit your audio notes with helpful context.")
-                }
-                .alert("Apple Intelligence Has Been Removed", isPresented: $showingAppleIntelligenceMigrationAlert) {
-                    Button("Configure On-Device AI") {
-                        showingOnDeviceLLMSettings = true
-                    }
-                } message: {
-                    Text("Apple Intelligence has been removed from the app. Your settings have been automatically updated to use On-Device AI, which provides similar functionality. Please download an AI model to continue using on-device AI processing.")
-                }
-                .sheet(isPresented: $showingOnDeviceLLMSettings) {
-                    NavigationView {
-                        OnDeviceLLMSettingsView()
-                    }
-                }
-                .alert("Transcription Engine Updated", isPresented: $showingWhisperKitMigrationAlert) {
-                    Button("Download Model") {
-                        showingWhisperKitSettings = true
-                    }
-                    Button("Later", role: .cancel) { }
-                } message: {
-                    Text("Apple Transcription has been replaced with WhisperKit, a high-quality on-device transcription engine. Please download the WhisperKit model (~950MB) to continue transcribing audio.")
-                }
-                .sheet(isPresented: $showingWhisperKitSettings) {
-                    NavigationStack {
-                        WhisperKitSettingsView()
-                    }
-                }
-                .alert("Download Complete", isPresented: $downloadMonitor.showingCompletionAlert) {
-                    Button("OK") {
-                        downloadMonitor.reset()
-                    }
-                } message: {
-                    Text(downloadMonitor.completionMessage)
-                }
-                .alert("Unsupported File Type", isPresented: $showingUnsupportedFileAlert) {
-                    Button("OK", role: .cancel) { }
-                } message: {
-                    Text("This file type cannot be imported as a recording or transcript.")
-                }
-            }
-        } else {
-            // Loading state
-                VStack {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                    Text("Loading...")
-                        .padding(.top)
-                    
-                    if let error = initializationError {
-                        Text("Error: \(error)")
-                            .foregroundColor(.red)
-                            .font(.caption)
-                            .padding(.top)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black)
+                loadingView
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(horizontalSizeClass == .compact ? .dark : nil)
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .onAppear {
-            // Ensure initialization happens on main thread
             DispatchQueue.main.async {
                 initializeApp()
             }
@@ -172,6 +71,132 @@ struct ContentView: View {
         .task {
             handleActionButtonLaunchIfNeeded()
         }
+    }
+
+    // MARK: - Extracted Sub-Views
+
+    private var firstLaunchView: some View {
+        SimpleSettingsView()
+            .environmentObject(recorderVM)
+            .environmentObject(appCoordinator)
+            .onAppear {
+                UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
+            }
+    }
+
+    @ViewBuilder
+    private var mainContentView: some View {
+        Group {
+            if horizontalSizeClass == .compact {
+                tabContentView
+            } else {
+                AdaptiveNavigationView()
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
+            }
+        }
+        .alert("Enable Location Services", isPresented: $showingLocationPermission) {
+            Button("Continue") {
+                recorderVM.locationManager.requestLocationPermission()
+            }
+        } message: {
+            Text("We use your location to log where each recording happens, helping you organize and revisit your audio notes with helpful context.")
+        }
+        .alert("Apple Intelligence Has Been Removed", isPresented: $showingAppleIntelligenceMigrationAlert) {
+            Button("Configure On-Device AI") {
+                showingOnDeviceLLMSettings = true
+            }
+        } message: {
+            Text("Apple Intelligence has been removed from the app. Your settings have been automatically updated to use On-Device AI, which provides similar functionality. Please download an AI model to continue using on-device AI processing.")
+        }
+        .sheet(isPresented: $showingOnDeviceLLMSettings) {
+            NavigationView {
+                OnDeviceLLMSettingsView()
+            }
+        }
+        .alert("Transcription Engine Updated", isPresented: $showingWhisperKitMigrationAlert) {
+            Button("Download Model") {
+                showingWhisperKitSettings = true
+            }
+            Button("Later", role: .cancel) { }
+        } message: {
+            Text("Apple Transcription has been replaced with WhisperKit, a high-quality on-device transcription engine. Please download the WhisperKit model (~950MB) to continue transcribing audio.")
+        }
+        .sheet(isPresented: $showingWhisperKitSettings) {
+            NavigationStack {
+                WhisperKitSettingsView()
+            }
+        }
+        .alert("Download Complete", isPresented: $downloadMonitor.showingCompletionAlert) {
+            Button("OK") {
+                downloadMonitor.reset()
+            }
+        } message: {
+            Text(downloadMonitor.completionMessage)
+        }
+        .alert("Unsupported File Type", isPresented: $showingUnsupportedFileAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("This file type cannot be imported as a recording or transcript.")
+        }
+    }
+
+    private var tabContentView: some View {
+        TabView(selection: $selectedTab) {
+            RecordingsView()
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .tabItem {
+                    Image(systemName: "mic.fill")
+                    Text("Record")
+                }
+                .tag(0)
+
+            SummariesView()
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .tabItem {
+                    Image(systemName: "doc.text.magnifyingglass")
+                    Text("Summaries")
+                }
+                .tag(1)
+
+            TranscriptsView()
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .tabItem {
+                    Image(systemName: "text.bubble.fill")
+                    Text("Transcripts")
+                }
+                .tag(2)
+
+            SimpleSettingsView()
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .tabItem {
+                    Image(systemName: "gearshape.fill")
+                    Text("Settings")
+                }
+                .tag(3)
+        }
+    }
+
+    private var loadingView: some View {
+        VStack {
+            ProgressView()
+                .scaleEffect(1.5)
+            Text("Loading...")
+                .padding(.top)
+
+            if let error = initializationError {
+                Text("Error: \(error)")
+                    .foregroundColor(.red)
+                    .font(.caption)
+                    .padding(.top)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black)
     }
 
     @MainActor

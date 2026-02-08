@@ -6,7 +6,9 @@
 //
 
 import SwiftUI
+#if !targetEnvironment(macCatalyst)
 import SafariServices
+#endif
 
 struct RecordingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
@@ -51,6 +53,7 @@ struct RecordingsView: View {
                 VStack(spacing: 40) {
                     VStack(spacing: 20) {
                         Image("AppLogo")
+
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(maxHeight: min(geometry.size.height * 0.25, 200))
@@ -207,6 +210,7 @@ struct RecordingsView: View {
                     
                     Spacer()
                 }
+                .frame(maxWidth: 600)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(.systemBackground))
             }
@@ -224,9 +228,19 @@ struct RecordingsView: View {
                 BackgroundProcessingView()
             }
             .sheet(isPresented: $showingHelpDocumentation) {
+                #if !targetEnvironment(macCatalyst)
                 if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
                     SafariView(url: url)
                 }
+                #endif
+            }
+            .onChange(of: showingHelpDocumentation) { _, isShowing in
+                #if targetEnvironment(macCatalyst)
+                if isShowing, let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
+                    UIApplication.shared.open(url)
+                    showingHelpDocumentation = false
+                }
+                #endif
             }
             .alert("Audio Import Results", isPresented: $importManager.showingImportAlert) {
                 Button("OK", role: .cancel) {}
@@ -242,11 +256,36 @@ struct RecordingsView: View {
                     Text(results.summary)
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ToggleRecording"))) { _ in
+                if recorderVM.isRecording {
+                    recorderVM.stopRecording()
+                } else {
+                    recorderVM.startRecording()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportAudioFromMenu"))) { _ in
+                documentPickerCoordinator.selectAudioFiles { urls in
+                    if !urls.isEmpty {
+                        Task {
+                            await importManager.importAudioFiles(from: urls)
+                        }
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportTranscriptFromMenu"))) { _ in
+                textDocumentPickerCoordinator.selectTextFiles { urls in
+                    if !urls.isEmpty {
+                        Task {
+                            await transcriptImportManager.importTranscriptFiles(from: urls)
+                        }
+                    }
+                }
+            }
         }
     }
-    
-    
-    
+
+
+
     private var backgroundProcessingIndicator: some View {
         Button(action: {
             showingBackgroundProcessing = true
@@ -398,9 +437,10 @@ struct RecordingsView: View {
 }
 
 // MARK: - Safari View Wrapper
+#if !targetEnvironment(macCatalyst)
 struct SafariView: UIViewControllerRepresentable {
     let url: URL
-    
+
     func makeUIViewController(context: Context) -> SFSafariViewController {
         let safariVC = SFSafariViewController(url: url)
         safariVC.preferredBarTintColor = UIColor.systemBackground
@@ -408,8 +448,9 @@ struct SafariView: UIViewControllerRepresentable {
         safariVC.dismissButtonStyle = .close
         return safariVC
     }
-    
+
     func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {
         // No updates needed
     }
 }
+#endif

@@ -2,6 +2,7 @@ import Foundation
 import CloudKit
 import SwiftUI
 import Network
+import CoreData
 
 // MARK: - Sync Status
 
@@ -190,6 +191,9 @@ class iCloudStorageManager: ObservableObject {
     
     /// Queue of summaries waiting to be synced
     private var pendingSyncQueue: [EnhancedSummaryData] = []
+
+    /// Prevents periodic/queued sync work from competing with manual backup/restore operations.
+    private var isManualCloudTransferInProgress = false
     
     /// Maximum number of summaries to sync in a single batch
     private let maxBatchSize = 10
@@ -1603,6 +1607,7 @@ class iCloudStorageManager: ObservableObject {
     
     private func performPeriodicSync() async {
         guard isEnabled else { return }
+        guard !isManualCloudTransferInProgress else { return }
         
         // Check if we should skip sync based on current conditions
         if shouldSkipSync() {
@@ -1639,6 +1644,10 @@ class iCloudStorageManager: ObservableObject {
     }
     
     private func shouldSkipSync() -> Bool {
+        if isManualCloudTransferInProgress {
+            return true
+        }
+
         // Skip sync if battery is critically low
         if performanceOptimizer.batteryInfo.isLowBattery {
             return true
@@ -2240,6 +2249,1727 @@ class iCloudStorageManager: ObservableObject {
     // MARK: - Private Methods
 }
 
+// MARK: - Robust Backup Models
+
+struct CloudBackupOptions {
+    var includeAudioFiles: Bool
+    var includeSettings: Bool
+    var includeSensitiveSettings: Bool
+}
+
+struct CloudBackupResult {
+    var recordingsBackedUp: Int = 0
+    var transcriptsBackedUp: Int = 0
+    var summariesBackedUp: Int = 0
+    var audioFilesBackedUp: Int = 0
+    var audioFilesSkippedUnchanged: Int = 0
+    var settingsBackedUp: Bool = false
+    var includedSensitiveSettings: Bool = false
+    var wasSkippedNoChanges: Bool = false
+}
+
+struct CloudRestoreResult {
+    var recordingsRestored: Int = 0
+    var transcriptsRestored: Int = 0
+    var summariesRestored: Int = 0
+    var audioFilesRestored: Int = 0
+    var settingsRestored: Bool = false
+    var includedSensitiveSettings: Bool = false
+}
+
+private struct CodableSettingsBackupPayload: Codable {
+    let createdAt: Date
+    let includesSensitiveValues: Bool
+    let values: [String: Data]
+}
+
+private struct BackupContentRecordsFromIndex {
+    var recordings: [CKRecord] = []
+    var transcripts: [CKRecord] = []
+    var summaries: [CKRecord] = []
+}
+
+private struct BackupIdentifierFixupResult {
+    var recordingsAssigned: Int = 0
+    var transcriptsAssigned: Int = 0
+    var summariesAssigned: Int = 0
+
+    var totalAssigned: Int {
+        recordingsAssigned + transcriptsAssigned + summariesAssigned
+    }
+}
+
+private struct LatestPerRecordingResolution {
+    var keptRecords: [CKRecord] = []
+    var loserRecordIDs: [CKRecord.ID] = []
+}
+
+// MARK: - Robust iCloud Backup Extension
+
+extension iCloudStorageManager {
+    private static let backupRecordingRecordType = "CD_BackupRecording"
+    private static let backupTranscriptRecordType = "CD_BackupTranscript"
+    private static let backupSummaryRecordType = "CD_BackupSummary"
+    private static let backupSettingsRecordType = "CD_BackupSettings"
+    private static let backupContentIndexRecordType = "CD_BackupContentIndex"
+    private static let backupSettingsRecordName = "settings"
+    private static let backupContentIndexRecordName = "content_index"
+    private static let backupSchemaVersion = 1
+    private static let backupStateSignatureKey = "iCloudBackupStateSignatureV1"
+    private static let backupRecordingRecordPrefix = "backup_recording_"
+    private static let backupTranscriptRecordPrefix = "backup_transcript_"
+    private static let backupSummaryRecordPrefix = "backup_summary_"
+
+    private static let fieldRecordingName = "recordingName"
+    private static let fieldRecordingDate = "recordingDate"
+    private static let fieldRecordingURL = "recordingURL"
+    private static let fieldCreatedAt = "createdAt"
+    private static let fieldLastModified = "lastModified"
+    private static let fieldFileSize = "fileSize"
+    private static let fieldDuration = "duration"
+    private static let fieldAudioQuality = "audioQuality"
+    private static let fieldTranscriptionStatus = "transcriptionStatus"
+    private static let fieldSummaryStatus = "summaryStatus"
+    private static let fieldTranscriptId = "transcriptId"
+    private static let fieldSummaryId = "summaryId"
+    private static let fieldLocationLatitude = "locationLatitude"
+    private static let fieldLocationLongitude = "locationLongitude"
+    private static let fieldLocationAccuracy = "locationAccuracy"
+    private static let fieldLocationTimestamp = "locationTimestamp"
+    private static let fieldLocationAddress = "locationAddress"
+    private static let fieldDeviceIdentifier = "deviceIdentifier"
+
+    private static let fieldAudioAsset = "audioAsset"
+    private static let fieldAudioFileName = "audioFileName"
+    private static let fieldAudioByteCount = "audioByteCount"
+    private static let fieldAudioSignature = "audioSignature"
+
+    private static let fieldRecordingId = "recordingId"
+    private static let fieldEngine = "engine"
+    private static let fieldProcessingTime = "processingTime"
+    private static let fieldConfidence = "confidence"
+    private static let fieldSegments = "segments"
+    private static let fieldSpeakerMappings = "speakerMappings"
+
+    private static let fieldSummaryText = "summary"
+    private static let fieldTasks = "tasks"
+    private static let fieldReminders = "reminders"
+    private static let fieldTitles = "titles"
+    private static let fieldContentType = "contentType"
+    private static let fieldAIMethod = "aiMethod"
+    private static let fieldGeneratedAt = "generatedAt"
+    private static let fieldVersion = "version"
+    private static let fieldWordCount = "wordCount"
+    private static let fieldOriginalLength = "originalLength"
+    private static let fieldCompressionRatio = "compressionRatio"
+
+    private static let fieldSettingsPayload = "payload"
+    private static let fieldSettingsIncludesSensitive = "includesSensitiveValues"
+    private static let fieldSettingsSchemaVersion = "schemaVersion"
+    private static let fieldSettingsUpdatedAt = "updatedAt"
+    private static let fieldIndexRecordingRecordNames = "recordingRecordNames"
+    private static let fieldIndexTranscriptRecordNames = "transcriptRecordNames"
+    private static let fieldIndexSummaryRecordNames = "summaryRecordNames"
+
+    private static let backedUpSettingsKeys: [String] = [
+        "SelectedAIEngine",
+        "selectedTranscriptionEngine",
+        "showTranscriptionProgress",
+        "summarizationTimeout",
+        "user_preference_time_format",
+        "WatchIntegrationEnabled",
+        "WatchAutoSync",
+        "WatchBatteryAware",
+        "isLocationTrackingEnabled",
+        "openAIAPIKey",
+        "openAIModel",
+        "openAIBaseURL",
+        "openAISummarizationModel",
+        "openAISummarizationBaseURL",
+        "openAISummarizationTemperature",
+        "openAISummarizationMaxTokens",
+        "enableOpenAI",
+        "openAICompatibleAPIKey",
+        "openAICompatibleModel",
+        "openAICompatibleBaseURL",
+        "openAICompatibleTemperature",
+        "openAICompatibleMaxTokens",
+        "enableOpenAICompatible",
+        "openAICompatibleManualFormatOverride",
+        "openAICompatibleManualFormat",
+        "googleAIStudioAPIKey",
+        "googleAIStudioModel",
+        "googleAIStudioTemperature",
+        "googleAIStudioMaxTokens",
+        "enableGoogleAIStudio",
+        "mistralAPIKey",
+        "mistralBaseURL",
+        "mistralModel",
+        "mistralTemperature",
+        "mistralMaxTokens",
+        "enableMistralAI",
+        "mistralSupportsJsonResponseFormat",
+        "mistralTranscribeModel",
+        "mistralTranscribeDiarize",
+        "mistralTranscribeLanguage",
+        "awsBucketName",
+        "enableAWSTranscribe",
+        "AWSCredentials",
+        "awsBedrockSessionToken",
+        "awsBedrockModel",
+        "awsBedrockTemperature",
+        "awsBedrockMaxTokens",
+        "awsBedrockUseProfile",
+        "awsBedrockProfileName",
+        "enableAWSBedrock",
+        "ollamaServerURL",
+        "ollamaPort",
+        "ollamaModelName",
+        "ollamaMaxTokens",
+        "ollamaTemperature",
+        "ollamaContextTokens",
+        "enableOllama",
+        "enableWhisper",
+        "whisperServerURL",
+        "whisperPort",
+        "whisperProtocol",
+        WhisperKitModelInfo.SettingsKeys.enableWhisperKit,
+        WhisperKitModelInfo.SettingsKeys.selectedModelId,
+        OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM,
+        OnDeviceLLMModelInfo.SettingsKeys.selectedModelId,
+        OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels,
+        OnDeviceLLMModelInfo.SettingsKeys.temperature,
+        OnDeviceLLMModelInfo.SettingsKeys.maxTokens,
+        OnDeviceLLMModelInfo.SettingsKeys.topK,
+        OnDeviceLLMModelInfo.SettingsKeys.topP,
+        OnDeviceLLMModelInfo.SettingsKeys.minP,
+        OnDeviceLLMModelInfo.SettingsKeys.repeatPenalty
+    ]
+
+    private static let sensitiveSettingKeyFragments: [String] = [
+        "apikey",
+        "secret",
+        "token",
+        "credentials",
+        "accesskey"
+    ]
+
+    /// CloudKit private database already provides built-in encryption at rest and in transit.
+    /// No app-managed encryption key is required for current backups.
+    func canEncryptSensitiveSettingsBackup() -> Bool {
+        return true
+    }
+
+    func backupAllDataToiCloud(
+        appCoordinator: AppDataCoordinator,
+        options: CloudBackupOptions
+    ) async throws -> CloudBackupResult {
+        guard isEnabled else {
+            throw NSError(
+                domain: "iCloudStorageManager",
+                code: 4001,
+                userInfo: [NSLocalizedDescriptionKey: "Enable iCloud Sync before backing up."]
+            )
+        }
+        isManualCloudTransferInProgress = true
+        defer { isManualCloudTransferInProgress = false }
+
+        let container = CKContainer.default()
+        let database = container.privateCloudDatabase
+
+        do {
+            let bundleIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
+            let containerIdentifier = container.containerIdentifier ?? "default"
+            print("☁️ Backup context - bundle: \(bundleIdentifier), container: \(containerIdentifier)")
+
+            try await validateiCloudAccountAvailability(using: container)
+            await MainActor.run {
+                self.syncStatus = .syncing
+                self.lastError = nil
+            }
+
+            var result = CloudBackupResult()
+            var recordingRecordsSaved = 0
+            var transcriptRecordsSaved = 0
+            var summaryRecordsSaved = 0
+            var recordingRecordNames = Set<String>()
+            var transcriptRecordNames = Set<String>()
+            var summaryRecordNames = Set<String>()
+            let fileManager = FileManager.default
+            let recordings = appCoordinator.coreDataManager.getAllRecordings()
+            let transcripts = appCoordinator.coreDataManager.getAllTranscripts()
+            let summaries = appCoordinator.coreDataManager.getAllSummaries()
+            print(
+                "☁️ Backup source counts - recordings: \(recordings.count), " +
+                "transcripts: \(transcripts.count), summaries: \(summaries.count)"
+            )
+
+            let idFixup = try ensureBackupIdentifiers(
+                recordings: recordings,
+                transcripts: transcripts,
+                summaries: summaries
+            )
+            if idFixup.totalAssigned > 0 {
+                print(
+                    "🔧 Assigned missing backup IDs - recordings: \(idFixup.recordingsAssigned), " +
+                    "transcripts: \(idFixup.transcriptsAssigned), summaries: \(idFixup.summariesAssigned)"
+                )
+            }
+
+            let currentBackupStateSignature = computeBackupStateSignature(
+                recordings: recordings,
+                transcripts: transcripts,
+                summaries: summaries,
+                appCoordinator: appCoordinator,
+                options: options
+            )
+            if UserDefaults.standard.string(forKey: Self.backupStateSignatureKey) == currentBackupStateSignature {
+                let hasCloudContentBackup = try await cloudHasAnyContentBackupRecord(database: database)
+                if hasCloudContentBackup {
+                    result.wasSkippedNoChanges = true
+                    await MainActor.run {
+                        self.lastSyncDate = Date()
+                        UserDefaults.standard.set(self.lastSyncDate, forKey: "lastSyncDate")
+                        self.syncStatus = .completed
+                        self.lastError = nil
+                    }
+                    return result
+                } else {
+                    print(
+                        "⚠️ Local backup signature matched but cloud content backup is empty. " +
+                        "Forcing full upload to seed this CloudKit environment."
+                    )
+                }
+            }
+
+            let existingRecordingRecordsById = try await fetchBackupRecordsByUUID(
+                recordType: Self.backupRecordingRecordType,
+                recordNamePrefix: Self.backupRecordingRecordPrefix,
+                database: database
+            )
+            recordingRecordNames.formUnion(existingRecordingRecordsById.values.map { $0.recordID.recordName })
+
+            for recording in recordings {
+                guard let recordingId = recording.id else { continue }
+                var backedUpAudioForRecording = false
+
+                let recordID = CKRecord.ID(
+                    recordName: makeBackupRecordName(
+                        prefix: Self.backupRecordingRecordPrefix,
+                        id: recordingId
+                    )
+                )
+                recordingRecordNames.insert(recordID.recordName)
+                let existingRecord = existingRecordingRecordsById[recordingId]
+                let record = existingRecord ?? CKRecord(recordType: Self.backupRecordingRecordType, recordID: recordID)
+
+                var shouldSave = existingRecord == nil
+                let stableLastModified = recording.lastModified ?? recording.createdAt ?? recording.recordingDate
+
+                updateStringField(Self.fieldRecordingName, value: recording.recordingName, on: record, changed: &shouldSave)
+                updateDateField(Self.fieldRecordingDate, value: recording.recordingDate, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldRecordingURL, value: recording.recordingURL, on: record, changed: &shouldSave)
+                updateDateField(Self.fieldCreatedAt, value: recording.createdAt, on: record, changed: &shouldSave)
+                updateDateField(Self.fieldLastModified, value: stableLastModified, on: record, changed: &shouldSave)
+                updateInt64Field(Self.fieldFileSize, value: recording.fileSize, on: record, changed: &shouldSave)
+                updateDoubleField(Self.fieldDuration, value: recording.duration, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldAudioQuality, value: recording.audioQuality, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldTranscriptionStatus, value: recording.transcriptionStatus, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldSummaryStatus, value: recording.summaryStatus, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldTranscriptId, value: recording.transcriptId?.uuidString, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldSummaryId, value: recording.summaryId?.uuidString, on: record, changed: &shouldSave)
+                updateDoubleField(Self.fieldLocationLatitude, value: recording.locationLatitude, on: record, changed: &shouldSave)
+                updateDoubleField(Self.fieldLocationLongitude, value: recording.locationLongitude, on: record, changed: &shouldSave)
+                updateDoubleField(Self.fieldLocationAccuracy, value: recording.locationAccuracy, on: record, changed: &shouldSave)
+                updateDateField(Self.fieldLocationTimestamp, value: recording.locationTimestamp, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldLocationAddress, value: recording.locationAddress, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldDeviceIdentifier, value: deviceIdentifier, on: record, changed: &shouldSave)
+
+                if options.includeAudioFiles {
+                    if let localURL = appCoordinator.getAbsoluteURL(for: recording),
+                       fileManager.fileExists(atPath: localURL.path) {
+                        let signature = audioFileSignature(for: localURL)
+                        let existingSignature = record[Self.fieldAudioSignature] as? String
+                        if signature != existingSignature {
+                            record[Self.fieldAudioAsset] = CKAsset(fileURL: localURL)
+                            updateStringField(Self.fieldAudioFileName, value: localURL.lastPathComponent, on: record, changed: &shouldSave)
+                            if let attributes = try? fileManager.attributesOfItem(atPath: localURL.path),
+                               let size = attributes[.size] as? Int64 {
+                                updateInt64Field(Self.fieldAudioByteCount, value: size, on: record, changed: &shouldSave)
+                            }
+                            updateStringField(Self.fieldAudioSignature, value: signature, on: record, changed: &shouldSave)
+                            backedUpAudioForRecording = true
+                        } else {
+                            result.audioFilesSkippedUnchanged += 1
+                        }
+                    }
+                }
+
+                if shouldSave {
+                    try await saveBackupRecord(record, database: database)
+                    recordingRecordsSaved += 1
+                }
+                result.recordingsBackedUp += 1
+
+                if backedUpAudioForRecording {
+                    result.audioFilesBackedUp += 1
+                }
+            }
+
+            let existingTranscriptRecordsById = try await fetchBackupRecordsByUUID(
+                recordType: Self.backupTranscriptRecordType,
+                recordNamePrefix: Self.backupTranscriptRecordPrefix,
+                database: database
+            )
+            transcriptRecordNames.formUnion(existingTranscriptRecordsById.values.map { $0.recordID.recordName })
+            for transcript in transcripts {
+                guard let transcriptId = transcript.id else { continue }
+
+                let recordID = CKRecord.ID(
+                    recordName: makeBackupRecordName(
+                        prefix: Self.backupTranscriptRecordPrefix,
+                        id: transcriptId
+                    )
+                )
+                transcriptRecordNames.insert(recordID.recordName)
+                let existingRecord = existingTranscriptRecordsById[transcriptId]
+                let record = existingRecord ?? CKRecord(recordType: Self.backupTranscriptRecordType, recordID: recordID)
+
+                var shouldSave = existingRecord == nil
+                let stableLastModified = transcript.lastModified ?? transcript.createdAt ?? Date()
+                updateStringField(Self.fieldRecordingId, value: transcript.recordingId?.uuidString, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldEngine, value: transcript.engine, on: record, changed: &shouldSave)
+                updateDateField(Self.fieldCreatedAt, value: transcript.createdAt, on: record, changed: &shouldSave)
+                updateDateField(Self.fieldLastModified, value: stableLastModified, on: record, changed: &shouldSave)
+                updateDoubleField(Self.fieldProcessingTime, value: transcript.processingTime, on: record, changed: &shouldSave)
+                updateDoubleField(Self.fieldConfidence, value: transcript.confidence, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldSegments, value: transcript.segments, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldSpeakerMappings, value: transcript.speakerMappings, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldDeviceIdentifier, value: deviceIdentifier, on: record, changed: &shouldSave)
+
+                if shouldSave {
+                    try await saveBackupRecord(record, database: database)
+                    transcriptRecordsSaved += 1
+                }
+                result.transcriptsBackedUp += 1
+            }
+
+            // Keep only the newest transcript per recording in cloud.
+            let transcriptQueryRecords = (try? await fetchBackupRecords(
+                recordType: Self.backupTranscriptRecordType,
+                database: database
+            )) ?? []
+            transcriptRecordNames.formUnion(transcriptQueryRecords.map { $0.recordID.recordName })
+            let transcriptCandidateRecords = try await fetchBackupRecordsByRecordNames(
+                Array(transcriptRecordNames),
+                expectedRecordType: Self.backupTranscriptRecordType,
+                database: database
+            )
+            let transcriptResolution = resolveLatestRecordsPerRecording(
+                transcriptCandidateRecords,
+                recordingIdField: Self.fieldRecordingId,
+                timestampKeys: [Self.fieldLastModified, Self.fieldCreatedAt]
+            )
+            if !transcriptResolution.loserRecordIDs.isEmpty {
+                try await deleteBackupRecords(transcriptResolution.loserRecordIDs, database: database)
+                print("🧹 Removed \(transcriptResolution.loserRecordIDs.count) older transcript backup records")
+            }
+            transcriptRecordNames = Set(transcriptResolution.keptRecords.map { $0.recordID.recordName })
+
+            let existingSummaryRecordsById = try await fetchBackupRecordsByUUID(
+                recordType: Self.backupSummaryRecordType,
+                recordNamePrefix: Self.backupSummaryRecordPrefix,
+                database: database
+            )
+            summaryRecordNames.formUnion(existingSummaryRecordsById.values.map { $0.recordID.recordName })
+            for summary in summaries {
+                guard let summaryId = summary.id else { continue }
+
+                let recordID = CKRecord.ID(
+                    recordName: makeBackupRecordName(
+                        prefix: Self.backupSummaryRecordPrefix,
+                        id: summaryId
+                    )
+                )
+                summaryRecordNames.insert(recordID.recordName)
+                let existingRecord = existingSummaryRecordsById[summaryId]
+                let record = existingRecord ?? CKRecord(recordType: Self.backupSummaryRecordType, recordID: recordID)
+
+                var shouldSave = existingRecord == nil
+                let stableGeneratedAt = summary.generatedAt ?? summary.recording?.recordingDate ?? Date()
+                updateStringField(Self.fieldRecordingId, value: summary.recordingId?.uuidString, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldTranscriptId, value: summary.transcriptId?.uuidString, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldSummaryText, value: summary.summary, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldTasks, value: summary.tasks, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldReminders, value: summary.reminders, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldTitles, value: summary.titles, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldContentType, value: summary.contentType, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldAIMethod, value: summary.aiMethod, on: record, changed: &shouldSave)
+                updateDateField(Self.fieldGeneratedAt, value: stableGeneratedAt, on: record, changed: &shouldSave)
+                updateIntField(Self.fieldVersion, value: Int(summary.version), on: record, changed: &shouldSave)
+                updateIntField(Self.fieldWordCount, value: Int(summary.wordCount), on: record, changed: &shouldSave)
+                updateIntField(Self.fieldOriginalLength, value: Int(summary.originalLength), on: record, changed: &shouldSave)
+                updateDoubleField(Self.fieldCompressionRatio, value: summary.compressionRatio, on: record, changed: &shouldSave)
+                updateDoubleField(Self.fieldConfidence, value: summary.confidence, on: record, changed: &shouldSave)
+                updateDoubleField(Self.fieldProcessingTime, value: summary.processingTime, on: record, changed: &shouldSave)
+                updateDateField(Self.fieldLastModified, value: stableGeneratedAt, on: record, changed: &shouldSave)
+                updateStringField(Self.fieldDeviceIdentifier, value: deviceIdentifier, on: record, changed: &shouldSave)
+
+                updateStringField(Self.fieldRecordingName, value: summary.recording?.recordingName, on: record, changed: &shouldSave)
+                updateDateField(Self.fieldRecordingDate, value: summary.recording?.recordingDate, on: record, changed: &shouldSave)
+
+                if shouldSave {
+                    try await saveBackupRecord(record, database: database)
+                    summaryRecordsSaved += 1
+                }
+                result.summariesBackedUp += 1
+            }
+
+            // Keep only the newest summary per recording in cloud.
+            let summaryQueryRecords = (try? await fetchBackupRecords(
+                recordType: Self.backupSummaryRecordType,
+                database: database
+            )) ?? []
+            summaryRecordNames.formUnion(summaryQueryRecords.map { $0.recordID.recordName })
+            let summaryCandidateRecords = try await fetchBackupRecordsByRecordNames(
+                Array(summaryRecordNames),
+                expectedRecordType: Self.backupSummaryRecordType,
+                database: database
+            )
+            let summaryResolution = resolveLatestRecordsPerRecording(
+                summaryCandidateRecords,
+                recordingIdField: Self.fieldRecordingId,
+                timestampKeys: [Self.fieldLastModified, Self.fieldGeneratedAt, Self.fieldCreatedAt]
+            )
+            if !summaryResolution.loserRecordIDs.isEmpty {
+                try await deleteBackupRecords(summaryResolution.loserRecordIDs, database: database)
+                print("🧹 Removed \(summaryResolution.loserRecordIDs.count) older summary backup records")
+            }
+            summaryRecordNames = Set(summaryResolution.keptRecords.map { $0.recordID.recordName })
+
+            if options.includeSettings {
+                let settingsResult = try await backupSettingsToiCloud(
+                    database: database,
+                    includeSensitiveSettings: options.includeSensitiveSettings
+                )
+                result.settingsBackedUp = settingsResult.backedUp
+                result.includedSensitiveSettings = settingsResult.includedSensitiveSettings
+            }
+
+            try await saveBackupContentIndex(
+                database: database,
+                recordingRecordNames: Array(recordingRecordNames).sorted(),
+                transcriptRecordNames: Array(transcriptRecordNames).sorted(),
+                summaryRecordNames: Array(summaryRecordNames).sorted()
+            )
+
+            let indexedCloudRecords = try await fetchBackupRecordsFromContentIndex(database: database)
+            let cloudRecordingCount = indexedCloudRecords.recordings.count
+            let cloudTranscriptCount = indexedCloudRecords.transcripts.count
+            let cloudSummaryCount = indexedCloudRecords.summaries.count
+            print(
+                "☁️ Backup write summary - processed [recordings: \(result.recordingsBackedUp), " +
+                "transcripts: \(result.transcriptsBackedUp), summaries: \(result.summariesBackedUp)], " +
+                "saved this run [recordings: \(recordingRecordsSaved), transcripts: \(transcriptRecordsSaved), " +
+                "summaries: \(summaryRecordsSaved)], cloud now [recordings: \(cloudRecordingCount), " +
+                "transcripts: \(cloudTranscriptCount), summaries: \(cloudSummaryCount)]"
+            )
+
+            await MainActor.run {
+                self.lastSyncDate = Date()
+                UserDefaults.standard.set(self.lastSyncDate, forKey: "lastSyncDate")
+                UserDefaults.standard.set(currentBackupStateSignature, forKey: Self.backupStateSignatureKey)
+                self.syncStatus = .completed
+                self.lastError = nil
+            }
+
+            return result
+        } catch {
+            await MainActor.run {
+                self.syncStatus = .failed(error.localizedDescription)
+                self.lastError = error.localizedDescription
+            }
+            throw error
+        }
+    }
+
+    func restoreAllDataFromiCloud(
+        appCoordinator: AppDataCoordinator,
+        includeAudioFiles: Bool,
+        restoreSettings: Bool
+    ) async throws -> CloudRestoreResult {
+        guard isEnabled else {
+            throw NSError(
+                domain: "iCloudStorageManager",
+                code: 4002,
+                userInfo: [NSLocalizedDescriptionKey: "Enable iCloud Sync before restoring."]
+            )
+        }
+        isManualCloudTransferInProgress = true
+        defer { isManualCloudTransferInProgress = false }
+
+        let container = CKContainer.default()
+        let database = container.privateCloudDatabase
+
+        do {
+            let bundleIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
+            let containerIdentifier = container.containerIdentifier ?? "default"
+            print("☁️ Restore context - bundle: \(bundleIdentifier), container: \(containerIdentifier)")
+
+            try await validateiCloudAccountAvailability(using: container)
+            await MainActor.run {
+                self.syncStatus = .syncing
+                self.lastError = nil
+            }
+
+            var result = CloudRestoreResult()
+            let context = PersistenceController.shared.container.viewContext
+            let fileManager = FileManager.default
+
+            var recordingRecords = try await fetchBackupRecords(
+                recordType: Self.backupRecordingRecordType,
+                database: database
+            )
+            var transcriptRecords = try await fetchBackupRecords(
+                recordType: Self.backupTranscriptRecordType,
+                database: database
+            )
+            var summaryRecords = try await fetchBackupRecords(
+                recordType: Self.backupSummaryRecordType,
+                database: database
+            )
+
+            if recordingRecords.isEmpty, transcriptRecords.isEmpty, summaryRecords.isEmpty {
+                let indexedRecords = try await fetchBackupRecordsFromContentIndex(database: database)
+                if !indexedRecords.recordings.isEmpty ||
+                    !indexedRecords.transcripts.isEmpty ||
+                    !indexedRecords.summaries.isEmpty {
+                    recordingRecords = indexedRecords.recordings
+                    transcriptRecords = indexedRecords.transcripts
+                    summaryRecords = indexedRecords.summaries
+                    print(
+                        "☁️ Restore fallback via content index - recordings: \(recordingRecords.count), " +
+                        "transcripts: \(transcriptRecords.count), summaries: \(summaryRecords.count)"
+                    )
+                }
+            }
+
+            print(
+                "☁️ Backup restore candidates - recordings: \(recordingRecords.count), " +
+                "transcripts: \(transcriptRecords.count), summaries: \(summaryRecords.count)"
+            )
+
+            // Resolve duplicate transcript/summary records for the same recording by timestamp.
+            let transcriptResolution = resolveLatestRecordsPerRecording(
+                transcriptRecords,
+                recordingIdField: Self.fieldRecordingId,
+                timestampKeys: [Self.fieldLastModified, Self.fieldCreatedAt]
+            )
+            if transcriptResolution.keptRecords.count != transcriptRecords.count {
+                print(
+                    "🧭 Restore selected newest transcript per recording; " +
+                    "ignored \(transcriptRecords.count - transcriptResolution.keptRecords.count) older records"
+                )
+            }
+            transcriptRecords = transcriptResolution.keptRecords
+
+            let summaryResolution = resolveLatestRecordsPerRecording(
+                summaryRecords,
+                recordingIdField: Self.fieldRecordingId,
+                timestampKeys: [Self.fieldLastModified, Self.fieldGeneratedAt, Self.fieldCreatedAt]
+            )
+            if summaryResolution.keptRecords.count != summaryRecords.count {
+                print(
+                    "🧭 Restore selected newest summary per recording; " +
+                    "ignored \(summaryRecords.count - summaryResolution.keptRecords.count) older records"
+                )
+            }
+            summaryRecords = summaryResolution.keptRecords
+
+            var recordingsById = [UUID: RecordingEntry]()
+            for recording in appCoordinator.coreDataManager.getAllRecordings() {
+                if let id = recording.id {
+                    recordingsById[id] = recording
+                }
+            }
+
+            for record in recordingRecords {
+                guard let recordingId = decodeBackupRecordUUID(
+                    recordName: record.recordID.recordName,
+                    prefix: Self.backupRecordingRecordPrefix
+                ) else {
+                    continue
+                }
+                let existing = recordingsById[recordingId]
+                let entry = existing ?? RecordingEntry(context: context)
+
+                if existing == nil {
+                    entry.id = recordingId
+                    result.recordingsRestored += 1
+                }
+
+                entry.recordingName = record[Self.fieldRecordingName] as? String
+                entry.recordingDate = record[Self.fieldRecordingDate] as? Date
+                entry.createdAt = record[Self.fieldCreatedAt] as? Date
+                entry.lastModified = record[Self.fieldLastModified] as? Date
+                entry.fileSize = int64Value(from: record[Self.fieldFileSize])
+                entry.duration = doubleValue(from: record[Self.fieldDuration])
+                entry.audioQuality = record[Self.fieldAudioQuality] as? String
+                entry.transcriptionStatus = record[Self.fieldTranscriptionStatus] as? String
+                entry.summaryStatus = record[Self.fieldSummaryStatus] as? String
+                entry.transcriptId = (record[Self.fieldTranscriptId] as? String).flatMap { UUID(uuidString: $0) }
+                entry.summaryId = (record[Self.fieldSummaryId] as? String).flatMap { UUID(uuidString: $0) }
+                entry.locationLatitude = doubleValue(from: record[Self.fieldLocationLatitude])
+                entry.locationLongitude = doubleValue(from: record[Self.fieldLocationLongitude])
+                entry.locationAccuracy = doubleValue(from: record[Self.fieldLocationAccuracy])
+                entry.locationTimestamp = record[Self.fieldLocationTimestamp] as? Date
+                entry.locationAddress = record[Self.fieldLocationAddress] as? String
+
+                if includeAudioFiles,
+                   let asset = record[Self.fieldAudioAsset] as? CKAsset,
+                   let assetURL = asset.fileURL,
+                   fileManager.fileExists(atPath: assetURL.path) {
+                    let backupFileName = (record[Self.fieldAudioFileName] as? String) ?? "\(recordingId.uuidString).m4a"
+                    let destinationURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent(backupFileName)
+
+                    if fileManager.fileExists(atPath: destinationURL.path) {
+                        try? fileManager.removeItem(at: destinationURL)
+                    }
+
+                    try fileManager.copyItem(at: assetURL, to: destinationURL)
+                    entry.recordingURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? backupFileName
+                    result.audioFilesRestored += 1
+                } else if existing == nil {
+                    // Keep metadata-only records when audio backup is disabled or unavailable.
+                    entry.recordingURL = nil
+                }
+
+                recordingsById[recordingId] = entry
+            }
+
+            var transcriptsById = [UUID: TranscriptEntry]()
+            for transcript in appCoordinator.coreDataManager.getAllTranscripts() {
+                if let id = transcript.id {
+                    transcriptsById[id] = transcript
+                }
+            }
+
+            for record in transcriptRecords {
+                guard let transcriptId = decodeBackupRecordUUID(
+                    recordName: record.recordID.recordName,
+                    prefix: Self.backupTranscriptRecordPrefix
+                ) else {
+                    continue
+                }
+                let existing = transcriptsById[transcriptId]
+                let entry = existing ?? TranscriptEntry(context: context)
+
+                if existing == nil {
+                    entry.id = transcriptId
+                    result.transcriptsRestored += 1
+                }
+
+                let recordingId = (record[Self.fieldRecordingId] as? String).flatMap { UUID(uuidString: $0) }
+                entry.recordingId = recordingId
+                entry.engine = record[Self.fieldEngine] as? String
+                entry.createdAt = record[Self.fieldCreatedAt] as? Date
+                entry.lastModified = record[Self.fieldLastModified] as? Date
+                entry.processingTime = doubleValue(from: record[Self.fieldProcessingTime])
+                entry.confidence = doubleValue(from: record[Self.fieldConfidence])
+                entry.segments = record[Self.fieldSegments] as? String
+                entry.speakerMappings = record[Self.fieldSpeakerMappings] as? String
+
+                if let recordingId, let recording = recordingsById[recordingId] {
+                    entry.recording = recording
+                    recording.transcript = entry
+                    recording.transcriptId = transcriptId
+                    if recording.transcriptionStatus == nil || recording.transcriptionStatus?.isEmpty == true {
+                        recording.transcriptionStatus = ProcessingStatus.completed.rawValue
+                    }
+                }
+
+                transcriptsById[transcriptId] = entry
+            }
+
+            var summariesById = [UUID: SummaryEntry]()
+            for summary in appCoordinator.coreDataManager.getAllSummaries() {
+                if let id = summary.id {
+                    summariesById[id] = summary
+                }
+            }
+
+            for record in summaryRecords {
+                guard let summaryId = decodeBackupRecordUUID(
+                    recordName: record.recordID.recordName,
+                    prefix: Self.backupSummaryRecordPrefix
+                ) else {
+                    continue
+                }
+                let existing = summariesById[summaryId]
+                let entry = existing ?? SummaryEntry(context: context)
+
+                if existing == nil {
+                    entry.id = summaryId
+                    result.summariesRestored += 1
+                }
+
+                let recordingId = (record[Self.fieldRecordingId] as? String).flatMap { UUID(uuidString: $0) }
+                let transcriptId = (record[Self.fieldTranscriptId] as? String).flatMap { UUID(uuidString: $0) }
+
+                entry.recordingId = recordingId
+                entry.transcriptId = transcriptId
+                entry.summary = record[Self.fieldSummaryText] as? String
+                entry.tasks = record[Self.fieldTasks] as? String
+                entry.reminders = record[Self.fieldReminders] as? String
+                entry.titles = record[Self.fieldTitles] as? String
+                entry.contentType = record[Self.fieldContentType] as? String
+                entry.aiMethod = record[Self.fieldAIMethod] as? String
+                entry.generatedAt = record[Self.fieldGeneratedAt] as? Date
+                entry.version = Int32(intValue(from: record[Self.fieldVersion], defaultValue: 1))
+                entry.wordCount = Int32(intValue(from: record[Self.fieldWordCount]))
+                entry.originalLength = Int32(intValue(from: record[Self.fieldOriginalLength]))
+                entry.compressionRatio = doubleValue(from: record[Self.fieldCompressionRatio])
+                entry.confidence = doubleValue(from: record[Self.fieldConfidence])
+                entry.processingTime = doubleValue(from: record[Self.fieldProcessingTime])
+
+                if let recordingId, let recording = recordingsById[recordingId] {
+                    entry.recording = recording
+                    recording.summary = entry
+                    recording.summaryId = summaryId
+                    if recording.summaryStatus == nil || recording.summaryStatus?.isEmpty == true {
+                        recording.summaryStatus = ProcessingStatus.completed.rawValue
+                    }
+                }
+
+                if let transcriptId, let transcript = transcriptsById[transcriptId] {
+                    entry.transcript = transcript
+                }
+
+                summariesById[summaryId] = entry
+            }
+
+            var restoredSettings = false
+            var restoredSensitiveSettings = false
+            if restoreSettings {
+                let settingsResult = try await restoreSettingsFromiCloud(database: database)
+                restoredSettings = settingsResult.restored
+                restoredSensitiveSettings = settingsResult.includedSensitiveSettings
+            }
+
+            let hasContentBackupRecords =
+                !recordingRecords.isEmpty ||
+                !transcriptRecords.isEmpty ||
+                !summaryRecords.isEmpty
+            if !hasContentBackupRecords {
+                let settingsSuffix = restoredSettings
+                    ? " Settings were restored."
+                    : ""
+                throw NSError(
+                    domain: "iCloudStorageManager",
+                    code: 4005,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "No recordings, transcripts, or summaries backup records were found in iCloud." +
+                            settingsSuffix +
+                            " Run Backup Now on the source device and ensure both devices use the same app build channel (both Debug or both TestFlight/App Store)."
+                    ]
+                )
+            }
+
+            try context.save()
+            AWSCredentialsManager.shared.initializeEnvironment()
+
+            await MainActor.run {
+                self.lastSyncDate = Date()
+                UserDefaults.standard.set(self.lastSyncDate, forKey: "lastSyncDate")
+                self.syncStatus = .completed
+                self.lastError = nil
+            }
+
+            result.settingsRestored = restoredSettings
+            result.includedSensitiveSettings = restoredSensitiveSettings
+
+            return result
+        } catch {
+            await MainActor.run {
+                self.syncStatus = .failed(error.localizedDescription)
+                self.lastError = error.localizedDescription
+            }
+            throw error
+        }
+    }
+
+    private func makeBackupRecordName(prefix: String, id: UUID) -> String {
+        return "\(prefix)\(id.uuidString)"
+    }
+
+    private func decodeBackupRecordUUID(recordName: String, prefix: String) -> UUID? {
+        guard recordName.hasPrefix(prefix) else { return nil }
+        let uuidText = String(recordName.dropFirst(prefix.count))
+        return UUID(uuidString: uuidText)
+    }
+
+    private func audioFileSignature(for url: URL) -> String {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let size = (attributes?[.size] as? Int64) ?? 0
+        let modifiedTime = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return "\(size)-\(Int64(modifiedTime))"
+    }
+
+    private func computeBackupStateSignature(
+        recordings: [RecordingEntry],
+        transcripts: [TranscriptEntry],
+        summaries: [SummaryEntry],
+        appCoordinator: AppDataCoordinator,
+        options: CloudBackupOptions
+    ) -> String {
+        var hashBuilder = StableHashBuilder()
+        hashBuilder.combine("v2")
+        hashBuilder.combine(options.includeAudioFiles ? "audio:on" : "audio:off")
+        hashBuilder.combine(options.includeSettings ? "settings:on" : "settings:off")
+        hashBuilder.combine(options.includeSensitiveSettings ? "sensitive:on" : "sensitive:off")
+
+        let sortedRecordings = recordings.sorted {
+            ($0.id?.uuidString ?? "") < ($1.id?.uuidString ?? "")
+        }
+        for recording in sortedRecordings {
+            hashBuilder.combine(recording.id?.uuidString ?? "-")
+            hashBuilder.combine(recording.recordingName ?? "-")
+            hashBuilder.combine(recording.recordingURL ?? "-")
+            hashBuilder.combine(dateToken(recording.recordingDate))
+            hashBuilder.combine(dateToken(recording.createdAt))
+            hashBuilder.combine(dateToken(recording.lastModified))
+            hashBuilder.combine(String(recording.fileSize))
+            hashBuilder.combine(String(recording.duration))
+            hashBuilder.combine(recording.audioQuality ?? "-")
+            hashBuilder.combine(recording.transcriptionStatus ?? "-")
+            hashBuilder.combine(recording.summaryStatus ?? "-")
+            hashBuilder.combine(recording.transcriptId?.uuidString ?? "-")
+            hashBuilder.combine(recording.summaryId?.uuidString ?? "-")
+            hashBuilder.combine(String(recording.locationLatitude))
+            hashBuilder.combine(String(recording.locationLongitude))
+            hashBuilder.combine(String(recording.locationAccuracy))
+            hashBuilder.combine(dateToken(recording.locationTimestamp))
+            hashBuilder.combine(recording.locationAddress ?? "-")
+
+            if options.includeAudioFiles,
+               let localURL = appCoordinator.getAbsoluteURL(for: recording),
+               FileManager.default.fileExists(atPath: localURL.path) {
+                hashBuilder.combine(localURL.lastPathComponent)
+                hashBuilder.combine(audioFileSignature(for: localURL))
+            }
+        }
+
+        let sortedTranscripts = transcripts.sorted {
+            ($0.id?.uuidString ?? "") < ($1.id?.uuidString ?? "")
+        }
+        for transcript in sortedTranscripts {
+            hashBuilder.combine(transcript.id?.uuidString ?? "-")
+            hashBuilder.combine(transcript.recordingId?.uuidString ?? "-")
+            hashBuilder.combine(transcript.engine ?? "-")
+            hashBuilder.combine(dateToken(transcript.createdAt))
+            hashBuilder.combine(dateToken(transcript.lastModified))
+            hashBuilder.combine(String(transcript.processingTime))
+            hashBuilder.combine(String(transcript.confidence))
+            hashBuilder.combine(transcript.segments ?? "-")
+            hashBuilder.combine(transcript.speakerMappings ?? "-")
+        }
+
+        let sortedSummaries = summaries.sorted {
+            ($0.id?.uuidString ?? "") < ($1.id?.uuidString ?? "")
+        }
+        for summary in sortedSummaries {
+            hashBuilder.combine(summary.id?.uuidString ?? "-")
+            hashBuilder.combine(summary.recordingId?.uuidString ?? "-")
+            hashBuilder.combine(summary.transcriptId?.uuidString ?? "-")
+            hashBuilder.combine(summary.summary ?? "-")
+            hashBuilder.combine(summary.tasks ?? "-")
+            hashBuilder.combine(summary.reminders ?? "-")
+            hashBuilder.combine(summary.titles ?? "-")
+            hashBuilder.combine(summary.contentType ?? "-")
+            hashBuilder.combine(summary.aiMethod ?? "-")
+            hashBuilder.combine(dateToken(summary.generatedAt))
+            hashBuilder.combine(String(summary.version))
+            hashBuilder.combine(String(summary.wordCount))
+            hashBuilder.combine(String(summary.originalLength))
+            hashBuilder.combine(String(summary.compressionRatio))
+            hashBuilder.combine(String(summary.confidence))
+            hashBuilder.combine(String(summary.processingTime))
+        }
+
+        if options.includeSettings {
+            let settings = collectSettingsForBackup(includeSensitiveSettings: options.includeSensitiveSettings)
+            hashBuilder.combine(settings.includedSensitiveSettings ? "settings-sensitive:yes" : "settings-sensitive:no")
+            for key in settings.values.keys.sorted() {
+                guard let valueData = settings.values[key] else { continue }
+                hashBuilder.combine(key)
+                hashBuilder.combine(valueData)
+            }
+        }
+
+        return hashBuilder.hexDigest
+    }
+
+    private func dateToken(_ date: Date?) -> String {
+        guard let date else { return "-" }
+        return String(Int64(date.timeIntervalSince1970 * 1000))
+    }
+
+    private func ensureBackupIdentifiers(
+        recordings: [RecordingEntry],
+        transcripts: [TranscriptEntry],
+        summaries: [SummaryEntry]
+    ) throws -> BackupIdentifierFixupResult {
+        var result = BackupIdentifierFixupResult()
+        var contextsToSave: [NSManagedObjectContext] = []
+
+        func trackContext(_ context: NSManagedObjectContext?) {
+            guard let context else { return }
+            if !contextsToSave.contains(where: { $0 === context }) {
+                contextsToSave.append(context)
+            }
+        }
+
+        for recording in recordings where recording.id == nil {
+            recording.id = UUID()
+            result.recordingsAssigned += 1
+            trackContext(recording.managedObjectContext)
+        }
+
+        for transcript in transcripts where transcript.id == nil {
+            transcript.id = UUID()
+            result.transcriptsAssigned += 1
+            trackContext(transcript.managedObjectContext)
+        }
+
+        for summary in summaries where summary.id == nil {
+            summary.id = UUID()
+            result.summariesAssigned += 1
+            trackContext(summary.managedObjectContext)
+        }
+
+        if result.totalAssigned > 0 {
+            for context in contextsToSave where context.hasChanges {
+                try context.save()
+            }
+        }
+
+        return result
+    }
+
+    private struct StableHashBuilder {
+        private var hash: UInt64 = 1469598103934665603
+        private static let prime: UInt64 = 1099511628211
+
+        mutating func combine(_ text: String) {
+            combine(Data(text.utf8))
+        }
+
+        mutating func combine(_ data: Data) {
+            for byte in data {
+                hash ^= UInt64(byte)
+                hash = hash &* Self.prime
+            }
+            // Field separator to avoid accidental concatenation collisions.
+            hash ^= 0x1F
+            hash = hash &* Self.prime
+        }
+
+        var hexDigest: String {
+            String(format: "%016llx", hash)
+        }
+    }
+
+    private func updateStringField(
+        _ key: String,
+        value: String?,
+        on record: CKRecord,
+        changed: inout Bool
+    ) {
+        let current = record[key] as? String
+        if current != value {
+            record[key] = value as CKRecordValue?
+            changed = true
+        }
+    }
+
+    private func updateDateField(
+        _ key: String,
+        value: Date?,
+        on record: CKRecord,
+        changed: inout Bool
+    ) {
+        let current = record[key] as? Date
+        if current != value {
+            record[key] = value as CKRecordValue?
+            changed = true
+        }
+    }
+
+    private func updateIntField(
+        _ key: String,
+        value: Int,
+        on record: CKRecord,
+        changed: inout Bool
+    ) {
+        let current = intValue(from: record[key], defaultValue: Int.min)
+        if current != value {
+            record[key] = NSNumber(value: value)
+            changed = true
+        }
+    }
+
+    private func updateInt64Field(
+        _ key: String,
+        value: Int64,
+        on record: CKRecord,
+        changed: inout Bool
+    ) {
+        let current = int64Value(from: record[key], defaultValue: Int64.min)
+        if current != value {
+            record[key] = NSNumber(value: value)
+            changed = true
+        }
+    }
+
+    private func updateDoubleField(
+        _ key: String,
+        value: Double,
+        on record: CKRecord,
+        changed: inout Bool
+    ) {
+        let current = doubleValue(from: record[key], defaultValue: Double.nan)
+        if current.isNaN || abs(current - value) > 0.0000001 {
+            record[key] = NSNumber(value: value)
+            changed = true
+        }
+    }
+
+    private func intValue(from rawValue: Any?, defaultValue: Int = 0) -> Int {
+        if let value = rawValue as? Int {
+            return value
+        }
+        if let value = rawValue as? Int64 {
+            return Int(value)
+        }
+        if let value = rawValue as? NSNumber {
+            return value.intValue
+        }
+        return defaultValue
+    }
+
+    private func int64Value(from rawValue: Any?, defaultValue: Int64 = 0) -> Int64 {
+        if let value = rawValue as? Int64 {
+            return value
+        }
+        if let value = rawValue as? Int {
+            return Int64(value)
+        }
+        if let value = rawValue as? NSNumber {
+            return value.int64Value
+        }
+        return defaultValue
+    }
+
+    private func doubleValue(from rawValue: Any?, defaultValue: Double = 0) -> Double {
+        if let value = rawValue as? Double {
+            return value
+        }
+        if let value = rawValue as? NSNumber {
+            return value.doubleValue
+        }
+        return defaultValue
+    }
+
+    private func validateiCloudAccountAvailability(using container: CKContainer) async throws {
+        let accountStatus = try await container.accountStatus()
+        guard accountStatus == .available else {
+            throw NSError(
+                domain: "iCloudStorageManager",
+                code: 4003,
+                userInfo: [NSLocalizedDescriptionKey: "iCloud account is not available."]
+            )
+        }
+    }
+
+    private func fetchOrCreateRecord(
+        recordType: String,
+        recordID: CKRecord.ID,
+        database: CKDatabase
+    ) async throws -> CKRecord {
+        do {
+            let existingRecord = try await database.record(for: recordID)
+            if existingRecord.recordType == recordType {
+                return existingRecord
+            }
+        } catch let error as CKError where error.code == .unknownItem {
+            // No existing record - create one below.
+        }
+
+        return CKRecord(recordType: recordType, recordID: recordID)
+    }
+
+    private func fetchBackupRecordsByUUID(
+        recordType: String,
+        recordNamePrefix: String,
+        database: CKDatabase
+    ) async throws -> [UUID: CKRecord] {
+        let indexedRecords = try await fetchIndexedBackupRecords(
+            recordType: recordType,
+            database: database
+        )
+        let records: [CKRecord]
+        if !indexedRecords.isEmpty {
+            records = indexedRecords
+        } else {
+            records = try await fetchBackupRecords(
+                recordType: recordType,
+                database: database
+            )
+        }
+
+        var recordsByUUID: [UUID: CKRecord] = [:]
+        for record in records {
+            guard let uuid = decodeBackupRecordUUID(
+                recordName: record.recordID.recordName,
+                prefix: recordNamePrefix
+            ) else {
+                continue
+            }
+            recordsByUUID[uuid] = record
+        }
+
+        return recordsByUUID
+    }
+
+    private func fetchIndexedBackupRecords(
+        recordType: String,
+        database: CKDatabase
+    ) async throws -> [CKRecord] {
+        let indexedRecords = try await fetchBackupRecordsFromContentIndex(database: database)
+        switch recordType {
+        case Self.backupRecordingRecordType:
+            return indexedRecords.recordings
+        case Self.backupTranscriptRecordType:
+            return indexedRecords.transcripts
+        case Self.backupSummaryRecordType:
+            return indexedRecords.summaries
+        default:
+            return []
+        }
+    }
+
+    private func fetchBackupRecords(
+        recordType: String,
+        database: CKDatabase
+    ) async throws -> [CKRecord] {
+        let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
+
+        do {
+            var records: [CKRecord] = []
+            var fetchResult = try await database.records(matching: query)
+
+            while true {
+                for (_, result) in fetchResult.matchResults {
+                    if case .success(let record) = result {
+                        records.append(record)
+                    }
+                }
+
+                guard let queryCursor = fetchResult.queryCursor else {
+                    break
+                }
+                fetchResult = try await database.records(continuingMatchFrom: queryCursor)
+            }
+
+            if !records.isEmpty {
+                return records
+            }
+
+            let zoneQueryRecords = try await fetchBackupRecordsInDefaultZoneQuery(
+                recordType: recordType,
+                database: database
+            )
+            if !zoneQueryRecords.isEmpty {
+                return zoneQueryRecords
+            }
+
+            let zoneChangeRecords = try await fetchBackupRecordsUsingZoneChanges(
+                recordType: recordType,
+                database: database
+            )
+            if !zoneChangeRecords.isEmpty {
+                return zoneChangeRecords
+            }
+
+            return []
+        } catch {
+            return try await fetchBackupRecordsUsingZoneChanges(
+                recordType: recordType,
+                database: database
+            )
+        }
+    }
+
+    private func fetchBackupRecordsInDefaultZoneQuery(
+        recordType: String,
+        database: CKDatabase
+    ) async throws -> [CKRecord] {
+        let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
+        let (matchResults, _) = try await database.records(
+            matching: query,
+            inZoneWith: CKRecordZone.default().zoneID,
+            desiredKeys: nil,
+            resultsLimit: 1000
+        )
+
+        var records: [CKRecord] = []
+        for (_, result) in matchResults {
+            if case .success(let record) = result {
+                records.append(record)
+            }
+        }
+        return records
+    }
+
+    private func fetchBackupRecordsUsingZoneChanges(
+        recordType: String,
+        database: CKDatabase
+    ) async throws -> [CKRecord] {
+        let zoneID = CKRecordZone.default().zoneID
+
+        let operation = CKFetchRecordZoneChangesOperation(
+            recordZoneIDs: [zoneID],
+            configurationsByRecordZoneID: nil
+        )
+
+        let lock = NSLock()
+        var records: [CKRecord] = []
+
+        operation.recordWasChangedBlock = { _, result in
+            if case .success(let record) = result, record.recordType == recordType {
+                lock.lock()
+                records.append(record)
+                lock.unlock()
+            }
+        }
+
+        _ = try await withCheckedThrowingContinuation { continuation in
+            operation.fetchRecordZoneChangesResultBlock = { result in
+                continuation.resume(with: result)
+            }
+            database.add(operation)
+        }
+
+        return records
+    }
+
+    private func cloudHasAnyContentBackupRecord(database: CKDatabase) async throws -> Bool {
+        let indexedRecords = try await fetchBackupRecordsFromContentIndex(database: database)
+        if !indexedRecords.recordings.isEmpty ||
+            !indexedRecords.transcripts.isEmpty ||
+            !indexedRecords.summaries.isEmpty {
+            return true
+        }
+
+        if try await hasAtLeastOneBackupRecord(recordType: Self.backupRecordingRecordType, database: database) {
+            return true
+        }
+        if try await hasAtLeastOneBackupRecord(recordType: Self.backupTranscriptRecordType, database: database) {
+            return true
+        }
+        if try await hasAtLeastOneBackupRecord(recordType: Self.backupSummaryRecordType, database: database) {
+            return true
+        }
+        return false
+    }
+
+    private func hasAtLeastOneBackupRecord(
+        recordType: String,
+        database: CKDatabase
+    ) async throws -> Bool {
+        let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
+        do {
+            let (matchResults, _) = try await database.records(
+                matching: query,
+                inZoneWith: CKRecordZone.default().zoneID,
+                desiredKeys: nil,
+                resultsLimit: 1
+            )
+            return matchResults.contains { (_, result) in
+                if case .success = result {
+                    return true
+                }
+                return false
+            }
+        } catch {
+            // Fallback for accounts/environments where this query variant is unavailable.
+            let records = try await fetchBackupRecords(recordType: recordType, database: database)
+            return !records.isEmpty
+        }
+    }
+
+    private func saveBackupContentIndex(
+        database: CKDatabase,
+        recordingRecordNames: [String],
+        transcriptRecordNames: [String],
+        summaryRecordNames: [String]
+    ) async throws {
+        let recordID = CKRecord.ID(recordName: Self.backupContentIndexRecordName)
+        let record = try await fetchOrCreateRecord(
+            recordType: Self.backupContentIndexRecordType,
+            recordID: recordID,
+            database: database
+        )
+
+        record[Self.fieldIndexRecordingRecordNames] = recordingRecordNames as NSArray
+        record[Self.fieldIndexTranscriptRecordNames] = transcriptRecordNames as NSArray
+        record[Self.fieldIndexSummaryRecordNames] = summaryRecordNames as NSArray
+        record[Self.fieldSettingsSchemaVersion] = Self.backupSchemaVersion
+        record[Self.fieldSettingsUpdatedAt] = Date()
+        record[Self.fieldDeviceIdentifier] = deviceIdentifier
+
+        try await saveBackupRecord(record, database: database)
+    }
+
+    private func fetchBackupRecordsFromContentIndex(
+        database: CKDatabase
+    ) async throws -> BackupContentRecordsFromIndex {
+        let recordID = CKRecord.ID(recordName: Self.backupContentIndexRecordName)
+
+        do {
+            let indexRecord = try await database.record(for: recordID)
+            let recordingNames = indexRecord[Self.fieldIndexRecordingRecordNames] as? [String] ?? []
+            let transcriptNames = indexRecord[Self.fieldIndexTranscriptRecordNames] as? [String] ?? []
+            let summaryNames = indexRecord[Self.fieldIndexSummaryRecordNames] as? [String] ?? []
+
+            return BackupContentRecordsFromIndex(
+                recordings: try await fetchBackupRecordsByRecordNames(
+                    recordingNames,
+                    expectedRecordType: Self.backupRecordingRecordType,
+                    database: database
+                ),
+                transcripts: try await fetchBackupRecordsByRecordNames(
+                    transcriptNames,
+                    expectedRecordType: Self.backupTranscriptRecordType,
+                    database: database
+                ),
+                summaries: try await fetchBackupRecordsByRecordNames(
+                    summaryNames,
+                    expectedRecordType: Self.backupSummaryRecordType,
+                    database: database
+                )
+            )
+        } catch let error as CKError where error.code == .unknownItem {
+            return BackupContentRecordsFromIndex()
+        } catch {
+            throw error
+        }
+    }
+
+    private func fetchBackupRecordsByRecordNames(
+        _ recordNames: [String],
+        expectedRecordType: String,
+        database: CKDatabase
+    ) async throws -> [CKRecord] {
+        var records: [CKRecord] = []
+        records.reserveCapacity(recordNames.count)
+
+        for recordName in recordNames {
+            let recordID = CKRecord.ID(recordName: recordName)
+            do {
+                let record = try await database.record(for: recordID)
+                if record.recordType == expectedRecordType {
+                    records.append(record)
+                }
+            } catch let error as CKError where error.code == .unknownItem {
+                continue
+            } catch {
+                throw error
+            }
+        }
+
+        return records
+    }
+
+    private func resolveLatestRecordsPerRecording(
+        _ records: [CKRecord],
+        recordingIdField: String,
+        timestampKeys: [String]
+    ) -> LatestPerRecordingResolution {
+        var winnersByRecordingId: [UUID: CKRecord] = [:]
+        var recordsWithoutRecordingId: [CKRecord] = []
+        var loserRecordIDs: [CKRecord.ID] = []
+
+        for record in records {
+            guard let recordingIdValue = record[recordingIdField] as? String,
+                  let recordingId = UUID(uuidString: recordingIdValue) else {
+                recordsWithoutRecordingId.append(record)
+                continue
+            }
+
+            if let currentWinner = winnersByRecordingId[recordingId] {
+                if isBackupRecord(record, newerThan: currentWinner, timestampKeys: timestampKeys) {
+                    loserRecordIDs.append(currentWinner.recordID)
+                    winnersByRecordingId[recordingId] = record
+                } else {
+                    loserRecordIDs.append(record.recordID)
+                }
+            } else {
+                winnersByRecordingId[recordingId] = record
+            }
+        }
+
+        return LatestPerRecordingResolution(
+            keptRecords: Array(winnersByRecordingId.values) + recordsWithoutRecordingId,
+            loserRecordIDs: loserRecordIDs
+        )
+    }
+
+    private func isBackupRecord(
+        _ candidate: CKRecord,
+        newerThan current: CKRecord,
+        timestampKeys: [String]
+    ) -> Bool {
+        let candidateTimestamp = backupRecordTimestamp(candidate, keys: timestampKeys)
+        let currentTimestamp = backupRecordTimestamp(current, keys: timestampKeys)
+
+        if candidateTimestamp != currentTimestamp {
+            return candidateTimestamp > currentTimestamp
+        }
+
+        // Deterministic tie-breaker for equal timestamps.
+        return candidate.recordID.recordName > current.recordID.recordName
+    }
+
+    private func backupRecordTimestamp(_ record: CKRecord, keys: [String]) -> Date {
+        for key in keys {
+            if let value = record[key] as? Date {
+                return value
+            }
+        }
+        return Date.distantPast
+    }
+
+    private func deleteBackupRecords(_ recordIDs: [CKRecord.ID], database: CKDatabase) async throws {
+        var seenRecordNames = Set<String>()
+        for recordID in recordIDs where !seenRecordNames.contains(recordID.recordName) {
+            seenRecordNames.insert(recordID.recordName)
+            try await deleteBackupRecord(recordID, database: database)
+        }
+    }
+
+    private func deleteBackupRecord(_ recordID: CKRecord.ID, database: CKDatabase) async throws {
+        var attempt = 0
+
+        while true {
+            do {
+                _ = try await database.deleteRecord(withID: recordID)
+                return
+            } catch let ckError as CKError {
+                if ckError.code == .unknownItem {
+                    return
+                }
+
+                attempt += 1
+                let shouldRetry = ckError.isRetryable && attempt < maxRetryAttempts
+                guard shouldRetry else {
+                    throw ckError
+                }
+
+                let delaySeconds = max(
+                    ckError.suggestedRetryAfterSeconds ?? (retryDelay * Double(attempt)),
+                    0.5
+                )
+                try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+            } catch {
+                throw error
+            }
+        }
+    }
+
+    private func saveBackupRecord(_ record: CKRecord, database: CKDatabase) async throws {
+        var attempt = 0
+        var recordToSave = record
+
+        while true {
+            do {
+                _ = try await database.save(recordToSave)
+                return
+            } catch let ckError as CKError {
+                attempt += 1
+
+                if isRecordAlreadyExistsConflict(ckError), attempt < maxRetryAttempts {
+                    do {
+                        let serverRecord = try await database.record(for: record.recordID)
+                        mergeBackupRecordFields(from: recordToSave, into: serverRecord)
+                        recordToSave = serverRecord
+                        continue
+                    } catch {
+                        // If the server read fails transiently, fall through to normal retry logic below.
+                    }
+                }
+
+                let shouldRetry = ckError.isRetryable && attempt < maxRetryAttempts
+                guard shouldRetry else {
+                    print("❌ CloudKit save failed for \(record.recordID.recordName): \(ckError.localizedDescription)")
+                    throw ckError
+                }
+
+                let delaySeconds = max(
+                    ckError.suggestedRetryAfterSeconds ?? (retryDelay * Double(attempt)),
+                    0.5
+                )
+                print(
+                    "⚠️ CloudKit save retry \(attempt)/\(maxRetryAttempts) for \(record.recordID.recordName) " +
+                    "in \(String(format: "%.1f", delaySeconds))s: \(ckError.localizedDescription)"
+                )
+                try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+            } catch {
+                throw error
+            }
+        }
+    }
+
+    private func mergeBackupRecordFields(from source: CKRecord, into destination: CKRecord) {
+        for key in source.allKeys() {
+            destination[key] = source[key]
+        }
+    }
+
+    private func isRecordAlreadyExistsConflict(_ error: CKError) -> Bool {
+        if error.code == .serverRecordChanged {
+            return true
+        }
+
+        if error.localizedDescription.lowercased().contains("already exists") {
+            return true
+        }
+
+        if let partialErrors = error.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error] {
+            for nestedError in partialErrors.values {
+                if let nestedCKError = nestedError as? CKError {
+                    if isRecordAlreadyExistsConflict(nestedCKError) {
+                        return true
+                    }
+                } else if nestedError.localizedDescription.lowercased().contains("already exists") {
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+    private func backupSettingsToiCloud(
+        database: CKDatabase,
+        includeSensitiveSettings: Bool
+    ) async throws -> (backedUp: Bool, includedSensitiveSettings: Bool) {
+        let settingsValues = collectSettingsForBackup(includeSensitiveSettings: includeSensitiveSettings)
+        guard !settingsValues.values.isEmpty else {
+            return (false, false)
+        }
+
+        let payload = CodableSettingsBackupPayload(
+            createdAt: Date(),
+            includesSensitiveValues: settingsValues.includedSensitiveSettings,
+            values: settingsValues.values
+        )
+        let payloadData = try JSONEncoder().encode(payload)
+
+        let recordID = CKRecord.ID(recordName: Self.backupSettingsRecordName)
+        let record = try await fetchOrCreateRecord(
+            recordType: Self.backupSettingsRecordType,
+            recordID: recordID,
+            database: database
+        )
+
+        record[Self.fieldSettingsPayload] = payloadData
+        record[Self.fieldSettingsIncludesSensitive] = payload.includesSensitiveValues
+        record[Self.fieldSettingsSchemaVersion] = Self.backupSchemaVersion
+        record[Self.fieldSettingsUpdatedAt] = Date()
+        record[Self.fieldDeviceIdentifier] = deviceIdentifier
+
+        try await saveBackupRecord(record, database: database)
+        return (true, payload.includesSensitiveValues)
+    }
+
+    private func restoreSettingsFromiCloud(
+        database: CKDatabase
+    ) async throws -> (restored: Bool, includedSensitiveSettings: Bool) {
+        let recordID = CKRecord.ID(recordName: Self.backupSettingsRecordName)
+
+        do {
+            let record = try await database.record(for: recordID)
+            guard let rawPayloadData = record[Self.fieldSettingsPayload] as? Data else {
+                return (false, false)
+            }
+
+            let includesSensitive = record[Self.fieldSettingsIncludesSensitive] as? Bool ?? false
+
+            let payload = try JSONDecoder().decode(CodableSettingsBackupPayload.self, from: rawPayloadData)
+            applySettingsPayload(payload)
+            return (true, includesSensitive)
+        } catch let error as CKError where error.code == .unknownItem {
+            return (false, false)
+        }
+    }
+
+    private func collectSettingsForBackup(includeSensitiveSettings: Bool) -> (values: [String: Data], includedSensitiveSettings: Bool) {
+        var encodedValues: [String: Data] = [:]
+        var includedSensitive = false
+        let defaults = UserDefaults.standard
+
+        for key in Self.backedUpSettingsKeys {
+            guard let rawValue = defaults.object(forKey: key) else { continue }
+
+            let sensitive = isSensitiveSettingKey(key)
+            if sensitive && !includeSensitiveSettings {
+                continue
+            }
+
+            guard let encoded = try? PropertyListSerialization.data(
+                fromPropertyList: rawValue,
+                format: .binary,
+                options: 0
+            ) else {
+                continue
+            }
+
+            encodedValues[key] = encoded
+            if sensitive {
+                includedSensitive = true
+            }
+        }
+
+        return (encodedValues, includedSensitive)
+    }
+
+    private func applySettingsPayload(_ payload: CodableSettingsBackupPayload) {
+        let defaults = UserDefaults.standard
+
+        for (key, encodedValue) in payload.values {
+            guard let rawValue = try? PropertyListSerialization.propertyList(
+                from: encodedValue,
+                options: [],
+                format: nil
+            ) else {
+                continue
+            }
+
+            defaults.set(rawValue, forKey: key)
+        }
+
+        defaults.synchronize()
+    }
+
+    private func isSensitiveSettingKey(_ key: String) -> Bool {
+        let lowercase = key.lowercased()
+        return Self.sensitiveSettingKeyFragments.contains { lowercase.contains($0) }
+    }
+}
+
 // MARK: - CloudKit Error Extensions
 
 extension CKError {
@@ -2269,6 +3999,13 @@ extension CKError {
         default:
             return localizedDescription
         }
+    }
+
+    var suggestedRetryAfterSeconds: Double? {
+        if let retryAfter = userInfo[CKErrorRetryAfterKey] as? NSNumber {
+            return retryAfter.doubleValue
+        }
+        return nil
     }
 
     // MARK: - Debug Methods

@@ -35,7 +35,7 @@ struct TranscriptsView: View {
     @State private var isDateFilterActive = false
 
     var body: some View {
-        NavigationView {
+        AdaptiveNavigationWrapper {
             mainContentView
         }
         .sheet(item: $selectedRecording) { recording in

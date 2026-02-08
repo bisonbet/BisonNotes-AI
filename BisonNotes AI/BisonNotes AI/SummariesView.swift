@@ -7,6 +7,7 @@ import NaturalLanguage
 struct SummariesView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
+    @Environment(\.isEmbeddedInSplitView) private var isEmbeddedInSplitView
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
     @StateObject private var iCloudManager = iCloudStorageManager()
@@ -34,7 +35,7 @@ struct SummariesView: View {
     // MARK: - Body
     
     var body: some View {
-        NavigationView {
+        AdaptiveNavigationWrapper {
             mainContentView
                 .navigationTitle("Summaries")
                 .searchable(text: $searchText, prompt: "Search summaries, tasks, reminders...")

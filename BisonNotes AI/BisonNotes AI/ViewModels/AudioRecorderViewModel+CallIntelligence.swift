@@ -6,8 +6,10 @@
 //
 
 import Foundation
-import CallKit
 import UserNotifications
+
+#if !targetEnvironment(macCatalyst)
+import CallKit
 
 // MARK: - CallKit Observer Delegate (Phase 1)
 
@@ -149,3 +151,4 @@ extension AudioRecorderViewModel: CXCallObserverDelegate {
 		}
 	}
 }
+#endif
