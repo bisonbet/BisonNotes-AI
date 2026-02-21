@@ -53,12 +53,11 @@ struct RecordingsView: View {
                 VStack(spacing: 40) {
                     VStack(spacing: 20) {
                         Image("AppLogo")
-
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(maxHeight: min(geometry.size.height * 0.25, 200))
                             .frame(maxWidth: .infinity)
-                            .shadow(color: .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                            .shadow(color: Color(red: 0.102, green: 0.541, blue: 0.490).opacity(0.4), radius: 12, x: 0, y: 4)
                         
                         Text("BisonNotes AI")
                             .font(.largeTitle)

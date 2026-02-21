@@ -25,17 +25,26 @@ struct ContentView: View {
     @State private var showingWhisperKitSettings = false
     @State private var showingUnsupportedFileAlert = false
     @StateObject private var downloadMonitor = OnDeviceAIDownloadMonitor.shared
-    
+    @State private var showSplash = true
+
     var body: some View {
-        Group {
-            if isInitialized {
-                if isFirstLaunch {
-                    firstLaunchView
+        ZStack {
+            Group {
+                if isInitialized {
+                    if isFirstLaunch {
+                        firstLaunchView
+                    } else {
+                        mainContentView
+                    }
                 } else {
-                    mainContentView
+                    loadingView
                 }
-            } else {
-                loadingView
+            }
+
+            if showSplash {
+                SplashView(isActive: $showSplash)
+                    .transition(.opacity)
+                    .zIndex(1)
             }
         }
         .preferredColorScheme(horizontalSizeClass == .compact ? .dark : nil)
@@ -196,7 +205,7 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black)
+        .background(Color(red: 0.039, green: 0.086, blue: 0.157))
     }
 
     @MainActor

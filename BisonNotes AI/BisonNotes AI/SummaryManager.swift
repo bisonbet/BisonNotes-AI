@@ -1202,18 +1202,24 @@ class SummaryManager: ObservableObject {
                 // Handle the error and provide recovery options
                 handleError(error, context: "Enhanced Summary Generation", recordingName: recordingName)
 
+                // If the error is already a well-formed SummarizationError, re-throw it as-is
+                // to avoid wrapping it in another layer of error messages
+                if let summarizationError = error as? SummarizationError {
+                    throw summarizationError
+                }
+
                 // Provide more specific error messages for Ollama
                 if engine.name.contains("Ollama") {
                     if error.localizedDescription.contains("parsing") || error.localizedDescription.contains("JSON") {
-                        throw SummarizationError.aiServiceUnavailable(service: "\(engine.name) failed after retry: Parsing error: \(error.localizedDescription). This usually means Ollama returned text that couldn't be parsed as JSON. Please check your Ollama model configuration or try a different model.")
+                        throw SummarizationError.processingFailed(reason: "Ollama returned text that couldn't be parsed. Please check your Ollama model configuration or try a different model.")
                     } else if error.localizedDescription.contains("connection") || error.localizedDescription.contains("server") {
-                        throw SummarizationError.aiServiceUnavailable(service: "\(engine.name) failed after retry: Connection error: \(error.localizedDescription). Please check that Ollama is running and accessible at your configured server URL.")
+                        throw SummarizationError.networkError(underlying: error)
                     }
                 }
 
                 // STOP HERE - Don't fall back to basic summary automatically
                 // Let the user decide what to do instead of silently switching engines
-                throw SummarizationError.aiServiceUnavailable(service: "\(engine.name) failed after retry: \(error.localizedDescription). Please check your \(engine.name) configuration or select a different AI engine.")
+                throw SummarizationError.aiServiceUnavailable(service: engine.name)
             }
         }
 

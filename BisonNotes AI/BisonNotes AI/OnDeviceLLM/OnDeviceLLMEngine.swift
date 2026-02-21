@@ -578,21 +578,21 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         if let llmError = error as? OnDeviceLLMError {
             switch llmError {
             case .modelNotLoaded, .modelNotDownloaded:
-                return SummarizationError.aiServiceUnavailable(service: "On-Device AI model not ready. Please download a model in Settings.")
+                return SummarizationError.configurationRequired(message: "On-Device AI model not ready. Please download a model in Settings.")
             case .downloadFailed(let message):
-                return SummarizationError.aiServiceUnavailable(service: "Model download failed: \(message)")
+                return SummarizationError.processingFailed(reason: "Model download failed: \(message)")
             case .inferenceFailed(let message):
-                return SummarizationError.aiServiceUnavailable(service: "Inference failed: \(message)")
+                return SummarizationError.processingFailed(reason: "Inference failed: \(message)")
             case .insufficientDiskSpace(let required):
-                return SummarizationError.aiServiceUnavailable(service: "Insufficient disk space. Need \(formatSize(required)) free.")
+                return SummarizationError.processingFailed(reason: "Insufficient disk space. Need \(formatSize(required)) free.")
             case .networkUnavailable:
-                return SummarizationError.aiServiceUnavailable(service: "Network unavailable for model download")
+                return SummarizationError.networkError(underlying: error)
             case .configurationError(let message):
-                return SummarizationError.aiServiceUnavailable(service: message)
+                return SummarizationError.configurationRequired(message: message)
             }
         }
 
-        return SummarizationError.aiServiceUnavailable(service: "On-Device AI error: \(error.localizedDescription)")
+        return SummarizationError.processingFailed(reason: "On-Device AI error: \(error.localizedDescription)")
     }
 
     private func formatSize(_ size: Int64) -> String {
