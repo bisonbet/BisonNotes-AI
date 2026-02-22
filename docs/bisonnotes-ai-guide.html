@@ -1,0 +1,1014 @@
+<!-- BisonNotes AI - Complete User Guide -->
+<!-- Paste everything below into WordPress Custom HTML block or HTML editor -->
+
+<style>
+/* ===== RESET & BASE ===== */
+.bn *, .bn *::before, .bn *::after { box-sizing: border-box; }
+.bn {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0.75rem;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+  font-size: clamp(17px, 1rem + 0.4vw, 19px);
+  line-height: 1.7;
+  color: #1a1a1a;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Override WordPress theme constraints */
+.entry-content > .bn,
+.post-inner .bn,
+.page-content .bn,
+.section-inner .bn,
+.wp-block-post-content .bn,
+.entry-content .bn {
+  max-width: 960px !important;
+  width: 100% !important;
+}
+.entry-content > *:has(.bn),
+.post-inner:has(.bn),
+.section-inner:has(.bn) {
+  max-width: none !important;
+  width: 100% !important;
+}
+
+/* ===== TYPOGRAPHY ===== */
+.bn h2 { font-size: 1.35rem; font-weight: 700; margin: 2.2rem 0 0.8rem; padding-bottom: 0.35rem; border-bottom: 2px solid #c0392b; color: #111; }
+.bn h3 { font-size: 1.1rem; font-weight: 600; margin: 1.4rem 0 0.5rem; color: #222; }
+.bn h4 { font-size: 0.95rem; font-weight: 600; margin: 1rem 0 0.35rem; color: #333; }
+.bn p { margin: 0.5rem 0; }
+.bn ul, .bn ol { margin: 0.4rem 0 0.6rem; padding-left: 1.4rem; }
+.bn li { margin: 0.25rem 0; }
+.bn li ul, .bn li ol { margin: 0.2rem 0 0.3rem; }
+.bn a { color: #c0392b; text-decoration: none; }
+.bn a:hover { text-decoration: underline; }
+.bn code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-size: 0.88em; word-break: break-all; }
+.bn pre { background: #f0f0f0; padding: 0.8rem; border-radius: 6px; overflow-x: auto; font-size: 0.85em; margin: 0.6rem 0; }
+.bn pre code { background: none; padding: 0; word-break: normal; }
+.bn hr { border: none; border-top: 1px solid #ddd; margin: 2rem 0; }
+
+/* ===== HIDE WP PAGE TITLE (Twenty Twenty theme) ===== */
+.post-inner .entry-header,
+.entry-header .entry-title,
+body.page .entry-header {
+  display: none !important;
+}
+
+/* ===== HERO ===== */
+.bn-hero { text-align: center; padding: 1.5rem 1rem; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); color: #fff; border-radius: 10px; margin-bottom: 1.5rem; }
+.bn-hero h1 { color: #fff !important; font-size: 1.5rem; margin: 0 0 0.2rem; line-height: 1.3; border: none !important; padding: 0 !important; }
+.bn-hero p { margin: 0; font-size: 0.9rem; opacity: 0.8; color: #fff; }
+.bn-hero .bn-ver { display: inline-block; background: #c0392b; color: #fff; padding: 0.15rem 0.6rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; margin-top: 0.6rem; }
+
+/* ===== TABLE OF CONTENTS ===== */
+.bn-toc { background: #f7f8f9; border: 1px solid #e0e0e0; border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 1.8rem; }
+.bn-toc p { font-weight: 700; margin: 0 0 0.4rem; }
+.bn-toc ol { margin: 0; padding-left: 1.2rem; }
+.bn-toc li { margin: 0.2rem 0; font-size: 0.92rem; }
+.bn-toc a { color: #2563eb; }
+.bn-toc ul { list-style: disc; padding-left: 1.2rem; margin: 0.15rem 0 0; }
+
+/* ===== CALLOUT BOXES ===== */
+.bn-info, .bn-warn, .bn-ok { border-radius: 6px; padding: 0.7rem 0.9rem; margin: 0.7rem 0; font-size: 0.94rem; }
+.bn-info { background: #eaf3fc; border-left: 4px solid #2563eb; }
+.bn-warn { background: #fef7e0; border-left: 4px solid #e6a817; }
+.bn-ok { background: #eaf7ec; border-left: 4px solid #27ae60; }
+
+/* ===== CARDS ===== */
+.bn-card { background: #f7f8f9; border: 1px solid #e0e0e0; border-radius: 8px; padding: 0.8rem 1rem; margin: 0.6rem 0; }
+.bn-card-a { border-left: 4px solid #c0392b; }
+.bn-card h4:first-child { margin-top: 0; }
+
+/* ===== GRID ===== */
+.bn-g { display: grid; grid-template-columns: 1fr; gap: 0.6rem; margin: 0.8rem 0; }
+.bn-gc { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 0.8rem 1rem; }
+.bn-gc h4 { margin: 0 0 0.2rem; font-size: 0.95rem; }
+.bn-gc ul { font-size: 0.92rem; margin: 0.2rem 0; padding-left: 1.2rem; }
+.bn-gc p { font-size: 0.92rem; margin: 0.2rem 0; }
+.bn-badge { display: inline-block; font-size: 0.68rem; font-weight: 600; padding: 0.1rem 0.45rem; border-radius: 10px; margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.02em; }
+.bn-b-free { background: #d5edda; color: #155724; }
+.bn-b-cloud { background: #cce5ff; color: #004085; }
+.bn-b-local { background: #fff3cd; color: #856404; }
+.bn-b-paid { background: #f8d7da; color: #721c24; }
+
+/* ===== TABLES ===== */
+.bn-tw { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0.6rem 0; border-radius: 6px; border: 1px solid #e0e0e0; }
+.bn table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.bn th, .bn td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #eee; }
+.bn th { background: #f1f3f5; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.02em; color: #555; white-space: nowrap; }
+
+/* ===== COLLAPSIBLE SECTIONS ===== */
+.bn details { border: 1px solid #e0e0e0; border-radius: 8px; margin: 0.5rem 0; background: #fff; }
+.bn details[open] { background: #fafbfc; }
+.bn summary { padding: 0.65rem 0.9rem; font-weight: 600; cursor: pointer; list-style: none; display: flex; align-items: center; gap: 0.4rem; font-size: 0.97rem; -webkit-tap-highlight-color: transparent; }
+.bn summary::-webkit-details-marker { display: none; }
+.bn summary::before { content: "\25B6"; font-size: 0.6rem; transition: transform 0.15s; flex-shrink: 0; }
+.bn details[open] > summary::before { transform: rotate(90deg); }
+.bn .dd { padding: 0 0.9rem 0.8rem; }
+
+/* ===== STEP LIST ===== */
+.bn-sl { counter-reset: st; list-style: none; padding-left: 0; }
+.bn-sl > li { counter-increment: st; position: relative; padding-left: 2.3rem; margin: 0.7rem 0; }
+.bn-sl > li::before { content: counter(st); position: absolute; left: 0; top: 0; width: 1.6rem; height: 1.6rem; background: #c0392b; color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.8rem; line-height: 1; }
+.bn-sl > li ul { margin-top: 0.3rem; }
+
+/* ===== RESPONSIVE ===== */
+@media (min-width: 540px) {
+  .bn-g { grid-template-columns: 1fr 1fr; }
+  .bn { padding: 1rem; }
+}
+@media (max-width: 539px) {
+  .bn h2 { font-size: 1.25rem; }
+  .bn h3 { font-size: 1.08rem; }
+  .bn-hero h1 { font-size: 1.3rem; }
+  .bn-hero { padding: 1.2rem 0.7rem; }
+}
+</style>
+
+<div class="bn">
+
+<!-- ===== HERO ===== -->
+<div class="bn-hero">
+  <h1>BisonNotes AI</h1>
+  <p>Complete User Guide</p>
+  <span class="bn-ver">v1.6</span>
+</div>
+
+<!-- ===== TOC ===== -->
+<div class="bn-toc">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#bn-start">Getting Started</a>
+      <ul>
+        <li><a href="#bn-first-recording">Your First Recording</a></li>
+        <li><a href="#bn-first-transcript">First Transcript &amp; Summary</a></li>
+      </ul>
+    </li>
+    <li><a href="#bn-recording">Recording Features</a>
+      <ul>
+        <li><a href="#bn-action-btn">Action Button</a></li>
+        <li><a href="#bn-share-ext">Share Extension</a></li>
+        <li><a href="#bn-combine">Combining Recordings</a></li>
+      </ul>
+    </li>
+    <li><a href="#bn-ai">AI Engine Configuration</a></li>
+    <li><a href="#bn-transcription">Transcription Configuration</a></li>
+    <li><a href="#bn-summaries">Working with Summaries</a></li>
+    <li><a href="#bn-playback">Audio Playback</a></li>
+    <li><a href="#bn-settings">Settings &amp; Configuration</a></li>
+    <li><a href="#bn-trouble">Troubleshooting</a></li>
+    <li><a href="#bn-advanced">Advanced Features</a></li>
+    <li><a href="#bn-best">Best Practices</a></li>
+    <li><a href="#bn-resources">External Resources</a></li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<!-- GETTING STARTED                                               -->
+<!-- ============================================================ -->
+<h2 id="bn-start">Getting Started</h2>
+
+<h3>First Launch Setup</h3>
+
+<ol class="bn-sl">
+  <li><strong>Install the App</strong> — Download BisonNotes AI from the App Store.</li>
+  <li><strong>Simple Settings Welcome Screen</strong> — You'll see a streamlined setup with three options:
+    <div class="bn-card bn-card-a">
+      <h4>Initial Setup Options</h4>
+      <ul>
+        <li><strong>OpenAI (Cloud):</strong> Cloud-based transcription and AI summaries. Requires OpenAI API key. Most powerful option with pay-per-use pricing.</li>
+        <li><strong>On-Device AI:</strong> Private, on-device processing. No data leaves your device. Requires download of AI models (2-3GB each) and transcription model (150-520MB). Best for recordings under 60 minutes.</li>
+        <li><strong>Advanced &amp; Other Options:</strong> Skip initial setup and configure later. Access to all engines: Google AI Studio, AWS Bedrock, Mistral AI, OpenAI Compatible, Ollama.</li>
+      </ul>
+    </div>
+    <div class="bn-info"><strong>Tip:</strong> The simple settings page automatically detects your current configuration. If you've configured something in advanced settings that doesn't match the simple options, it will automatically show "Advanced &amp; Other Options".</div>
+  </li>
+  <li><strong>Location Permission</strong> — The app will ask for location access if enabled:
+    <ul>
+      <li><strong>"Allow While Using App"</strong>: Recommended — captures location during recording</li>
+      <li><strong>"Don't Allow"</strong>: You can still add locations manually later</li>
+    </ul>
+  </li>
+  <li><strong>Automatic Migration</strong> — On first launch, the app scans for existing audio files and migrates them into the database.</li>
+</ol>
+
+<h3 id="bn-first-recording">Your First Recording</h3>
+
+<ol class="bn-sl">
+  <li><strong>Start Recording</strong> — Tap the large microphone button on the main screen.</li>
+  <li><strong>Microphone Permission</strong> — On your first recording, iOS will ask for microphone access. Tap "OK". If denied, re-enable in Settings &rarr; Privacy &amp; Security &rarr; Microphone.</li>
+  <li><strong>Recording Status</strong> — You'll see a red recording indicator, live timer, and location indicator (if enabled).</li>
+  <li><strong>Stop Recording</strong> — Tap the stop button to end.</li>
+  <li><strong>Background Recording</strong> — The app continues recording when minimized or the phone is locked.</li>
+</ol>
+
+<h3 id="bn-first-transcript">First Transcript &amp; Summary</h3>
+
+<details>
+  <summary>Generate Your First Transcript</summary>
+  <div class="dd">
+    <ol class="bn-sl">
+      <li><strong>Access Recording</strong> — After stopping, you'll see it in the recordings list.</li>
+      <li><strong>Start Transcription</strong> — Tap the recording, then tap "Generate Transcript". The app processes your audio using your selected engine.</li>
+      <li><strong>Progress</strong> — You'll see processing status and time remaining. You can continue using the app while it processes.</li>
+      <li><strong>View Results</strong> — Full transcript with editable text, timestamps (if supported), and confidence indicators.</li>
+    </ol>
+  </div>
+</details>
+
+<details>
+  <summary>Generate Your First Summary</summary>
+  <div class="dd">
+    <ol class="bn-sl">
+      <li><strong>Prerequisites</strong> — You need a transcript first.</li>
+      <li><strong>Start Summary</strong> — In the recording detail view, tap "Generate Summary".</li>
+      <li><strong>AI Processing</strong> — The app analyzes your transcript and creates:
+        <ul>
+          <li><strong>Enhanced Summary</strong>: Main content overview</li>
+          <li><strong>Action Items</strong>: Tasks with priority levels</li>
+          <li><strong>Reminders</strong>: Time-sensitive items with urgency indicators</li>
+          <li><strong>Alternative Titles</strong>: AI-generated recording names</li>
+        </ul>
+      </li>
+      <li><strong>Review Results</strong> — Expandable sections, priority indicators, interactive maps, and integration options.</li>
+    </ol>
+  </div>
+</details>
+
+<details>
+  <summary>iCloud Sync Setup</summary>
+  <div class="dd">
+    <div class="bn-info"><strong>When does this appear?</strong> After generating your first successful summary.</div>
+    <ul>
+      <li><strong>"Enable iCloud Sync"</strong> — Summaries sync across all your devices. Uses your iCloud storage quota.</li>
+      <li><strong>"Keep Local Only"</strong> — Summaries stay on this device only. Better for privacy-sensitive content. Can be changed later.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Managing &amp; Deleting Recordings</summary>
+  <div class="dd">
+    <p>Long press on any recording, or tap and use the "..." menu. Deletion options:</p>
+    <ul>
+      <li><strong>Audio File Only</strong> — Keeps transcript/summary, removes audio. Good for saving storage.</li>
+      <li><strong>Everything</strong> — Removes audio, transcript, and summary. Cannot be undone.</li>
+      <li><strong>Summary Only</strong> — Keeps audio and transcript. Useful for regenerating with a different engine.</li>
+    </ul>
+    <div class="bn-warn"><strong>Important:</strong> Deletion is permanent. Make sure you have backups if needed.</div>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<!-- RECORDING FEATURES                                            -->
+<!-- ============================================================ -->
+<h2 id="bn-recording">Recording Features</h2>
+
+<h3 id="bn-action-btn">iPhone Action Button Integration</h3>
+
+<div class="bn-info"><strong>Available on:</strong> iPhone 15 Pro, iPhone 15 Pro Max, iPhone 16 Pro, iPhone 16 Pro Max, and future iPhone Pro models with Action Button.</div>
+
+<p>Start recording instantly without opening the app first — perfect for capturing thoughts, meetings, or voice notes.</p>
+
+<details>
+  <summary>How to Configure the Action Button</summary>
+  <div class="dd">
+    <ol class="bn-sl">
+      <li>Open the <strong>Settings</strong> app on your iPhone.</li>
+      <li>Navigate to <strong>Action Button</strong>.</li>
+      <li>Select <strong>Shortcut</strong> as the Action Button function.</li>
+      <li>Tap "Choose a Shortcut" &rarr; Search for "Start Recording" or "BisonNotes AI" &rarr; Select it.</li>
+      <li>Press the Action Button to test!</li>
+    </ol>
+    <p><strong>What happens:</strong> The app launches, switches to the Recordings tab, and starts recording immediately. Recording continues even if you switch apps or lock your phone.</p>
+    <div class="bn-ok"><strong>Pro Tip:</strong> The Action Button works even when your phone is locked!</div>
+  </div>
+</details>
+
+<h3>Location Tracking</h3>
+<ul>
+  <li><strong>Automatic</strong> — GPS location captured with each recording</li>
+  <li><strong>Manual</strong> — Add or edit location later in the summary view</li>
+  <li><strong>Privacy</strong> — Location tracking can be disabled in settings</li>
+</ul>
+
+<h3>Import Existing Audio</h3>
+<ol class="bn-sl">
+  <li>Tap "Import Audio Files" on the main screen.</li>
+  <li>Select audio files from your device.</li>
+  <li>Files are automatically added to your recordings library.</li>
+</ol>
+
+<h3 id="bn-share-ext">Import via Share Extension</h3>
+
+<div class="bn-info"><strong>Share from other apps:</strong> Import audio files directly from Voice Memos, Files, and other apps using the iOS share sheet.</div>
+
+<ol class="bn-sl">
+  <li><strong>Open the source app</strong> — Voice Memos, Files, or any app with the audio file.</li>
+  <li><strong>Tap Share</strong> — Select "BisonNotes AI" from the share sheet.</li>
+  <li><strong>Automatic Import</strong> — The file is saved and BisonNotes AI opens to import it.</li>
+  <li><strong>Background Import</strong> — If BisonNotes AI is already running, it detects the new file immediately.</li>
+</ol>
+
+<p><strong>Supported file types:</strong></p>
+<ul>
+  <li><strong>Audio:</strong> M4A, MP3, WAV, CAF, AIFF, AIF</li>
+  <li><strong>Documents:</strong> TXT, MD, PDF, DOC, DOCX</li>
+</ul>
+
+<h3 id="bn-combine">Combining Recordings</h3>
+
+<div class="bn-info"><strong>When to use:</strong> Merge two separate recordings into one continuous file — useful if your recording was interrupted.</div>
+
+<details>
+  <summary>How to Combine Recordings</summary>
+  <div class="dd">
+    <ol class="bn-sl">
+      <li><strong>Select recordings</strong> — Go to Recordings tab &rarr; tap "Select" &rarr; check two recordings.</li>
+      <li><strong>Tap "Combine"</strong> — A "Combine" button appears when two are selected.</li>
+      <li><strong>Choose order</strong> — The app recommends chronological order. Tap the "First" card to swap if needed.</li>
+      <li><strong>Review &amp; confirm</strong> — Check combined duration preview, tap "Combine Recordings".</li>
+      <li><strong>After combining</strong> — The new recording appears in your list. Original recordings remain unchanged. Generate new transcripts and summaries for the combined file.</li>
+    </ol>
+
+    <div class="bn-warn"><strong>Important:</strong> Recordings with existing transcripts or summaries cannot be combined. Delete any existing transcripts/summaries from both recordings first. Why? Transcripts and summaries are tied to specific audio files.</div>
+
+    <p><strong>Tips:</strong></p>
+    <ul>
+      <li>Make sure recordings are in the correct chronological order</li>
+      <li>Combined file size = sum of both originals</li>
+      <li>You'll need to generate new transcripts/summaries afterward</li>
+    </ul>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<!-- AI ENGINE CONFIGURATION                                       -->
+<!-- ============================================================ -->
+<h2 id="bn-ai">AI Engine Configuration</h2>
+
+<div class="bn-info"><strong>Overview:</strong> BisonNotes AI supports multiple AI engines for transcription and summarization. Each has different capabilities, requirements, and pricing.</div>
+
+<!-- On-Device AI -->
+<details>
+  <summary>1. On-Device AI — Free &amp; Private</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-free">Free</span>
+    <span class="bn-badge bn-b-local">On-Device</span>
+    <p><strong>Type:</strong> Local processing &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Only for initial model download</p>
+
+    <h4>Requirements</h4>
+    <ul>
+      <li><strong>Transcription:</strong> iOS 17.0+, 4GB+ RAM</li>
+      <li><strong>AI Summary:</strong> iPhone 15 Pro, iPhone 16+, iOS 18.1+</li>
+      <li><strong>Storage:</strong> 2-3GB per AI model, 150-520MB for transcription model</li>
+    </ul>
+
+    <h4>Recommended Models (by RAM)</h4>
+    <ul>
+      <li><strong>8GB+:</strong> Granite 4.0 H Tiny (4.3 GB) — Best quality</li>
+      <li><strong>6GB+:</strong> Granite 4.0 Micro (2.1 GB) — Fast processing</li>
+      <li><strong>6GB+:</strong> Gemma 3n E2B (3.0 GB) — Good quality, smaller</li>
+      <li><strong>8GB+:</strong> Gemma 3n E4B (4.5 GB) — Best overall quality</li>
+      <li><strong>6GB+:</strong> Ministral 3B (2.1 GB) — Best for tasks/reminders</li>
+    </ul>
+
+    <h4>Experimental Models</h4>
+    <ul>
+      <li><strong>4GB+:</strong> LFM 2.5 1.2B (731 MB) — Fast, minimal summaries</li>
+      <li><strong>4GB+:</strong> Qwen3 1.7B (1.1 GB) — Latest Qwen3</li>
+      <li><strong>8GB+:</strong> Qwen3 4B (2.7 GB) — Excellent detail</li>
+    </ul>
+
+    <p><strong>Best for:</strong> Privacy-conscious users, offline use, recordings under 60 minutes</p>
+  </div>
+</details>
+
+<!-- OpenAI -->
+<details>
+  <summary>2. OpenAI — Cloud AI</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-cloud">Cloud</span>
+    <span class="bn-badge bn-b-paid">Pay-per-use</span>
+    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Pay-per-use &bull; <strong>Privacy:</strong> Data sent to OpenAI &bull; <strong>Internet:</strong> Required</p>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li>Get API key at <a href="https://platform.openai.com" target="_blank" rel="noopener">platform.openai.com</a></li>
+      <li>Go to Settings &rarr; AI Settings &rarr; OpenAI</li>
+      <li>Enter your API key, select model, test connection.</li>
+    </ol>
+
+    <h4>Summarization Models</h4>
+    <div class="bn-tw">
+      <table>
+        <thead><tr><th>Model</th><th>Best For</th><th>Tier</th></tr></thead>
+        <tbody>
+          <tr><td><strong>GPT-4.1</strong></td><td>Most comprehensive analysis</td><td>Premium</td></tr>
+          <tr><td><strong>GPT-4.1 Mini</strong></td><td>Balanced performance (Default)</td><td>Standard</td></tr>
+          <tr><td><strong>GPT-4.1 Nano</strong></td><td>Fastest, most economical</td><td>Economy</td></tr>
+          <tr><td><strong>GPT-5 Mini</strong></td><td>Next-gen reasoning</td><td>Premium</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Transcription Models</h4>
+    <div class="bn-tw">
+      <table>
+        <thead><tr><th>Model</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><strong>GPT-4o Transcribe</strong></td><td>Most robust. Supports streaming.</td></tr>
+          <tr><td><strong>GPT-4o Mini Transcribe</strong></td><td>Cheapest/fastest. Streaming. Recommended.</td></tr>
+          <tr><td><strong>Whisper-1</strong></td><td>Legacy Whisper V2. No streaming.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Best for:</strong> High-quality results, advanced features</p>
+  </div>
+</details>
+
+<!-- Google AI Studio -->
+<details>
+  <summary>3. Google AI Studio — Gemini Models</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-cloud">Cloud</span>
+    <span class="bn-badge bn-b-free">Free tier</span>
+    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Free tier, then pay-per-use &bull; <strong>Privacy:</strong> Data sent to Google &bull; <strong>Internet:</strong> Required</p>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li>Get API key at <a href="https://aistudio.google.com" target="_blank" rel="noopener">aistudio.google.com</a></li>
+      <li>Go to Settings &rarr; AI Settings &rarr; Google AI Studio</li>
+      <li>Enter API key, select model, test connection.</li>
+    </ol>
+
+    <h4>Available Models</h4>
+    <ul>
+      <li><strong>Gemini 2.5 Flash</strong> (Default) — Fast and efficient</li>
+      <li><strong>Gemini 2.5 Flash Lite</strong> — Lightweight variant</li>
+      <li><strong>Gemini 3 Pro Preview</strong> — Advanced reasoning</li>
+      <li><strong>Gemini 3 Flash Preview</strong> — Fast next-gen</li>
+    </ul>
+    <p><strong>Best for:</strong> Balanced performance and cost, with free tier for getting started</p>
+  </div>
+</details>
+
+<!-- OpenAI API Compatible -->
+<details>
+  <summary>4. OpenAI API Compatible — LiteLLM, llama.cpp, Groq, etc.</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-cloud">Cloud/Local</span>
+    <span class="bn-badge bn-b-free">Flexible</span>
+    <p><strong>Type:</strong> OpenAI-compatible endpoint &bull; <strong>Cost:</strong> Varies &bull; <strong>Privacy:</strong> Depends on provider &bull; <strong>Internet:</strong> Required unless local</p>
+
+    <div class="bn-info"><strong>Note:</strong> This is a single engine option that works with multiple providers. You don't select them as separate engines — just change the base URL and API key.</div>
+
+    <h4>Supported Providers</h4>
+    <ul>
+      <li><strong>LiteLLM</strong> — Base URL: your server (e.g., <code>http://localhost:4000/v1</code>)</li>
+      <li><strong>llama.cpp</strong> — Base URL: <code>http://localhost:8080</code>. API key: "no-key" or empty.</li>
+      <li><strong>Groq</strong> — Base URL: <code>https://api.groq.com/v1</code>. API key from <a href="https://console.groq.com" target="_blank" rel="noopener">console.groq.com</a></li>
+      <li><strong>Nebius</strong> — Your Nebius endpoint URL</li>
+      <li><strong>Custom</strong> — Any OpenAI-compatible endpoint</li>
+    </ul>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li>Go to Settings &rarr; AI Settings &rarr; OpenAI API Compatible</li>
+      <li>Enter API key and base URL for your provider.</li>
+      <li>Select model (use your provider's exact model name, e.g., <code>llama-3.1-70b-versatile</code> for Groq).</li>
+      <li>Test the connection.</li>
+    </ol>
+
+    <div class="bn-info"><strong>llama.cpp setup:</strong> Clone from <a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener">github.com/ggerganov/llama.cpp</a>, build, run <code>./server --model &lt;model.gguf&gt;</code>. Or use Python: <code>pip install 'llama-cpp-python[server]'</code></div>
+
+    <p><strong>Best for:</strong> Using LiteLLM, llama.cpp, Nebius, Groq, or other compatible services</p>
+  </div>
+</details>
+
+<!-- Mistral AI -->
+<details>
+  <summary>5. Mistral AI — Summarization &amp; Transcription</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-cloud">Cloud</span>
+    <span class="bn-badge bn-b-paid">Pay-per-use</span>
+    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Pay-per-use (transcription $0.003/min) &bull; <strong>Internet:</strong> Required</p>
+
+    <h4>Summarization Models</h4>
+    <ul>
+      <li><strong>Mistral Large (25.12)</strong> — Most capable, 128K context (Premium)</li>
+      <li><strong>Mistral Medium (25.08)</strong> — Balanced, 128K context (Standard)</li>
+      <li><strong>Magistral Medium (25.09)</strong> — Economy, 40K context</li>
+    </ul>
+
+    <h4>Transcription</h4>
+    <ul>
+      <li><strong>Voxtral Mini Transcribe</strong> — $0.003/min with optional speaker diarization</li>
+      <li>Supports MP3, MP4, M4A, WAV, FLAC, OGG, WebM</li>
+      <li>Automatic language detection or explicit language code</li>
+      <li>Files over 24MB automatically chunked</li>
+    </ul>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li>Get API key at <a href="https://console.mistral.ai" target="_blank" rel="noopener">console.mistral.ai</a></li>
+      <li>Go to Settings &rarr; AI Settings &rarr; Mistral AI</li>
+      <li>Enter API key, select model, test connection.</li>
+      <li>For transcription: Settings &rarr; Transcription Settings &rarr; select "Mistral AI".</li>
+    </ol>
+    <p><strong>Best for:</strong> Fast summaries and affordable transcription with speaker diarization</p>
+  </div>
+</details>
+
+<!-- AWS Bedrock -->
+<details>
+  <summary>6. AWS Bedrock — Enterprise Claude AI</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-cloud">Cloud</span>
+    <span class="bn-badge bn-b-paid">Pay-per-use</span>
+    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Pay-per-use &bull; <strong>Internet:</strong> Required</p>
+
+    <h4>Available Models</h4>
+    <ul>
+      <li><strong>Claude 4.5 Haiku</strong> (Default) — Fast, efficient (Standard tier)</li>
+      <li><strong>Claude Sonnet 4.5</strong> — Advanced reasoning and analysis (Premium tier)</li>
+      <li><strong>Llama 4 Maverick 17B</strong> — Meta's latest, enhanced reasoning (Economy tier)</li>
+    </ul>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li>Create an AWS account and enable Bedrock service.</li>
+      <li>Create IAM user with Bedrock permissions and generate access keys.</li>
+      <li>Go to Settings &rarr; AI Settings &rarr; AWS Bedrock.</li>
+      <li>Enter AWS credentials, select region and model, test connection.</li>
+    </ol>
+    <p><strong>Best for:</strong> Enterprise features and compliance</p>
+  </div>
+</details>
+
+<!-- Ollama -->
+<details>
+  <summary>7. Ollama — Local LLM Server</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-local">Local</span>
+    <span class="bn-badge bn-b-free">Free</span>
+    <p><strong>Type:</strong> Local server &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Not required</p>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li>Install <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> on your machine.</li>
+      <li>Download models:
+        <pre><code>ollama pull qwen3:30b
+ollama pull gpt-oss:20b
+ollama pull mistral-small3.2</code></pre>
+      </li>
+      <li>Go to Settings &rarr; AI Settings &rarr; Ollama.</li>
+      <li>Set server URL and port (default: <code>http://localhost:11434</code>).</li>
+      <li>Tap refresh to scan for models, select one, test connection.</li>
+    </ol>
+
+    <div class="bn-info"><strong>Tips:</strong> Use your server's IP for network access (e.g., <code>http://192.168.1.100:11434</code>). Larger models = better results but more RAM.</div>
+    <p><strong>Best for:</strong> Privacy, customizable models, offline use</p>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<!-- TRANSCRIPTION CONFIGURATION                                   -->
+<!-- ============================================================ -->
+<h2 id="bn-transcription">Transcription Configuration</h2>
+
+<div class="bn-info"><strong>Privacy first:</strong> For complete privacy, use On Device transcription. Your audio is processed entirely on your device and never leaves your iPhone or iPad.</div>
+
+<h3>Engine Selection</h3>
+<ol class="bn-sl">
+  <li>Go to Settings &rarr; Transcription Settings.</li>
+  <li>Select your preferred transcription engine.</li>
+  <li>Configure and test the connection.</li>
+</ol>
+
+<h3>Available Engines</h3>
+<ul>
+  <li><strong>On Device</strong> — Free, private, works offline. Requires model download (150-520MB).</li>
+  <li><strong>OpenAI</strong> — GPT-4o Transcribe, GPT-4o Mini Transcribe, or Whisper-1.</li>
+  <li><strong>Mistral AI</strong> — Voxtral Mini ($0.003/min) with optional speaker diarization.</li>
+  <li><strong>Whisper (Local Server)</strong> — Your own Whisper server (REST API or Wyoming protocol).</li>
+  <li><strong>AWS Transcribe</strong> — Cloud service for long audio files.</li>
+  <li><strong>OpenAI API Compatible</strong> — Any compatible transcription endpoint.</li>
+</ul>
+
+<h3>Transcription Engine Comparison</h3>
+<div class="bn-tw">
+  <table>
+    <thead><tr><th>Engine</th><th>Type</th><th>Speakers</th><th>Cost</th></tr></thead>
+    <tbody>
+      <tr><td><strong>On-Device</strong></td><td>Local</td><td>No</td><td>Free</td></tr>
+      <tr><td><strong>OpenAI GPT-4o</strong></td><td>Cloud</td><td>No</td><td>Per token</td></tr>
+      <tr><td><strong>OpenAI Whisper</strong></td><td>Cloud</td><td>No</td><td>Per minute</td></tr>
+      <tr><td><strong>Mistral AI</strong></td><td>Cloud</td><td>Yes</td><td>~$0.003/min</td></tr>
+      <tr><td><strong>AWS Transcribe</strong></td><td>Cloud</td><td>Yes</td><td>Per minute</td></tr>
+      <tr><td><strong>Whisper (local)</strong></td><td>Local</td><td>No</td><td>Free</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- On Device Transcription Setup -->
+<details>
+  <summary>On Device Transcription — Detailed Setup</summary>
+  <div class="dd">
+    <h4>Initial Setup</h4>
+    <ol class="bn-sl">
+      <li><strong>Enable:</strong> Settings &rarr; Transcription Settings &rarr; select "On Device" &rarr; tap "Configure".</li>
+      <li><strong>Download a model:</strong>
+        <ul>
+          <li><strong>Higher Quality</strong> (~520MB) — Best accuracy, slower processing</li>
+          <li><strong>Faster Processing</strong> (~150MB) — Faster, slightly lower accuracy</li>
+        </ul>
+      </li>
+      <li><strong>Requirements:</strong> iOS 17.0+, 4GB+ RAM, 150-520MB free space.</li>
+      <li><strong>Test:</strong> Tap "Test Model Loading". First load may take 30-60 seconds.</li>
+    </ol>
+
+    <h4>Which Model Should I Use?</h4>
+    <div class="bn-tw">
+      <table>
+        <thead><tr><th>Use Case</th><th>Model</th><th>Why?</th></tr></thead>
+        <tbody>
+          <tr><td>Voice Notes / Journaling</td><td>Faster</td><td>Close to mic, clear audio</td></tr>
+          <tr><td>Meeting / Interview</td><td>Higher Quality</td><td>Multiple voices, distance</td></tr>
+          <tr><td>Noisy Environment</td><td>Higher Quality</td><td>Better noise separation</td></tr>
+          <tr><td>Battery Conservation</td><td>Faster</td><td>Uses less power</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="bn-ok"><strong>Benefits:</strong> Complete privacy, works offline, no API costs, fast processing.</div>
+  </div>
+</details>
+
+<!-- Whisper Local Server -->
+<details>
+  <summary>Whisper (Local Server) Setup</summary>
+  <div class="dd">
+    <ol class="bn-sl">
+      <li><strong>Install Whisper Server:</strong>
+        <pre><code># Using Docker (recommended)
+docker run -d -p 9000:9000 \
+  -e ASR_MODEL=base \
+  -e ASR_ENGINE=openai_whisper \
+  onerahmet/openai-whisper-asr-webservice:latest</code></pre>
+      </li>
+      <li><strong>Configure:</strong> Settings &rarr; Transcription Settings &rarr; Whisper (Local Server). Set server URL and port (default: 9000). Choose protocol (REST API or Wyoming) and model size.</li>
+    </ol>
+    <div class="bn-info"><strong>Protocols:</strong> REST API = traditional HTTP file uploads. Wyoming = modern WebSocket streaming.</div>
+  </div>
+</details>
+
+<!-- AWS Transcribe -->
+<details>
+  <summary>AWS Transcribe Setup</summary>
+  <div class="dd">
+    <ol class="bn-sl">
+      <li>Create an AWS account and enable Transcribe service.</li>
+      <li>Create IAM user with <code>transcribe:StartTranscriptionJob</code> and <code>transcribe:GetTranscriptionJob</code> permissions.</li>
+      <li>Settings &rarr; Transcription Settings &rarr; AWS Transcribe.</li>
+      <li>Enter access key, secret key, region, language. Test connection.</li>
+    </ol>
+    <div class="bn-info"><strong>Tip:</strong> Choose a region close to you for better performance.</div>
+  </div>
+</details>
+
+<h3>Large File Processing</h3>
+<ul>
+  <li><strong>Automatic Chunking</strong> — Files over 5 minutes are automatically split</li>
+  <li><strong>Progress Tracking</strong> — Real-time updates</li>
+  <li><strong>Background Processing</strong> — Continues when app is minimized</li>
+  <li><strong>Configurable Timeouts</strong> — Adjustable processing time limits</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- WORKING WITH SUMMARIES                                        -->
+<!-- ============================================================ -->
+<h2 id="bn-summaries">Working with Summaries</h2>
+
+<h3>Viewing Summaries</h3>
+<ol class="bn-sl">
+  <li>Tap the "Summaries" tab.</li>
+  <li>Browse recordings with AI-generated summaries.</li>
+  <li>Tap any summary to view details.</li>
+</ol>
+
+<h3>Summary Features</h3>
+<ul>
+  <li><strong>Expandable Sections</strong> — Tap to expand/collapse</li>
+  <li><strong>Task Extraction</strong> — AI-identified actionable items</li>
+  <li><strong>Reminder Detection</strong> — Time-sensitive reminders</li>
+  <li><strong>Priority Indicators</strong> — Color-coded priorities</li>
+  <li><strong>Location Maps</strong> — Interactive maps showing recording location</li>
+</ul>
+
+<h3>Search &amp; Filtering</h3>
+<p>Search is available in three views:</p>
+<ul>
+  <li><strong>Summaries View</strong> — Search content, tasks, reminders, titles</li>
+  <li><strong>Transcripts View</strong> — Search transcript text</li>
+  <li><strong>Recordings View</strong> — Search by recording name</li>
+</ul>
+<p>Tap the search bar, type your terms — results filter in real-time (case-insensitive, partial match).</p>
+
+<h4>Date Filters</h4>
+<p>Tap the filter icon &rarr; select start/end dates &rarr; tap "Apply". Clear with the X on the filter banner. Filters combine with search and persist until cleared.</p>
+
+<h3>Editing Metadata</h3>
+<details>
+  <summary>Change Title, Date, or Location</summary>
+  <div class="dd">
+    <h4>Recording Title</h4>
+    <p>Open summary &rarr; "Titles" section &rarr; "Edit" &rarr; enter new title or select from AI alternatives &rarr; "Use This Title".</p>
+
+    <h4>Custom Date &amp; Time</h4>
+    <p>Open summary &rarr; "Recording Date &amp; Time" &rarr; "Set Custom Date &amp; Time" &rarr; use pickers &rarr; "Save".</p>
+
+    <h4>Location</h4>
+    <p>Open summary &rarr; location section &rarr; "Add Location" or "Edit Location". Choose: Current Location (GPS), Map Selection, or Manual Entry &rarr; "Save".</p>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<!-- AUDIO PLAYBACK                                                -->
+<!-- ============================================================ -->
+<h2 id="bn-playback">Audio Playback</h2>
+
+<h3>Basic Playback</h3>
+<ol class="bn-sl">
+  <li>Go to the "Recordings" tab.</li>
+  <li>Tap any recording to play.</li>
+  <li>Controls: Play/Pause (center), Skip 15s (sides), Scrub (drag progress bar).</li>
+</ol>
+
+<h3>Advanced Playback</h3>
+<ul>
+  <li><strong>Seek Control</strong> — Drag scrubber for precise positioning</li>
+  <li><strong>Background Playback</strong> — Audio continues when app is minimized</li>
+  <li><strong>Audio Session Management</strong> — Handles interruptions gracefully</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- SETTINGS & CONFIGURATION                                      -->
+<!-- ============================================================ -->
+<h2 id="bn-settings">Settings &amp; Configuration</h2>
+
+<h3>Simple Settings vs Advanced Settings</h3>
+
+<div class="bn-g">
+  <div class="bn-gc">
+    <h4>Simple Settings</h4>
+    <p>Appears on first launch. Quick setup for common configurations.</p>
+    <ul>
+      <li>Auto-detects your current config</li>
+      <li>Three quick options: OpenAI, On-Device AI, or Advanced</li>
+      <li>Preserves settings when switching</li>
+    </ul>
+  </div>
+  <div class="bn-gc">
+    <h4>Advanced Settings</h4>
+    <p>Full control over all options.</p>
+    <ul>
+      <li>All 7 AI engines</li>
+      <li>All transcription engines</li>
+      <li>Microphone selection</li>
+      <li>Preferences, iCloud, background processing</li>
+    </ul>
+  </div>
+</div>
+
+<div class="bn-info"><strong>Switching:</strong> Simple &rarr; Advanced: tap "Advanced Options" button. Advanced &rarr; Simple: the simple page auto-detects your config when you return.</div>
+
+<h3>Audio Settings</h3>
+<ul>
+  <li><strong>Quality:</strong> Whisper Optimized (22 kHz, 64 kbps AAC) — optimized for voice</li>
+  <li><strong>Microphone Selection:</strong> Choose from available mics (built-in, Bluetooth, USB). Saved across recordings. Auto-fallback if unavailable.</li>
+  <li><strong>Mixed Audio:</strong> Record without interrupting system audio</li>
+  <li><strong>Background Recording:</strong> Continue when app is minimized</li>
+</ul>
+
+<h3>AI Settings</h3>
+<ul>
+  <li><strong>Engine Selection</strong> — Choose from all 7 AI engines</li>
+  <li><strong>Model Configuration</strong> — Temperature, max tokens, etc.</li>
+  <li><strong>Connection Testing</strong> — Verify API connectivity</li>
+  <li><strong>Batch Regeneration</strong> — Update all summaries with new engine</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- TROUBLESHOOTING                                               -->
+<!-- ============================================================ -->
+<h2 id="bn-trouble">Troubleshooting</h2>
+
+<details>
+  <summary>Recording Problems</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>No Audio:</strong> Check microphone permissions in Settings &rarr; Privacy</li>
+      <li><strong>Poor Quality:</strong> Adjust audio quality settings, ensure proper mic distance</li>
+      <li><strong>Background Recording:</strong> Enable in app settings</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>AI Engine Issues</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Connection Failed:</strong> Check internet and API keys</li>
+      <li><strong>Timeout Errors:</strong> Increase timeout settings</li>
+      <li><strong>Authentication Errors:</strong> Verify API credentials</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Transcription Problems</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>No Transcription:</strong> Check engine configuration</li>
+      <li><strong>Poor Quality:</strong> Try a different engine or model</li>
+      <li><strong>Large File Issues:</strong> Enable chunking for files over 5 minutes</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Data Issues</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Missing Recordings:</strong> Use Data Migration tools</li>
+      <li><strong>Corrupted Data:</strong> Clear and re-import data</li>
+      <li><strong>Sync Problems:</strong> Check iCloud settings</li>
+    </ul>
+  </div>
+</details>
+
+<h3>Performance Tips</h3>
+<ul>
+  <li><strong>Battery:</strong> Use local engines when battery is low</li>
+  <li><strong>Memory:</strong> Close other apps during large file processing</li>
+  <li><strong>Storage:</strong> Regularly clean up old recordings</li>
+  <li><strong>Network:</strong> Use local engines to reduce data usage</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- ADVANCED FEATURES                                             -->
+<!-- ============================================================ -->
+<h2 id="bn-advanced">Advanced Features</h2>
+
+<details>
+  <summary>Background Processing</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Job Queue</strong> — Multiple operations run simultaneously</li>
+      <li><strong>Progress Tracking</strong> — Real-time updates</li>
+      <li><strong>Error Recovery</strong> — Automatic retry for failures</li>
+      <li><strong>Stale Job Cleanup</strong> — Automatic cleanup of abandoned jobs</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>File Management</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Import/Export</strong> — M4A, MP3, WAV, CAF, AIFF, AIF</li>
+      <li><strong>Share Extension</strong> — Import from Voice Memos, Files, etc.</li>
+      <li><strong>Combining Recordings</strong> — Merge two into one</li>
+      <li><strong>PDF Export</strong> — Professional reports with metadata, maps, page numbers</li>
+      <li><strong>File Relationships</strong> — Audio/transcript/summary links maintained</li>
+      <li><strong>Orphaned File Detection</strong> — Find and clean disconnected files</li>
+      <li><strong>Selective Deletion</strong> — Choose what to keep</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Location Intelligence</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>GPS Integration</strong> — Automatic capture</li>
+      <li><strong>Reverse Geocoding</strong> — Coordinates to addresses</li>
+      <li><strong>Smart Search</strong> — 3-tier fallback system</li>
+      <li><strong>University Database</strong> — Built-in campus mapping</li>
+      <li><strong>Interactive Maps</strong> — View recording locations</li>
+      <li><strong>Manual Location</strong> — Add locations after recording</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>iCloud Backup &amp; Sync</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>iCloud Backup</strong> (v1.6) — Full backup of all data to iCloud Drive</li>
+      <li><strong>CloudKit Sync</strong> — Optional summary synchronization across devices</li>
+      <li>Prompted after generating your first summary</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Data Migration</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Legacy Import</strong> — Migrate from old file-based storage</li>
+      <li><strong>Data Integrity</strong> — Validate and repair data relationships</li>
+      <li><strong>Batch Operations</strong> — Process multiple files at once</li>
+      <li><strong>Progress Tracking</strong> — Monitor migration progress</li>
+    </ul>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<!-- BEST PRACTICES                                                -->
+<!-- ============================================================ -->
+<h2 id="bn-best">Best Practices</h2>
+
+<div class="bn-g">
+  <div class="bn-gc">
+    <h4>Recording</h4>
+    <ul>
+      <li>Quiet environment</li>
+      <li>Mic 6-12 inches away</li>
+      <li>Break long sessions into segments</li>
+      <li>Minimize background noise</li>
+    </ul>
+  </div>
+  <div class="bn-gc">
+    <h4>AI Configuration</h4>
+    <ul>
+      <li>Local engines for sensitive content</li>
+      <li>Start free, upgrade as needed</li>
+      <li>Experiment with models</li>
+      <li>Have a backup engine ready</li>
+    </ul>
+  </div>
+  <div class="bn-gc">
+    <h4>Data Management</h4>
+    <ul>
+      <li>Export important recordings as PDF</li>
+      <li>Use iCloud Backup</li>
+      <li>Clean up old recordings</li>
+      <li>Use descriptive titles</li>
+    </ul>
+  </div>
+  <div class="bn-gc">
+    <h4>Performance</h4>
+    <ul>
+      <li>Local engines when battery is low</li>
+      <li>Monitor available storage</li>
+      <li>Local engines on slow networks</li>
+      <li>Close other apps when processing</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- EXTERNAL RESOURCES                                            -->
+<!-- ============================================================ -->
+<h2 id="bn-resources">External Resources</h2>
+
+<div class="bn-g">
+  <div class="bn-gc">
+    <h4>Cloud Services</h4>
+    <ul>
+      <li><a href="https://platform.openai.com/docs" target="_blank" rel="noopener">OpenAI Docs</a></li>
+      <li><a href="https://ai.google.dev" target="_blank" rel="noopener">Google AI</a></li>
+      <li><a href="https://docs.aws.amazon.com/bedrock" target="_blank" rel="noopener">AWS Bedrock</a></li>
+      <li><a href="https://docs.aws.amazon.com/transcribe" target="_blank" rel="noopener">AWS Transcribe</a></li>
+      <li><a href="https://docs.mistral.ai" target="_blank" rel="noopener">Mistral AI</a></li>
+    </ul>
+  </div>
+  <div class="bn-gc">
+    <h4>Local / Self-Hosted</h4>
+    <ul>
+      <li><a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a></li>
+      <li><a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener">llama.cpp</a></li>
+      <li><a href="https://llama-cpp-python.readthedocs.io/en/latest/server/" target="_blank" rel="noopener">llama-cpp-python</a></li>
+      <li><a href="https://github.com/BerriAI/litellm" target="_blank" rel="noopener">LiteLLM</a></li>
+      <li><a href="https://groq.com" target="_blank" rel="noopener">Groq</a></li>
+      <li><a href="https://github.com/ahmetoner/whisper-asr-webservice" target="_blank" rel="noopener">Whisper ASR</a></li>
+    </ul>
+  </div>
+</div>
+
+<div class="bn-ok">
+  <strong>Ready to get started?</strong> BisonNotes AI transforms your spoken words into actionable intelligence with advanced AI processing. Download the app and start recording today!
+</div>
+
+<div class="bn-info">
+  <strong>Need help?</strong> Report issues on <a href="https://github.com/bisonbet/BisonNotes-AI/issues" target="_blank" rel="noopener">GitHub</a> or use the in-app help documentation.
+</div>
+
+<hr>
+<p style="text-align:center;font-size:0.85rem;opacity:0.6;"><em>This documentation is regularly updated. For the latest information, check the app's built-in help.</em></p>
+
+</div>
+<!-- End BisonNotes AI Guide -->

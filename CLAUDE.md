@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Current Environment Context
-- **Year**: 2025
+- **Year**: 2026
 - **Current iOS**: iOS 26 / iPadOS 26
 - **Latest Devices**: iPhone models through iPhone 17 series, iPad models with M4 chips and A17 Pro
 
