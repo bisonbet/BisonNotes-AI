@@ -138,7 +138,7 @@ struct SettingsView: View {
             .padding(.top, 20)
             .padding(.horizontal, 24)
             
-            Text("Advanced settings for comprehensive configuration")
+            Text("Additional settings for comprehensive configuration")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 24)
