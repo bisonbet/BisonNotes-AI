@@ -193,7 +193,7 @@ struct SimpleSettingsView: View {
                 
                 Spacer()
                 
-                Button("Advanced Options") {
+                Button("Additional Settings") {
                     showingAdvancedSettings = true
                 }
                 .font(.caption)
