@@ -257,7 +257,7 @@ struct TranscriptsView: View {
         return List {
             // Audio Recordings with Transcripts
             if !filtered.isEmpty {
-                Section(header: Text("Audio Recordings")) {
+                Section(header: Text("Audio Transcripts")) {
                     // Show first 3 items with their section headers
                     ForEach(recentRecordings, id: \.recording.id) { recordingData in
                         recordingRowView(recordingData)
@@ -323,7 +323,7 @@ struct TranscriptsView: View {
                 }
             }
         }
-        .navigationTitle("Audio Recordings")
+        .navigationTitle("Audio Transcripts")
     }
 
     private var importedTranscriptsFullListView: some View {
