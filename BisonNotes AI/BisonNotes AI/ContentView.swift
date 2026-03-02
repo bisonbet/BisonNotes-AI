@@ -184,7 +184,7 @@ struct ContentView: View {
                 .environmentObject(appCoordinator)
                 .tabItem {
                     Image(systemName: "gearshape.fill")
-                    Text("Settings")
+                    Text("Setup")
                 }
                 .tag(3)
         }

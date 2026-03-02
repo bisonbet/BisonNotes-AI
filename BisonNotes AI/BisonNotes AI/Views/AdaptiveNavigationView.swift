@@ -48,7 +48,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case record = "Record"
     case summaries = "Summaries"
     case transcripts = "Transcripts"
-    case settings = "Settings"
+    case settings = "Setup"
 
     var id: String { rawValue }
 

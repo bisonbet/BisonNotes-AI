@@ -128,7 +128,7 @@ struct SettingsView: View {
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Settings")
+                Text("Setup")
                     .font(.largeTitle)
                     .fontWeight(.bold)
                     .foregroundColor(.primary)
