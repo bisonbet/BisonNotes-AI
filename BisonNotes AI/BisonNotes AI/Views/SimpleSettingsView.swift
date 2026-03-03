@@ -410,7 +410,7 @@ struct SimpleSettingsView: View {
                 .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color(.systemGray4), lineWidth: 0.5)
+                        .stroke(Color.blue, lineWidth: 1)
                 )
         )
     }

@@ -355,26 +355,6 @@ public class RecordingRegistryManager: ObservableObject {
         return true // Assume monitoring is always enabled for now
     }
     
-    // MARK: - Legacy Compatibility
-    
-    func convertLegacyToEnhanced(_ summary: SummaryData) -> EnhancedSummaryData {
-        // Convert legacy SummaryData to EnhancedSummaryData
-        return EnhancedSummaryData(
-            recordingURL: summary.recordingURL,
-            recordingName: summary.recordingName,
-            recordingDate: summary.recordingDate,
-            summary: summary.summary,
-            tasks: [],
-            reminders: [],
-            titles: [],
-            contentType: .general,
-            aiEngine: "Local Processing",
-            aiModel: "Legacy Conversion",
-            originalLength: summary.summary.count,
-            processingTime: 0
-        )
-    }
-    
     func generateEnhancedSummary(from transcriptText: String, for url: URL, recordingName: String, recordingDate: Date) async throws -> EnhancedSummaryData {
         guard let engine = currentEngine else {
             throw SummarizationError.aiServiceUnavailable(service: "No engine available")

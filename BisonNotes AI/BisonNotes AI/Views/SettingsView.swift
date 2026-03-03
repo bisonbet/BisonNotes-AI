@@ -128,20 +128,15 @@ struct SettingsView: View {
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Setup")
+                Text("Settings")
                     .font(.largeTitle)
                     .fontWeight(.bold)
                     .foregroundColor(.primary)
-                
+
                 Spacer()
             }
             .padding(.top, 20)
             .padding(.horizontal, 24)
-            
-            Text("Additional settings for comprehensive configuration")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 24)
         }
     }
     
