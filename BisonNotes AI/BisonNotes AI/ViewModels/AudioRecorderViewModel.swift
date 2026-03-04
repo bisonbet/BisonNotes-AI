@@ -11,7 +11,9 @@ import SwiftUI
 import Combine
 import CoreLocation
 import UserNotifications
+#if !targetEnvironment(macCatalyst)
 import CallKit
+#endif
 
 class AudioRecorderViewModel: NSObject, ObservableObject {
 
@@ -87,7 +89,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var currentSegmentIndex: Int = 0 // Track which segment we're on
 
 	// Call interruption intelligence (Phase 1)
+	#if !targetEnvironment(macCatalyst)
 	var callObserver: CXCallObserver?
+	#endif
 	var callInterruptionStartTime: Date?
 	var deferredCallDuration: TimeInterval? // Set when CallKit defers during background
 	let SHORT_CALL_THRESHOLD: TimeInterval = 180 // 3 minutes
@@ -170,7 +174,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		setupNotificationObservers()
 
 		// Setup CallKit observer for intelligent call interruption handling (Phase 1)
+		#if !targetEnvironment(macCatalyst)
 		setupCallObserver()
+		#endif
 	}
 
 	/// Set the app coordinator reference
@@ -182,7 +188,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			self.workflowManager = workflowManager
 
 			// Set up watch sync handler now that we have app coordinator
+			#if !targetEnvironment(macCatalyst)
 			setupWatchSyncHandler()
+			#endif
 		}
 	}
 
@@ -375,12 +383,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	// MARK: - Call Observer Setup (Phase 1)
 
+	#if !targetEnvironment(macCatalyst)
 	/// Setup CallKit observer for intelligent call interruption handling
 	func setupCallObserver() {
 		callObserver = CXCallObserver()
 		callObserver?.setDelegate(self, queue: DispatchQueue.main)
 		print("✅ CallKit observer setup complete for intelligent interruption handling")
 	}
+	#endif
 
 	// MARK: - Core Recording
 

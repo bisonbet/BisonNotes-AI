@@ -56,6 +56,7 @@ extension AudioRecorderViewModel {
 
 			// Check if CallKit deferred a long-call decision while we were backgrounded.
 			// If so, prompt the user instead of auto-resuming.
+			#if !targetEnvironment(macCatalyst)
 			if let callDuration = deferredCallDuration, callDuration >= SHORT_CALL_THRESHOLD {
 				print("📞 Deferred long call detected (\(callDuration)s ≥ \(SHORT_CALL_THRESHOLD)s threshold) — asking user whether to resume")
 				deferredCallDuration = nil
@@ -66,6 +67,7 @@ extension AudioRecorderViewModel {
 				return
 			}
 			deferredCallDuration = nil // Clear for short or no-duration calls
+			#endif
 
 			if let options = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
 				let interruptionOptions = AVAudioSession.InterruptionOptions(rawValue: options)

@@ -7,6 +7,7 @@ import NaturalLanguage
 struct SummariesView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
+    @Environment(\.isEmbeddedInSplitView) private var isEmbeddedInSplitView
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
     @StateObject private var iCloudManager = iCloudStorageManager()
@@ -19,6 +20,7 @@ struct SummariesView: View {
     @State private var showSummary = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
+    @State private var errorRecoverySuggestion = ""
     @State private var refreshTrigger = false
     @State private var showingFirstTimeiCloudPrompt = false
     @State private var showingiCloudDataFoundPrompt = false
@@ -34,7 +36,7 @@ struct SummariesView: View {
     // MARK: - Body
     
     var body: some View {
-        NavigationView {
+        AdaptiveNavigationWrapper {
             mainContentView
                 .navigationTitle("Summaries")
                 .searchable(text: $searchText, prompt: "Search summaries, tasks, reminders...")
@@ -137,7 +139,11 @@ struct SummariesView: View {
         .alert("Error", isPresented: $showErrorAlert) {
             Button("OK") { }
         } message: {
-            Text(errorMessage)
+            if errorRecoverySuggestion.isEmpty {
+                Text(errorMessage)
+            } else {
+                Text("\(errorMessage)\n\n\(errorRecoverySuggestion)")
+            }
         }
         .alert("Download Summaries from iCloud?", isPresented: $showingFirstTimeiCloudPrompt) {
             Button("Not Now") {
@@ -154,6 +160,7 @@ struct SummariesView: View {
                         print("❌ Failed to download summaries: \(error)")
                         await MainActor.run {
                             errorMessage = "Failed to download summaries: \(error.localizedDescription)"
+                            errorRecoverySuggestion = ""
                             showErrorAlert = true
                         }
                     }
@@ -182,6 +189,7 @@ struct SummariesView: View {
                         print("❌ Failed to download summaries: \(error)")
                         await MainActor.run {
                             errorMessage = "Failed to download summaries: \(error.localizedDescription)"
+                            errorRecoverySuggestion = ""
                             showErrorAlert = true
                         }
                     }
@@ -651,6 +659,7 @@ struct SummariesView: View {
                     
                     await MainActor.run {
                         errorMessage = "No transcript available for this recording"
+                        errorRecoverySuggestion = ""
                         showErrorAlert = true
                         isGeneratingSummary = false
                         generatingSummaryRecordingId = nil
@@ -664,7 +673,13 @@ struct SummariesView: View {
                     await BackgroundProcessingManager.shared.updateExternalJob(failedJob)
                 }
                 await MainActor.run {
-                    errorMessage = "Failed to generate summary: \(error.localizedDescription)"
+                    if let summarizationError = error as? SummarizationError {
+                        errorMessage = summarizationError.localizedDescription
+                        errorRecoverySuggestion = summarizationError.recoverySuggestion ?? ""
+                    } else {
+                        errorMessage = "Failed to generate summary: \(error.localizedDescription)"
+                        errorRecoverySuggestion = ""
+                    }
                     showErrorAlert = true
                     isGeneratingSummary = false
                     generatingSummaryRecordingId = nil
@@ -816,6 +831,7 @@ struct SummariesView: View {
             print("❌ Sync error: \(error)")
             await MainActor.run {
                 errorMessage = "iCloud sync failed: \(error.localizedDescription)"
+                errorRecoverySuggestion = ""
                 showErrorAlert = true
             }
         }

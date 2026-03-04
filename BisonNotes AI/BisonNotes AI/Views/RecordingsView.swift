@@ -6,7 +6,9 @@
 //
 
 import SwiftUI
+#if !targetEnvironment(macCatalyst)
 import SafariServices
+#endif
 
 struct RecordingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
@@ -55,7 +57,7 @@ struct RecordingsView: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(maxHeight: min(geometry.size.height * 0.25, 200))
                             .frame(maxWidth: .infinity)
-                            .shadow(color: .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                            .shadow(color: Color(red: 0.102, green: 0.541, blue: 0.490).opacity(0.4), radius: 12, x: 0, y: 4)
                         
                         Text("BisonNotes AI")
                             .font(.largeTitle)
@@ -207,6 +209,7 @@ struct RecordingsView: View {
                     
                     Spacer()
                 }
+                .frame(maxWidth: 600)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(.systemBackground))
             }
@@ -224,9 +227,19 @@ struct RecordingsView: View {
                 BackgroundProcessingView()
             }
             .sheet(isPresented: $showingHelpDocumentation) {
+                #if !targetEnvironment(macCatalyst)
                 if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
                     SafariView(url: url)
                 }
+                #endif
+            }
+            .onChange(of: showingHelpDocumentation) { _, isShowing in
+                #if targetEnvironment(macCatalyst)
+                if isShowing, let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
+                    UIApplication.shared.open(url)
+                    showingHelpDocumentation = false
+                }
+                #endif
             }
             .alert("Audio Import Results", isPresented: $importManager.showingImportAlert) {
                 Button("OK", role: .cancel) {}
@@ -242,11 +255,36 @@ struct RecordingsView: View {
                     Text(results.summary)
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ToggleRecording"))) { _ in
+                if recorderVM.isRecording {
+                    recorderVM.stopRecording()
+                } else {
+                    recorderVM.startRecording()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportAudioFromMenu"))) { _ in
+                documentPickerCoordinator.selectAudioFiles { urls in
+                    if !urls.isEmpty {
+                        Task {
+                            await importManager.importAudioFiles(from: urls)
+                        }
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportTranscriptFromMenu"))) { _ in
+                textDocumentPickerCoordinator.selectTextFiles { urls in
+                    if !urls.isEmpty {
+                        Task {
+                            await transcriptImportManager.importTranscriptFiles(from: urls)
+                        }
+                    }
+                }
+            }
         }
     }
-    
-    
-    
+
+
+
     private var backgroundProcessingIndicator: some View {
         Button(action: {
             showingBackgroundProcessing = true
@@ -398,9 +436,10 @@ struct RecordingsView: View {
 }
 
 // MARK: - Safari View Wrapper
+#if !targetEnvironment(macCatalyst)
 struct SafariView: UIViewControllerRepresentable {
     let url: URL
-    
+
     func makeUIViewController(context: Context) -> SFSafariViewController {
         let safariVC = SFSafariViewController(url: url)
         safariVC.preferredBarTintColor = UIColor.systemBackground
@@ -408,8 +447,9 @@ struct SafariView: UIViewControllerRepresentable {
         safariVC.dismissButtonStyle = .close
         return safariVC
     }
-    
+
     func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {
         // No updates needed
     }
 }
+#endif

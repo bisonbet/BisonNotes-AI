@@ -41,10 +41,8 @@ class SummaryManager: ObservableObject {
     // MARK: - Shared Instance
     static let shared = SummaryManager()
     
-    @Published var summaries: [SummaryData] = []
     @Published var enhancedSummaries: [EnhancedSummaryData] = []
-    
-    private let summariesKey = "SavedSummaries"
+
     private let enhancedSummariesKey = "SavedEnhancedSummaries"
     
     // MARK: - Enhanced Summarization Integration
@@ -78,8 +76,6 @@ class SummaryManager: ObservableObject {
     }()
     
     private init() {
-        loadSummaries()
-        // Load any legacy summaries for backward compatibility during transition
         loadEnhancedSummariesLegacy()
         initializeEngines()
     }
@@ -98,84 +94,6 @@ class SummaryManager: ObservableObject {
         } catch {
             print("Failed to load legacy enhanced summaries during init: \(error)")
         }
-    }
-    
-    // MARK: - Legacy Summary Methods (for backward compatibility)
-    
-    func saveSummary(_ summary: SummaryData) {
-        DispatchQueue.main.async {
-            self.summaries.append(summary)
-            self.saveSummariesToDisk()
-        }
-    }
-    
-    func updateSummary(_ summary: SummaryData) {
-        DispatchQueue.main.async {
-            if let index = self.summaries.firstIndex(where: { $0.recordingURL == summary.recordingURL }) {
-                self.summaries[index] = summary
-                self.saveSummariesToDisk()
-            }
-        }
-    }
-    
-    func getSummary(for recordingURL: URL) -> SummaryData? {
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("Looking for legacy summary with URL: \(recordingURL)", category: "SummaryManager")
-            AppLogger.shared.verbose("Total legacy summaries: \(summaries.count)", category: "SummaryManager")
-        }
-        
-        let targetFilename = recordingURL.lastPathComponent
-        let targetName = recordingURL.deletingPathExtension().lastPathComponent
-        
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("Looking for filename: \(targetFilename)", category: "SummaryManager")
-            AppLogger.shared.verbose("Looking for name: \(targetName)", category: "SummaryManager")
-        }
-        
-        for (index, summary) in summaries.enumerated() {
-            let summaryFilename = summary.recordingURL.lastPathComponent
-            let summaryName = summary.recordingURL.deletingPathExtension().lastPathComponent
-            
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Checking legacy summary \(index): \(summary.recordingName)", category: "SummaryManager")
-                AppLogger.shared.verbose("Stored filename: \(summaryFilename)", category: "SummaryManager")
-                AppLogger.shared.verbose("Stored name: \(summaryName)", category: "SummaryManager")
-            }
-            
-            // Try multiple comparison methods
-            let exactMatch = summary.recordingURL == recordingURL
-            let pathMatch = summary.recordingURL.path == recordingURL.path
-            let filenameMatch = summaryFilename == targetFilename
-            let nameMatch = summaryName == targetName
-            let recordingNameMatch = summary.recordingName == targetName
-            
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Exact match: \(exactMatch)", category: "SummaryManager")
-                AppLogger.shared.verbose("Path match: \(pathMatch)", category: "SummaryManager")
-                AppLogger.shared.verbose("Filename match: \(filenameMatch)", category: "SummaryManager")
-                AppLogger.shared.verbose("Name match: \(nameMatch)", category: "SummaryManager")
-                AppLogger.shared.verbose("Recording name match: \(recordingNameMatch)", category: "SummaryManager")
-            }
-            
-            // Match if any of these conditions are true
-            if exactMatch || pathMatch || filenameMatch || nameMatch || recordingNameMatch {
-                // Only log if verbose logging is enabled
-                if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("Found matching legacy summary!", category: "SummaryManager")
-                }
-                return summary
-            }
-        }
-        
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("No matching legacy summary found", category: "SummaryManager")
-        }
-        return nil
     }
     
     // MARK: - Enhanced Summary Methods
@@ -308,16 +226,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Unified Methods (prefer enhanced, fallback to legacy)
     
     func hasSummary(for recordingURL: URL) -> Bool {
-        let hasEnhanced = hasEnhancedSummary(for: recordingURL)
-        let hasLegacy = getSummary(for: recordingURL) != nil
-        
-        let result = hasEnhanced || hasLegacy
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("hasSummary for \(recordingURL.lastPathComponent) = \(result) (enhanced: \(hasEnhanced), legacy: \(hasLegacy))", category: "SummaryManager")
-        }
-        
-        return result
+        return hasEnhancedSummary(for: recordingURL)
     }
     
     func deleteSummary(for recordingURL: URL) {
@@ -325,10 +234,8 @@ class SummaryManager: ObservableObject {
             // Find the enhanced summary to get its ID for iCloud deletion
             let enhancedSummary = self.enhancedSummaries.first { $0.recordingURL == recordingURL }
             
-            self.summaries.removeAll { $0.recordingURL == recordingURL }
             self.enhancedSummaries.removeAll { $0.recordingURL == recordingURL }
-            self.saveSummariesToDisk()
-            // NOTE: Removed saveEnhancedSummariesToDisk() - Core Data is now the source of truth
+            // NOTE: Core Data is now the source of truth for persistence
             
             // Delete from iCloud if there was an enhanced summary
             if let summary = enhancedSummary {
@@ -344,17 +251,7 @@ class SummaryManager: ObservableObject {
     }
     
     func getBestAvailableSummary(for recordingURL: URL) -> EnhancedSummaryData? {
-        // First try to get enhanced summary
-        if let enhanced = getEnhancedSummary(for: recordingURL) {
-            return enhanced
-        }
-        
-        // Fallback to converting legacy summary
-        if let legacy = getSummary(for: recordingURL) {
-            return convertLegacyToEnhanced(legacy)
-        }
-        
-        return nil
+        return getEnhancedSummary(for: recordingURL)
     }
     
     // MARK: - iCloud Access Methods
@@ -363,70 +260,16 @@ class SummaryManager: ObservableObject {
         return iCloudManager
     }
     
-    // MARK: - Migration Methods
-    
-    func migrateLegacySummary(for recordingURL: URL, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String = "Legacy", originalLength: Int = 0) {
-        guard let legacy = getSummary(for: recordingURL),
-              !hasEnhancedSummary(for: recordingURL) else { return }
-        
-        let enhanced = convertLegacyToEnhanced(legacy, contentType: contentType, aiEngine: aiEngine, aiModel: aiModel, originalLength: originalLength)
-        DispatchQueue.main.async {
-            // Only update UI state - migration should handle Core Data persistence elsewhere
-            self.enhancedSummaries.append(enhanced)
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Migrated legacy summary to UI state for \(enhanced.recordingName)", category: "SummaryManager")
-            }
-        }
-    }
-    
-    // MARK: - Legacy Conversion
-    
-    func convertLegacyToEnhanced(_ legacy: SummaryData, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String = "Legacy", originalLength: Int = 0) -> EnhancedSummaryData {
-        let taskItems = legacy.tasks.map { TaskItem(text: $0) }
-        let reminderItems = legacy.reminders.map {
-            ReminderItem(text: $0, timeReference: ReminderItem.TimeReference.fromReminderText($0))
-        }
-        let titleItems: [TitleItem] = [] // Legacy summaries don't have titles
-        
-        return EnhancedSummaryData(
-            recordingURL: legacy.recordingURL,
-            recordingName: legacy.recordingName,
-            recordingDate: legacy.recordingDate,
-            summary: legacy.summary,
-            tasks: taskItems,
-            reminders: reminderItems,
-            titles: titleItems,
-            contentType: contentType,
-            aiEngine: aiEngine,
-            aiModel: aiModel,
-            originalLength: originalLength > 0 ? originalLength : legacy.summary.components(separatedBy: .whitespacesAndNewlines).count * 5 // Estimate
-        )
-    }
-    
-    func migrateAllLegacySummaries() {
-        for legacy in summaries {
-            if !hasEnhancedSummary(for: legacy.recordingURL) {
-                migrateLegacySummary(for: legacy.recordingURL)
-            }
-        }
-    }
-    
     // MARK: - Clear All Data
     
     func clearAllSummaries() {
         AppLogger.shared.info("Clearing all summaries...", category: "SummaryManager")
         
         let enhancedCount = enhancedSummaries.count
-        let legacyCount = summaries.count
-        
+
         DispatchQueue.main.async {
             self.enhancedSummaries.removeAll()
-            self.summaries.removeAll()
-            
-            // NOTE: Removed saveEnhancedSummariesToDisk() - Core Data is now the source of truth
-            self.saveSummariesToDisk()
-            
-            AppLogger.shared.info("Cleared \(enhancedCount) enhanced summaries and \(legacyCount) legacy summaries", category: "SummaryManager")
+            AppLogger.shared.info("Cleared \(enhancedCount) summaries", category: "SummaryManager")
         }
     }
     
@@ -1202,18 +1045,24 @@ class SummaryManager: ObservableObject {
                 // Handle the error and provide recovery options
                 handleError(error, context: "Enhanced Summary Generation", recordingName: recordingName)
 
+                // If the error is already a well-formed SummarizationError, re-throw it as-is
+                // to avoid wrapping it in another layer of error messages
+                if let summarizationError = error as? SummarizationError {
+                    throw summarizationError
+                }
+
                 // Provide more specific error messages for Ollama
                 if engine.name.contains("Ollama") {
                     if error.localizedDescription.contains("parsing") || error.localizedDescription.contains("JSON") {
-                        throw SummarizationError.aiServiceUnavailable(service: "\(engine.name) failed after retry: Parsing error: \(error.localizedDescription). This usually means Ollama returned text that couldn't be parsed as JSON. Please check your Ollama model configuration or try a different model.")
+                        throw SummarizationError.processingFailed(reason: "Ollama returned text that couldn't be parsed. Please check your Ollama model configuration or try a different model.")
                     } else if error.localizedDescription.contains("connection") || error.localizedDescription.contains("server") {
-                        throw SummarizationError.aiServiceUnavailable(service: "\(engine.name) failed after retry: Connection error: \(error.localizedDescription). Please check that Ollama is running and accessible at your configured server URL.")
+                        throw SummarizationError.networkError(underlying: error)
                     }
                 }
 
                 // STOP HERE - Don't fall back to basic summary automatically
                 // Let the user decide what to do instead of silently switching engines
-                throw SummarizationError.aiServiceUnavailable(service: "\(engine.name) failed after retry: \(error.localizedDescription). Please check your \(engine.name) configuration or select a different AI engine.")
+                throw SummarizationError.aiServiceUnavailable(service: engine.name)
             }
         }
 
@@ -2211,24 +2060,6 @@ class SummaryManager: ObservableObject {
     }
     
     // MARK: - Persistence
-    
-    private func saveSummariesToDisk() {
-        do {
-            let data = try JSONEncoder().encode(summaries)
-            UserDefaults.standard.set(data, forKey: summariesKey)
-        } catch {
-            print("Failed to save summaries: \(error)")
-        }
-    }
-    
-    private func loadSummaries() {
-        guard let data = UserDefaults.standard.data(forKey: summariesKey) else { return }
-        do {
-            summaries = try JSONDecoder().decode([SummaryData].self, from: data)
-        } catch {
-            print("Failed to load summaries: \(error)")
-        }
-    }
     
     /// DEPRECATED: UserDefaults storage is legacy - Core Data is now the source of truth
     @available(*, deprecated, message: "Core Data is now the source of truth for summary persistence")

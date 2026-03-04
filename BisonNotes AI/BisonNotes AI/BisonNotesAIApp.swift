@@ -293,7 +293,9 @@ struct BisonNotesAIApp: App {
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didFinishLaunchingNotification)) { _ in
                     requestBackgroundAppRefreshPermission()
+                    #if !targetEnvironment(macCatalyst)
                     setupWatchConnectivity()
+                    #endif
                     // Note: Notification permission is now requested when first needed (in BackgroundProcessingManager)
                     // Initialize download monitor for on-device AI models
                     _ = OnDeviceAIDownloadMonitor.shared
@@ -309,6 +311,46 @@ struct BisonNotesAIApp: App {
                     NSLog("📎 Darwin notification received from Share Extension")
                     scanSharedContainerForImports()
                 }
+        }
+        .commands {
+            // MARK: - Mac Menu Bar Commands
+            CommandGroup(replacing: .newItem) {
+                Button("New Recording") {
+                    NotificationCenter.default.post(name: NSNotification.Name("ToggleRecording"), object: nil)
+                }
+                .keyboardShortcut("r", modifiers: .command)
+
+                Divider()
+
+                Button("Import Audio...") {
+                    NotificationCenter.default.post(name: NSNotification.Name("ImportAudioFromMenu"), object: nil)
+                }
+                .keyboardShortcut("i", modifiers: .command)
+
+                Button("Import Transcript...") {
+                    NotificationCenter.default.post(name: NSNotification.Name("ImportTranscriptFromMenu"), object: nil)
+                }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+            }
+
+            CommandGroup(after: .sidebar) {
+                Divider()
+
+                Button("Record") {
+                    NotificationCenter.default.post(name: NSNotification.Name("NavigateToSection"), object: "record")
+                }
+                .keyboardShortcut("1", modifiers: .command)
+
+                Button("Summaries") {
+                    NotificationCenter.default.post(name: NSNotification.Name("NavigateToSection"), object: "summaries")
+                }
+                .keyboardShortcut("2", modifiers: .command)
+
+                Button("Transcripts") {
+                    NotificationCenter.default.post(name: NSNotification.Name("NavigateToSection"), object: "transcripts")
+                }
+                .keyboardShortcut("3", modifiers: .command)
+            }
         }
     }
 
@@ -651,6 +693,7 @@ struct BisonNotesAIApp: App {
             AppShortcuts.updateAppShortcutParameters()
         }
 
+        #if !targetEnvironment(macCatalyst)
         if #available(iOS 18.0, *) {
             if let plugInsURL = Bundle.main.builtInPlugInsURL,
                let _ = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {
@@ -669,6 +712,7 @@ struct BisonNotesAIApp: App {
                 }
             }
         }
+        #endif
     }
     
 #if DEBUG

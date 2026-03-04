@@ -7,7 +7,9 @@
 
 import SwiftUI
 import UIKit
+#if !targetEnvironment(macCatalyst)
 import SafariServices
+#endif
 
 enum ProcessingOption: String, CaseIterable {
     case openai = "OpenAI"
@@ -57,7 +59,7 @@ struct SimpleSettingsView: View {
     @StateObject private var whisperKitManager = WhisperKitManager.shared
     
     var body: some View {
-        NavigationView {
+        AdaptiveNavigationWrapper {
             ScrollView {
                 VStack(alignment: .leading, spacing: 32) {
                     headerSection
@@ -78,6 +80,8 @@ struct SimpleSettingsView: View {
                     Spacer(minLength: 40)
                 }
                 .padding(.horizontal, 24)
+                .frame(maxWidth: 700)
+                .frame(maxWidth: .infinity)
             }
             .navigationBarHidden(true)
         }
@@ -154,9 +158,19 @@ struct SimpleSettingsView: View {
             }
         }
         .sheet(isPresented: $showingHelpDocumentation) {
+            #if !targetEnvironment(macCatalyst)
             if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
                 SafariView(url: url)
             }
+            #endif
+        }
+        .onChange(of: showingHelpDocumentation) { _, isShowing in
+            #if targetEnvironment(macCatalyst)
+            if isShowing, let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
+                UIApplication.shared.open(url)
+                showingHelpDocumentation = false
+            }
+            #endif
         }
         .sheet(isPresented: $showingOnDeviceAIDownload) {
             OnDeviceAIDownloadView(
@@ -179,7 +193,7 @@ struct SimpleSettingsView: View {
                 
                 Spacer()
                 
-                Button("Advanced Options") {
+                Button("Additional Settings") {
                     showingAdvancedSettings = true
                 }
                 .font(.caption)
@@ -273,7 +287,7 @@ struct SimpleSettingsView: View {
                 .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color(.systemGray4), lineWidth: 0.5)
+                        .stroke(Color.blue, lineWidth: 1)
                 )
         )
     }
@@ -396,7 +410,7 @@ struct SimpleSettingsView: View {
                 .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color(.systemGray4), lineWidth: 0.5)
+                        .stroke(Color.blue, lineWidth: 1)
                 )
         )
     }
