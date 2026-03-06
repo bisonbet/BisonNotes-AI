@@ -4,7 +4,7 @@ struct FluidAudioSettingsView: View {
     @AppStorage(FluidAudioModelInfo.SettingsKeys.enableFluidAudio) private var enableFluidAudio = false
     @AppStorage(FluidAudioModelInfo.SettingsKeys.selectedModelVersion) private var selectedModelVersion = FluidAudioModelInfo.ModelVersion.v3.rawValue
 
-    @StateObject private var manager = FluidAudioManager.shared
+    @ObservedObject private var manager = FluidAudioManager.shared
 
     var body: some View {
         Form {
@@ -22,32 +22,37 @@ struct FluidAudioSettingsView: View {
                         .tag(version.rawValue)
                     }
                 }
+                .onChange(of: selectedModelVersion) { _ in
+                    manager.invalidateForVersionChange()
+                }
             }
 
-            Section("Model Status") {
-                HStack {
-                    Text("Status")
-                    Spacer()
-                    Text(manager.isModelReady ? "Ready" : "Not Downloaded")
-                        .foregroundColor(manager.isModelReady ? .green : .secondary)
-                }
+            if enableFluidAudio {
+                Section("Model Status") {
+                    HStack {
+                        Text("Status")
+                        Spacer()
+                        Text(manager.isModelReady ? "Ready" : "Not Downloaded")
+                            .foregroundColor(manager.isModelReady ? .green : .secondary)
+                    }
 
-                if !manager.currentStatus.isEmpty {
-                    Text(manager.currentStatus)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                    if !manager.currentStatus.isEmpty {
+                        Text(manager.currentStatus)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
 
-                Button(manager.isDownloading ? "Downloading..." : "Download / Prepare Model") {
-                    Task {
-                        do {
-                            try await manager.downloadAndPrepareModel()
-                        } catch {
-                            manager.currentStatus = "Failed: \(error.localizedDescription)"
+                    Button(manager.isDownloading ? "Downloading..." : "Download / Prepare Model") {
+                        Task {
+                            do {
+                                try await manager.downloadAndPrepareModel()
+                            } catch {
+                                manager.currentStatus = "Failed: \(error.localizedDescription)"
+                            }
                         }
                     }
+                    .disabled(manager.isDownloading)
                 }
-                .disabled(manager.isDownloading)
             }
 
             Section {

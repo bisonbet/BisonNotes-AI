@@ -28,6 +28,7 @@ struct FluidAudioModelInfo {
         static let enableFluidAudio = "enableFluidAudio"
         static let selectedModelVersion = "fluidAudioSelectedModelVersion"
         static let modelDownloaded = "fluidAudioModelDownloaded"
+        static let downloadedModelVersion = "fluidAudioDownloadedModelVersion"
     }
 
     static var selectedModelVersion: ModelVersion {

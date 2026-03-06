@@ -94,9 +94,9 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
     case mistralAI = "Mistral AI"
     case openAIAPICompatible = "OpenAI API Compatible"
 
-    /// Returns all available engine types based on device capabilities
+    /// Returns only engine types that are available on the current device and build.
     static var availableCases: [TranscriptionEngine] {
-        return allCases
+        return allCases.filter { $0.isAvailable }
     }
 
     var description: String {
@@ -128,7 +128,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             // Only show WhisperKit if device is compatible
             return DeviceCompatibility.isWhisperKitSupported
         case .fluidAudio:
-            return DeviceCompatibility.isFluidAudioSupported
+            return DeviceCompatibility.isFluidAudioSupported && FluidAudioManager.shared.isAvailableInCurrentBuild
         case .awsTranscribe, .whisper, .openAI, .mistralAI:
             return true
         case .openAIAPICompatible:

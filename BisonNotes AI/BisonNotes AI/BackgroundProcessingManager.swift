@@ -854,6 +854,9 @@ class BackgroundProcessingManager: ObservableObject {
             case .fluidAudio:
                 print("🤖 Using FluidAudio (Parakeet) for transcription")
                 let fluidAudioManager = FluidAudioManager.shared
+                guard fluidAudioManager.isAvailableInCurrentBuild else {
+                    throw BackgroundProcessingError.processingFailed("FluidAudio SDK is not available in this build.")
+                }
                 result = try await fluidAudioManager.transcribe(audioURL: chunk.chunkURL)
 
             case .mistralAI:

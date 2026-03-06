@@ -98,7 +98,7 @@ struct TranscriptionSettingsView: View {
                     .fontWeight(.medium)
                 
                 Picker("Transcription Engine", selection: $selectedTranscriptionEngine) {
-                    ForEach(TranscriptionEngine.availableCases.filter { $0.isAvailable }, id: \.self) { engine in
+                    ForEach(TranscriptionEngine.availableCases, id: \.self) { engine in
                         VStack(alignment: .leading) {
                             Text(engine.rawValue)
                                 .font(.body)
