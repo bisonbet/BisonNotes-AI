@@ -851,6 +851,11 @@ class BackgroundProcessingManager: ObservableObject {
                 }
                 result = try await whisperKitManager.transcribe(audioURL: chunk.chunkURL)
 
+            case .fluidAudio:
+                print("🤖 Using FluidAudio (Parakeet) for transcription")
+                let fluidAudioManager = FluidAudioManager.shared
+                result = try await fluidAudioManager.transcribe(audioURL: chunk.chunkURL)
+
             case .mistralAI:
                 print("🤖 Using Mistral AI for transcription")
                 let config = getMistralTranscribeConfig()

@@ -92,6 +92,16 @@ struct DeviceCompatibility {
     static var isOnDeviceAISupported: Bool {
         return DeviceCapabilities.supportsOnDeviceLLM
     }
+
+    // MARK: - FluidAudio Support
+
+    /// FluidAudio requires iOS 17+ for CoreML model runtime in this app
+    static var isFluidAudioSupported: Bool {
+        if #available(iOS 17.0, *) {
+            return true
+        }
+        return false
+    }
 }
 
 public extension UIDevice {
