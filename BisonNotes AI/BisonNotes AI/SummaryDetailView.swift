@@ -31,6 +31,7 @@ struct SummaryDetailView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
     @State private var expandedSections: Set<String> = ["summary"]
+    @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var isRegenerating = false
     @State private var showingRegenerationAlert = false
     @State private var regenerationError: String?
@@ -92,16 +93,10 @@ struct SummaryDetailView: View {
     var body: some View {
         NavigationView {
             content
-                .navigationTitle("Enhanced Summary")
+                .navigationTitle("Summary")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button("Done") {
-                            dismiss()
-                        }
-                    }
-
-                    ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             showingExportFormatPicker = true
                         } label: {
@@ -124,6 +119,12 @@ struct SummaryDetailView: View {
                             }
                         }
                         .disabled(isExporting)
+                    }
+
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") {
+                            dismiss()
+                        }
                     }
                 }
         }
@@ -195,6 +196,36 @@ struct SummaryDetailView: View {
         .onDisappear {
             geocodingTask?.cancel()
             geocodingTask = nil
+        }
+        .onChange(of: processingManager.activeJobs.map { "\($0.id)-\($0.status.displayName)" }) { _, _ in
+            // Check if our regeneration job completed so we can dismiss
+            if isRegenerating {
+                let hasPendingSummaryJob = processingManager.activeJobs.contains { job in
+                    if case .summarization = job.type,
+                       job.recordingPath == summaryData.recordingURL.lastPathComponent {
+                        return job.status == .queued || job.status == .processing
+                    }
+                    return false
+                }
+                if !hasPendingSummaryJob {
+                    isRegenerating = false
+                    // Check final status of our job
+                    if let finishedJob = processingManager.activeJobs.first(where: { job in
+                        if case .summarization = job.type,
+                           job.recordingPath == summaryData.recordingURL.lastPathComponent {
+                            return job.status.isTerminal
+                        }
+                        return false
+                    }) {
+                        if finishedJob.status == .completed {
+                            dismiss()
+                        } else if finishedJob.status.isError {
+                            regenerationError = finishedJob.status.errorMessage ?? "Regeneration failed"
+                            showingRegenerationAlert = true
+                        }
+                    }
+                }
+            }
         }
         .alert("Regeneration Error", isPresented: $showingRegenerationAlert) {
             Button("OK") {
@@ -567,7 +598,8 @@ struct SummaryDetailView: View {
                 metadataRow(title: "Content Type", value: summaryData.contentType.rawValue, icon: "doc.text")
                 metadataRow(title: "Word Count", value: "\(summaryData.wordCount) words", icon: "text.word.spacing")
                 metadataRow(title: "Compression Ratio", value: summaryData.formattedCompressionRatio, icon: "chart.bar.fill")
-                metadataRow(title: "Processing Time", value: summaryData.formattedProcessingTime, icon: "timer")
+                metadataRow(title: "Audio Length", value: recording.durationString, icon: "waveform")
+                metadataRow(title: "Processing Time", value: formattedProcessingTime(summaryData.processingTime), icon: "timer")
             }
         }
         .onTapGesture {
@@ -880,9 +912,7 @@ struct SummaryDetailView: View {
                         return
                     }
 
-                    Task {
-                        await regenerateSummary()
-                    }
+                    regenerateSummary()
                 }) {
                     HStack {
                         if isRegenerating {
@@ -1097,98 +1127,36 @@ struct SummaryDetailView: View {
     
     // MARK: - Regeneration Logic
     
-    private func regenerateSummary() async {
+    private func regenerateSummary() {
         guard !isRegenerating else { return }
-        
-        await MainActor.run {
-            isRegenerating = true
-        }
-        
-        do {
-            // Get the recording data
-            guard let recordingId = summaryData.recordingId,
-                  let recordingData = appCoordinator.getCompleteRecordingData(id: recordingId) else {
-                throw NSError(domain: "SummaryRegeneration", code: 2, userInfo: [NSLocalizedDescriptionKey: "No recording data found"])
-            }
-            
-            // Get the transcript
-            guard let transcript = recordingData.transcript else {
-                throw NSError(domain: "SummaryRegeneration", code: 3, userInfo: [NSLocalizedDescriptionKey: "No transcript found for this recording"])
-            }
-            
-            print("🔄 Starting summary regeneration for: \(summaryData.recordingName)")
-            print("📝 Transcript length: \(transcript.plainText.count) characters")
-            print("🤖 Current AI model: \(summaryData.aiModel)")
-            
-            // Generate new summary using the current AI engine
-            let newEnhancedSummary = try await SummaryManager.shared.generateEnhancedSummary(
-                from: transcript.textForSummarization,
-                for: summaryData.recordingURL,
-                recordingName: summaryData.recordingName,
-                recordingDate: summaryData.recordingDate
-            )
-            
-            print("✅ New summary generated successfully")
-            print("📄 New summary length: \(newEnhancedSummary.summary.count) characters")
-            print("📋 New tasks: \(newEnhancedSummary.tasks.count)")
-            print("📋 New reminders: \(newEnhancedSummary.reminders.count)")
-            print("📋 New titles: \(newEnhancedSummary.titles.count)")
-            
-            // Delete the old summary from Core Data and iCloud
-            try await appCoordinator.deleteSummary(id: summaryData.id)
-            print("🗑️ Deleted old summary with ID: \(summaryData.id)")
-            
-            // Debug: Check if recording name changed during regeneration
-            print("🔍 SummaryDetailView regeneration name check:")
-            print("   Old name: '\(summaryData.recordingName)'")
-            print("   New name: '\(newEnhancedSummary.recordingName)'")
-            print("   Names equal: \(newEnhancedSummary.recordingName == summaryData.recordingName)")
-            
-            // Update the recording name if it changed during regeneration
-            if newEnhancedSummary.recordingName != summaryData.recordingName {
-                print("📝 SummaryDetailView: Recording name updated from '\(summaryData.recordingName)' to '\(newEnhancedSummary.recordingName)'")
-                // Update recording name in Core Data
-                try appCoordinator.coreDataManager.updateRecordingName(
-                    for: recordingId,
-                    newName: newEnhancedSummary.recordingName
+
+        isRegenerating = true
+
+        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let selectedModel = UserDefaults.standard.string(forKey: "SelectedAIModel")
+        let oldSummaryId = summaryData.id
+        let recordingURL = summaryData.recordingURL
+        let recordingName = summaryData.recordingName
+
+        print("🔄 Queueing summary regeneration for: \(recordingName)")
+
+        Task {
+            do {
+                try await BackgroundProcessingManager.shared.startSummarizationJob(
+                    recordingURL: recordingURL,
+                    recordingName: recordingName,
+                    engine: selectedEngine,
+                    modelName: selectedModel,
+                    replacingSummaryId: oldSummaryId
                 )
-            } else {
-                print("⚠️ SummaryDetailView: Recording name did not change during regeneration")
-            }
-            
-            // Create new summary entry in Core Data
-            let newSummaryId = appCoordinator.workflowManager.createSummary(
-                for: recordingId,
-                transcriptId: summaryData.transcriptId ?? UUID(),
-                summary: newEnhancedSummary.summary,
-                tasks: newEnhancedSummary.tasks,
-                reminders: newEnhancedSummary.reminders,
-                titles: newEnhancedSummary.titles,
-                contentType: newEnhancedSummary.contentType,
-                aiEngine: newEnhancedSummary.aiEngine,
-                aiModel: newEnhancedSummary.aiModel,
-                originalLength: newEnhancedSummary.originalLength,
-                processingTime: newEnhancedSummary.processingTime
-            )
-            
-            if newSummaryId != nil {
-                print("✅ New summary saved to Core Data with ID: \(newSummaryId?.uuidString ?? "nil")")
-                
+                print("✅ Summary regeneration job queued for: \(recordingName)")
+            } catch {
+                print("❌ Failed to queue regeneration job: \(error)")
                 await MainActor.run {
+                    regenerationError = "Failed to start regeneration: \(error.localizedDescription)"
+                    showingRegenerationAlert = true
                     isRegenerating = false
-                    // Dismiss the view to refresh the data
-                    dismiss()
                 }
-            } else {
-                throw NSError(domain: "SummaryRegeneration", code: 4, userInfo: [NSLocalizedDescriptionKey: "Failed to save new summary to Core Data"])
-            }
-            
-        } catch {
-            print("❌ Summary regeneration failed: \(error)")
-            await MainActor.run {
-                regenerationError = "Failed to regenerate summary: \(error.localizedDescription)"
-                showingRegenerationAlert = true
-                isRegenerating = false
             }
         }
     }
@@ -1224,7 +1192,17 @@ struct SummaryDetailView: View {
     private func formatFullDateTime(_ date: Date) -> String {
         return UserPreferences.shared.formatFullDateTime(date)
     }
-    
+
+    private func formattedProcessingTime(_ time: TimeInterval) -> String {
+        if time < 60 {
+            return String(format: "%.1fs", time)
+        } else {
+            let minutes = Int(time) / 60
+            let seconds = Int(time) % 60
+            return String(format: "%dm %ds", minutes, seconds)
+        }
+    }
+
     // TODO: Implement custom date detection once Core Data field is added
     private var isCustomDate: Bool {
         // For now, return false. This will be implemented when we add dateSource to Core Data

@@ -54,11 +54,44 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     private var service: OnDeviceLLMService?
     private var currentConfig: OnDeviceLLMConfig?
     private let logger = Logger(subsystem: "com.bisonnotes.app", category: "OnDeviceLLMEngine")
+    private var backgroundObserver: NSObjectProtocol?
+    private var foregroundObserver: NSObjectProtocol?
 
     // MARK: - Initialization
 
     init() {
         updateConfiguration()
+        setupBackgroundObservers()
+    }
+
+    deinit {
+        if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
+        if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+    }
+
+    // MARK: - Background Safety
+
+    /// Observe app lifecycle to prevent Metal GPU work from background.
+    /// iOS kills Metal command buffers submitted from background apps, causing
+    /// a fatal crash in llama.cpp's Metal backend (ggml_abort).
+    private func setupBackgroundObservers() {
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            print("[OnDeviceLLMEngine] App entered background — pausing GPU inference")
+            self?.service?.setAppBackgrounded(true)
+        }
+
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            print("[OnDeviceLLMEngine] App entering foreground — resuming GPU inference")
+            self?.service?.setAppBackgrounded(false)
+        }
     }
 
     // MARK: - Configuration
@@ -213,6 +246,12 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 print("[OnDeviceLLMEngine] Processing single chunk")
                 let result = try await service.processComplete(text: text)
 
+                // Check if inference was interrupted by app entering background
+                if service.wasInterruptedByBackground {
+                    print("[OnDeviceLLMEngine] Inference interrupted by app backgrounding (GPU not available)")
+                    throw OnDeviceLLMError.inferenceFailed("On-device AI requires the app to stay in the foreground. iOS does not allow GPU processing in the background. Please keep the app open and try again.")
+                }
+
                 if let metrics = service.lastMetrics {
                     print("[OnDeviceLLMEngine] Inference completed at \(String(format: "%.1f", metrics.inferenceTokensPerSecond)) tokens/sec")
                 }
@@ -310,6 +349,13 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
             do {
                 let chunkResult = try await service.processComplete(text: chunk)
+
+                // Check if chunk processing was interrupted by backgrounding
+                if service.wasInterruptedByBackground {
+                    print("[OnDeviceLLMEngine] Chunk \(index + 1) interrupted by app backgrounding")
+                    throw OnDeviceLLMError.inferenceFailed("On-device AI requires the app to stay in the foreground. iOS does not allow GPU processing in the background. Please keep the app open and try again.")
+                }
+
                 allSummaries.append(chunkResult.summary)
                 allTasks.append(contentsOf: chunkResult.tasks)
                 allReminders.append(contentsOf: chunkResult.reminders)
@@ -318,7 +364,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 if index == 0 {
                     contentType = chunkResult.contentType
                 }
-                
+
                 // Add a small delay between chunks to let the GPU cool down/prevent TDR
                 if index < chunks.count - 1 {
                     try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds

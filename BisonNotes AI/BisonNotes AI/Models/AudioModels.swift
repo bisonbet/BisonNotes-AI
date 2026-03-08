@@ -86,8 +86,8 @@ public enum WhisperProtocol: String, CaseIterable, Codable {
 
 public enum TranscriptionEngine: String, CaseIterable, Codable {
     case notConfigured = "Not Configured"
-    case whisperKit = "On Device"
-    case fluidAudio = "On Device (Parakeet)"
+    case fluidAudio = "On Device"
+    case whisperKit = "On Device (WhisperKit)"
     case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
     case openAI = "OpenAI"
@@ -103,10 +103,10 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
         switch self {
         case .notConfigured:
             return "No transcription engine has been configured yet"
-        case .whisperKit:
-            return "High-quality on-device transcription. Your audio never leaves your device, ensuring complete privacy."
         case .fluidAudio:
-            return "On-device transcription powered by FluidAudio + NVIDIA Parakeet CoreML models."
+            return "High-quality on-device transcription powered by NVIDIA Parakeet. Your audio never leaves your device, ensuring complete privacy."
+        case .whisperKit:
+            return "On-device transcription powered by WhisperKit. Alternative on-device engine with multiple model sizes."
         case .awsTranscribe:
             return "Cloud-based transcription service with support for long audio files"
         case .whisper:
@@ -128,7 +128,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             // Only show WhisperKit if device is compatible
             return DeviceCompatibility.isWhisperKitSupported
         case .fluidAudio:
-            return DeviceCompatibility.isFluidAudioSupported && FluidAudioManager.shared.isAvailableInCurrentBuild
+            return DeviceCompatibility.isFluidAudioSupported && FluidAudioManager.isAvailableInCurrentBuild
         case .awsTranscribe, .whisper, .openAI, .mistralAI:
             return true
         case .openAIAPICompatible:

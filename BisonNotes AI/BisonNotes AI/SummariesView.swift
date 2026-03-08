@@ -11,6 +11,7 @@ struct SummariesView: View {
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
     @StateObject private var iCloudManager = iCloudStorageManager()
+    @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = []
     @State private var selectedRecording: RecordingEntry?
     @State private var isGeneratingSummary = false
@@ -133,6 +134,22 @@ struct SummariesView: View {
                 // Force a UI refresh to update button states
                 DispatchQueue.main.async {
                     self.refreshTrigger.toggle()
+                }
+            }
+        }
+        .onChange(of: processingManager.activeJobs.map { "\($0.id)-\($0.status.displayName)" }) { _, _ in
+            // Check if our summary job completed, failed, or was cancelled
+            if isGeneratingSummary {
+                let hasPendingSummaryJob = processingManager.activeJobs.contains { job in
+                    if case .summarization = job.type {
+                        return job.status == .queued || job.status == .processing
+                    }
+                    return false
+                }
+                if !hasPendingSummaryJob {
+                    isGeneratingSummary = false
+                    generatingSummaryRecordingId = nil
+                    loadRecordings()
                 }
             }
         }
@@ -547,137 +564,39 @@ struct SummariesView: View {
         print("🚀 generateSummary called for recording: \(recording.recordingName ?? "unknown")")
         print("📁 Recording URL: \(recording.recordingURL ?? "unknown")")
         print("📅 Recording date: \(recording.recordingDate ?? Date())")
-        
+
         isGeneratingSummary = true
         generatingSummaryRecordingId = recording.id
-        
-        // Engine status checking is no longer needed with the simplified system
-        print("🔧 Starting summary generation...")
-        
+
+        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let selectedModel = UserDefaults.standard.string(forKey: "SelectedAIModel")
+        let recordingURL: URL
+        if let absoluteURL = appCoordinator.getAbsoluteURL(for: recording) {
+            recordingURL = absoluteURL
+        } else {
+            recordingURL = URL(fileURLWithPath: recording.recordingURL ?? "")
+        }
+        let recordingName = recording.recordingName ?? "Unknown Recording"
+
+        print("🔧 Queueing summary job via BackgroundProcessingManager...")
+
         Task {
-            var job: ProcessingJob?
             do {
-                print("🔍 Starting summary generation for recording: \(recording.recordingName ?? "Unknown")")
-                
-                // Get the transcript for this recording using the new Core Data system
-                print("🔍 Looking for transcript...")
-                // TODO: Update to use new Core Data system with UUID
-                // For now, find the recording by URL and get its transcript
-                
-                if let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
-                   let coreDataRecording = appCoordinator.getRecording(url: recordingURL),
-                   let recordingId = coreDataRecording.id,
-                   let transcript = appCoordinator.getTranscriptData(for: recordingId) {
-                    print("✅ Found transcript with \(transcript.segments.count) segments")
-                    print("📝 Transcript text: \(transcript.plainText.prefix(100))...")
-                    
-                    // Generate summary using the transcript
-                    print("🔧 Generating summary for recording: \(recording.recordingName ?? "Unknown")")
-                    
-                    // Get the selected AI engine
-                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
-                    print("🤖 Using AI engine: \(selectedEngine)")
-
-                    // Prepare for background tracking
-                    let transcriptText = transcript.textForSummarization
-                    let recordingURL = URL(string: recording.recordingURL ?? "") ?? URL(fileURLWithPath: "")
-                    let recordingName = recording.recordingName ?? "Unknown Recording"
-                    let recordingDate = recording.recordingDate ?? Date()
-
-                    job = ProcessingJob(
-                        type: .summarization(engine: selectedEngine),
-                        recordingURL: recordingURL,
-                        recordingName: recordingName
-                    )
-                    if let job = job {
-                        await BackgroundProcessingManager.shared.trackExternalJob(job)
-                        let processingJob = job.withStatus(.processing)
-                        await BackgroundProcessingManager.shared.updateExternalJob(processingJob)
-                    }
-
-                    print("📝 Generating enhanced summary for transcript with \(transcriptText.count) characters")
-
-                    // Use the SummaryManager to generate the actual summary
-                    let enhancedSummary = try await SummaryManager.shared.generateEnhancedSummary(
-                        from: transcriptText,
-                        for: recordingURL,
-                        recordingName: recordingName,
-                        recordingDate: recordingDate,
-                        coordinator: appCoordinator,
-                        engineName: selectedEngine
-                    )
-
-                    if let job = job {
-                        let completedJob = job.withStatus(.completed).withProgress(1.0)
-                        await BackgroundProcessingManager.shared.updateExternalJob(completedJob)
-                    }
-                    
-                    print("✅ Enhanced summary generated successfully")
-                    print("📄 Summary length: \(enhancedSummary.summary.count) characters")
-                    print("📋 Tasks: \(enhancedSummary.tasks.count)")
-                    print("📋 Reminders: \(enhancedSummary.reminders.count)")
-                    print("📋 Titles: \(enhancedSummary.titles.count)")
-                    
-                    // Create summary entry in Core Data using the workflow manager
-                let summaryId = self.appCoordinator.workflowManager.createSummary(
-                    for: recordingId,
-                    transcriptId: transcript.id,
-                    summary: enhancedSummary.summary,
-                    tasks: enhancedSummary.tasks,
-                    reminders: enhancedSummary.reminders,
-                    titles: enhancedSummary.titles,
-                    contentType: enhancedSummary.contentType,
-                    aiEngine: enhancedSummary.aiEngine,
-                    aiModel: enhancedSummary.aiModel,
-                    originalLength: enhancedSummary.originalLength,
-                    processingTime: enhancedSummary.processingTime
+                try await BackgroundProcessingManager.shared.startSummarizationJob(
+                    recordingURL: recordingURL,
+                    recordingName: recordingName,
+                    engine: selectedEngine,
+                    modelName: selectedModel
                 )
-                    
-                    if summaryId != nil {
-                        print("✅ Summary created with ID: \(summaryId?.uuidString ?? "nil")")
-                        await MainActor.run {
-                            isGeneratingSummary = false
-                            generatingSummaryRecordingId = nil
-                            loadRecordings()
-                        }
-                    } else {
-                        throw NSError(domain: "SummaryGeneration", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to create summary entry"])
-                    }
-                } else {
-                    print("❌ No transcript found for recording: \(recording.recordingName ?? "Unknown")")
-                    
-                    // Create a job for tracking even when there's no transcript
-                    let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
-                    let recordingURL = URL(string: recording.recordingURL ?? "") ?? URL(fileURLWithPath: "")
-                    let recordingName = recording.recordingName ?? "Unknown Recording"
-                    
-                    job = ProcessingJob(
-                        type: .summarization(engine: selectedEngine),
-                        recordingURL: recordingURL,
-                        recordingName: recordingName
-                    )
-                    
-                    await MainActor.run {
-                        errorMessage = "No transcript available for this recording"
-                        errorRecoverySuggestion = ""
-                        showErrorAlert = true
-                        isGeneratingSummary = false
-                        generatingSummaryRecordingId = nil
-                    }
-                }
+                print("✅ Summary job queued successfully for: \(recordingName)")
             } catch {
-                print("❌ Error generating summary: \(error)")
-                print("🔍 Error details: \(error)")
-                if let currentJob = job {
-                    let failedJob = currentJob.withStatus(.failed(error.localizedDescription))
-                    await BackgroundProcessingManager.shared.updateExternalJob(failedJob)
-                }
+                print("❌ Failed to queue summary job: \(error)")
                 await MainActor.run {
                     if let summarizationError = error as? SummarizationError {
                         errorMessage = summarizationError.localizedDescription
                         errorRecoverySuggestion = summarizationError.recoverySuggestion ?? ""
                     } else {
-                        errorMessage = "Failed to generate summary: \(error.localizedDescription)"
+                        errorMessage = "Failed to start summary: \(error.localizedDescription)"
                         errorRecoverySuggestion = ""
                     }
                     showErrorAlert = true
@@ -687,7 +606,7 @@ struct SummariesView: View {
             }
         }
     }
-    
+
     private func formatDuration(_ duration: TimeInterval) -> String {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60

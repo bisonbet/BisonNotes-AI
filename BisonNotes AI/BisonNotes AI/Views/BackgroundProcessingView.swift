@@ -9,22 +9,22 @@ import SwiftUI
 
 struct BackgroundProcessingView: View {
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
-    @State private var showingJobDetails = false
     @State private var selectedJob: ProcessingJob?
-    
+
     var body: some View {
+        let _ = print("📊 BackgroundProcessingView body: activeJobs.count = \(processingManager.activeJobs.count), jobs: \(processingManager.activeJobs.map { "\($0.recordingName) (\($0.status.displayName))" })")
         NavigationView {
             VStack(spacing: 0) {
                 // Header with overall status
                 headerSection
-                
+
                 // Active jobs list
                 if !processingManager.activeJobs.isEmpty {
                     jobsListSection
                 } else {
                     emptyStateSection
                 }
-                
+
                 Spacer()
             }
             .navigationTitle("Background Processing")
@@ -37,15 +37,15 @@ struct BackgroundProcessingView: View {
                                 await processingManager.cleanupCompletedJobs()
                             }
                         }
-                        
+
                         Button("Cancel All Jobs") {
                             Task {
                                 await processingManager.cancelAllJobs()
                             }
                         }
-                        
+
                         Divider()
-                        
+
                         Button("Clear All Jobs", role: .destructive) {
                             Task {
                                 await processingManager.clearAllJobs()
@@ -56,14 +56,12 @@ struct BackgroundProcessingView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingJobDetails) {
-                if let job = selectedJob {
-                    JobDetailView(job: job)
-                }
+            .sheet(item: $selectedJob) { job in
+                JobDetailView(job: job)
             }
         }
     }
-    
+
     private var headerSection: some View {
         VStack(spacing: 16) {
             // Overall status card
@@ -72,25 +70,25 @@ struct BackgroundProcessingView: View {
                     Image(systemName: statusIcon)
                         .font(.title2)
                         .foregroundColor(statusColor)
-                    
+
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Processing Status")
                             .font(.headline)
                             .foregroundColor(.primary)
-                        
+
                         Text(processingManager.processingStatus.displayName)
                             .font(.subheadline)
                             .foregroundColor(statusColor)
                     }
-                    
+
                     Spacer()
-                    
+
                     if processingManager.processingStatus == .processing {
                         ProgressView()
                             .scaleEffect(0.8)
                     }
                 }
-                
+
                 // Progress bar for overall processing
                 if processingManager.processingStatus == .processing {
                     ProgressView(value: overallProgress)
@@ -104,26 +102,33 @@ struct BackgroundProcessingView: View {
                     .fill(Color(.systemGray6))
             )
             .padding(.horizontal)
-            
+
             // Quick stats
-            HStack(spacing: 20) {
+            HStack(spacing: 12) {
                 StatCard(
-                    title: "Active Jobs",
-                    value: "\(processingManager.activeJobs.filter { $0.status == .processing }.count)",
+                    title: "Queued",
+                    value: "\(processingManager.activeJobs.filter { $0.status == .queued }.count)",
                     icon: "clock.fill",
+                    color: .orange
+                )
+
+                StatCard(
+                    title: "Active",
+                    value: "\(processingManager.activeJobs.filter { $0.status == .processing }.count)",
+                    icon: "gear",
                     color: .blue
                 )
-                
+
                 StatCard(
-                    title: "Completed",
+                    title: "Done",
                     value: "\(processingManager.activeJobs.filter { $0.status == .completed }.count)",
                     icon: "checkmark.circle.fill",
                     color: .green
                 )
-                
+
                 StatCard(
                     title: "Failed",
-                    value: "\(processingManager.activeJobs.filter { $0.status.isError }.count)",
+                    value: "\(processingManager.activeJobs.filter { $0.status.isError || $0.status.isCancelled }.count)",
                     icon: "exclamationmark.triangle.fill",
                     color: .red
                 )
@@ -132,19 +137,18 @@ struct BackgroundProcessingView: View {
         }
         .padding(.top)
     }
-    
+
     private var jobsListSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Active Jobs")
+            Text("Jobs")
                 .font(.headline)
                 .padding(.horizontal)
-            
+
             ScrollView {
                 LazyVStack(spacing: 12) {
                     ForEach(processingManager.activeJobs) { job in
                         JobCard(job: job) {
                             selectedJob = job
-                            showingJobDetails = true
                         }
                     }
                 }
@@ -152,18 +156,18 @@ struct BackgroundProcessingView: View {
             }
         }
     }
-    
+
     private var emptyStateSection: some View {
         VStack(spacing: 16) {
             Image(systemName: "checkmark.circle")
                 .font(.system(size: 60))
                 .foregroundColor(.green)
-            
+
             Text("No Active Jobs")
                 .font(.title2)
                 .fontWeight(.semibold)
                 .foregroundColor(.primary)
-            
+
             Text("All processing jobs have been completed or there are no pending jobs.")
                 .font(.body)
                 .foregroundColor(.secondary)
@@ -172,7 +176,7 @@ struct BackgroundProcessingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    
+
     private var statusIcon: String {
         switch processingManager.processingStatus {
         case .queued:
@@ -183,9 +187,13 @@ struct BackgroundProcessingView: View {
             return "checkmark.circle"
         case .failed:
             return "exclamationmark.triangle"
+        case .cancelled:
+            return "xmark.circle"
+        case .interrupted:
+            return "pause.circle"
         }
     }
-    
+
     private var statusColor: Color {
         switch processingManager.processingStatus {
         case .queued:
@@ -196,9 +204,13 @@ struct BackgroundProcessingView: View {
             return .green
         case .failed:
             return .red
+        case .cancelled:
+            return .gray
+        case .interrupted:
+            return .yellow
         }
     }
-    
+
     private var overallProgress: Double {
         let completedJobs = processingManager.activeJobs.filter { $0.status == .completed }.count
         let totalJobs = processingManager.activeJobs.count
@@ -213,24 +225,25 @@ struct StatCard: View {
     let value: String
     let icon: String
     let color: Color
-    
+
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.title2)
+                .font(.body)
                 .foregroundColor(color)
-            
+
             Text(value)
-                .font(.title2)
+                .font(.title3)
                 .fontWeight(.bold)
                 .foregroundColor(.primary)
-            
+
             Text(title)
-                .font(.caption)
+                .font(.caption2)
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding()
+        .padding(.vertical, 10)
+        .padding(.horizontal, 4)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(.systemGray6))
@@ -241,35 +254,60 @@ struct StatCard: View {
 struct JobCard: View {
     let job: ProcessingJob
     let onTap: () -> Void
+    @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var currentTime = Date()
     @State private var timer: Timer?
-    
+
+    private var isCancellable: Bool {
+        job.status == .processing || job.status == .queued
+    }
+
     var body: some View {
         Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(job.recordingName)
                             .font(.headline)
                             .foregroundColor(.primary)
                             .lineLimit(1)
-                        
+
                         Text(job.type.displayName)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
+
+                        if let model = job.modelName {
+                            Text(model)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
-                    
+
                     Spacer()
-                    
-                    StatusBadge(status: convertJobStatus(job.status))
+
+                    HStack(spacing: 8) {
+                        StatusBadge(status: convertJobStatus(job.status))
+
+                        if isCancellable {
+                            Button {
+                                Task {
+                                    await processingManager.cancelJob(id: job.id)
+                                }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.red)
+                                    .font(.title3)
+                            }
+                        }
+                    }
                 }
-                
+
                 // Progress bar
                 if job.status == .processing {
                     ProgressView(value: job.progress)
                         .progressViewStyle(LinearProgressViewStyle())
                 }
-                
+
                 // Time information
                 HStack {
                     if job.status == .processing {
@@ -277,13 +315,11 @@ struct JobCard: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .onAppear {
-                                // Start timer to update running time
                                 timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
                                     currentTime = Date()
                                 }
                             }
                             .onDisappear {
-                                // Clean up timer when view disappears
                                 timer?.invalidate()
                                 timer = nil
                             }
@@ -291,26 +327,38 @@ struct JobCard: View {
                         Text("Duration: \(formatDuration(completionTime.timeIntervalSince(job.startTime)))")
                             .font(.caption)
                             .foregroundColor(.secondary)
+                    } else if job.status == .queued {
+                        Text("Queued \(job.startTime, style: .relative) ago")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     } else {
-                        Text("Started: \(job.startTime, style: .relative)")
+                        Text("Started: \(job.startTime, style: .relative) ago")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    
+
                     Spacer()
-                    
+
                     if job.status == .completed, let completionTime = job.completionTime {
-                        Text("Completed: \(formatCompletionTime(completionTime))")
+                        Text(formatCompletionTime(completionTime))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                 }
-                
+
                 // Error message if failed
                 if case .failed(let error) = job.status {
                     Text("Error: \(error)")
                         .font(.caption)
                         .foregroundColor(.red)
+                        .lineLimit(2)
+                }
+
+                // Interrupted reason
+                if case .interrupted(let reason) = job.status {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundColor(.orange)
                         .lineLimit(2)
                 }
             }
@@ -322,28 +370,28 @@ struct JobCard: View {
         }
         .buttonStyle(PlainButtonStyle())
     }
-    
+
     private func formatDuration(_ duration: TimeInterval) -> String {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
-        
+
         if minutes > 0 {
             return "\(minutes)m \(seconds)s"
         } else {
             return "\(seconds)s"
         }
     }
-    
+
     private func formatCompletionTime(_ date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "MMM dd, yyyy HH:mm:ss"
+        formatter.dateFormat = "MMM dd, HH:mm"
         return formatter.string(from: date)
     }
 }
 
 struct StatusBadge: View {
     let status: ProcessingStatus
-    
+
     var body: some View {
         Text(status.description)
             .font(.caption)
@@ -356,7 +404,7 @@ struct StatusBadge: View {
                     .fill(statusColor)
             )
     }
-    
+
     private var statusColor: Color {
         switch status {
         case .notStarted:
@@ -371,16 +419,19 @@ struct StatusBadge: View {
             return .red
         case .cancelled:
             return .gray
+        case .interrupted:
+            return .yellow
         }
     }
 }
 
 struct JobDetailView: View {
     let job: ProcessingJob
+    @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @Environment(\.dismiss) private var dismiss
     @State private var currentTime = Date()
     @State private var timer: Timer?
-    
+
     var body: some View {
         NavigationView {
             ScrollView {
@@ -390,50 +441,56 @@ struct JobDetailView: View {
                         Text(job.recordingName)
                             .font(.title2)
                             .fontWeight(.bold)
-                        
+
                         Text(job.type.displayName)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
+
+                        if let model = job.modelName {
+                            Text("Model: \(model)")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
                     }
-                    
+
                     // Status and progress
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Status")
                             .font(.headline)
-                        
+
                         HStack {
                             StatusBadge(status: convertJobStatus(job.status))
                             Spacer()
                         }
-                        
+
                         if job.status == .processing {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Progress")
                                     .font(.subheadline)
                                     .fontWeight(.medium)
-                                
+
                                 ProgressView(value: job.progress)
                                     .progressViewStyle(LinearProgressViewStyle())
-                                
+
                                 Text("\(Int(job.progress * 100))%")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
                         }
                     }
-                    
+
                     // Timing information
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Timing")
                             .font(.headline)
-                        
+
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 Text("Started:")
                                 Spacer()
                                 Text(job.startTime, style: .time)
                             }
-                            
+
                             if job.status == .processing {
                                 HStack {
                                     Text("Running:")
@@ -441,23 +498,21 @@ struct JobDetailView: View {
                                     Text(formatDuration(currentTime.timeIntervalSince(job.startTime)))
                                 }
                                 .onAppear {
-                                    // Start timer to update running time
                                     timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
                                         currentTime = Date()
                                     }
                                 }
                                 .onDisappear {
-                                    // Clean up timer when view disappears
                                     timer?.invalidate()
                                     timer = nil
                                 }
-                            } else if job.status == .completed, let completionTime = job.completionTime {
+                            } else if let completionTime = job.completionTime {
                                 HStack {
-                                    Text("Completed:")
+                                    Text("Ended:")
                                     Spacer()
                                     Text(formatCompletionTime(completionTime))
                                 }
-                                
+
                                 HStack {
                                     Text("Duration:")
                                     Spacer()
@@ -467,25 +522,48 @@ struct JobDetailView: View {
                         }
                         .font(.subheadline)
                     }
-                    
+
+                    // Engine information
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Engine")
+                            .font(.headline)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Engine:")
+                                Spacer()
+                                Text(job.type.engineName)
+                            }
+
+                            if let model = job.modelName {
+                                HStack {
+                                    Text("Model:")
+                                    Spacer()
+                                    Text(model)
+                                }
+                            }
+                        }
+                        .font(.subheadline)
+                    }
+
                     // Chunk information
                     if let chunks = job.chunks, !chunks.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("File Chunks")
                                 .font(.headline)
-                            
+
                             Text("Processing \(chunks.count) chunks")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
                     }
-                    
+
                     // Error details
                     if case .failed(let error) = job.status {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Error Details")
                                 .font(.headline)
-                            
+
                             Text(error)
                                 .font(.body)
                                 .foregroundColor(.red)
@@ -496,7 +574,44 @@ struct JobDetailView: View {
                                 )
                         }
                     }
-                    
+
+                    // Interrupted details
+                    if case .interrupted(let reason) = job.status {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Interrupted")
+                                .font(.headline)
+
+                            Text(reason)
+                                .font(.body)
+                                .foregroundColor(.orange)
+                                .padding()
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.orange.opacity(0.1))
+                                )
+                        }
+                    }
+
+                    // Cancel button for active/queued jobs
+                    if job.status == .processing || job.status == .queued {
+                        Button {
+                            Task {
+                                await processingManager.cancelJob(id: job.id)
+                                dismiss()
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "xmark.circle.fill")
+                                Text("Cancel Job")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.red)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                        }
+                    }
+
                     Spacer()
                 }
                 .padding()
@@ -512,18 +627,18 @@ struct JobDetailView: View {
             }
         }
     }
-    
+
     private func formatDuration(_ duration: TimeInterval) -> String {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
-        
+
         if minutes > 0 {
             return "\(minutes)m \(seconds)s"
         } else {
             return "\(seconds)s"
         }
     }
-    
+
     private func formatCompletionTime(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM dd, yyyy HH:mm:ss"
@@ -543,9 +658,13 @@ private func convertJobStatus(_ jobStatus: JobProcessingStatus) -> ProcessingSta
         return .completed
     case .failed:
         return .failed
+    case .cancelled:
+        return .cancelled
+    case .interrupted:
+        return .interrupted
     }
 }
 
 #Preview {
     BackgroundProcessingView()
-} 
+}

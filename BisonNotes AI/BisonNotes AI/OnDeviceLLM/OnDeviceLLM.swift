@@ -8,12 +8,29 @@
 
 import Foundation
 import llama
+import os
 
 // MARK: - On-Device LLM Class
 
 /// Base class for on-device Large Language Model inference
 /// Provides functionality for text generation optimized for single-shot summarization tasks
 open class OnDeviceLLM: ObservableObject {
+
+    // MARK: - Background Safety
+
+    /// Thread-safe flag indicating the app is backgrounded.
+    /// When true, all GPU (Metal) operations must be skipped to avoid
+    /// `kIOGPUCommandBufferCallbackErrorBackgroundExecutionNotPermitted` fatal crash.
+    private let _isAppBackgrounded = OSAllocatedUnfairLock(initialState: false)
+
+    public var isAppBackgrounded: Bool {
+        get { _isAppBackgrounded.withLock { $0 } }
+        set { _isAppBackgrounded.withLock { $0 = newValue } }
+    }
+
+    /// Set to true when inference was aborted because the app entered background.
+    /// Callers should check this to distinguish background interruption from normal completion.
+    public private(set) var wasInterruptedByBackground = false
 
     // MARK: - Public Properties
 
@@ -357,6 +374,13 @@ open class OnDeviceLLM: ObservableObject {
             fatalError("Sampler not initialized")
         }
 
+        // Check if app is backgrounded before submitting GPU work
+        if self.isAppBackgrounded {
+            print("[OnDeviceLLM] App is backgrounded, stopping token generation to avoid Metal crash")
+            self.wasInterruptedByBackground = true
+            return self.model.endToken
+        }
+
         let token = llama_sampler_sample(sampler, context.pointer, self.batch.n_tokens - 1)
         metrics.recordToken()
 
@@ -421,12 +445,20 @@ open class OnDeviceLLM: ObservableObject {
 
             guard self.batch.n_tokens > 0 else { return false }
 
+            // Check if app is backgrounded before submitting GPU work
+            // iOS kills Metal command buffers from background apps (fatal crash)
+            if self.isAppBackgrounded {
+                print("[OnDeviceLLM] App is backgrounded, aborting prefill to avoid Metal crash")
+                self.wasInterruptedByBackground = true
+                return false
+            }
+
             // Handle decode failure gracefully
             if !self.context.decode(self.batch) {
                 print("[OnDeviceLLM] Batch decode failed at token \(tokenIndex)")
                 return false
             }
-            
+
             // Check for cancellation after each batch decode
             if Task.isCancelled {
                 print("[OnDeviceLLM] Task cancelled during prefill, aborting")
@@ -514,7 +546,8 @@ open class OnDeviceLLM: ObservableObject {
 
     @InferenceActor
     private func generateResponseStream(from input: String) -> AsyncStream<String> {
-        AsyncStream<String> { output in
+        self.wasInterruptedByBackground = false
+        return AsyncStream<String> { output in
             Task { [weak self] in
                 guard let self = self else { return output.finish() }
                 guard self.inferenceTask != nil else { return output.finish() }

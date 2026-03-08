@@ -2449,9 +2449,18 @@ extension iCloudStorageManager {
     private static let sensitiveSettingKeyFragments: [String] = [
         "apikey",
         "secret",
-        "token",
         "credentials",
         "accesskey"
+    ]
+
+    /// Keys that exactly match known credential/token settings (avoids false
+    /// positives on configuration keys like "*MaxTokens").
+    private static let sensitiveSettingExactSuffixes: [String] = [
+        "token",
+        "accesstoken",
+        "refreshtoken",
+        "bearertoken",
+        "authtoken"
     ]
 
     /// CloudKit private database already provides built-in encryption at rest and in transit.
@@ -2930,15 +2939,19 @@ extension iCloudStorageManager {
                    let assetURL = asset.fileURL,
                    fileManager.fileExists(atPath: assetURL.path) {
                     let backupFileName = (record[Self.fieldAudioFileName] as? String) ?? "\(recordingId.uuidString).m4a"
+                    // Use recording ID as the filename to avoid collisions when
+                    // multiple recordings share the same original basename.
+                    let fileExtension = (backupFileName as NSString).pathExtension.isEmpty ? "m4a" : (backupFileName as NSString).pathExtension
+                    let uniqueFileName = "\(recordingId.uuidString).\(fileExtension)"
                     let destinationURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                        .appendingPathComponent(backupFileName)
+                        .appendingPathComponent(uniqueFileName)
 
                     if fileManager.fileExists(atPath: destinationURL.path) {
                         try? fileManager.removeItem(at: destinationURL)
                     }
 
                     try fileManager.copyItem(at: assetURL, to: destinationURL)
-                    entry.recordingURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? backupFileName
+                    entry.recordingURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? uniqueFileName
                     result.audioFilesRestored += 1
                 } else if existing == nil {
                     // Keep metadata-only records when audio backup is disabled or unavailable.
@@ -3966,7 +3979,13 @@ extension iCloudStorageManager {
 
     private func isSensitiveSettingKey(_ key: String) -> Bool {
         let lowercase = key.lowercased()
-        return Self.sensitiveSettingKeyFragments.contains { lowercase.contains($0) }
+        // Substring match for unambiguous credential fragments (e.g. "apikey", "secret")
+        if Self.sensitiveSettingKeyFragments.contains(where: { lowercase.contains($0) }) {
+            return true
+        }
+        // Suffix match for "token" variants to avoid false positives on keys
+        // like "openAISummarizationMaxTokens" or "ollamaMaxTokens".
+        return Self.sensitiveSettingExactSuffixes.contains { lowercase.hasSuffix($0) }
     }
 }
 

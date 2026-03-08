@@ -5,6 +5,7 @@ struct FluidAudioSettingsView: View {
     @AppStorage(FluidAudioModelInfo.SettingsKeys.selectedModelVersion) private var selectedModelVersion = FluidAudioModelInfo.ModelVersion.v3.rawValue
 
     @ObservedObject private var manager = FluidAudioManager.shared
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Form {
@@ -77,6 +78,13 @@ struct FluidAudioSettingsView: View {
                     .foregroundColor(.secondary)
             }
         }
-        .navigationTitle("Parakeet Settings")
+        .navigationTitle("On Device Transcription")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") {
+                    dismiss()
+                }
+            }
+        }
     }
 }

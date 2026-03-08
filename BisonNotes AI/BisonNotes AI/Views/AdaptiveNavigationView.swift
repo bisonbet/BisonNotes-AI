@@ -110,5 +110,8 @@ struct AdaptiveNavigationView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SwitchToRecordTabForImport"))) { _ in
+            selectedItem = .record
+        }
     }
 }

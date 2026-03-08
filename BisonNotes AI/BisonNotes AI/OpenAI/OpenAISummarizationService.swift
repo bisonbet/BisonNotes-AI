@@ -399,11 +399,12 @@ class OpenAISummarizationService: ObservableObject {
             }
 
             #if DEBUG
-            // Log the raw response for debugging
-            let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
-            print("🌐 OpenAI API Response - Status: \(httpResponse.statusCode)")
-            print("📝 Raw response: \(responseString)")
-            print("📊 Response data length: \(data.count) bytes")
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
+                print("🌐 OpenAI API Response - Status: \(httpResponse.statusCode)")
+                print("📝 Raw response: \(responseString)")
+                print("📊 Response data length: \(data.count) bytes")
+            }
             #endif
             
             if httpResponse.statusCode != 200 {

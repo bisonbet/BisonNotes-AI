@@ -448,7 +448,7 @@ if durationMinutes > 120 { // 2 hours max
         let duration = try await getAudioDuration(url: url)
         
 // Determine transcription engine to use
-        let selectedEngine = engine ?? .whisperKit // Default fallback
+        let selectedEngine = engine ?? .fluidAudio // Default fallback
         
         // Manage background checking based on selected engine
         switch selectedEngine {
@@ -2151,7 +2151,7 @@ enum TranscriptionError: LocalizedError {
         case .fluidAudioNotAvailable:
             return "FluidAudio is not available in this build. Add the FluidAudio Swift package and rebuild."
         case .fluidAudioNotReady:
-            return "FluidAudio model is not ready. Download and initialize the Parakeet model in Settings > Transcription > On Device (Parakeet)."
+            return "On-device model is not ready. Download and initialize the Parakeet model in Settings > Transcription > On Device."
         case .fluidAudioTranscriptionFailed(let error):
             return "Parakeet transcription failed: \(error.localizedDescription)"
         case .fileTooLarge(let duration, let maxDuration):

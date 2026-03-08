@@ -85,21 +85,26 @@ public enum ProcessingStatus: String, Codable, CaseIterable {
     case completed = "Completed"
     case failed = "Failed"
     case cancelled = "Cancelled"
-    
+    case interrupted = "Interrupted"
+
     public var description: String {
         return self.rawValue
     }
-    
+
     public var isActive: Bool {
         return self == .queued || self == .processing
     }
-    
+
     public var isComplete: Bool {
         return self == .completed
     }
-    
+
     public var hasError: Bool {
         return self == .failed || self == .cancelled
+    }
+
+    public var isResumable: Bool {
+        return self == .interrupted
     }
 }
 

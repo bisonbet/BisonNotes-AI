@@ -22,6 +22,16 @@ struct FluidAudioModelInfo {
                 return "Multilingual model for 25 European languages"
             }
         }
+
+        /// Estimated download size in bytes
+        var downloadSizeBytes: Int64 {
+            switch self {
+            case .v2:
+                return 250_000_000 // ~250 MB
+            case .v3:
+                return 350_000_000 // ~350 MB
+            }
+        }
     }
 
     enum SettingsKeys {

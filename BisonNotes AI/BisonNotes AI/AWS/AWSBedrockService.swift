@@ -340,11 +340,13 @@ class AWSBedrockService: ObservableObject {
             // Convert response body to Data
             let responseData = Data(responseBody)
             
-            // Log the raw response for debugging
-            let responseString = String(data: responseData, encoding: .utf8) ?? "Unable to decode response"
-            print("🌐 AWS Bedrock API Response received")
-            print("📝 Raw response: \(responseString)")
-            print("📊 Response data length: \(responseData.count) bytes")
+            // Log the raw response only when verbose logging is enabled
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                let responseString = String(data: responseData, encoding: .utf8) ?? "Unable to decode response"
+                print("🌐 AWS Bedrock API Response received")
+                print("📝 Raw response: \(responseString)")
+                print("📊 Response data length: \(responseData.count) bytes")
+            }
             
             // Parse the model-specific response
             let modelResponse = try AWSBedrockModelFactory.parseResponse(for: config.model, data: responseData)

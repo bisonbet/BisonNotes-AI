@@ -47,12 +47,18 @@ final class FluidAudioManager: ObservableObject {
         startNetworkMonitoring()
     }
 
-    var isAvailableInCurrentBuild: Bool {
+    /// Whether the FluidAudio SDK is linked in this build. Compile-time constant, safe to access from any isolation domain.
+    nonisolated static var isAvailableInCurrentBuild: Bool {
         #if canImport(FluidAudio)
         return true
         #else
         return false
         #endif
+    }
+
+    /// Instance convenience accessor
+    nonisolated var isAvailableInCurrentBuild: Bool {
+        Self.isAvailableInCurrentBuild
     }
 
     // MARK: - Network Monitoring
@@ -108,7 +114,7 @@ final class FluidAudioManager: ObservableObject {
         let selectedVersion = FluidAudioModelInfo.selectedModelVersion
 
         // Wrap in a Task so we can support cancellation
-        let task = Task {
+        let task = Task { () -> AsrModels in
             let models: AsrModels
             switch selectedVersion {
             case .v2:
@@ -119,7 +125,11 @@ final class FluidAudioManager: ObservableObject {
             try Task.checkCancellation()
             return models
         }
-        downloadTask = task
+        // Store an erased reference for cancellation
+        let cancellationTask = Task<Void, Error> {
+            _ = try await task.value
+        }
+        downloadTask = cancellationTask
 
         // Update progress while downloading (poll-based since FluidAudio SDK doesn't expose progress callbacks)
         let progressTask = Task {
@@ -256,7 +266,7 @@ final class FluidAudioManager: ObservableObject {
         let durationSeconds = CMTimeGetSeconds(duration)
 
         let segment = TranscriptSegment(
-            speaker: "Speaker 1",
+            speaker: "",
             text: result.text,
             startTime: 0,
             endTime: durationSeconds > 0 ? durationSeconds : 0

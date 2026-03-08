@@ -193,9 +193,9 @@ struct TranscriptionSettingsView: View {
         switch engine {
         case .notConfigured:
             return .gray
-        case .whisperKit:
-            return .indigo
         case .fluidAudio:
+            return .indigo
+        case .whisperKit:
             return .mint
         case .awsTranscribe:
             return .orange

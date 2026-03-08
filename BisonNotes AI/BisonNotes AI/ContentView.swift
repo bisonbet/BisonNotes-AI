@@ -23,6 +23,8 @@ struct ContentView: View {
     @State private var showingOnDeviceLLMSettings = false
     @State private var showingWhisperKitMigrationAlert = false
     @State private var showingWhisperKitSettings = false
+    @State private var showingParakeetUpgradeAlert = false
+    @State private var showingFluidAudioSettings = false
     @State private var showingUnsupportedFileAlert = false
     @StateObject private var downloadMonitor = OnDeviceAIDownloadMonitor.shared
     @State private var showSplash = true
@@ -136,6 +138,23 @@ struct ContentView: View {
                 WhisperKitSettingsView()
             }
         }
+        .alert("Faster On-Device Transcription Available", isPresented: $showingParakeetUpgradeAlert) {
+            Button("Switch to Parakeet") {
+                // Switch engine to FluidAudio
+                UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")
+                UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
+                // Open FluidAudio settings for model download
+                showingFluidAudioSettings = true
+            }
+            Button("Keep WhisperKit", role: .cancel) { }
+        } message: {
+            Text("Parakeet is a newer, faster, and more accurate on-device transcription engine. It has the same device requirements as WhisperKit and keeps your audio fully on-device. Would you like to switch?")
+        }
+        .sheet(isPresented: $showingFluidAudioSettings) {
+            NavigationStack {
+                FluidAudioSettingsView()
+            }
+        }
         .alert("Download Complete", isPresented: $downloadMonitor.showingCompletionAlert) {
             Button("OK") {
                 downloadMonitor.reset()
@@ -161,21 +180,21 @@ struct ContentView: View {
                 }
                 .tag(0)
 
-            SummariesView()
-                .environmentObject(recorderVM)
-                .environmentObject(appCoordinator)
-                .tabItem {
-                    Image(systemName: "doc.text.magnifyingglass")
-                    Text("Summaries")
-                }
-                .tag(1)
-
             TranscriptsView()
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
                 .tabItem {
                     Image(systemName: "text.bubble.fill")
                     Text("Transcripts")
+                }
+                .tag(1)
+
+            SummariesView()
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .tabItem {
+                    Image(systemName: "doc.text.magnifyingglass")
+                    Text("Summaries")
                 }
                 .tag(2)
 
@@ -299,6 +318,19 @@ struct ContentView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             showingWhisperKitMigrationAlert = true
                             UserDefaults.standard.removeObject(forKey: "showWhisperKitMigrationSettings")
+                        }
+                    }
+
+                    // One-time prompt for existing WhisperKit users to upgrade to Parakeet
+                    let parakeetUpgradeKey = "hasShownParakeetUpgradePrompt"
+                    let currentEngine = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine")
+                    if !isFirstLaunch
+                        && currentEngine == TranscriptionEngine.whisperKit.rawValue
+                        && !UserDefaults.standard.bool(forKey: parakeetUpgradeKey)
+                        && DeviceCompatibility.isFluidAudioSupported {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            showingParakeetUpgradeAlert = true
+                            UserDefaults.standard.set(true, forKey: parakeetUpgradeKey)
                         }
                     }
                 } catch {

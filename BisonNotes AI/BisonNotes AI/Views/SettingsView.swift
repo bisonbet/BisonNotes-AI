@@ -346,7 +346,7 @@ struct SettingsView: View {
                 Text("Current Engine:")
                     .font(.body)
                     .foregroundColor(.secondary)
-                Text(TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue)?.rawValue ?? "On Device")
+                Text(TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue)?.rawValue ?? "On Device")
                     .font(.body)
                     .fontWeight(.medium)
                     .foregroundColor(.primary)
