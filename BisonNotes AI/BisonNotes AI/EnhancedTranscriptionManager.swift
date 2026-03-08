@@ -1564,6 +1564,11 @@ return result
             throw TranscriptionError.fluidAudioNotAvailable
         }
 
+        // Check if model is ready
+        guard manager.isModelReady else {
+            throw TranscriptionError.fluidAudioNotReady
+        }
+
         await MainActor.run {
             isTranscribing = true
             currentStatus = "Preparing Parakeet transcription..."

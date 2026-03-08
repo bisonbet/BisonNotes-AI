@@ -95,12 +95,41 @@ struct DeviceCompatibility {
 
     // MARK: - FluidAudio Support
 
-    /// FluidAudio requires iOS 17+ for CoreML model runtime in this app
+    /// Cached result for FluidAudio support check
+    private static var _cachedFluidAudioSupport: Bool?
+    private static var _hasLoggedFluidAudioSupport = false
+
+    /// FluidAudio requires iOS 17+ and 4GB+ RAM for CoreML/ANE model inference
     static var isFluidAudioSupported: Bool {
-        if #available(iOS 17.0, *) {
-            return true
+        if let cached = _cachedFluidAudioSupport {
+            return cached
         }
-        return false
+
+        guard #available(iOS 17.0, *) else {
+            if !_hasLoggedFluidAudioSupport {
+                print("❌ DeviceCompatibility: iOS 17+ required for FluidAudio")
+                _hasLoggedFluidAudioSupport = true
+            }
+            _cachedFluidAudioSupport = false
+            return false
+        }
+
+        // Check RAM (4GB minimum for CoreML ANE inference)
+        let totalMemory = ProcessInfo.processInfo.physicalMemory
+        let totalMemoryGB = Double(totalMemory) / 1_073_741_824.0
+        let hasEnoughRAM = totalMemoryGB >= 4.0
+
+        if !_hasLoggedFluidAudioSupport {
+            if hasEnoughRAM {
+                print("✅ DeviceCompatibility: FluidAudio supported (RAM: \(String(format: "%.1f", totalMemoryGB))GB)")
+            } else {
+                print("❌ DeviceCompatibility: FluidAudio requires 4GB+ RAM (Device has \(String(format: "%.1f", totalMemoryGB))GB)")
+            }
+            _hasLoggedFluidAudioSupport = true
+        }
+
+        _cachedFluidAudioSupport = hasEnoughRAM
+        return hasEnoughRAM
     }
 }
 

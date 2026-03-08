@@ -22,7 +22,7 @@ struct FluidAudioSettingsView: View {
                         .tag(version.rawValue)
                     }
                 }
-                .onChange(of: selectedModelVersion) { _ in
+                .onChange(of: selectedModelVersion) { _, _ in
                     manager.invalidateForVersionChange()
                 }
             }
@@ -36,22 +36,38 @@ struct FluidAudioSettingsView: View {
                             .foregroundColor(manager.isModelReady ? .green : .secondary)
                     }
 
+                    if manager.isDownloading {
+                        ProgressView(value: manager.downloadProgress)
+                            .progressViewStyle(.linear)
+                    }
+
                     if !manager.currentStatus.isEmpty {
                         Text(manager.currentStatus)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
 
-                    Button(manager.isDownloading ? "Downloading..." : "Download / Prepare Model") {
-                        Task {
-                            do {
-                                try await manager.downloadAndPrepareModel()
-                            } catch {
-                                manager.currentStatus = "Failed: \(error.localizedDescription)"
+                    if manager.isDownloading {
+                        Button("Cancel Download", role: .destructive) {
+                            manager.cancelDownload()
+                        }
+                    } else {
+                        Button("Download / Prepare Model") {
+                            Task {
+                                do {
+                                    try await manager.downloadAndPrepareModel()
+                                } catch {
+                                    manager.currentStatus = "Failed: \(error.localizedDescription)"
+                                }
                             }
                         }
                     }
-                    .disabled(manager.isDownloading)
+
+                    if manager.isModelReady {
+                        Button("Delete Model", role: .destructive) {
+                            manager.deleteModel()
+                        }
+                    }
                 }
             }
 

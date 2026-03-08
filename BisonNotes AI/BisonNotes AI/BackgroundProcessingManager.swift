@@ -857,6 +857,9 @@ class BackgroundProcessingManager: ObservableObject {
                 guard fluidAudioManager.isAvailableInCurrentBuild else {
                     throw BackgroundProcessingError.processingFailed("FluidAudio SDK is not available in this build.")
                 }
+                guard fluidAudioManager.isModelReady else {
+                    throw BackgroundProcessingError.processingFailed("Parakeet model not downloaded. Please download the model in Settings > Transcription > On Device (Parakeet).")
+                }
                 result = try await fluidAudioManager.transcribe(audioURL: chunk.chunkURL)
 
             case .mistralAI:
