@@ -460,6 +460,10 @@ if durationMinutes > 120 { // 2 hours max
             switchToWhisperKitTranscription()
             return try await transcribeWithWhisperKit(url: url)
 
+        case .fluidAudio:
+            switchToFluidAudioTranscription()
+            return try await transcribeWithFluidAudio(url: url)
+
         case .awsTranscribe:
             switchToAWSTranscription()
             
@@ -1548,6 +1552,46 @@ return result
         }
     }
 
+    // MARK: - FluidAudio (Parakeet) Transcription
+
+    private func transcribeWithFluidAudio(url: URL) async throws -> TranscriptionResult {
+        beginBackgroundTask()
+        defer { endBackgroundTask() }
+
+        let manager = FluidAudioManager.shared
+
+        guard manager.isAvailableInCurrentBuild else {
+            throw TranscriptionError.fluidAudioNotAvailable
+        }
+
+        // Check if model is ready
+        guard manager.isModelReady else {
+            throw TranscriptionError.fluidAudioNotReady
+        }
+
+        await MainActor.run {
+            isTranscribing = true
+            currentStatus = "Preparing Parakeet transcription..."
+        }
+
+        do {
+            let result = try await manager.transcribe(audioURL: url)
+
+            await MainActor.run {
+                isTranscribing = false
+                currentStatus = "Transcription complete"
+            }
+
+            return result
+        } catch {
+            await MainActor.run {
+                isTranscribing = false
+                currentStatus = "Parakeet transcription failed"
+            }
+            throw TranscriptionError.fluidAudioTranscriptionFailed(error)
+        }
+    }
+
     // MARK: - OpenAI Transcription
 
 private func transcribeWithOpenAI(url: URL, config: OpenAITranscribeConfig) async throws -> TranscriptionResult {
@@ -1888,6 +1932,19 @@ func switchToWhisperTranscription() {
         }
     }
 
+    func switchToFluidAudioTranscription() {
+        stopBackgroundChecking()
+
+        let pendingCount = getPendingJobNames().count
+        if pendingCount > 0 {
+            clearAllPendingJobs()
+        }
+
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLogger.shared.verbose("FluidAudio (Parakeet) transcription selected", category: "EnhancedTranscriptionManager")
+        }
+    }
+
     /// Public method to update transcription engine and manage background processes
     func updateTranscriptionEngine(_ engine: TranscriptionEngine) {
         // Only log if verbose logging is enabled
@@ -1901,6 +1958,8 @@ func switchToWhisperTranscription() {
             switchToNativeSpeechTranscription()
         case .whisperKit:
             switchToWhisperKitTranscription()
+        case .fluidAudio:
+            switchToFluidAudioTranscription()
         case .awsTranscribe:
             switchToAWSTranscription()
         case .whisper:
@@ -2051,6 +2110,9 @@ enum TranscriptionError: LocalizedError {
     case openAITranscriptionFailed(Error)
     case whisperKitNotReady
     case whisperKitTranscriptionFailed(Error)
+    case fluidAudioNotAvailable
+    case fluidAudioNotReady
+    case fluidAudioTranscriptionFailed(Error)
     case engineNotConfigured
     case mistralTranscriptionFailed(Error)
 
@@ -2086,6 +2148,12 @@ enum TranscriptionError: LocalizedError {
             return "WhisperKit model is not downloaded. Please download the model in Settings > Transcription > WhisperKit."
         case .whisperKitTranscriptionFailed(let error):
             return "WhisperKit transcription failed: \(error.localizedDescription)"
+        case .fluidAudioNotAvailable:
+            return "FluidAudio is not available in this build. Add the FluidAudio Swift package and rebuild."
+        case .fluidAudioNotReady:
+            return "FluidAudio model is not ready. Download and initialize the Parakeet model in Settings > Transcription > On Device (Parakeet)."
+        case .fluidAudioTranscriptionFailed(let error):
+            return "Parakeet transcription failed: \(error.localizedDescription)"
         case .fileTooLarge(let duration, let maxDuration):
             return "File too large for processing (\(Int(duration/60)) minutes, max \(Int(maxDuration/60)) minutes)"
         case .engineNotConfigured:

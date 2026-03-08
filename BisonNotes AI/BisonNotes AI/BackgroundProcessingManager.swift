@@ -851,6 +851,17 @@ class BackgroundProcessingManager: ObservableObject {
                 }
                 result = try await whisperKitManager.transcribe(audioURL: chunk.chunkURL)
 
+            case .fluidAudio:
+                print("🤖 Using FluidAudio (Parakeet) for transcription")
+                let fluidAudioManager = FluidAudioManager.shared
+                guard fluidAudioManager.isAvailableInCurrentBuild else {
+                    throw BackgroundProcessingError.processingFailed("FluidAudio SDK is not available in this build.")
+                }
+                guard fluidAudioManager.isModelReady else {
+                    throw BackgroundProcessingError.processingFailed("Parakeet model not downloaded. Please download the model in Settings > Transcription > On Device (Parakeet).")
+                }
+                result = try await fluidAudioManager.transcribe(audioURL: chunk.chunkURL)
+
             case .mistralAI:
                 print("🤖 Using Mistral AI for transcription")
                 let config = getMistralTranscribeConfig()

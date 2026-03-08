@@ -109,6 +109,8 @@ struct ChunkingConfig {
             return ChunkingConfig(strategy: .aws)
         case .whisperKit:
             return ChunkingConfig(strategy: .whisper) // WhisperKit uses similar limits to Whisper
+        case .fluidAudio:
+            return ChunkingConfig(strategy: .onDeviceAI)
         case .mistralAI:
             return ChunkingConfig(strategy: .mistralAI)
         case .openAIAPICompatible:

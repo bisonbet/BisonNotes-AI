@@ -18,6 +18,7 @@ struct TranscriptionSettingsView: View {
     @State private var showingAWSSettings = false
     @State private var showingWhisperSettings = false
     @State private var showingWhisperKitSettings = false
+    @State private var showingFluidAudioSettings = false
     @State private var showingOpenAISettings = false
     @State private var showingMistralTranscribeSettings = false
     @Environment(\.dismiss) private var dismiss
@@ -51,6 +52,11 @@ struct TranscriptionSettingsView: View {
                     WhisperKitSettingsView()
                 }
             }
+            .sheet(isPresented: $showingFluidAudioSettings) {
+                NavigationStack {
+                    FluidAudioSettingsView()
+                }
+            }
             .sheet(isPresented: $showingOpenAISettings) {
                 OpenAISettingsView()
             }
@@ -75,6 +81,13 @@ struct TranscriptionSettingsView: View {
                 showingWhisperKitSettings = true
             }
         }
+
+        if engine == .fluidAudio {
+            UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
+            if !FluidAudioManager.shared.isModelReady {
+                showingFluidAudioSettings = true
+            }
+        }
     }
     
     private var engineSection: some View {
@@ -85,7 +98,7 @@ struct TranscriptionSettingsView: View {
                     .fontWeight(.medium)
                 
                 Picker("Transcription Engine", selection: $selectedTranscriptionEngine) {
-                    ForEach(TranscriptionEngine.availableCases.filter { $0.isAvailable }, id: \.self) { engine in
+                    ForEach(TranscriptionEngine.availableCases, id: \.self) { engine in
                         VStack(alignment: .leading) {
                             Text(engine.rawValue)
                                 .font(.body)
@@ -138,6 +151,8 @@ struct TranscriptionSettingsView: View {
                                     break
                                 case .whisperKit:
                                     showingWhisperKitSettings = true
+                                case .fluidAudio:
+                                    showingFluidAudioSettings = true
                                 case .awsTranscribe:
                                     showingAWSSettings = true
                                 case .whisper:
@@ -180,6 +195,8 @@ struct TranscriptionSettingsView: View {
             return .gray
         case .whisperKit:
             return .indigo
+        case .fluidAudio:
+            return .mint
         case .awsTranscribe:
             return .orange
         case .whisper:
@@ -220,7 +237,7 @@ struct TranscriptionSettingsView: View {
                     .fontWeight(.medium)
             }
             
-            if engine == .whisperKit {
+            if engine == .whisperKit || engine == .fluidAudio {
                 HStack {
                     Text("Privacy:")
                         .font(.body)
@@ -246,6 +263,8 @@ struct TranscriptionSettingsView: View {
         case .notConfigured:
             return "Not Configured"
         case .whisperKit:
+            return "On-Device AI"
+        case .fluidAudio:
             return "On-Device AI"
         case .awsTranscribe:
             return "Cloud-based"
