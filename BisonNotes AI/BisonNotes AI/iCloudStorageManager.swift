@@ -3070,11 +3070,20 @@ extension iCloudStorageManager {
                 restoredSensitiveSettings = settingsResult.includedSensitiveSettings
             }
 
+            var fallbackSummariesRestored = 0
             let hasContentBackupRecords =
                 !recordingRecords.isEmpty ||
                 !transcriptRecords.isEmpty ||
                 !summaryRecords.isEmpty
             if !hasContentBackupRecords {
+                fallbackSummariesRestored = try await restoreSummariesFromCloudIfAvailable(
+                    appCoordinator: appCoordinator,
+                    existingSummaryIds: Set(summariesById.keys)
+                )
+                result.summariesRestored += fallbackSummariesRestored
+            }
+
+            if !hasContentBackupRecords, fallbackSummariesRestored == 0 {
                 let settingsSuffix = restoredSettings
                     ? " Settings were restored."
                     : ""
@@ -3111,6 +3120,32 @@ extension iCloudStorageManager {
             }
             throw error
         }
+    }
+
+    private func restoreSummariesFromCloudIfAvailable(
+        appCoordinator: AppDataCoordinator,
+        existingSummaryIds: Set<UUID>
+    ) async throws -> Int {
+        let cloudSummaries = try await fetchAllSummariesFromCloud()
+        guard !cloudSummaries.isEmpty else {
+            return 0
+        }
+
+        var restoredCount = 0
+        for cloudSummary in cloudSummaries {
+            if existingSummaryIds.contains(cloudSummary.id) {
+                continue
+            }
+
+            try await createCoreDataSummary(from: cloudSummary, appCoordinator: appCoordinator)
+            restoredCount += 1
+        }
+
+        if restoredCount > 0 {
+            print("☁️ Restored \(restoredCount) summaries from CloudKit summary sync records")
+        }
+
+        return restoredCount
     }
 
     private func makeBackupRecordName(prefix: String, id: UUID) -> String {
