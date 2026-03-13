@@ -265,6 +265,7 @@ class BackgroundProcessingManager: ObservableObject {
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var backgroundTaskStartTime: Date?
     private var backgroundTimeMonitor: Task<Void, Never>?
+    private var staleJobMonitor: Task<Void, Never>?
     private let chunkingService = AudioFileChunkingService()
     private let performanceOptimizer = PerformanceOptimizer.shared
     private let enhancedFileManager = EnhancedFileManager.shared
@@ -281,6 +282,7 @@ class BackgroundProcessingManager: ObservableObject {
         setupNotifications()
         setupAppLifecycleObservers()
         setupPerformanceOptimization()
+        startStaleJobMonitoring()
         
         // Resume interrupted jobs and start processing queued jobs on initialization
         Task {
@@ -293,10 +295,23 @@ class BackgroundProcessingManager: ObservableObject {
     
     deinit {
         NotificationCenter.default.removeObserver(self)
+        staleJobMonitor?.cancel()
     }
     
     // MARK: - Performance Optimization Setup
     
+    private func startStaleJobMonitoring() {
+        staleJobMonitor?.cancel()
+        staleJobMonitor = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000) // 60 seconds
+                if !Task.isCancelled {
+                    await cleanupStaleJobs()
+                }
+            }
+        }
+    }
+
     private func setupPerformanceOptimization() {
         // Start periodic optimization
         Task {
@@ -2027,7 +2042,9 @@ class BackgroundProcessingManager: ObservableObject {
         case "Queued":
             processingStatus = .queued
         case "Processing":
-            processingStatus = .processing
+            // A persisted "Processing" job means the previous app session ended before status was finalized.
+            // Mark as interrupted so it can be resumed instead of appearing permanently active.
+            processingStatus = .interrupted(jobEntry.error ?? "Recovered after app restart")
         case "Completed":
             processingStatus = .completed
         case "Failed":
@@ -2393,29 +2410,41 @@ class BackgroundProcessingManager: ObservableObject {
     
     // MARK: - Stale Job Cleanup
     
-    /// Cleans up jobs that have been stuck in processing state for too long
+    /// Reconciles jobs that are stuck in `processing` without a live task, or exceed timeout.
     func cleanupStaleJobs() async {
-        let staleThreshold: TimeInterval = 3600 // 1 hour
+        let processingTimeoutThreshold: TimeInterval = 3600 // 1 hour hard timeout
+        let orphanedProcessingThreshold: TimeInterval = 120 // 2 minute grace period
         let now = Date()
-        var cleanedCount = 0
-        
-        for job in activeJobs {
+        var reconciledCount = 0
+
+        for job in activeJobs where job.status == .processing {
             let timeSinceStart = now.timeIntervalSince(job.startTime)
-            
-            // Check if job is stuck in processing state for too long
-            if job.status == .processing && timeSinceStart > staleThreshold {
-                // Cleanup stale job silently
-                
+            let isCurrentInProcess = currentJob?.id == job.id
+            let hasExternalTask = externalTaskHandles[job.id] != nil
+
+            if timeSinceStart > processingTimeoutThreshold {
                 let failedJob = job.withStatus(.failed("Job timed out after \(Int(timeSinceStart/60)) minutes"))
                 await updateJobInMemoryAndCoreData(failedJob)
-                cleanedCount += 1
+                reconciledCount += 1
+                continue
+            }
+
+            // If no task is actively associated with this processing job, reconcile it out of active state.
+            if !isCurrentInProcess && !hasExternalTask && timeSinceStart > orphanedProcessingThreshold {
+                let interruptedJob = job.withStatus(.interrupted("Processing stopped unexpectedly"))
+                await updateJobInMemoryAndCoreData(interruptedJob)
+                reconciledCount += 1
             }
         }
-        
-        if cleanedCount > 0 {
-            // Update UI on main thread
-            await MainActor.run {
-                self.objectWillChange.send()
+
+        if reconciledCount > 0 {
+            print("🧹 Reconciled \(reconciledCount) stale/orphaned processing job(s)")
+            objectWillChange.send()
+
+            // Re-queue interrupted jobs after reconciliation and continue processing.
+            await resumeInterruptedJobs()
+            if currentJob == nil && activeJobs.contains(where: { $0.status == .queued }) {
+                await processNextJob()
             }
         }
     }
