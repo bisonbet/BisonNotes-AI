@@ -34,7 +34,7 @@ class AppDataCoordinator: ObservableObject {
     // MARK: - Public Interface
     
     func addRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
-        return workflowManager.createRecording(
+        let id = workflowManager.createRecording(
             url: url,
             name: name,
             date: date,
@@ -43,10 +43,12 @@ class AppDataCoordinator: ObservableObject {
             quality: quality,
             locationData: locationData
         )
+        scheduleAutoBackupIfEnabled()
+        return id
     }
-    
+
     func addWatchRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
-        return workflowManager.createRecording(
+        let id = workflowManager.createRecording(
             url: url,
             name: name,
             date: date,
@@ -55,6 +57,8 @@ class AppDataCoordinator: ObservableObject {
             quality: quality,
             locationData: locationData
         )
+        scheduleAutoBackupIfEnabled()
+        return id
     }
     
     func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {

@@ -906,12 +906,31 @@ class iCloudStorageManager: ObservableObject {
     /// Fetches all summary-sync records using the provided database.
     /// Use this overload in the restore path where `self.database` may not
     /// yet be initialized (fresh app session on a new device).
+    /// Follows pagination cursors to ensure all pages are fetched.
     func fetchAllSummariesFromCloud(using database: CKDatabase) async throws -> [EnhancedSummaryData] {
         let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: NSPredicate(value: true))
-        let (matchResults, _) = try await database.records(matching: query)
-
         var summaries: [EnhancedSummaryData] = []
 
+        // Fetch first page
+        let (firstResults, firstCursor) = try await database.records(matching: query)
+        processSummaryMatchResults(firstResults, into: &summaries)
+
+        // Follow pagination cursors for remaining pages
+        var cursor = firstCursor
+        while let activeCursor = cursor {
+            let (pageResults, nextCursor) = try await database.records(continuingMatchFrom: activeCursor)
+            processSummaryMatchResults(pageResults, into: &summaries)
+            cursor = nextCursor
+        }
+
+        return summaries
+    }
+
+    /// Decodes match results into EnhancedSummaryData, appending to the provided array.
+    private func processSummaryMatchResults(
+        _ matchResults: [(CKRecord.ID, Result<CKRecord, Error>)],
+        into summaries: inout [EnhancedSummaryData]
+    ) {
         for (_, result) in matchResults {
             switch result {
             case .success(let record):
@@ -925,8 +944,6 @@ class iCloudStorageManager: ObservableObject {
                 print("❌ Failed to fetch cloud summary record: \(error)")
             }
         }
-
-        return summaries
     }
     
     
@@ -3242,7 +3259,22 @@ extension iCloudStorageManager {
         existingSummaryIds: Set<UUID>,
         database: CKDatabase
     ) async throws -> Int {
-        let cloudSummaries = try await fetchAllSummariesFromCloud(using: database)
+        // Try the paginated query first.
+        var cloudSummaries = try await fetchAllSummariesFromCloud(using: database)
+
+        // If the query returned nothing, it may be a non-queryable schema issue.
+        // Fall back to the schema-safe record-operation approach which uses
+        // UUID scanning + zone change tracking instead of CKQuery.
+        if cloudSummaries.isEmpty {
+            // Ensure self.database is available for the schema-safe helpers
+            // (they guard on self.database, which may be nil on a fresh session).
+            if self.database == nil {
+                self.database = database
+            }
+            print("☁️ Query returned 0 summaries, trying schema-safe record discovery...")
+            cloudSummaries = (try? await fetchAllSummariesUsingRecordOperation(appCoordinator: appCoordinator)) ?? []
+        }
+
         guard !cloudSummaries.isEmpty else {
             return 0
         }
