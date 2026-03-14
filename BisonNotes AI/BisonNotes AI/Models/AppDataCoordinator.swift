@@ -58,7 +58,7 @@ class AppDataCoordinator: ObservableObject {
     }
     
     func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {
-        return workflowManager.createTranscript(
+        let result = workflowManager.createTranscript(
             for: recordingId,
             segments: segments,
             speakerMappings: speakerMappings,
@@ -66,10 +66,14 @@ class AppDataCoordinator: ObservableObject {
             processingTime: processingTime,
             confidence: confidence
         )
+        if result != nil {
+            scheduleAutoBackupIfEnabled()
+        }
+        return result
     }
     
     func addSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) -> UUID? {
-        return workflowManager.createSummary(
+        let result = workflowManager.createSummary(
             for: recordingId,
             transcriptId: transcriptId,
             summary: summary,
@@ -82,6 +86,10 @@ class AppDataCoordinator: ObservableObject {
             originalLength: originalLength,
             processingTime: processingTime
         )
+        if result != nil {
+            scheduleAutoBackupIfEnabled()
+        }
+        return result
     }
     
     func getRecording(id: UUID) -> RecordingEntry? {
@@ -231,8 +239,17 @@ class AppDataCoordinator: ObservableObject {
         }
     }
     
+    // MARK: - Auto-Backup
+
+    /// Schedules a debounced auto-backup to iCloud when sync is enabled.
+    /// Called automatically after new transcripts and summaries are persisted.
+    private func scheduleAutoBackupIfEnabled() {
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+        iCloudManager.scheduleAutoBackup(appCoordinator: self)
+    }
+
     // MARK: - Debug Methods
-    
+
     func debugDatabaseContents() {
         coreDataManager.debugDatabaseContents()
     }
