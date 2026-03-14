@@ -136,18 +136,7 @@ public class RecordingRegistryManager: ObservableObject {
     
     // MARK: - iCloud Integration
     
-    private let iCloudManager: iCloudStorageManager = {
-        // Use preview instance in preview environments
-        let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
-                       ProcessInfo.processInfo.processName.contains("PreviewShell") ||
-                       ProcessInfo.processInfo.arguments.contains("--enable-previews")
-        
-        if isPreview {
-            print("🔍 RecordingRegistryManager using preview iCloudManager")
-            return iCloudStorageManager.preview
-        }
-        return iCloudStorageManager()
-    }()
+    private let iCloudManager = iCloudStorageManager.shared
     
     init() {
         loadRecordings()
