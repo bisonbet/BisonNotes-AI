@@ -656,8 +656,13 @@ class BackgroundProcessingManager: ObservableObject {
                 await updateFileMetadata(for: processingJob)
 
             } catch is CancellationError {
-                // Check if this was an interruption (background/termination) or user cancel
-                if let reason = cancellationReason {
+                // If the job was already moved to a terminal state (e.g., timed out by the
+                // stale job monitor), don't overwrite it — just clear the cancellation reason.
+                let currentStatus = activeJobs.first(where: { $0.id == nextJob.id })?.status
+                if let currentStatus, currentStatus.isTerminal {
+                    print("⏭️ Job already terminal (\(currentStatus.displayName)): \(nextJob.type.displayName) for \(nextJob.recordingName)")
+                    cancellationReason = nil
+                } else if let reason = cancellationReason {
                     let interruptedJob = processingJob.withStatus(.interrupted(reason))
                     await updateJob(interruptedJob)
                     print("⏸️ Job interrupted (\(reason)): \(nextJob.type.displayName) for \(nextJob.recordingName)")
@@ -2430,19 +2435,25 @@ class BackgroundProcessingManager: ObservableObject {
             let hasExternalTask = externalTaskHandles[job.id] != nil
 
             if timeSinceStart > processingTimeoutThreshold {
-                // Cancel any live task handles before marking the job as failed,
-                // so the underlying work actually stops and can't overwrite state later.
+                let timeoutMessage = "Job timed out after \(Int(timeSinceStart/60)) minutes"
+
+                // Write the failure status first, before cancelling the task.
+                let failedJob = job.withStatus(.failed(timeoutMessage))
+                await updateJobInMemoryAndCoreData(failedJob)
+                reconciledCount += 1
+
+                // Cancel live task handles. Set cancellationReason so the task's
+                // CancellationError catch block doesn't overwrite .failed with .cancelled.
+                // Keep currentJob/currentTaskHandle bound — the task's natural exit path
+                // (after the do/catch) will clear them and schedule the next queued job,
+                // preventing overlapping execution if cancellation takes time to propagate.
                 if isCurrentInProcess {
+                    cancellationReason = timeoutMessage
                     currentTaskHandle?.cancel()
-                    currentTaskHandle = nil
-                    currentJob = nil
                 }
                 if let externalTask = externalTaskHandles.removeValue(forKey: job.id) {
                     externalTask.cancel()
                 }
-                let failedJob = job.withStatus(.failed("Job timed out after \(Int(timeSinceStart/60)) minutes"))
-                await updateJobInMemoryAndCoreData(failedJob)
-                reconciledCount += 1
                 continue
             }
 
