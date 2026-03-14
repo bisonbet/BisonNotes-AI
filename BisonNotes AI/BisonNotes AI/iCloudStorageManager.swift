@@ -1610,15 +1610,21 @@ class iCloudStorageManager: ObservableObject {
         guard isEnabled else { return }
         guard !isManualCloudTransferInProgress else { return }
 
-        // Throttle: skip if we backed up recently
-        if let lastBackup = lastAutoBackupDate,
-           Date().timeIntervalSince(lastBackup) < autoBackupMinInterval {
-            return
+        // Calculate how long to wait before firing.
+        // If we're inside the throttle window, delay until the window expires
+        // (plus the debounce interval). Otherwise just use the debounce interval.
+        var delay = autoBackupDebounceInterval
+        if let lastBackup = lastAutoBackupDate {
+            let elapsed = Date().timeIntervalSince(lastBackup)
+            if elapsed < autoBackupMinInterval {
+                let remaining = autoBackupMinInterval - elapsed
+                delay = remaining + autoBackupDebounceInterval
+            }
         }
 
         // Debounce: reset the timer on each call so we wait for a quiet period
         autoBackupTimer?.invalidate()
-        autoBackupTimer = Timer.scheduledTimer(withTimeInterval: autoBackupDebounceInterval, repeats: false) { [weak self] _ in
+        autoBackupTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             guard let self = self else { return }
             Task {
                 await self.performAutoBackup(appCoordinator: appCoordinator)
