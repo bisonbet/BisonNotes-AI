@@ -1636,11 +1636,23 @@ class iCloudStorageManager: ObservableObject {
             return
         }
 
+        // Read user preferences with the same defaults as SettingsView's @AppStorage declarations.
+        // UserDefaults.bool returns false for unset keys, so we must check for explicit values.
+        let defaults = UserDefaults.standard
+        let includeAudio = defaults.object(forKey: "iCloudBackupIncludeAudioFiles") != nil
+            ? defaults.bool(forKey: "iCloudBackupIncludeAudioFiles")
+            : false  // default: off (audio can be large)
+        let includeSettings = defaults.object(forKey: "iCloudBackupIncludeSettings") != nil
+            ? defaults.bool(forKey: "iCloudBackupIncludeSettings")
+            : true   // default: on
+        let includeSensitive = defaults.object(forKey: "iCloudBackupIncludeSensitiveSettings") != nil
+            ? defaults.bool(forKey: "iCloudBackupIncludeSensitiveSettings")
+            : true   // default: on
+
         let options = CloudBackupOptions(
-            includeAudioFiles: UserDefaults.standard.bool(forKey: "iCloudBackupIncludeAudioFiles"),
-            includeSettings: UserDefaults.standard.bool(forKey: "iCloudBackupIncludeSettings"),
-            includeSensitiveSettings: UserDefaults.standard.bool(forKey: "iCloudBackupIncludeSettings")
-                && UserDefaults.standard.bool(forKey: "iCloudBackupIncludeSensitiveSettings")
+            includeAudioFiles: includeAudio,
+            includeSettings: includeSettings,
+            includeSensitiveSettings: includeSettings && includeSensitive
         )
 
         do {
