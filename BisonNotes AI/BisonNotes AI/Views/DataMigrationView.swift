@@ -16,7 +16,7 @@ enum MigrationMode {
 struct DataMigrationView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var migrationManager = DataMigrationManager()
-    @StateObject private var legacyiCloudManager = iCloudStorageManager()
+    @ObservedObject private var legacyiCloudManager = iCloudStorageManager.shared
     @Environment(\.dismiss) private var dismiss
     @State private var integrityReport: DataIntegrityReport?
     @State private var repairResults: DataRepairResults?

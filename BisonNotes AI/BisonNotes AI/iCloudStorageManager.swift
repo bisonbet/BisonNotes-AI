@@ -106,7 +106,23 @@ enum NetworkStatus {
 
 @MainActor
 class iCloudStorageManager: ObservableObject {
-    
+
+    // MARK: - Shared Instance
+
+    /// Single shared instance used across the entire app.
+    /// All code should use `.shared` instead of creating new instances
+    /// so that in-memory state (isManualCloudTransferInProgress, timers,
+    /// sync queue, etc.) is consistent.
+    static let shared: iCloudStorageManager = {
+        let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
+                       ProcessInfo.processInfo.processName.contains("PreviewShell") ||
+                       ProcessInfo.processInfo.arguments.contains("--enable-previews")
+        if isPreview {
+            return iCloudStorageManager.preview
+        }
+        return iCloudStorageManager()
+    }()
+
     // Preview-safe instance for SwiftUI previews
     static let preview: iCloudStorageManager = {
         let manager = iCloudStorageManager()

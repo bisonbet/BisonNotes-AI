@@ -10,7 +10,7 @@ struct SummariesView: View {
     @Environment(\.isEmbeddedInSplitView) private var isEmbeddedInSplitView
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
-    @StateObject private var iCloudManager = iCloudStorageManager()
+    @ObservedObject private var iCloudManager = iCloudStorageManager.shared
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = []
     @State private var selectedRecording: RecordingEntry?
