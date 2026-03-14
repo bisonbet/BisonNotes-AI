@@ -266,6 +266,7 @@ class BackgroundProcessingManager: ObservableObject {
     private var backgroundTaskStartTime: Date?
     private var backgroundTimeMonitor: Task<Void, Never>?
     private var staleJobMonitor: Task<Void, Never>?
+    private var isCleaningUpStaleJobs = false
     private let chunkingService = AudioFileChunkingService()
     private let performanceOptimizer = PerformanceOptimizer.shared
     private let enhancedFileManager = EnhancedFileManager.shared
@@ -295,11 +296,13 @@ class BackgroundProcessingManager: ObservableObject {
     
     deinit {
         NotificationCenter.default.removeObserver(self)
-        staleJobMonitor?.cancel()
+        staleJobMonitor?.cancel() // Defensive: class is a singleton so deinit rarely fires
     }
     
     // MARK: - Performance Optimization Setup
     
+    /// Starts a periodic monitor that reconciles stale/orphaned processing jobs every 60s.
+    /// The initial 60s sleep is intentional — `init` already handles the first pass via `resumeInterruptedJobs()`.
     private func startStaleJobMonitoring() {
         staleJobMonitor?.cancel()
         staleJobMonitor = Task {
@@ -1805,7 +1808,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     /// Resume jobs that were interrupted due to background limitations
-    private func resumeInterruptedJobs() async {
+    private func resumeInterruptedJobs(notify: Bool = true) async {
         // Find interrupted jobs (using the new .interrupted status)
         let interruptedJobs = activeJobs.filter { $0.status.isInterrupted }
 
@@ -1870,13 +1873,13 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
 
-        if resumedCount > 0 {
+        if notify && resumedCount > 0 {
             await sendNotification(
                 title: "Jobs Resumed",
                 body: "Resumed \(resumedCount) interrupted job\(resumedCount == 1 ? "" : "s")."
             )
         }
-        if waitingCount > 0 {
+        if notify && waitingCount > 0 {
             await sendNotification(
                 title: "Jobs Waiting",
                 body: "\(waitingCount) job\(waitingCount == 1 ? "" : "s") waiting for engine availability."
@@ -2412,6 +2415,10 @@ class BackgroundProcessingManager: ObservableObject {
     
     /// Reconciles jobs that are stuck in `processing` without a live task, or exceed timeout.
     func cleanupStaleJobs() async {
+        guard !isCleaningUpStaleJobs else { return }
+        isCleaningUpStaleJobs = true
+        defer { isCleaningUpStaleJobs = false }
+
         let processingTimeoutThreshold: TimeInterval = 3600 // 1 hour hard timeout
         let orphanedProcessingThreshold: TimeInterval = 120 // 2 minute grace period
         let now = Date()
@@ -2423,6 +2430,16 @@ class BackgroundProcessingManager: ObservableObject {
             let hasExternalTask = externalTaskHandles[job.id] != nil
 
             if timeSinceStart > processingTimeoutThreshold {
+                // Cancel any live task handles before marking the job as failed,
+                // so the underlying work actually stops and can't overwrite state later.
+                if isCurrentInProcess {
+                    currentTaskHandle?.cancel()
+                    currentTaskHandle = nil
+                    currentJob = nil
+                }
+                if let externalTask = externalTaskHandles.removeValue(forKey: job.id) {
+                    externalTask.cancel()
+                }
                 let failedJob = job.withStatus(.failed("Job timed out after \(Int(timeSinceStart/60)) minutes"))
                 await updateJobInMemoryAndCoreData(failedJob)
                 reconciledCount += 1
@@ -2441,8 +2458,8 @@ class BackgroundProcessingManager: ObservableObject {
             print("🧹 Reconciled \(reconciledCount) stale/orphaned processing job(s)")
             objectWillChange.send()
 
-            // Re-queue interrupted jobs after reconciliation and continue processing.
-            await resumeInterruptedJobs()
+            // Re-queue interrupted jobs after reconciliation (suppress notifications from periodic monitor).
+            await resumeInterruptedJobs(notify: false)
             if currentJob == nil && activeJobs.contains(where: { $0.status == .queued }) {
                 await processNextJob()
             }
