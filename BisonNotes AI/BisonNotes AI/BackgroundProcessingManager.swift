@@ -25,6 +25,9 @@ struct ProcessingJob: Identifiable, Codable {
     let status: JobProcessingStatus
     let progress: Double
     let startTime: Date
+    /// When the job actually began processing (transitioned from queued to processing).
+    /// Not persisted to Core Data — only valid for the current app session.
+    let processingStartTime: Date?
     let completionTime: Date?
     let chunks: [AudioChunk]?
     let error: String?
@@ -48,6 +51,7 @@ struct ProcessingJob: Identifiable, Codable {
         self.status = .queued
         self.progress = 0.0
         self.startTime = Date()
+        self.processingStartTime = nil
         self.completionTime = nil
         self.chunks = chunks
         self.error = nil
@@ -63,6 +67,7 @@ struct ProcessingJob: Identifiable, Codable {
             status: status,
             progress: self.progress,
             startTime: self.startTime,
+            processingStartTime: status == .processing ? (self.processingStartTime ?? Date()) : self.processingStartTime,
             completionTime: status == .completed || status.isCancelled || status.isError ? Date() : self.completionTime,
             chunks: self.chunks,
             error: status.errorMessage
@@ -79,13 +84,14 @@ struct ProcessingJob: Identifiable, Codable {
             status: self.status,
             progress: progress,
             startTime: self.startTime,
+            processingStartTime: self.processingStartTime,
             completionTime: self.completionTime,
             chunks: self.chunks,
             error: self.error
         )
     }
 
-    init(id: UUID, type: JobType, recordingPath: String, recordingName: String, modelName: String? = nil, status: JobProcessingStatus, progress: Double, startTime: Date, completionTime: Date?, chunks: [AudioChunk]?, error: String?) {
+    init(id: UUID, type: JobType, recordingPath: String, recordingName: String, modelName: String? = nil, status: JobProcessingStatus, progress: Double, startTime: Date, processingStartTime: Date? = nil, completionTime: Date?, chunks: [AudioChunk]?, error: String?) {
         self.id = id
         self.type = type
         self.recordingPath = recordingPath
@@ -94,6 +100,7 @@ struct ProcessingJob: Identifiable, Codable {
         self.status = status
         self.progress = progress
         self.startTime = startTime
+        self.processingStartTime = processingStartTime
         self.completionTime = completionTime
         self.chunks = chunks
         self.error = error
@@ -2430,12 +2437,15 @@ class BackgroundProcessingManager: ObservableObject {
         var reconciledCount = 0
 
         for job in activeJobs where job.status == .processing {
-            let timeSinceStart = now.timeIntervalSince(job.startTime)
+            // Use processingStartTime (when the job actually began processing) for timeout,
+            // falling back to startTime for jobs rehydrated from Core Data where it's unavailable.
+            let effectiveStart = job.processingStartTime ?? job.startTime
+            let timeSinceProcessingBegan = now.timeIntervalSince(effectiveStart)
             let isCurrentInProcess = currentJob?.id == job.id
             let hasExternalTask = externalTaskHandles[job.id] != nil
 
-            if timeSinceStart > processingTimeoutThreshold {
-                let timeoutMessage = "Job timed out after \(Int(timeSinceStart/60)) minutes"
+            if timeSinceProcessingBegan > processingTimeoutThreshold {
+                let timeoutMessage = "Job timed out after \(Int(timeSinceProcessingBegan/60)) minutes"
 
                 // Write the failure status first, before cancelling the task.
                 let failedJob = job.withStatus(.failed(timeoutMessage))
@@ -2458,7 +2468,7 @@ class BackgroundProcessingManager: ObservableObject {
             }
 
             // If no task is actively associated with this processing job, reconcile it out of active state.
-            if !isCurrentInProcess && !hasExternalTask && timeSinceStart > orphanedProcessingThreshold {
+            if !isCurrentInProcess && !hasExternalTask && timeSinceProcessingBegan > orphanedProcessingThreshold {
                 let interruptedJob = job.withStatus(.interrupted("Processing stopped unexpectedly"))
                 await updateJobInMemoryAndCoreData(interruptedJob)
                 reconciledCount += 1
