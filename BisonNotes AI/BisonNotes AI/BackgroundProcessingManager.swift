@@ -25,9 +25,34 @@ struct ProcessingJob: Identifiable, Codable {
     let status: JobProcessingStatus
     let progress: Double
     let startTime: Date
+    /// When the job actually began processing (transitioned from queued to processing).
+    /// Not persisted — only valid for the current app session.
+    let processingStartTime: Date?
     let completionTime: Date?
     let chunks: [AudioChunk]?
     let error: String?
+
+    // Exclude processingStartTime from Codable to avoid forward-compatibility issues
+    private enum CodingKeys: String, CodingKey {
+        case id, type, recordingPath, recordingName, modelName, status, progress,
+             startTime, completionTime, chunks, error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        type = try container.decode(JobType.self, forKey: .type)
+        recordingPath = try container.decode(String.self, forKey: .recordingPath)
+        recordingName = try container.decode(String.self, forKey: .recordingName)
+        modelName = try container.decodeIfPresent(String.self, forKey: .modelName)
+        status = try container.decode(JobProcessingStatus.self, forKey: .status)
+        progress = try container.decode(Double.self, forKey: .progress)
+        startTime = try container.decode(Date.self, forKey: .startTime)
+        processingStartTime = nil
+        completionTime = try container.decodeIfPresent(Date.self, forKey: .completionTime)
+        chunks = try container.decodeIfPresent([AudioChunk].self, forKey: .chunks)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+    }
 
     // Computed property to get absolute URL when needed
     var recordingURL: URL {
@@ -48,6 +73,7 @@ struct ProcessingJob: Identifiable, Codable {
         self.status = .queued
         self.progress = 0.0
         self.startTime = Date()
+        self.processingStartTime = nil
         self.completionTime = nil
         self.chunks = chunks
         self.error = nil
@@ -63,6 +89,7 @@ struct ProcessingJob: Identifiable, Codable {
             status: status,
             progress: self.progress,
             startTime: self.startTime,
+            processingStartTime: status == .processing ? Date() : nil,
             completionTime: status == .completed || status.isCancelled || status.isError ? Date() : self.completionTime,
             chunks: self.chunks,
             error: status.errorMessage
@@ -79,13 +106,14 @@ struct ProcessingJob: Identifiable, Codable {
             status: self.status,
             progress: progress,
             startTime: self.startTime,
+            processingStartTime: self.processingStartTime,
             completionTime: self.completionTime,
             chunks: self.chunks,
             error: self.error
         )
     }
 
-    init(id: UUID, type: JobType, recordingPath: String, recordingName: String, modelName: String? = nil, status: JobProcessingStatus, progress: Double, startTime: Date, completionTime: Date?, chunks: [AudioChunk]?, error: String?) {
+    init(id: UUID, type: JobType, recordingPath: String, recordingName: String, modelName: String? = nil, status: JobProcessingStatus, progress: Double, startTime: Date, processingStartTime: Date? = nil, completionTime: Date?, chunks: [AudioChunk]?, error: String?) {
         self.id = id
         self.type = type
         self.recordingPath = recordingPath
@@ -94,6 +122,7 @@ struct ProcessingJob: Identifiable, Codable {
         self.status = status
         self.progress = progress
         self.startTime = startTime
+        self.processingStartTime = processingStartTime
         self.completionTime = completionTime
         self.chunks = chunks
         self.error = error
@@ -265,6 +294,8 @@ class BackgroundProcessingManager: ObservableObject {
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var backgroundTaskStartTime: Date?
     private var backgroundTimeMonitor: Task<Void, Never>?
+    private var staleJobMonitor: Task<Void, Never>?
+    private var isCleaningUpStaleJobs = false
     private let chunkingService = AudioFileChunkingService()
     private let performanceOptimizer = PerformanceOptimizer.shared
     private let enhancedFileManager = EnhancedFileManager.shared
@@ -281,6 +312,7 @@ class BackgroundProcessingManager: ObservableObject {
         setupNotifications()
         setupAppLifecycleObservers()
         setupPerformanceOptimization()
+        startStaleJobMonitoring()
         
         // Resume interrupted jobs and start processing queued jobs on initialization
         Task {
@@ -293,10 +325,25 @@ class BackgroundProcessingManager: ObservableObject {
     
     deinit {
         NotificationCenter.default.removeObserver(self)
+        staleJobMonitor?.cancel() // Defensive: class is a singleton so deinit rarely fires
     }
     
     // MARK: - Performance Optimization Setup
     
+    /// Starts a periodic monitor that reconciles stale/orphaned processing jobs every 60s.
+    /// The initial 60s sleep is intentional — `init` already handles the first pass via `resumeInterruptedJobs()`.
+    private func startStaleJobMonitoring() {
+        staleJobMonitor?.cancel()
+        staleJobMonitor = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000) // 60 seconds
+                if !Task.isCancelled {
+                    await cleanupStaleJobs()
+                }
+            }
+        }
+    }
+
     private func setupPerformanceOptimization() {
         // Start periodic optimization
         Task {
@@ -638,8 +685,13 @@ class BackgroundProcessingManager: ObservableObject {
                 await updateFileMetadata(for: processingJob)
 
             } catch is CancellationError {
-                // Check if this was an interruption (background/termination) or user cancel
-                if let reason = cancellationReason {
+                // If the job was already moved to a terminal state (e.g., timed out by the
+                // stale job monitor), don't overwrite it — just clear the cancellation reason.
+                let currentStatus = activeJobs.first(where: { $0.id == nextJob.id })?.status
+                if let currentStatus, currentStatus.isTerminal {
+                    print("⏭️ Job already terminal (\(currentStatus.displayName)): \(nextJob.type.displayName) for \(nextJob.recordingName)")
+                    cancellationReason = nil
+                } else if let reason = cancellationReason {
                     let interruptedJob = processingJob.withStatus(.interrupted(reason))
                     await updateJob(interruptedJob)
                     print("⏸️ Job interrupted (\(reason)): \(nextJob.type.displayName) for \(nextJob.recordingName)")
@@ -662,24 +714,34 @@ class BackgroundProcessingManager: ObservableObject {
                 }
 
             } catch {
-                let failedJob = processingJob.withStatus(.failed(error.localizedDescription))
-                await updateJob(failedJob)
+                // Clear any stale cancellation reason so it doesn't leak to the next job.
+                cancellationReason = nil
 
-                print("❌ Job failed: \(nextJob.type.displayName) for \(nextJob.recordingName)")
-                print("   - Error: \(error)")
-                print("   - Localized description: \(error.localizedDescription)")
+                // If the job was already moved to a terminal state (e.g., timed out by the
+                // stale job monitor), don't overwrite it or attempt recovery.
+                let currentStatus = activeJobs.first(where: { $0.id == nextJob.id })?.status
+                if let currentStatus, currentStatus.isTerminal {
+                    print("⏭️ Job already terminal (\(currentStatus.displayName)): \(nextJob.type.displayName) for \(nextJob.recordingName) (error was: \(error.localizedDescription))")
+                } else {
+                    let failedJob = processingJob.withStatus(.failed(error.localizedDescription))
+                    await updateJob(failedJob)
 
-                // Save detailed error log
-                await saveErrorLog(for: processingJob, error: error)
+                    print("❌ Job failed: \(nextJob.type.displayName) for \(nextJob.recordingName)")
+                    print("   - Error: \(error)")
+                    print("   - Localized description: \(error.localizedDescription)")
 
-                // Error recovery
-                await handleJobFailure(processingJob, error: error)
+                    // Save detailed error log
+                    await saveErrorLog(for: processingJob, error: error)
 
-                // Send failure notification
-                await sendNotification(
-                    title: "Processing Failed",
-                    body: "Failed to process \(nextJob.recordingName): \(error.localizedDescription)"
-                )
+                    // Error recovery
+                    await handleJobFailure(processingJob, error: error)
+
+                    // Send failure notification
+                    await sendNotification(
+                        title: "Processing Failed",
+                        body: "Failed to process \(nextJob.recordingName): \(error.localizedDescription)"
+                    )
+                }
             }
 
             // Clear current job and task handle
@@ -1790,7 +1852,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     /// Resume jobs that were interrupted due to background limitations
-    private func resumeInterruptedJobs() async {
+    private func resumeInterruptedJobs(notify: Bool = true) async {
         // Find interrupted jobs (using the new .interrupted status)
         let interruptedJobs = activeJobs.filter { $0.status.isInterrupted }
 
@@ -1855,13 +1917,13 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
 
-        if resumedCount > 0 {
+        if notify && resumedCount > 0 {
             await sendNotification(
                 title: "Jobs Resumed",
                 body: "Resumed \(resumedCount) interrupted job\(resumedCount == 1 ? "" : "s")."
             )
         }
-        if waitingCount > 0 {
+        if notify && waitingCount > 0 {
             await sendNotification(
                 title: "Jobs Waiting",
                 body: "\(waitingCount) job\(waitingCount == 1 ? "" : "s") waiting for engine availability."
@@ -2027,7 +2089,9 @@ class BackgroundProcessingManager: ObservableObject {
         case "Queued":
             processingStatus = .queued
         case "Processing":
-            processingStatus = .processing
+            // A persisted "Processing" job means the previous app session ended before status was finalized.
+            // Mark as interrupted so it can be resumed instead of appearing permanently active.
+            processingStatus = .interrupted(jobEntry.error ?? "Recovered after app restart")
         case "Completed":
             processingStatus = .completed
         case "Failed":
@@ -2393,29 +2457,64 @@ class BackgroundProcessingManager: ObservableObject {
     
     // MARK: - Stale Job Cleanup
     
-    /// Cleans up jobs that have been stuck in processing state for too long
+    /// Reconciles jobs that are stuck in `processing` without a live task, or exceed timeout.
     func cleanupStaleJobs() async {
-        let staleThreshold: TimeInterval = 3600 // 1 hour
+        guard !isCleaningUpStaleJobs else { return }
+        isCleaningUpStaleJobs = true
+        defer { isCleaningUpStaleJobs = false }
+
+        let processingTimeoutThreshold: TimeInterval = 3600 // 1 hour hard timeout
+        let orphanedProcessingThreshold: TimeInterval = 120 // 2 minute grace period
         let now = Date()
-        var cleanedCount = 0
-        
-        for job in activeJobs {
-            let timeSinceStart = now.timeIntervalSince(job.startTime)
-            
-            // Check if job is stuck in processing state for too long
-            if job.status == .processing && timeSinceStart > staleThreshold {
-                // Cleanup stale job silently
-                
-                let failedJob = job.withStatus(.failed("Job timed out after \(Int(timeSinceStart/60)) minutes"))
+        var reconciledCount = 0
+
+        for job in activeJobs where job.status == .processing {
+            // Use processingStartTime (when the job actually began processing) for timeout,
+            // falling back to startTime for jobs rehydrated from Core Data where it's unavailable.
+            let effectiveStart = job.processingStartTime ?? job.startTime
+            let timeSinceProcessingBegan = now.timeIntervalSince(effectiveStart)
+            let isCurrentInProcess = currentJob?.id == job.id
+            let hasExternalTask = externalTaskHandles[job.id] != nil
+
+            if timeSinceProcessingBegan > processingTimeoutThreshold {
+                let timeoutMessage = "Job timed out after \(Int(timeSinceProcessingBegan/60)) minutes"
+
+                // Write the failure status first, before cancelling the task.
+                let failedJob = job.withStatus(.failed(timeoutMessage))
                 await updateJobInMemoryAndCoreData(failedJob)
-                cleanedCount += 1
+                reconciledCount += 1
+
+                // Cancel live task handles. Set cancellationReason so the task's
+                // CancellationError catch block doesn't overwrite .failed with .cancelled.
+                // Keep currentJob/currentTaskHandle bound — the task's natural exit path
+                // (after the do/catch) will clear them and schedule the next queued job,
+                // preventing overlapping execution if cancellation takes time to propagate.
+                if isCurrentInProcess {
+                    cancellationReason = timeoutMessage
+                    currentTaskHandle?.cancel()
+                }
+                if let externalTask = externalTaskHandles.removeValue(forKey: job.id) {
+                    externalTask.cancel()
+                }
+                continue
+            }
+
+            // If no task is actively associated with this processing job, reconcile it out of active state.
+            if !isCurrentInProcess && !hasExternalTask && timeSinceProcessingBegan > orphanedProcessingThreshold {
+                let interruptedJob = job.withStatus(.interrupted("Processing stopped unexpectedly"))
+                await updateJobInMemoryAndCoreData(interruptedJob)
+                reconciledCount += 1
             }
         }
-        
-        if cleanedCount > 0 {
-            // Update UI on main thread
-            await MainActor.run {
-                self.objectWillChange.send()
+
+        if reconciledCount > 0 {
+            print("🧹 Reconciled \(reconciledCount) stale/orphaned processing job(s)")
+            objectWillChange.send()
+
+            // Re-queue interrupted jobs after reconciliation (suppress notifications from periodic monitor).
+            await resumeInterruptedJobs(notify: false)
+            if currentJob == nil && activeJobs.contains(where: { $0.status == .queued }) {
+                await processNextJob()
             }
         }
     }
@@ -2426,37 +2525,26 @@ class BackgroundProcessingManager: ObservableObject {
         if let index = activeJobs.firstIndex(where: { $0.id == updatedJob.id }) {
             activeJobs[index] = updatedJob
         }
-        
-        // Update in Core Data
+
+        // Keep currentJob in sync so the UI reflects the update immediately
+        if updatedJob.id == currentJob?.id {
+            currentJob = updatedJob
+            processingStatus = updatedJob.status
+        }
+
+        // Update in Core Data — use displayName for status (title-case) to match
+        // convertToProcessingJob's expected format, and store error separately.
         if let jobEntry = coreDataManager.getProcessingJob(id: updatedJob.id) {
-            jobEntry.status = statusToString(updatedJob.status)
+            jobEntry.status = updatedJob.status.displayName
             jobEntry.error = updatedJob.error
             jobEntry.completionTime = updatedJob.completionTime
             jobEntry.progress = updatedJob.progress
-            
+
             do {
                 try coreDataManager.saveContext()
             } catch {
                 print("❌ Failed to update job in Core Data: \(error)")
             }
-        }
-    }
-    
-    /// Convert JobProcessingStatus to string for Core Data storage
-    private func statusToString(_ status: JobProcessingStatus) -> String {
-        switch status {
-        case .queued:
-            return "queued"
-        case .processing:
-            return "processing"
-        case .completed:
-            return "completed"
-        case .failed(let message):
-            return "failed:\(message)"
-        case .cancelled:
-            return "cancelled"
-        case .interrupted(let reason):
-            return "interrupted:\(reason)"
         }
     }
     
