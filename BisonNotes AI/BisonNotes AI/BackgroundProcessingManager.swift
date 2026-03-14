@@ -26,11 +26,33 @@ struct ProcessingJob: Identifiable, Codable {
     let progress: Double
     let startTime: Date
     /// When the job actually began processing (transitioned from queued to processing).
-    /// Not persisted to Core Data — only valid for the current app session.
+    /// Not persisted — only valid for the current app session.
     let processingStartTime: Date?
     let completionTime: Date?
     let chunks: [AudioChunk]?
     let error: String?
+
+    // Exclude processingStartTime from Codable to avoid forward-compatibility issues
+    private enum CodingKeys: String, CodingKey {
+        case id, type, recordingPath, recordingName, modelName, status, progress,
+             startTime, completionTime, chunks, error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        type = try container.decode(JobType.self, forKey: .type)
+        recordingPath = try container.decode(String.self, forKey: .recordingPath)
+        recordingName = try container.decode(String.self, forKey: .recordingName)
+        modelName = try container.decodeIfPresent(String.self, forKey: .modelName)
+        status = try container.decode(JobProcessingStatus.self, forKey: .status)
+        progress = try container.decode(Double.self, forKey: .progress)
+        startTime = try container.decode(Date.self, forKey: .startTime)
+        processingStartTime = nil
+        completionTime = try container.decodeIfPresent(Date.self, forKey: .completionTime)
+        chunks = try container.decodeIfPresent([AudioChunk].self, forKey: .chunks)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+    }
 
     // Computed property to get absolute URL when needed
     var recordingURL: URL {
@@ -67,7 +89,7 @@ struct ProcessingJob: Identifiable, Codable {
             status: status,
             progress: self.progress,
             startTime: self.startTime,
-            processingStartTime: status == .processing ? (self.processingStartTime ?? Date()) : self.processingStartTime,
+            processingStartTime: status == .processing ? Date() : nil,
             completionTime: status == .completed || status.isCancelled || status.isError ? Date() : self.completionTime,
             chunks: self.chunks,
             error: status.errorMessage
@@ -692,24 +714,34 @@ class BackgroundProcessingManager: ObservableObject {
                 }
 
             } catch {
-                let failedJob = processingJob.withStatus(.failed(error.localizedDescription))
-                await updateJob(failedJob)
+                // Clear any stale cancellation reason so it doesn't leak to the next job.
+                cancellationReason = nil
 
-                print("❌ Job failed: \(nextJob.type.displayName) for \(nextJob.recordingName)")
-                print("   - Error: \(error)")
-                print("   - Localized description: \(error.localizedDescription)")
+                // If the job was already moved to a terminal state (e.g., timed out by the
+                // stale job monitor), don't overwrite it or attempt recovery.
+                let currentStatus = activeJobs.first(where: { $0.id == nextJob.id })?.status
+                if let currentStatus, currentStatus.isTerminal {
+                    print("⏭️ Job already terminal (\(currentStatus.displayName)): \(nextJob.type.displayName) for \(nextJob.recordingName) (error was: \(error.localizedDescription))")
+                } else {
+                    let failedJob = processingJob.withStatus(.failed(error.localizedDescription))
+                    await updateJob(failedJob)
 
-                // Save detailed error log
-                await saveErrorLog(for: processingJob, error: error)
+                    print("❌ Job failed: \(nextJob.type.displayName) for \(nextJob.recordingName)")
+                    print("   - Error: \(error)")
+                    print("   - Localized description: \(error.localizedDescription)")
 
-                // Error recovery
-                await handleJobFailure(processingJob, error: error)
+                    // Save detailed error log
+                    await saveErrorLog(for: processingJob, error: error)
 
-                // Send failure notification
-                await sendNotification(
-                    title: "Processing Failed",
-                    body: "Failed to process \(nextJob.recordingName): \(error.localizedDescription)"
-                )
+                    // Error recovery
+                    await handleJobFailure(processingJob, error: error)
+
+                    // Send failure notification
+                    await sendNotification(
+                        title: "Processing Failed",
+                        body: "Failed to process \(nextJob.recordingName): \(error.localizedDescription)"
+                    )
+                }
             }
 
             // Clear current job and task handle
@@ -2493,37 +2525,26 @@ class BackgroundProcessingManager: ObservableObject {
         if let index = activeJobs.firstIndex(where: { $0.id == updatedJob.id }) {
             activeJobs[index] = updatedJob
         }
-        
-        // Update in Core Data
+
+        // Keep currentJob in sync so the UI reflects the update immediately
+        if updatedJob.id == currentJob?.id {
+            currentJob = updatedJob
+            processingStatus = updatedJob.status
+        }
+
+        // Update in Core Data — use displayName for status (title-case) to match
+        // convertToProcessingJob's expected format, and store error separately.
         if let jobEntry = coreDataManager.getProcessingJob(id: updatedJob.id) {
-            jobEntry.status = statusToString(updatedJob.status)
+            jobEntry.status = updatedJob.status.displayName
             jobEntry.error = updatedJob.error
             jobEntry.completionTime = updatedJob.completionTime
             jobEntry.progress = updatedJob.progress
-            
+
             do {
                 try coreDataManager.saveContext()
             } catch {
                 print("❌ Failed to update job in Core Data: \(error)")
             }
-        }
-    }
-    
-    /// Convert JobProcessingStatus to string for Core Data storage
-    private func statusToString(_ status: JobProcessingStatus) -> String {
-        switch status {
-        case .queued:
-            return "queued"
-        case .processing:
-            return "processing"
-        case .completed:
-            return "completed"
-        case .failed(let message):
-            return "failed:\(message)"
-        case .cancelled:
-            return "cancelled"
-        case .interrupted(let reason):
-            return "interrupted:\(reason)"
         }
     }
     
