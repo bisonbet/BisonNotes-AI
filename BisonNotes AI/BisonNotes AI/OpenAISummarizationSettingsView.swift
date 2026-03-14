@@ -782,13 +782,13 @@ struct OpenAICompatibleSettingsView: View {
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 4) {
-                            ForEach(availableModelIds.prefix(10), id: \.self) { modelId in
+                            ForEach(availableModelIds, id: \.self) { modelId in
                                 Button(action: {
                                     selectedModel = modelId
                                 }) {
                                     HStack {
                                         Text(modelId)
-                                            .font(.caption)
+                                            .font(.subheadline)
                                             .foregroundColor(selectedModel == modelId ? .blue : .primary)
                                         Spacer()
                                         if selectedModel == modelId {
@@ -799,12 +799,6 @@ struct OpenAICompatibleSettingsView: View {
                                     }
                                     .padding(.vertical, 4)
                                 }
-                            }
-
-                            if availableModelIds.count > 10 {
-                                Text("... and \(availableModelIds.count - 10) more (scroll or type below)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
                             }
                         }
                     }

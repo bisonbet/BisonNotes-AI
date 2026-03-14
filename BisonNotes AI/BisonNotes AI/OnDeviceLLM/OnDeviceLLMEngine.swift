@@ -249,7 +249,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 // Check if inference was interrupted by app entering background
                 if service.wasInterruptedByBackground {
                     print("[OnDeviceLLMEngine] Inference interrupted by app backgrounding (GPU not available)")
-                    throw OnDeviceLLMError.inferenceFailed("On-device AI requires the app to stay in the foreground. iOS does not allow GPU processing in the background. Please keep the app open and try again.")
+                    throw OnDeviceLLMError.inferenceFailed("On-device AI needs the app to stay open. Please return to the app and try again.")
                 }
 
                 if let metrics = service.lastMetrics {
@@ -343,7 +343,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 
                 if remaining < 10 { // Less than 10 seconds remaining
                     print("[OnDeviceLLMEngine] Background time critical (\(remaining)s), aborting to prevent crash")
-                    throw OnDeviceLLMError.inferenceFailed("Insufficient background time remaining")
+                    throw OnDeviceLLMError.inferenceFailed("On-device AI needs the app to stay open. Please return to the app and try again.")
                 }
             }
 
@@ -353,7 +353,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 // Check if chunk processing was interrupted by backgrounding
                 if service.wasInterruptedByBackground {
                     print("[OnDeviceLLMEngine] Chunk \(index + 1) interrupted by app backgrounding")
-                    throw OnDeviceLLMError.inferenceFailed("On-device AI requires the app to stay in the foreground. iOS does not allow GPU processing in the background. Please keep the app open and try again.")
+                    throw OnDeviceLLMError.inferenceFailed("On-device AI needs the app to stay open. Please return to the app and try again.")
                 }
 
                 allSummaries.append(chunkResult.summary)
@@ -628,7 +628,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             case .downloadFailed(let message):
                 return SummarizationError.processingFailed(reason: "Model download failed: \(message)")
             case .inferenceFailed(let message):
-                return SummarizationError.processingFailed(reason: "Inference failed: \(message)")
+                return SummarizationError.processingFailed(reason: message)
             case .insufficientDiskSpace(let required):
                 return SummarizationError.processingFailed(reason: "Insufficient disk space. Need \(formatSize(required)) free.")
             case .networkUnavailable:
