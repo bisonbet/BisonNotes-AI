@@ -3275,10 +3275,18 @@ extension iCloudStorageManager {
         existingSummaryIds: Set<UUID>,
         database: CKDatabase
     ) async throws -> Int {
-        // Try the paginated query first.
-        var cloudSummaries = try await fetchAllSummariesFromCloud(using: database)
+        // Try the paginated query first. Catch any thrown errors (e.g. non-queryable
+        // schema fields) so we can fall through to the schema-safe path instead of
+        // propagating the error to the call site where try? would silently return 0.
+        var cloudSummaries: [EnhancedSummaryData]
+        do {
+            cloudSummaries = try await fetchAllSummariesFromCloud(using: database)
+        } catch {
+            print("☁️ Query threw error (\(error.localizedDescription)), trying schema-safe record discovery...")
+            cloudSummaries = []
+        }
 
-        // If the query returned nothing, it may be a non-queryable schema issue.
+        // If the query returned nothing or threw, it may be a non-queryable schema issue.
         // Fall back to the schema-safe record-operation approach which uses
         // UUID scanning + zone change tracking instead of CKQuery.
         if cloudSummaries.isEmpty {
