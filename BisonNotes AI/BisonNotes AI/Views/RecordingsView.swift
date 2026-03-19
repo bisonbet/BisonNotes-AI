@@ -16,6 +16,7 @@ struct RecordingsView: View {
     @EnvironmentObject var transcriptImportManager: TranscriptImportManager
     @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
     @StateObject private var textDocumentPickerCoordinator = DocumentPickerCoordinator()
+    @StateObject private var videoPickerCoordinator = DocumentPickerCoordinator()
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [AudioRecordingFile] = []
     @State private var showingRecordingsList = false
@@ -152,6 +153,33 @@ struct RecordingsView: View {
                         }
 
                         Button(action: {
+                            videoPickerCoordinator.selectVideoFiles { urls in
+                                if !urls.isEmpty {
+                                    Task {
+                                        await importManager.importAudioFiles(from: urls)
+                                    }
+                                }
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "video.badge.plus")
+                                    .font(.title3)
+                                Text("Import Video")
+                                    .font(.title3)
+                                    .fontWeight(.semibold)
+                            }
+                            .foregroundColor(.orange)
+                            .padding()
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.orange, lineWidth: 2)
+                                    .background(Color.orange.opacity(0.1))
+                            )
+                            .padding(.horizontal, 40)
+                        }
+
+                        Button(action: {
                             // Trigger document picker for text files
                             textDocumentPickerCoordinator.selectTextFiles { urls in
                                 if !urls.isEmpty {
@@ -203,6 +231,31 @@ struct RecordingsView: View {
                                             .foregroundColor(.green)
                                     }
                                 }
+
+                                // Live transcript display
+                                if !recorderVM.liveTranscriptText.isEmpty {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "waveform")
+                                                .font(.caption)
+                                                .foregroundColor(.accentColor)
+                                            Text("Live Transcript")
+                                                .font(.caption)
+                                                .fontWeight(.semibold)
+                                                .foregroundColor(.accentColor)
+                                        }
+                                        Text(recorderVM.liveTranscriptText)
+                                            .font(.caption)
+                                            .foregroundColor(.primary)
+                                            .multilineTextAlignment(.leading)
+                                            .lineLimit(4)
+                                    }
+                                    .padding(10)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color(.systemGray6))
+                                    .cornerRadius(10)
+                                    .padding(.horizontal, 40)
+                                }
                             }
                         }
                     }
@@ -222,6 +275,9 @@ struct RecordingsView: View {
             }
             .sheet(isPresented: $textDocumentPickerCoordinator.isShowingPicker) {
                 TextDocumentPicker(isPresented: $textDocumentPickerCoordinator.isShowingPicker, coordinator: textDocumentPickerCoordinator)
+            }
+            .sheet(isPresented: $videoPickerCoordinator.isShowingPicker) {
+                VideoDocumentPicker(isPresented: $videoPickerCoordinator.isShowingPicker, coordinator: videoPickerCoordinator)
             }
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()

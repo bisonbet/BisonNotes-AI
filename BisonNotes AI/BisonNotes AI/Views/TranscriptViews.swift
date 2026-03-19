@@ -20,6 +20,8 @@ struct TranscriptsView: View {
     @State private var selectedRecording: RecordingEntry?
     @State private var isGeneratingTranscript = false
     @State private var generatingTranscriptRecording: RecordingEntry?
+    @State private var showingAudioCleanupPrompt = false
+    @State private var recordingPendingTranscription: RecordingEntry?
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
     @State private var showingTranscriptionCompletionAlert = false
@@ -48,6 +50,29 @@ struct TranscriptsView: View {
         }
         .sheet(item: $selectedLocationData) { locationData in
             LocationDetailView(locationData: locationData)
+        }
+        .confirmationDialog(
+            "Clean Audio Before Transcribing?",
+            isPresented: $showingAudioCleanupPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Clean & Transcribe") {
+                if let recording = recordingPendingTranscription {
+                    recordingPendingTranscription = nil
+                    proceedWithTranscription(for: recording, cleanFirst: true)
+                }
+            }
+            Button("Transcribe As-Is") {
+                if let recording = recordingPendingTranscription {
+                    recordingPendingTranscription = nil
+                    proceedWithTranscription(for: recording, cleanFirst: false)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                recordingPendingTranscription = nil
+            }
+        } message: {
+            Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
         }
         .alert("Transcription Complete", isPresented: $showingTranscriptionCompletionAlert) {
             Button("OK") {
@@ -724,31 +749,59 @@ struct TranscriptsView: View {
     private func generateTranscript(for recording: RecordingEntry) {
         guard !isGeneratingTranscript else { return }
 
-        isGeneratingTranscript = true
-        generatingTranscriptRecording = recording // Track which recording is being generated
+        // Show the audio cleanup prompt before starting transcription
+        recordingPendingTranscription = recording
+        showingAudioCleanupPrompt = true
+    }
 
-        // Proceed directly with transcription - each engine handles its own permissions
-        self.performEnhancedTranscription(for: recording)
+    private func proceedWithTranscription(for recording: RecordingEntry, cleanFirst: Bool) {
+        isGeneratingTranscript = true
+        generatingTranscriptRecording = recording
+
+        if cleanFirst {
+            Task {
+                guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
+                    await MainActor.run { isGeneratingTranscript = false; generatingTranscriptRecording = nil }
+                    return
+                }
+                do {
+                    let cleanedURL = try await AudioCleanupService.shared.cleanAudio(at: recordingURL)
+                    print("🎛️ Using cleaned audio for transcription: \(cleanedURL.lastPathComponent)")
+                    self.performEnhancedTranscription(for: recording, audioURL: cleanedURL, cleanupURL: cleanedURL)
+                } catch {
+                    print("⚠️ Audio cleanup failed, falling back to original: \(error)")
+                    self.performEnhancedTranscription(for: recording)
+                }
+            }
+        } else {
+            self.performEnhancedTranscription(for: recording)
+        }
     }
     
-    private func performEnhancedTranscription(for recording: RecordingEntry) {
+    private func performEnhancedTranscription(for recording: RecordingEntry, audioURL overrideURL: URL? = nil, cleanupURL: URL? = nil) {
         // Progress is now shown inline on the button, no modal needed
-        
+
         Task {
             // Use the selected transcription engine
             let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
-            
+
             do {
-                // Get the absolute URL using the coordinator
-                guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
-                    print("❌ Invalid recording URL: \(recording.recordingURL ?? "nil")")
-                    throw NSError(domain: "Transcription", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid recording URL"])
+                // Use the cleaned URL if provided, otherwise resolve from Core Data
+                let recordingURL: URL
+                if let override = overrideURL {
+                    recordingURL = override
+                } else {
+                    guard let resolved = appCoordinator.getAbsoluteURL(for: recording) else {
+                        print("❌ Invalid recording URL: \(recording.recordingURL ?? "nil")")
+                        throw NSError(domain: "Transcription", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid recording URL"])
+                    }
+                    recordingURL = resolved
                 }
-                
+
                 // Start transcription job through BackgroundProcessingManager
                 try await backgroundProcessingManager.startTranscriptionJob(
                     recordingURL: recordingURL,
-                                            recordingName: recording.recordingName ?? "Unknown Recording",
+                    recordingName: recording.recordingName ?? "Unknown Recording",
                     engine: selectedEngine
                 )
                 
@@ -763,10 +816,16 @@ struct TranscriptsView: View {
                 // Fallback to direct transcription if background processing fails
                 print("🔄 Falling back to direct transcription...")
                 do {
-                    // Get recording URL from the recording parameter
-                    guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
-                        print("❌ Invalid recording URL for fallback transcription")
-                        return
+                    // Use override URL (cleaned audio) if available, otherwise resolve from Core Data
+                    let recordingURL: URL
+                    if let override = overrideURL {
+                        recordingURL = override
+                    } else {
+                        guard let resolved = appCoordinator.getAbsoluteURL(for: recording) else {
+                            print("❌ Invalid recording URL for fallback transcription")
+                            return
+                        }
+                        recordingURL = resolved
                     }
                     
                     let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recordingURL, using: selectedEngine)
@@ -816,6 +875,11 @@ struct TranscriptsView: View {
                 }
             }
             
+            // Clean up any temporary cleaned audio file
+            if let cleanupURL = cleanupURL {
+                await AudioCleanupService.shared.removeTempFile(at: cleanupURL)
+            }
+
             await MainActor.run {
                 self.isGeneratingTranscript = false
                 self.generatingTranscriptRecording = nil

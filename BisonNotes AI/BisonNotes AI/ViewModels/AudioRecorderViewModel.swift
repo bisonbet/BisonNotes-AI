@@ -23,6 +23,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	@Published var isPlaying = false
 	@Published var recordingTime: TimeInterval = 0
 	@Published var playingTime: TimeInterval = 0
+	@Published var liveTranscriptText: String = ""
 	@Published var availableInputs: [AVAudioSessionPortDescription] = []
 	@Published var selectedInput: AVAudioSessionPortDescription?
 	@Published var recordingURL: URL?
@@ -50,6 +51,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var routeChangeObserver: NSObjectProtocol?
 	var willEnterForegroundObserver: NSObjectProtocol?
 	let preferredInputDefaultsKey = "PreferredAudioInputUID"
+
+	// Live transcription service (used when live transcription setting is enabled)
+	var liveTranscriptionService: LiveTranscriptionService?
+	var isUsingLiveTranscription = false
 
 	// Flag to prevent duplicate recording creation
 	var recordingBeingProcessed = false
@@ -460,6 +465,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		// Capture current location before starting recording
 		captureCurrentLocation()
 
+		// Check if live transcription mode is enabled
+		let useLiveTranscription = UserDefaults.standard.bool(forKey: "enableLiveTranscription")
+
+		if useLiveTranscription {
+			setupLiveTranscriptionRecording(url: audioFilename)
+			return
+		}
+
 		// Use Whisper-optimized quality for all recordings
 		let selectedQuality = AudioQuality.whisperOptimized
 		let settings = selectedQuality.settings
@@ -508,6 +521,29 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	func stopRecording() {
+		// Handle live transcription path
+		if isUsingLiveTranscription, let service = liveTranscriptionService {
+			isUsingLiveTranscription = false
+			liveTranscriptionService = nil
+			isRecording = false
+			stopRecordingTimer()
+			liveTranscriptText = ""
+
+			Task {
+				let (url, transcript) = await service.stop()
+				if let savedURL = url {
+					await MainActor.run { self.recordingURL = savedURL }
+					await saveLiveTranscriptionRecording(url: savedURL, transcript: transcript)
+				}
+				try? await enhancedAudioSessionManager.deactivateSession()
+			}
+
+			stopBackgroundTimeMonitoring()
+			endBackgroundTask()
+			notifyWatchOfRecordingStateChange()
+			return
+		}
+
 		audioRecorder?.stop()
 		isRecording = false
 		stopRecordingTimer()
@@ -547,15 +583,108 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		notifyWatchOfRecordingStateChange()
 	}
 
+	/// Saves a recording and optional transcript created via live transcription mode.
+	@MainActor
+	private func saveLiveTranscriptionRecording(url: URL, transcript: String) async {
+		saveLocationData(for: url)
+
+		guard let workflowManager = workflowManager else {
+			print("❌ WorkflowManager not set - live transcription recording not saved!")
+			return
+		}
+
+		let fileSize = getFileSize(url: url)
+		let duration = getRecordingDuration(url: url)
+		let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+		let displayName = generateAppRecordingDisplayName()
+
+		let recordingId = workflowManager.createRecording(
+			url: url,
+			name: displayName,
+			date: Date(),
+			fileSize: fileSize,
+			duration: duration,
+			quality: quality,
+			locationData: recordingLocationSnapshot()
+		)
+
+		print("✅ Live transcription recording saved, ID: \(recordingId)")
+
+		// Save the live transcript if we have content
+		if !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+		   let coordinator = appCoordinator {
+			let segment = TranscriptSegment(
+				speaker: "Speaker 1",
+				text: transcript,
+				startTime: 0,
+				endTime: duration
+			)
+			_ = coordinator.addTranscript(
+				for: recordingId,
+				segments: [segment],
+				speakerMappings: [:],
+				engine: .fluidAudio,
+				processingTime: duration,
+				confidence: 0.9
+			)
+			print("✅ Live transcript saved for recording \(recordingId)")
+		}
+
+		resetRecordingLocation()
+		endBackgroundTask()
+	}
+
+	// MARK: - Live Transcription Recording
+
+	func setupLiveTranscriptionRecording(url: URL) {
+		let service = LiveTranscriptionService()
+		liveTranscriptionService = service
+		isUsingLiveTranscription = true
+
+		Task { @MainActor in
+			do {
+				try service.start(finalURL: url)
+				self.isRecording = true
+				self.recordingTime = 0
+				self.lastCheckpointTime = Date()
+				self.startRecordingTimer()
+				self.notifyWatchOfRecordingStateChange()
+				print("✅ Live transcription recording started")
+			} catch {
+				self.isUsingLiveTranscription = false
+				self.liveTranscriptionService = nil
+				self.errorMessage = "Live transcription unavailable: \(error.localizedDescription). Starting standard recording."
+				// Fall back to standard recording
+				let selectedQuality = AudioQuality.whisperOptimized
+				let settings = selectedQuality.settings
+				do {
+					self.audioRecorder = try AVAudioRecorder(url: url, settings: settings)
+					self.audioRecorder?.delegate = self
+					self.audioRecorder?.isMeteringEnabled = true
+					self.audioRecorder?.record()
+					self.isRecording = true
+					self.recordingTime = 0
+					self.lastCheckpointTime = Date()
+					self.startRecordingTimer()
+					self.notifyWatchOfRecordingStateChange()
+				} catch {
+					self.errorMessage = "Failed to start recording: \(error.localizedDescription)"
+				}
+			}
+		}
+	}
+
 	// MARK: - Timer Management
 
 	func startRecordingTimer() {
 		recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
 			DispatchQueue.main.async {
 				guard let self = self else { return }
-				// Failsafe: if the underlying recorder stopped, try to resume before giving up
+				// Failsafe: if the underlying AVAudioRecorder stopped, try to resume before giving up.
 				// This also runs during backgrounding — a declined call can stop the recorder
 				// while the app is in the background, and we need to detect that.
+				// NOTE: In live transcription mode, audioRecorder is nil so this block is
+				// safely skipped — LiveTranscriptionService manages its own AVAudioEngine.
 				if self.isRecording, let recorder = self.audioRecorder, !recorder.isRecording {
 					if self.isInInterruption {
 						// We're in an interruption - wait for it to end rather than trying to resume now
@@ -586,6 +715,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					self.performSmartCheckpoint()
 				}
 				self.recordingTime += 1
+
+				// Sync live transcript text when live transcription is active
+				if self.isUsingLiveTranscription, let service = self.liveTranscriptionService {
+					self.liveTranscriptText = service.liveTranscript
+				}
 
 				// Phase 3: Check recording limits every 10 seconds (reduces overhead)
 				if Int(self.recordingTime) % 10 == 0 {

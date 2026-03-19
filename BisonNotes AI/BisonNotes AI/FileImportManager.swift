@@ -23,6 +23,7 @@ class FileImportManager: NSObject, ObservableObject {
     @Published var showingImportAlert = false
     
     private let supportedExtensions = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
+    private let supportedVideoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
     
@@ -82,8 +83,15 @@ class FileImportManager: NSObject, ObservableObject {
     }
     
     private func importAudioFile(from sourceURL: URL) async throws {
-        // Validate file extension
         let fileExtension = sourceURL.pathExtension.lowercased()
+
+        // Route video files through audio extraction
+        if supportedVideoExtensions.contains(fileExtension) {
+            try await importVideoFile(from: sourceURL)
+            return
+        }
+
+        // Validate audio file extension
         guard supportedExtensions.contains(fileExtension) else {
             throw ImportError.unsupportedFormat(fileExtension)
         }
@@ -124,6 +132,41 @@ class FileImportManager: NSObject, ObservableObject {
         print("✅ Successfully imported: \(filename)")
     }
     
+    private func importVideoFile(from sourceURL: URL) async throws {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let baseName = sourceURL.deletingPathExtension().lastPathComponent
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let timestamp = formatter.string(from: Date())
+        let audioFilename = "\(baseName)_\(timestamp).m4a"
+        let destinationURL = documentsPath.appendingPathComponent(audioFilename)
+
+        let asset = AVURLAsset(url: sourceURL)
+
+        // Verify the asset has an audio track
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        guard !audioTracks.isEmpty else {
+            throw ImportError.invalidAudioFile("Video contains no audio track")
+        }
+
+        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+            throw ImportError.copyFailed("Could not create audio export session")
+        }
+
+        exportSession.outputURL = destinationURL
+        exportSession.outputFileType = .m4a
+
+        try await exportSession.export(to: destinationURL, as: .m4a)
+
+        // Validate the extracted audio
+        try validateAudioFile(at: destinationURL)
+
+        // Create Core Data entry
+        try await createRecordingEntryForImportedFile(at: destinationURL)
+
+        print("✅ Successfully extracted audio from video: \(audioFilename)")
+    }
+
     private func generateUniqueFilename(for sourceURL: URL) -> String {
         let originalName = sourceURL.deletingPathExtension().lastPathComponent
         let fileExtension = sourceURL.pathExtension
@@ -303,7 +346,7 @@ enum ImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat(let format):
-            return "Unsupported audio format: \(format). Supported formats: m4a, mp3, wav, caf, aiff"
+            return "Unsupported format: \(format). Supported audio: m4a, mp3, wav, caf, aiff. Supported video: mp4, mov, m4v"
         case .fileAlreadyExists(let filename):
             return "File already exists: \(filename)"
         case .invalidAudioFile(let reason):

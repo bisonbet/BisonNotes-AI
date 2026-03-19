@@ -10,6 +10,7 @@ import SwiftUI
 struct TranscriptionSettingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @AppStorage("showTranscriptionProgress") private var showTranscriptionProgress: Bool = true
+    @AppStorage("enableLiveTranscription") private var enableLiveTranscription: Bool = false
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = TranscriptionEngine.whisperKit.rawValue
     @AppStorage(WhisperKitModelInfo.SettingsKeys.enableWhisperKit) private var enableWhisperKit = false
 
@@ -28,6 +29,7 @@ struct TranscriptionSettingsView: View {
             Form {
                 engineSection
                 selectedEngineConfigurationSection
+                liveTranscriptionSection
                 displayOptionsSection
                 tipsSection
                 resetSection
@@ -279,6 +281,30 @@ struct TranscriptionSettingsView: View {
         }
     }
     
+    private var liveTranscriptionSection: some View {
+        Section {
+            Toggle("Live Transcription (On-Device)", isOn: $enableLiveTranscription)
+                .onChange(of: enableLiveTranscription) { _, enabled in
+                    if enabled {
+                        Task {
+                            let granted = await LiveTranscriptionService.requestPermission()
+                            if !granted {
+                                await MainActor.run { enableLiveTranscription = false }
+                            }
+                        }
+                    }
+                }
+
+            if enableLiveTranscription {
+                Text("Transcribes speech in real time as you record, using on-device Apple speech recognition. The transcript is saved automatically when you stop recording.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        } header: {
+            Text("Live Transcription")
+        }
+    }
+
     private var displayOptionsSection: some View {
         Section {
             Toggle("Show Transcription Progress", isOn: $showTranscriptionProgress)

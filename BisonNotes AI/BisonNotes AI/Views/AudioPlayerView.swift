@@ -13,18 +13,29 @@ struct AudioPlayerView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var duration: TimeInterval = 0
-    
+    @State private var showingShareSheet = false
+
     var body: some View {
         VStack(spacing: 20) {
+            HStack {
+                Spacer()
+                Button(action: { showingShareSheet = true }) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.title3)
+                        .foregroundColor(.accentColor)
+                }
+                .padding(.trailing)
+            }
+
             Text("Audio Player")
                 .font(.largeTitle)
                 .fontWeight(.bold)
                 .foregroundColor(.primary)
-            
+
             Text("Recording: \(recording.name)")
                 .font(.title2)
                 .multilineTextAlignment(.center)
-            
+
             Text("Date: \(recording.dateString)")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
@@ -102,6 +113,9 @@ struct AudioPlayerView: View {
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
+        .sheet(isPresented: $showingShareSheet) {
+            ShareSheet(activityItems: [recording.url])
+        }
         .onAppear {
             print("🎵 AudioPlayerView appeared for: \(recording.name)")
             setupAudio()
