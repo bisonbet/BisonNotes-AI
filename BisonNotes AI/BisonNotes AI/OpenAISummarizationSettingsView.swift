@@ -759,7 +759,7 @@ struct OpenAICompatibleSettingsView: View {
             if useDynamicModels {
                 Text("Enable to discover models from your API endpoint automatically. If your provider supports the /models endpoint (like LiteLLM, vLLM, LocalAI), it will list all available models.")
             } else {
-                Text("Enter the model ID manually. Common examples: gpt-4o, claude-3-5-sonnet-20241022, llama-3.2-90b, gemini-2.0-flash, deepseek-chat, etc.")
+                Text("Enter the model ID manually. Common examples: gpt-4o, claude-sonnet-4-5-20250929, llama-4-maverick, gemini-2.5-flash, deepseek-chat, etc.")
             }
         }
     }
@@ -837,7 +837,7 @@ struct OpenAICompatibleSettingsView: View {
                 .font(.subheadline)
                 .fontWeight(.medium)
 
-            TextField("e.g., gpt-4o, claude-3-5-sonnet, llama-3.2-90b", text: $selectedModel)
+            TextField("e.g., gpt-4o, claude-sonnet-4-5, llama-4-maverick", text: $selectedModel)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .autocapitalization(.none)
                 .disableAutocorrection(true)

@@ -58,7 +58,7 @@ struct SummariesView: View {
                     }
                     
                     // Configure the transcription manager with the selected engine
-                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
+                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
                     enhancedTranscriptionManager.updateTranscriptionEngine(selectedEngine)
                     
                     // Show first-time iCloud prompt if not seen before and there are summaries

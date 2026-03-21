@@ -2077,7 +2077,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Convert job type string back to JobType enum
         let type: JobType
         if jobType.contains("Transcription") {
-            let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
+            let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
             type = .transcription(engine: engine)
         } else {
             type = .summarization(engine: jobEntry.engine ?? "On-Device AI")

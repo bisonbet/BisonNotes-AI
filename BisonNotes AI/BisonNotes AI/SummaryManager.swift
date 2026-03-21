@@ -954,6 +954,8 @@ class SummaryManager: ObservableObject {
     // MARK: - Enhanced Summary Generation
     
     func generateEnhancedSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator? = nil, engineName: String? = nil) async throws -> EnhancedSummaryData {
+        // Sync engine from settings before logging to avoid "No current engine set" warning
+        syncCurrentEngineWithSettings()
         AppLogger.shared.info("Starting enhanced summary generation using \(getCurrentEngineName())", category: "SummaryManager")
         
         let startTime = Date()
@@ -1011,9 +1013,6 @@ class SummaryManager: ObservableObject {
         beginSummaryBackgroundTask()
         defer { endSummaryBackgroundTask() }
 
-        // Ensure we're using the currently selected engine from settings
-        syncCurrentEngineWithSettings()
-        
         let engineToUse: SummarizationEngine?
 
         if let engineName = engineName, let engine = availableEngines[engineName] {

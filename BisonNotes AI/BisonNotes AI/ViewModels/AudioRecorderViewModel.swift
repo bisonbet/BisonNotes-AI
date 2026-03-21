@@ -637,11 +637,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// MARK: - Live Transcription Recording
 
 	func setupLiveTranscriptionRecording(url: URL) {
-		let service = LiveTranscriptionService()
-		liveTranscriptionService = service
-		isUsingLiveTranscription = true
-
 		Task { @MainActor in
+			let service = LiveTranscriptionService()
+			self.liveTranscriptionService = service
+			self.isUsingLiveTranscription = true
+
 			do {
 				try service.start(finalURL: url)
 				self.isRecording = true

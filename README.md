@@ -43,7 +43,7 @@ The project uses Swift Package Manager for dependency management. Major dependen
 - **llama.cpp**: Embedded as a pre-compiled xcframework (`Frameworks/llama.xcframework`) for Metal-accelerated on-device LLM inference
   - GitHub: https://github.com/ggerganov/llama.cpp
   - Supports GGUF model format with Q4_K_M quantization (optimal for mobile)
-  - Available models: Gemma 3n E4B/E2B, Granite 4.0 H Tiny/Micro, Ministral 3B, Qwen3 4B/1.7B, LFM 2.5 1.2B
+  - Available models: Gemma 3n E4B/E2B, Granite 4.0 H Tiny/Micro, Ministral 3B, LFM 2.5 1.2B, Qwen3.5 2B/4B
   - Models filtered by device RAM (6GB+ for most, 8GB+ for larger models)
 
 ### **UI & Formatting**
@@ -220,8 +220,8 @@ The on-device AI feature enables completely private, offline AI processing:
 
 - **Experimental Models** (enable in settings):
   - **4GB+ RAM**: LFM 2.5 1.2B (731 MB) - Fast, minimal summaries (summary only)
-  - **4GB+ RAM**: Qwen3 1.7B (1.1 GB) - Latest Qwen3 model (summary only)
-  - **8GB+ RAM**: Qwen3 4B (2.7 GB) - Excellent detail extraction
+  - **6GB+ RAM**: Qwen3.5 2B (1.3 GB) - Latest Qwen3.5 model (summary only)
+  - **8GB+ RAM**: Qwen3.5 4B (2.7 GB) - Excellent detail extraction
 
 - **Quantization**: Q4_K_M only (optimal balance of quality and memory usage)
 - **Storage**: Models stored in Application Support (731 MB - 4.5 GB each)

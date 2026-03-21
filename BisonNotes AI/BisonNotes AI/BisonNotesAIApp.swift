@@ -125,14 +125,14 @@ struct BisonNotesAIApp: App {
 
         // Check if user was using Apple Transcription
         if currentTranscription == "Apple Transcription" {
-            // Migrate to WhisperKit
-            UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
-            UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
+            // Migrate to Parakeet (FluidAudio) - the recommended on-device engine
+            UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: transcriptionEngineKey)
+            UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
 
-            // Set flag to show WhisperKit settings on first launch
-            UserDefaults.standard.set(true, forKey: "showWhisperKitMigrationSettings")
+            // Set flag to show Parakeet settings on first launch
+            UserDefaults.standard.set(true, forKey: "showParakeetMigrationSettings")
 
-            NSLog("✅ Migrated transcription from Apple Transcription to WhisperKit (On-Device)")
+            NSLog("✅ Migrated transcription from Apple Transcription to Parakeet (On-Device)")
         }
 
         // Mark migration as complete
@@ -233,9 +233,9 @@ struct BisonNotesAIApp: App {
             let transcriptionEngineKey = "selectedTranscriptionEngine"
             let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
             if let transcription = currentTranscription, appleIntelligenceVariants.contains(transcription) {
-                UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
-                UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
-                UserDefaults.standard.set(true, forKey: "showWhisperKitMigrationSettings")
+                UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: transcriptionEngineKey)
+                UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
+                UserDefaults.standard.set(true, forKey: "showParakeetMigrationSettings")
             }
             
             NSLog("✅ Migrated from Apple Intelligence (\(engine)) to On-Device AI")

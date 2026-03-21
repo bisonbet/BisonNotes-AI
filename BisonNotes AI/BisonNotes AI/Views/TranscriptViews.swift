@@ -474,21 +474,21 @@ struct TranscriptsView: View {
     
     private func transcriptButtonView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
         let hasTranscript = recordingData.transcript != nil
-        let isCurrentlyGenerating = isGeneratingTranscript && generatingTranscriptRecording?.id == recordingData.recording.id
+        let hasActiveJob = hasActiveTranscriptionJob(for: recordingData.recording)
 
         return Button(action: {
             if hasTranscript {
                 // Show existing transcript for editing - always allowed
                 selectedRecording = recordingData.recording
             } else {
-                // Generate new transcript - only if not currently generating any transcript
-                if !isGeneratingTranscript {
+                // Generate new transcript - only if this recording doesn't already have an active job
+                if !hasActiveJob {
                     generateTranscript(for: recordingData.recording)
                 }
             }
         }) {
             HStack {
-                if isCurrentlyGenerating {
+                if hasActiveJob && !hasTranscript {
                     ProgressView()
                         .scaleEffect(0.8)
                     Text("Generating...")
@@ -503,15 +503,30 @@ struct TranscriptsView: View {
             .padding(.vertical, 6)
             .background(
                 hasTranscript ? Color.green :
-                (isGeneratingTranscript && !hasTranscript) ? Color.gray : Color.accentColor
+                hasActiveJob ? Color.gray : Color.accentColor
             )
             .foregroundColor(.white)
             .cornerRadius(8)
         }
-        .disabled(isGeneratingTranscript && !hasTranscript) // Only disable generate buttons when generating
+        .disabled(hasActiveJob && !hasTranscript) // Only disable if this recording has an active job
         .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(hasTranscript)-\(isGeneratingTranscript)-\(refreshTrigger)")
+        .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(hasTranscript)-\(hasActiveJob)-\(refreshTrigger)")
+    }
+
+    /// Check if a recording has an active transcription job (queued or processing)
+    private func hasActiveTranscriptionJob(for recording: RecordingEntry) -> Bool {
+        guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
+            return false
+        }
+        let filename = recordingURL.lastPathComponent
+
+        return backgroundProcessingManager.activeJobs.contains { job in
+            // Match by filename and check if job is active (queued or processing)
+            job.recordingPath == filename &&
+            job.type.displayName == "Transcription" &&
+            (job.status == .queued || job.status == .processing)
+        }
     }
     
     // MARK: - Search and Date Filtering
@@ -747,7 +762,8 @@ struct TranscriptsView: View {
 
     
     private func generateTranscript(for recording: RecordingEntry) {
-        guard !isGeneratingTranscript else { return }
+        // Check if this specific recording already has an active job
+        guard !hasActiveTranscriptionJob(for: recording) else { return }
 
         // Show the audio cleanup prompt before starting transcription
         recordingPendingTranscription = recording
@@ -755,19 +771,42 @@ struct TranscriptsView: View {
     }
 
     private func proceedWithTranscription(for recording: RecordingEntry, cleanFirst: Bool) {
-        isGeneratingTranscript = true
-        generatingTranscriptRecording = recording
+        // Job tracking is now handled by BackgroundProcessingManager.activeJobs
+        // No longer need global isGeneratingTranscript flag
 
         if cleanFirst {
             Task {
                 guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
-                    await MainActor.run { isGeneratingTranscript = false; generatingTranscriptRecording = nil }
+                    // Job tracking handled by BackgroundProcessingManager - no local state to reset
                     return
                 }
                 do {
-                    let cleanedURL = try await AudioCleanupService.shared.cleanAudio(at: recordingURL)
-                    print("🎛️ Using cleaned audio for transcription: \(cleanedURL.lastPathComponent)")
-                    self.performEnhancedTranscription(for: recording, audioURL: cleanedURL, cleanupURL: cleanedURL)
+                    let tempCleanedURL = try await AudioCleanupService.shared.cleanAudio(at: recordingURL)
+                    print("🎛️ Cleaned audio created at temp location: \(tempCleanedURL.lastPathComponent)")
+
+                    // Copy cleaned file to Documents directory so the job can find it
+                    // (ProcessingJob resolves paths relative to Documents directory)
+                    guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                        print("⚠️ Could not access Documents directory, using original file")
+                        self.performEnhancedTranscription(for: recording)
+                        return
+                    }
+
+                    let cleanedFilename = tempCleanedURL.lastPathComponent
+                    let documentsCleanedURL = documentsURL.appendingPathComponent(cleanedFilename)
+
+                    // Remove any existing file at destination
+                    try? FileManager.default.removeItem(at: documentsCleanedURL)
+
+                    // Copy from temp to Documents
+                    try FileManager.default.copyItem(at: tempCleanedURL, to: documentsCleanedURL)
+                    print("✅ Copied cleaned audio to Documents: \(cleanedFilename)")
+
+                    // Clean up temp file immediately since we've copied it
+                    await AudioCleanupService.shared.removeTempFile(at: tempCleanedURL)
+
+                    // Use the Documents copy for transcription, and mark it for cleanup after
+                    self.performEnhancedTranscription(for: recording, audioURL: documentsCleanedURL, cleanupURL: documentsCleanedURL)
                 } catch {
                     print("⚠️ Audio cleanup failed, falling back to original: \(error)")
                     self.performEnhancedTranscription(for: recording)
@@ -783,7 +822,7 @@ struct TranscriptsView: View {
 
         Task {
             // Use the selected transcription engine
-            let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
+            let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
 
             do {
                 // Use the cleaned URL if provided, otherwise resolve from Core Data
@@ -875,14 +914,18 @@ struct TranscriptsView: View {
                 }
             }
             
-            // Clean up any temporary cleaned audio file
+            // Clean up any cleaned audio file (may be in Documents directory now)
             if let cleanupURL = cleanupURL {
-                await AudioCleanupService.shared.removeTempFile(at: cleanupURL)
+                // Remove the cleaned audio file - it's a copy we made for transcription
+                if cleanupURL.lastPathComponent.hasPrefix("cleaned_") {
+                    try? FileManager.default.removeItem(at: cleanupURL)
+                    print("🗑️ Cleaned up temporary audio file: \(cleanupURL.lastPathComponent)")
+                } else {
+                    await AudioCleanupService.shared.removeTempFile(at: cleanupURL)
+                }
             }
 
             await MainActor.run {
-                self.isGeneratingTranscript = false
-                self.generatingTranscriptRecording = nil
                 print("🏁 Transcription process completed")
 
                 // Refresh the recordings list to show the new transcript
@@ -1267,7 +1310,7 @@ struct EditableTranscriptView: View {
         Task {
             do {
                 // Get the currently configured transcription engine
-                let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
+                let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
                 
                 print("🔧 Using transcription engine: \(selectedEngine.rawValue)")
                 
@@ -1321,7 +1364,7 @@ struct EditableTranscriptView: View {
                     }
                     
                     // Get the currently configured transcription engine
-                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
+                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
                     
                     let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recordingURL, using: selectedEngine)
                     
@@ -1407,7 +1450,7 @@ struct EditableTranscriptView: View {
             print("🔄 Replacing transcript for recording ID: \(recordingId)")
             
             // Get the selected transcription engine
-            let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue
+            let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue
             let engine = TranscriptionEngine(rawValue: engineString) ?? .whisperKit
             
             

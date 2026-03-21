@@ -132,17 +132,20 @@ final class FluidAudioManager: ObservableObject {
         downloadTask = cancellationTask
 
         // Update progress while downloading (poll-based since FluidAudio SDK doesn't expose progress callbacks)
+        // Uses asymptotic formula that never reaches 100% until download completes:
+        // progress = 0.95 * (1 - e^(-tick/40)) approaches 95% smoothly over time
         let progressTask = Task {
             var tick: Float = 0
             while !Task.isCancelled {
                 try await Task.sleep(nanoseconds: 500_000_000) // 0.5s
                 tick += 1
-                // Indeterminate progress: pulse between 0 and 0.9 until done
-                let pulse = min(0.9, tick * 0.02)
+                // Asymptotic progress: smoothly approaches 95% without stalling
+                // At tick 20 (10s): ~39%, tick 40 (20s): ~63%, tick 80 (40s): ~86%, tick 120 (60s): ~95%
+                let progress = 0.95 * (1.0 - exp(-tick / 40.0))
                 await MainActor.run {
                     if self.isDownloading {
-                        self.downloadProgress = pulse
-                        self.currentStatus = "Downloading Parakeet model... (\(Int(pulse * 100))%)"
+                        self.downloadProgress = progress
+                        self.currentStatus = "Downloading Parakeet model... (\(Int(progress * 100))%)"
                     }
                 }
             }

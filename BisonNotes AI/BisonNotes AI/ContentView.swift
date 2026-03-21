@@ -23,6 +23,7 @@ struct ContentView: View {
     @State private var showingOnDeviceLLMSettings = false
     @State private var showingWhisperKitMigrationAlert = false
     @State private var showingWhisperKitSettings = false
+    @State private var showingParakeetMigrationAlert = false
     @State private var showingParakeetUpgradeAlert = false
     @State private var showingFluidAudioSettings = false
     @State private var showingUnsupportedFileAlert = false
@@ -137,6 +138,14 @@ struct ContentView: View {
             NavigationStack {
                 WhisperKitSettingsView()
             }
+        }
+        .alert("Transcription Engine Updated", isPresented: $showingParakeetMigrationAlert) {
+            Button("Download Model") {
+                showingFluidAudioSettings = true
+            }
+            Button("Later", role: .cancel) { }
+        } message: {
+            Text("Your transcription engine has been upgraded to Parakeet, a fast and accurate on-device engine. Please download the Parakeet model (~250MB) to continue transcribing audio.")
         }
         .alert("Faster On-Device Transcription Available", isPresented: $showingParakeetUpgradeAlert) {
             Button("Switch to Parakeet") {
@@ -313,7 +322,15 @@ struct ContentView: View {
                         }
                     }
 
-                    // Check if we need to show WhisperKit migration alert (Apple Transcription → WhisperKit)
+                    // Check if we need to show Parakeet migration alert (Apple Transcription → Parakeet)
+                    if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showParakeetMigrationSettings") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showingParakeetMigrationAlert = true
+                            UserDefaults.standard.removeObject(forKey: "showParakeetMigrationSettings")
+                        }
+                    }
+
+                    // Legacy: Check for old WhisperKit migration flag (for users who haven't updated yet)
                     if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showWhisperKitMigrationSettings") {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             showingWhisperKitMigrationAlert = true
