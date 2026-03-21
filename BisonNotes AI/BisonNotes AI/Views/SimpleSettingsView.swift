@@ -114,14 +114,12 @@ struct SimpleSettingsView: View {
             // When download view is dismissed, check if both models are ready and complete setup
             if oldValue == true && newValue == false {
                 Task { @MainActor in
-                    whisperKitManager.refreshModelStatus()
+                    let fluidAudioReady = FluidAudioManager.shared.isModelReady
                     OnDeviceLLMDownloadManager.shared.refreshModelStatus()
-                    
-                    let whisperKitReady = whisperKitManager.isModelReady
                     let onDeviceAIReady = OnDeviceLLMDownloadManager.shared.isModelReady
-                    
+
                     // If both models are ready and this is first launch, complete the setup
-                    if whisperKitReady && onDeviceAIReady && isFirstLaunch && selectedOption == .onDeviceLLM {
+                    if fluidAudioReady && onDeviceAIReady && isFirstLaunch && selectedOption == .onDeviceLLM {
                         // Post notification to complete first setup and navigate to recording page
                         try? await Task.sleep(nanoseconds: 500_000_000) // Wait 0.5 seconds
                         NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
@@ -596,8 +594,8 @@ struct SimpleSettingsView: View {
         if transcriptionEngine == "OpenAI" && aiEngine == "OpenAI" {
             selectedOption = .openai
         }
-        // Check if On-Device AI is selected for AI and WhisperKit (On Device) for Transcription
-        else if transcriptionEngine == TranscriptionEngine.whisperKit.rawValue && aiEngine == "On-Device AI" {
+        // Check if On-Device AI is selected for AI and on-device transcription (FluidAudio or WhisperKit)
+        else if (transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue || transcriptionEngine == TranscriptionEngine.whisperKit.rawValue) && aiEngine == "On-Device AI" {
             selectedOption = .onDeviceLLM
         }
         // Any other permutation should show Advanced & Other Options
@@ -683,12 +681,9 @@ struct SimpleSettingsView: View {
                     try await service.testConnection()
                     
                 } else {
-                    // Set transcription engine to WhisperKit (On Device) for transcription
-                    UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: "selectedTranscriptionEngine")
-                    UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
-                    
-                    // Set WhisperKit to use small model (recommended for onboarding)
-                    UserDefaults.standard.set(WhisperKitModelInfo.small.id, forKey: WhisperKitModelInfo.SettingsKeys.selectedModelId)
+                    // Set transcription engine to FluidAudio (On Device) for transcription
+                    UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")
+                    UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
                     
                     // Set AI engine to On-Device AI for summaries
                     UserDefaults.standard.set("On-Device AI", forKey: "SelectedAIEngine")
@@ -721,14 +716,12 @@ struct SimpleSettingsView: View {
                     try await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second to show success message
                     
                     // Check if models are already downloaded
-                    whisperKitManager.refreshModelStatus()
+                    let fluidAudioReady = FluidAudioManager.shared.isModelReady
                     OnDeviceLLMDownloadManager.shared.refreshModelStatus()
-                    
-                    let whisperKitReady = whisperKitManager.isModelReady
                     let onDeviceAIReady = OnDeviceLLMDownloadManager.shared.isModelReady
-                    
+
                     await MainActor.run {
-                        if whisperKitReady && onDeviceAIReady {
+                        if fluidAudioReady && onDeviceAIReady {
                             // Both models already downloaded, skip download view
                             if isFirstLaunch {
                                 // Post notification to complete first setup

@@ -656,7 +656,8 @@ class CoreDataManager: ObservableObject {
         jobType: String,
         engine: String,
         recordingURL: URL,
-        recordingName: String
+        recordingName: String,
+        modelName: String? = nil
     ) -> ProcessingJobEntry {
         let job = ProcessingJobEntry(context: context)
         job.id = id
@@ -664,6 +665,7 @@ class CoreDataManager: ObservableObject {
         job.engine = engine
         job.recordingURL = recordingURL.lastPathComponent
         job.recordingName = recordingName
+        job.modelName = modelName
         job.status = "queued"
         job.progress = 0.0
         job.startTime = Date()

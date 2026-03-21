@@ -691,10 +691,12 @@ class OllamaService: ObservableObject {
         
         let response = try await generateResponse(prompt: prompt, model: config.modelName)
         
-        // Debug logging
-        print("🔍 OllamaService: Raw response for complete processing:")
-        print("📝 Response: '\(response)'")
-        print("📏 Response length: \(response.count) characters")
+        // Debug logging (verbose only)
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            print("🔍 OllamaService: Raw response for complete processing:")
+            print("📝 Response: '\(response)'")
+            print("📏 Response length: \(response.count) characters")
+        }
         
         // Check if response is empty
         guard !response.isEmpty else {
@@ -1236,10 +1238,11 @@ class OllamaService: ObservableObject {
         
         let response = try await generateResponse(prompt: prompt, model: config.modelName)
         
-        // Debug logging
-        print("🔍 OllamaService: Raw response for tasks/reminders:")
-        print("📝 Response: '\(response)'")
-        print("📏 Response length: \(response.count) characters")
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            print("🔍 OllamaService: Raw response for tasks/reminders:")
+            print("📝 Response: '\(response)'")
+            print("📏 Response length: \(response.count) characters")
+        }
         
         // Check if response is empty
         guard !response.isEmpty else {
@@ -1357,10 +1360,11 @@ class OllamaService: ObservableObject {
         
         let response = try await generateResponse(prompt: prompt, model: config.modelName)
         
-        // Debug logging
-        print("🔍 OllamaService: Raw response for titles:")
-        print("📝 Response: '\(response)'")
-        print("📏 Response length: \(response.count) characters")
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            print("🔍 OllamaService: Raw response for titles:")
+            print("📝 Response: '\(response)'")
+            print("📏 Response length: \(response.count) characters")
+        }
         
         // Check if response is empty
         guard !response.isEmpty else {
@@ -2562,7 +2566,9 @@ class OllamaService: ObservableObject {
             let generateResponse = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
             
             print("✅ OllamaService: Successfully decoded Ollama response")
-            print("📝 OllamaService: Raw response content: '\(generateResponse.response)'")
+            if PerformanceOptimizer.shouldLogEngineInitialization() {
+                print("📝 OllamaService: Raw response content: '\(generateResponse.response)'")
+            }
             print("🏁 OllamaService: Response done: \(generateResponse.done)")
             
             // Clean up the response based on the expected format

@@ -14,7 +14,7 @@ struct SettingsView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var regenerationManager: SummaryRegenerationManager
     @StateObject private var errorHandler = ErrorHandler()
-    @StateObject private var iCloudManager = iCloudStorageManager()
+    @ObservedObject private var iCloudManager = iCloudStorageManager.shared
     @StateObject private var importManager = FileImportManager()
     @State private var showingEngineChangePrompt = false
     @State private var previousEngine = ""
@@ -346,7 +346,7 @@ struct SettingsView: View {
                 Text("Current Engine:")
                     .font(.body)
                     .foregroundColor(.secondary)
-                Text(TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.whisperKit.rawValue)?.rawValue ?? "On Device")
+                Text(TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue)?.rawValue ?? "On Device")
                     .font(.body)
                     .fontWeight(.medium)
                     .foregroundColor(.primary)

@@ -106,7 +106,23 @@ enum NetworkStatus {
 
 @MainActor
 class iCloudStorageManager: ObservableObject {
-    
+
+    // MARK: - Shared Instance
+
+    /// Single shared instance used across the entire app.
+    /// All code should use `.shared` instead of creating new instances
+    /// so that in-memory state (isManualCloudTransferInProgress, timers,
+    /// sync queue, etc.) is consistent.
+    static let shared: iCloudStorageManager = {
+        let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
+                       ProcessInfo.processInfo.processName.contains("PreviewShell") ||
+                       ProcessInfo.processInfo.arguments.contains("--enable-previews")
+        if isPreview {
+            return iCloudStorageManager.preview
+        }
+        return iCloudStorageManager()
+    }()
+
     // Preview-safe instance for SwiftUI previews
     static let preview: iCloudStorageManager = {
         let manager = iCloudStorageManager()
@@ -194,15 +210,32 @@ class iCloudStorageManager: ObservableObject {
 
     /// Prevents periodic/queued sync work from competing with manual backup/restore operations.
     private var isManualCloudTransferInProgress = false
-    
+
     /// Maximum number of summaries to sync in a single batch
     private let maxBatchSize = 10
-    
+
     /// Minimum delay between batch syncs (30 seconds)
     private let batchSyncDelay: TimeInterval = 30
-    
+
+    // MARK: - Auto-Backup
+
+    /// Debounce timer for auto-backup after data changes
+    private var autoBackupTimer: Timer?
+
+    /// Delay before auto-backup fires after the last data change (2 minutes)
+    private let autoBackupDebounceInterval: TimeInterval = 120
+
+    /// Minimum interval between auto-backups (15 minutes)
+    private let autoBackupMinInterval: TimeInterval = 900
+
+    /// Timestamp of the last completed auto-backup
+    private var lastAutoBackupDate: Date? {
+        get { UserDefaults.standard.object(forKey: "lastAutoBackupDate") as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: "lastAutoBackupDate") }
+    }
+
     // MARK: - Private Properties
-    
+
     private var container: CKContainer?
     private var database: CKDatabase?
     private let deviceIdentifier: String
@@ -861,9 +894,11 @@ class iCloudStorageManager: ObservableObject {
             for cloudSummary in cloudOnlySummaries {
                 do {
                     // Try to create Core Data summary entry
-                    try await createCoreDataSummary(from: cloudSummary, appCoordinator: appCoordinator)
-                    downloadedCount += 1
-                    print("📥 Downloaded cloud summary: \(cloudSummary.recordingName)")
+                    let didPersist = try await createCoreDataSummary(from: cloudSummary, appCoordinator: appCoordinator)
+                    if didPersist {
+                        downloadedCount += 1
+                        print("📥 Downloaded cloud summary: \(cloudSummary.recordingName)")
+                    }
                 } catch {
                     print("❌ Failed to create Core Data entry for cloud summary \(cloudSummary.recordingName): \(error)")
                 }
@@ -881,12 +916,37 @@ class iCloudStorageManager: ObservableObject {
     
     func fetchAllSummariesFromCloud() async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
-        
+        return try await fetchAllSummariesFromCloud(using: database)
+    }
+
+    /// Fetches all summary-sync records using the provided database.
+    /// Use this overload in the restore path where `self.database` may not
+    /// yet be initialized (fresh app session on a new device).
+    /// Follows pagination cursors to ensure all pages are fetched.
+    func fetchAllSummariesFromCloud(using database: CKDatabase) async throws -> [EnhancedSummaryData] {
         let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: NSPredicate(value: true))
-        let (matchResults, _) = try await database.records(matching: query)
-        
         var summaries: [EnhancedSummaryData] = []
-        
+
+        // Fetch first page
+        let (firstResults, firstCursor) = try await database.records(matching: query)
+        processSummaryMatchResults(firstResults, into: &summaries)
+
+        // Follow pagination cursors for remaining pages
+        var cursor = firstCursor
+        while let activeCursor = cursor {
+            let (pageResults, nextCursor) = try await database.records(continuingMatchFrom: activeCursor)
+            processSummaryMatchResults(pageResults, into: &summaries)
+            cursor = nextCursor
+        }
+
+        return summaries
+    }
+
+    /// Decodes match results into EnhancedSummaryData, appending to the provided array.
+    private func processSummaryMatchResults(
+        _ matchResults: [(CKRecord.ID, Result<CKRecord, Error>)],
+        into summaries: inout [EnhancedSummaryData]
+    ) {
         for (_, result) in matchResults {
             switch result {
             case .success(let record):
@@ -900,8 +960,6 @@ class iCloudStorageManager: ObservableObject {
                 print("❌ Failed to fetch cloud summary record: \(error)")
             }
         }
-        
-        return summaries
     }
     
     
@@ -1364,14 +1422,18 @@ class iCloudStorageManager: ObservableObject {
         return summaries
     }
     
-    /// Creates a Core Data summary entry from cloud summary data
-    private func createCoreDataSummary(from cloudSummary: EnhancedSummaryData, appCoordinator: AppDataCoordinator) async throws {
+    /// Creates a Core Data summary entry from cloud summary data.
+    /// Returns `true` when a Core Data row was actually persisted.
+    @discardableResult
+    private func createCoreDataSummary(from cloudSummary: EnhancedSummaryData, appCoordinator: AppDataCoordinator) async throws -> Bool {
+        var didPersist = false
+
         // First, try to link to existing local recording/transcript if they exist
         if let recordingId = cloudSummary.recordingId,
            let transcriptId = cloudSummary.transcriptId,
            appCoordinator.coreDataManager.getRecording(id: recordingId) != nil,
            appCoordinator.coreDataManager.getTranscript(for: recordingId) != nil {
-            
+
             // Full linking possible - use the workflow manager
             let summaryId = appCoordinator.addSummary(
                 for: recordingId,
@@ -1386,20 +1448,28 @@ class iCloudStorageManager: ObservableObject {
                 originalLength: cloudSummary.originalLength,
                 processingTime: cloudSummary.processingTime
             )
-            
+
             if summaryId != nil {
+                didPersist = true
                 print("✅ Created linked Core Data entry for cloud summary: \(cloudSummary.recordingName)")
+            } else {
+                print("⚠️ addSummary returned nil for cloud summary: \(cloudSummary.recordingName)")
             }
         } else {
             // Create orphaned summary entry (similar to "summary-only recordings")
             print("📥 Creating orphaned Core Data summary entry (no local recording/transcript): \(cloudSummary.recordingName)")
             try await createOrphanedSummaryEntry(cloudSummary, appCoordinator: appCoordinator)
+            didPersist = true
         }
-        
-        // Also add to SummaryManager for UI compatibility (Core Data is source of truth for persistence)
-        await MainActor.run {
-            SummaryManager.shared.enhancedSummaries.append(cloudSummary)
+
+        // Only update SummaryManager when Core Data write was confirmed
+        if didPersist {
+            await MainActor.run {
+                SummaryManager.shared.enhancedSummaries.append(cloudSummary)
+            }
         }
+
+        return didPersist
     }
     
     /// Creates an orphaned summary entry in Core Data (without recording/transcript links)
@@ -1564,6 +1634,80 @@ class iCloudStorageManager: ObservableObject {
         }
     }
     
+    // MARK: - Auto-Backup Methods
+
+    /// Call this after significant data changes (new recording, transcript, or summary)
+    /// to schedule an automatic backup to iCloud. The backup is debounced so rapid
+    /// changes are batched together.
+    func scheduleAutoBackup(appCoordinator: AppDataCoordinator) {
+        guard isEnabled else { return }
+        guard !isManualCloudTransferInProgress else { return }
+
+        // Calculate how long to wait before firing.
+        // If we're inside the throttle window, delay until the window expires
+        // (plus the debounce interval). Otherwise just use the debounce interval.
+        var delay = autoBackupDebounceInterval
+        if let lastBackup = lastAutoBackupDate {
+            let elapsed = Date().timeIntervalSince(lastBackup)
+            if elapsed < autoBackupMinInterval {
+                let remaining = autoBackupMinInterval - elapsed
+                delay = remaining + autoBackupDebounceInterval
+            }
+        }
+
+        // Debounce: reset the timer on each call so we wait for a quiet period
+        autoBackupTimer?.invalidate()
+        autoBackupTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            Task {
+                await self.performAutoBackup(appCoordinator: appCoordinator)
+            }
+        }
+    }
+
+    private func performAutoBackup(appCoordinator: AppDataCoordinator) async {
+        guard isEnabled else { return }
+        guard !isManualCloudTransferInProgress else { return }
+
+        // Re-check throttle in case multiple timers fired
+        if let lastBackup = lastAutoBackupDate,
+           Date().timeIntervalSince(lastBackup) < autoBackupMinInterval {
+            return
+        }
+
+        // Read user preferences with the same defaults as SettingsView's @AppStorage declarations.
+        // UserDefaults.bool returns false for unset keys, so we must check for explicit values.
+        let defaults = UserDefaults.standard
+        let includeAudio = defaults.object(forKey: "iCloudBackupIncludeAudioFiles") != nil
+            ? defaults.bool(forKey: "iCloudBackupIncludeAudioFiles")
+            : false  // default: off (audio can be large)
+        let includeSettings = defaults.object(forKey: "iCloudBackupIncludeSettings") != nil
+            ? defaults.bool(forKey: "iCloudBackupIncludeSettings")
+            : true   // default: on
+        let includeSensitive = defaults.object(forKey: "iCloudBackupIncludeSensitiveSettings") != nil
+            ? defaults.bool(forKey: "iCloudBackupIncludeSensitiveSettings")
+            : true   // default: on
+
+        let options = CloudBackupOptions(
+            includeAudioFiles: includeAudio,
+            includeSettings: includeSettings,
+            includeSensitiveSettings: includeSettings && includeSensitive
+        )
+
+        do {
+            let result = try await backupAllDataToiCloud(appCoordinator: appCoordinator, options: options)
+            if !result.wasSkippedNoChanges {
+                lastAutoBackupDate = Date()
+                print("☁️ Auto-backup complete: \(result.recordingsBackedUp) recordings, \(result.transcriptsBackedUp) transcripts, \(result.summariesBackedUp) summaries")
+            } else {
+                // Still update the timestamp to avoid retrying immediately
+                lastAutoBackupDate = Date()
+            }
+        } catch {
+            print("⚠️ Auto-backup failed (will retry on next data change): \(error.localizedDescription)")
+        }
+    }
+
     private func setupPeriodicSync() {
         syncTimer?.invalidate()
         
@@ -2449,9 +2593,18 @@ extension iCloudStorageManager {
     private static let sensitiveSettingKeyFragments: [String] = [
         "apikey",
         "secret",
-        "token",
         "credentials",
         "accesskey"
+    ]
+
+    /// Keys that exactly match known credential/token settings (avoids false
+    /// positives on configuration keys like "*MaxTokens").
+    private static let sensitiveSettingExactSuffixes: [String] = [
+        "token",
+        "accesstoken",
+        "refreshtoken",
+        "bearertoken",
+        "authtoken"
     ]
 
     /// CloudKit private database already provides built-in encryption at rest and in transit.
@@ -2930,15 +3083,19 @@ extension iCloudStorageManager {
                    let assetURL = asset.fileURL,
                    fileManager.fileExists(atPath: assetURL.path) {
                     let backupFileName = (record[Self.fieldAudioFileName] as? String) ?? "\(recordingId.uuidString).m4a"
+                    // Use recording ID as the filename to avoid collisions when
+                    // multiple recordings share the same original basename.
+                    let fileExtension = (backupFileName as NSString).pathExtension.isEmpty ? "m4a" : (backupFileName as NSString).pathExtension
+                    let uniqueFileName = "\(recordingId.uuidString).\(fileExtension)"
                     let destinationURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                        .appendingPathComponent(backupFileName)
+                        .appendingPathComponent(uniqueFileName)
 
                     if fileManager.fileExists(atPath: destinationURL.path) {
                         try? fileManager.removeItem(at: destinationURL)
                     }
 
                     try fileManager.copyItem(at: assetURL, to: destinationURL)
-                    entry.recordingURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? backupFileName
+                    entry.recordingURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? uniqueFileName
                     result.audioFilesRestored += 1
                 } else if existing == nil {
                     // Keep metadata-only records when audio backup is disabled or unavailable.
@@ -3057,11 +3214,24 @@ extension iCloudStorageManager {
                 restoredSensitiveSettings = settingsResult.includedSensitiveSettings
             }
 
+            var fallbackSummariesRestored = 0
             let hasContentBackupRecords =
                 !recordingRecords.isEmpty ||
                 !transcriptRecords.isEmpty ||
                 !summaryRecords.isEmpty
             if !hasContentBackupRecords {
+                // Try falling back to CloudKit summary-sync records.
+                // Use try? so that CloudKit errors don't replace the more
+                // helpful "run Backup Now" message below.
+                fallbackSummariesRestored = (try? await restoreSummariesFromCloudIfAvailable(
+                    appCoordinator: appCoordinator,
+                    existingSummaryIds: Set(summariesById.keys),
+                    database: database
+                )) ?? 0
+                result.summariesRestored += fallbackSummariesRestored
+            }
+
+            if !hasContentBackupRecords, fallbackSummariesRestored == 0 {
                 let settingsSuffix = restoredSettings
                     ? " Settings were restored."
                     : ""
@@ -3098,6 +3268,58 @@ extension iCloudStorageManager {
             }
             throw error
         }
+    }
+
+    private func restoreSummariesFromCloudIfAvailable(
+        appCoordinator: AppDataCoordinator,
+        existingSummaryIds: Set<UUID>,
+        database: CKDatabase
+    ) async throws -> Int {
+        // Try the paginated query first. Catch any thrown errors (e.g. non-queryable
+        // schema fields) so we can fall through to the schema-safe path instead of
+        // propagating the error to the call site where try? would silently return 0.
+        var cloudSummaries: [EnhancedSummaryData]
+        do {
+            cloudSummaries = try await fetchAllSummariesFromCloud(using: database)
+        } catch {
+            print("☁️ Query threw error (\(error.localizedDescription)), trying schema-safe record discovery...")
+            cloudSummaries = []
+        }
+
+        // If the query returned nothing or threw, it may be a non-queryable schema issue.
+        // Fall back to the schema-safe record-operation approach which uses
+        // UUID scanning + zone change tracking instead of CKQuery.
+        if cloudSummaries.isEmpty {
+            // Ensure self.database is available for the schema-safe helpers
+            // (they guard on self.database, which may be nil on a fresh session).
+            if self.database == nil {
+                self.database = database
+            }
+            print("☁️ Query returned 0 summaries, trying schema-safe record discovery...")
+            cloudSummaries = (try? await fetchAllSummariesUsingRecordOperation(appCoordinator: appCoordinator)) ?? []
+        }
+
+        guard !cloudSummaries.isEmpty else {
+            return 0
+        }
+
+        var restoredCount = 0
+        for cloudSummary in cloudSummaries {
+            if existingSummaryIds.contains(cloudSummary.id) {
+                continue
+            }
+
+            let didPersist = try await createCoreDataSummary(from: cloudSummary, appCoordinator: appCoordinator)
+            if didPersist {
+                restoredCount += 1
+            }
+        }
+
+        if restoredCount > 0 {
+            print("☁️ Restored \(restoredCount) summaries from CloudKit summary sync records")
+        }
+
+        return restoredCount
     }
 
     private func makeBackupRecordName(prefix: String, id: UUID) -> String {
@@ -3966,7 +4188,13 @@ extension iCloudStorageManager {
 
     private func isSensitiveSettingKey(_ key: String) -> Bool {
         let lowercase = key.lowercased()
-        return Self.sensitiveSettingKeyFragments.contains { lowercase.contains($0) }
+        // Substring match for unambiguous credential fragments (e.g. "apikey", "secret")
+        if Self.sensitiveSettingKeyFragments.contains(where: { lowercase.contains($0) }) {
+            return true
+        }
+        // Suffix match for "token" variants to avoid false positives on keys
+        // like "openAISummarizationMaxTokens" or "ollamaMaxTokens".
+        return Self.sensitiveSettingExactSuffixes.contains { lowercase.hasSuffix($0) }
     }
 }
 

@@ -88,7 +88,7 @@ struct WhisperKitSettingsView: View {
                 infoView
             }
         }
-        .navigationTitle("On Device Transcription")
+        .navigationTitle("WhisperKit Settings")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -467,7 +467,7 @@ struct WhisperKitSettingsView: View {
     @ViewBuilder
     private var infoView: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("About On Device Transcription", systemImage: "info.circle")
+            Label("About WhisperKit Transcription", systemImage: "info.circle")
                 .font(.subheadline)
                 .fontWeight(.medium)
 

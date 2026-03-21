@@ -63,6 +63,7 @@
         <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
         <attribute name="jobType" optional="YES" attributeType="String"/>
         <attribute name="lastModified" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="modelName" optional="YES" attributeType="String"/>
         <attribute name="progress" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
         <attribute name="recordingName" optional="YES" attributeType="String"/>
         <attribute name="recordingURL" optional="YES" attributeType="String"/>

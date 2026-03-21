@@ -33,7 +33,7 @@ enum SummarizationError: Error, LocalizedError {
         case .invalidInput:
             return "Invalid input provided for summarization"
         case .processingFailed(let reason):
-            return "Summarization failed: \(reason)"
+            return reason
         case .configurationRequired(let message):
             return message
         }

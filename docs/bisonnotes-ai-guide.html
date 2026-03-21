@@ -132,7 +132,7 @@ body.page .entry-header {
 <div class="bn-hero">
   <h1>BisonNotes AI</h1>
   <p>Complete User Guide</p>
-  <span class="bn-ver">v1.6</span>
+  <span class="bn-ver">v1.7</span>
 </div>
 
 <!-- ===== TOC ===== -->
@@ -156,7 +156,7 @@ body.page .entry-header {
     <li><a href="#bn-transcription">Transcription Configuration</a></li>
     <li><a href="#bn-summaries">Working with Summaries</a></li>
     <li><a href="#bn-playback">Audio Playback</a></li>
-    <li><a href="#bn-settings">Settings &amp; Configuration</a></li>
+    <li><a href="#bn-settings">Setup &amp; Configuration</a></li>
     <li><a href="#bn-trouble">Troubleshooting</a></li>
     <li><a href="#bn-advanced">Advanced Features</a></li>
     <li><a href="#bn-best">Best Practices</a></li>
@@ -178,7 +178,7 @@ body.page .entry-header {
       <h4>Initial Setup Options</h4>
       <ul>
         <li><strong>OpenAI (Cloud):</strong> Cloud-based transcription and AI summaries. Requires OpenAI API key. Most powerful option with pay-per-use pricing.</li>
-        <li><strong>On-Device AI:</strong> Private, on-device processing. No data leaves your device. Requires download of AI models (2-3GB each) and transcription model (150-520MB). Best for recordings under 60 minutes.</li>
+        <li><strong>On-Device AI:</strong> Private, on-device processing. No data leaves your device. Requires download of AI models (2-3GB each) and Parakeet transcription model. Best for recordings under 60 minutes.</li>
         <li><strong>Advanced &amp; Other Options:</strong> Skip initial setup and configure later. Access to all engines: Google AI Studio, AWS Bedrock, Mistral AI, OpenAI Compatible, Ollama.</li>
       </ul>
     </div>
@@ -360,9 +360,9 @@ body.page .entry-header {
 
     <h4>Requirements</h4>
     <ul>
-      <li><strong>Transcription:</strong> iOS 17.0+, 4GB+ RAM</li>
+      <li><strong>Transcription:</strong> iOS 17.0+, 4GB+ RAM. Uses Parakeet (default) for on-device transcription.</li>
       <li><strong>AI Summary:</strong> iPhone 15 Pro, iPhone 16+, iOS 18.1+</li>
-      <li><strong>Storage:</strong> 2-3GB per AI model, 150-520MB for transcription model</li>
+      <li><strong>Storage:</strong> 2-3GB per AI model, plus transcription model download</li>
     </ul>
 
     <h4>Recommended Models (by RAM)</h4>
@@ -396,7 +396,7 @@ body.page .entry-header {
     <h4>Setup</h4>
     <ol class="bn-sl">
       <li>Get API key at <a href="https://platform.openai.com" target="_blank" rel="noopener">platform.openai.com</a></li>
-      <li>Go to Settings &rarr; AI Settings &rarr; OpenAI</li>
+      <li>Go to Setup &rarr; AI Settings &rarr; OpenAI</li>
       <li>Enter your API key, select model, test connection.</li>
     </ol>
 
@@ -439,7 +439,7 @@ body.page .entry-header {
     <h4>Setup</h4>
     <ol class="bn-sl">
       <li>Get API key at <a href="https://aistudio.google.com" target="_blank" rel="noopener">aistudio.google.com</a></li>
-      <li>Go to Settings &rarr; AI Settings &rarr; Google AI Studio</li>
+      <li>Go to Setup &rarr; AI Settings &rarr; Google AI Studio</li>
       <li>Enter API key, select model, test connection.</li>
     </ol>
 
@@ -475,7 +475,7 @@ body.page .entry-header {
 
     <h4>Setup</h4>
     <ol class="bn-sl">
-      <li>Go to Settings &rarr; AI Settings &rarr; OpenAI API Compatible</li>
+      <li>Go to Setup &rarr; AI Settings &rarr; OpenAI API Compatible</li>
       <li>Enter API key and base URL for your provider.</li>
       <li>Select model (use your provider's exact model name, e.g., <code>llama-3.1-70b-versatile</code> for Groq).</li>
       <li>Test the connection.</li>
@@ -513,9 +513,9 @@ body.page .entry-header {
     <h4>Setup</h4>
     <ol class="bn-sl">
       <li>Get API key at <a href="https://console.mistral.ai" target="_blank" rel="noopener">console.mistral.ai</a></li>
-      <li>Go to Settings &rarr; AI Settings &rarr; Mistral AI</li>
+      <li>Go to Setup &rarr; AI Settings &rarr; Mistral AI</li>
       <li>Enter API key, select model, test connection.</li>
-      <li>For transcription: Settings &rarr; Transcription Settings &rarr; select "Mistral AI".</li>
+      <li>For transcription: Setup &rarr; Transcription Settings &rarr; select "Mistral AI".</li>
     </ol>
     <p><strong>Best for:</strong> Fast summaries and affordable transcription with speaker diarization</p>
   </div>
@@ -540,7 +540,7 @@ body.page .entry-header {
     <ol class="bn-sl">
       <li>Create an AWS account and enable Bedrock service.</li>
       <li>Create IAM user with Bedrock permissions and generate access keys.</li>
-      <li>Go to Settings &rarr; AI Settings &rarr; AWS Bedrock.</li>
+      <li>Go to Setup &rarr; AI Settings &rarr; AWS Bedrock.</li>
       <li>Enter AWS credentials, select region and model, test connection.</li>
     </ol>
     <p><strong>Best for:</strong> Enterprise features and compliance</p>
@@ -563,7 +563,7 @@ body.page .entry-header {
 ollama pull gpt-oss:20b
 ollama pull mistral-small3.2</code></pre>
       </li>
-      <li>Go to Settings &rarr; AI Settings &rarr; Ollama.</li>
+      <li>Go to Setup &rarr; AI Settings &rarr; Ollama.</li>
       <li>Set server URL and port (default: <code>http://localhost:11434</code>).</li>
       <li>Tap refresh to scan for models, select one, test connection.</li>
     </ol>
@@ -582,14 +582,15 @@ ollama pull mistral-small3.2</code></pre>
 
 <h3>Engine Selection</h3>
 <ol class="bn-sl">
-  <li>Go to Settings &rarr; Transcription Settings.</li>
+  <li>Go to Setup &rarr; Transcription Settings.</li>
   <li>Select your preferred transcription engine.</li>
   <li>Configure and test the connection.</li>
 </ol>
 
 <h3>Available Engines</h3>
 <ul>
-  <li><strong>On Device</strong> — Free, private, works offline. Requires model download (150-520MB).</li>
+  <li><strong>On Device (Parakeet)</strong> — Default. Free, private, works offline. Faster and more accurate than WhisperKit. Requires model download.</li>
+  <li><strong>On Device (WhisperKit)</strong> — Deprecated. Legacy on-device transcription. May be removed in a future release. Requires model download (150-520MB).</li>
   <li><strong>OpenAI</strong> — GPT-4o Transcribe, GPT-4o Mini Transcribe, or Whisper-1.</li>
   <li><strong>Mistral AI</strong> — Voxtral Mini ($0.003/min) with optional speaker diarization.</li>
   <li><strong>Whisper (Local Server)</strong> — Your own Whisper server (REST API or Wyoming protocol).</li>
@@ -602,7 +603,8 @@ ollama pull mistral-small3.2</code></pre>
   <table>
     <thead><tr><th>Engine</th><th>Type</th><th>Speakers</th><th>Cost</th></tr></thead>
     <tbody>
-      <tr><td><strong>On-Device</strong></td><td>Local</td><td>No</td><td>Free</td></tr>
+      <tr><td><strong>On-Device (Parakeet)</strong></td><td>Local</td><td>No</td><td>Free (Default)</td></tr>
+      <tr><td><strong>On-Device (WhisperKit)</strong></td><td>Local</td><td>No</td><td>Free (Deprecated)</td></tr>
       <tr><td><strong>OpenAI GPT-4o</strong></td><td>Cloud</td><td>No</td><td>Per token</td></tr>
       <tr><td><strong>OpenAI Whisper</strong></td><td>Cloud</td><td>No</td><td>Per minute</td></tr>
       <tr><td><strong>Mistral AI</strong></td><td>Cloud</td><td>Yes</td><td>~$0.003/min</td></tr>
@@ -614,11 +616,29 @@ ollama pull mistral-small3.2</code></pre>
 
 <!-- On Device Transcription Setup -->
 <details>
-  <summary>On Device Transcription — Detailed Setup</summary>
+  <summary>On Device Transcription (Parakeet) — Default</summary>
   <div class="dd">
+    <div class="bn-ok"><strong>New in v1.7:</strong> FluidAudio Parakeet is now the default on-device transcription engine. It is faster and more accurate than WhisperKit.</div>
+
     <h4>Initial Setup</h4>
     <ol class="bn-sl">
-      <li><strong>Enable:</strong> Settings &rarr; Transcription Settings &rarr; select "On Device" &rarr; tap "Configure".</li>
+      <li><strong>Enable:</strong> Setup &rarr; Transcription Settings &rarr; select "On Device" &rarr; Parakeet is selected by default.</li>
+      <li><strong>Download the model:</strong> Tap "Download" to get the Parakeet model.</li>
+      <li><strong>Requirements:</strong> iOS 17.0+, model download required.</li>
+    </ol>
+
+    <div class="bn-ok"><strong>Benefits:</strong> Complete privacy, works offline, no API costs, faster and more accurate than WhisperKit.</div>
+  </div>
+</details>
+
+<details>
+  <summary>On Device Transcription (WhisperKit) — Deprecated</summary>
+  <div class="dd">
+    <div class="bn-warn"><strong>Deprecated:</strong> WhisperKit transcription is still available but may be removed in a future release. We recommend switching to Parakeet for better speed and accuracy.</div>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li><strong>Enable:</strong> Setup &rarr; Transcription Settings &rarr; select "On Device (WhisperKit)".</li>
       <li><strong>Download a model:</strong>
         <ul>
           <li><strong>Higher Quality</strong> (~520MB) — Best accuracy, slower processing</li>
@@ -629,7 +649,7 @@ ollama pull mistral-small3.2</code></pre>
       <li><strong>Test:</strong> Tap "Test Model Loading". First load may take 30-60 seconds.</li>
     </ol>
 
-    <h4>Which Model Should I Use?</h4>
+    <h4>Which WhisperKit Model Should I Use?</h4>
     <div class="bn-tw">
       <table>
         <thead><tr><th>Use Case</th><th>Model</th><th>Why?</th></tr></thead>
@@ -641,8 +661,6 @@ ollama pull mistral-small3.2</code></pre>
         </tbody>
       </table>
     </div>
-
-    <div class="bn-ok"><strong>Benefits:</strong> Complete privacy, works offline, no API costs, fast processing.</div>
   </div>
 </details>
 
@@ -658,7 +676,7 @@ docker run -d -p 9000:9000 \
   -e ASR_ENGINE=openai_whisper \
   onerahmet/openai-whisper-asr-webservice:latest</code></pre>
       </li>
-      <li><strong>Configure:</strong> Settings &rarr; Transcription Settings &rarr; Whisper (Local Server). Set server URL and port (default: 9000). Choose protocol (REST API or Wyoming) and model size.</li>
+      <li><strong>Configure:</strong> Setup &rarr; Transcription Settings &rarr; Whisper (Local Server). Set server URL and port (default: 9000). Choose protocol (REST API or Wyoming) and model size.</li>
     </ol>
     <div class="bn-info"><strong>Protocols:</strong> REST API = traditional HTTP file uploads. Wyoming = modern WebSocket streaming.</div>
   </div>
@@ -671,7 +689,7 @@ docker run -d -p 9000:9000 \
     <ol class="bn-sl">
       <li>Create an AWS account and enable Transcribe service.</li>
       <li>Create IAM user with <code>transcribe:StartTranscriptionJob</code> and <code>transcribe:GetTranscriptionJob</code> permissions.</li>
-      <li>Settings &rarr; Transcription Settings &rarr; AWS Transcribe.</li>
+      <li>Setup &rarr; Transcription Settings &rarr; AWS Transcribe.</li>
       <li>Enter access key, secret key, region, language. Test connection.</li>
     </ol>
     <div class="bn-info"><strong>Tip:</strong> Choose a region close to you for better performance.</div>
@@ -756,13 +774,13 @@ docker run -d -p 9000:9000 \
 <!-- ============================================================ -->
 <!-- SETTINGS & CONFIGURATION                                      -->
 <!-- ============================================================ -->
-<h2 id="bn-settings">Settings &amp; Configuration</h2>
+<h2 id="bn-settings">Setup &amp; Configuration</h2>
 
-<h3>Simple Settings vs Advanced Settings</h3>
+<h3>Simple Setup vs Additional Settings</h3>
 
 <div class="bn-g">
   <div class="bn-gc">
-    <h4>Simple Settings</h4>
+    <h4>Simple Setup</h4>
     <p>Appears on first launch. Quick setup for common configurations.</p>
     <ul>
       <li>Auto-detects your current config</li>
@@ -771,7 +789,7 @@ docker run -d -p 9000:9000 \
     </ul>
   </div>
   <div class="bn-gc">
-    <h4>Advanced Settings</h4>
+    <h4>Additional Settings</h4>
     <p>Full control over all options.</p>
     <ul>
       <li>All 7 AI engines</li>
@@ -782,7 +800,7 @@ docker run -d -p 9000:9000 \
   </div>
 </div>
 
-<div class="bn-info"><strong>Switching:</strong> Simple &rarr; Advanced: tap "Advanced Options" button. Advanced &rarr; Simple: the simple page auto-detects your config when you return.</div>
+<div class="bn-info"><strong>Switching:</strong> Simple &rarr; Additional Settings: tap "Additional Settings" button. Additional Settings &rarr; Simple: the simple page auto-detects your config when you return.</div>
 
 <h3>Audio Settings</h3>
 <ul>
@@ -866,10 +884,12 @@ docker run -d -p 9000:9000 \
   <summary>Background Processing</summary>
   <div class="dd">
     <ul>
-      <li><strong>Job Queue</strong> — Multiple operations run simultaneously</li>
-      <li><strong>Progress Tracking</strong> — Real-time updates</li>
+      <li><strong>Job Queue</strong> — Multiple operations queued and processed in order</li>
+      <li><strong>Progress Tracking</strong> — Real-time updates with accurate status display</li>
       <li><strong>Error Recovery</strong> — Automatic retry for failures</li>
-      <li><strong>Stale Job Cleanup</strong> — Automatic cleanup of abandoned jobs</li>
+      <li><strong>Stale Job Detection</strong> (v1.7) — Intelligent detection and recovery of stuck jobs, with timeouts based on actual processing start time</li>
+      <li><strong>Job Cancellation</strong> (v1.7) — Properly cancel and interrupt running jobs when the app is backgrounded or closed</li>
+      <li><strong>On-Device AI Handling</strong> — On-device AI jobs are gracefully interrupted when the app is backgrounded, since GPU processing requires the app to stay open</li>
     </ul>
   </div>
 </details>
@@ -907,8 +927,9 @@ docker run -d -p 9000:9000 \
   <summary>iCloud Backup &amp; Sync</summary>
   <div class="dd">
     <ul>
-      <li><strong>iCloud Backup</strong> (v1.6) — Full backup of all data to iCloud Drive</li>
-      <li><strong>CloudKit Sync</strong> — Optional summary synchronization across devices</li>
+      <li><strong>iCloud Backup</strong> — Full backup of all data to iCloud Drive</li>
+      <li><strong>Auto-Backup</strong> (v1.7) — Automatically backs up when new recordings are created</li>
+      <li><strong>CloudKit Sync</strong> — Optional summary synchronization across devices with paginated queries and schema-safe fallback for reliability</li>
       <li>Prompted after generating your first summary</li>
     </ul>
   </div>

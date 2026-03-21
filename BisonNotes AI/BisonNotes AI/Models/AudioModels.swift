@@ -86,24 +86,27 @@ public enum WhisperProtocol: String, CaseIterable, Codable {
 
 public enum TranscriptionEngine: String, CaseIterable, Codable {
     case notConfigured = "Not Configured"
-    case whisperKit = "On Device"
+    case fluidAudio = "On Device"
+    case whisperKit = "On Device (WhisperKit)"
     case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
     case openAI = "OpenAI"
     case mistralAI = "Mistral AI"
     case openAIAPICompatible = "OpenAI API Compatible"
 
-    /// Returns all available engine types based on device capabilities
+    /// Returns only engine types that are available on the current device and build.
     static var availableCases: [TranscriptionEngine] {
-        return allCases
+        return allCases.filter { $0.isAvailable }
     }
 
     var description: String {
         switch self {
         case .notConfigured:
             return "No transcription engine has been configured yet"
+        case .fluidAudio:
+            return "High-quality on-device transcription powered by NVIDIA Parakeet. Your audio never leaves your device, ensuring complete privacy."
         case .whisperKit:
-            return "High-quality on-device transcription. Your audio never leaves your device, ensuring complete privacy."
+            return "On-device transcription powered by WhisperKit. Alternative on-device engine with multiple model sizes."
         case .awsTranscribe:
             return "Cloud-based transcription service with support for long audio files"
         case .whisper:
@@ -124,6 +127,8 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
         case .whisperKit:
             // Only show WhisperKit if device is compatible
             return DeviceCompatibility.isWhisperKitSupported
+        case .fluidAudio:
+            return DeviceCompatibility.isFluidAudioSupported && FluidAudioManager.isAvailableInCurrentBuild
         case .awsTranscribe, .whisper, .openAI, .mistralAI:
             return true
         case .openAIAPICompatible:
@@ -135,7 +140,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
         switch self {
         case .notConfigured:
             return true
-        case .whisperKit:
+        case .whisperKit, .fluidAudio:
             return true  // Requires model download
         case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible, .mistralAI:
             return true
@@ -144,7 +149,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
 
     var usesWyomingProtocol: Bool {
         switch self {
-        case .notConfigured, .whisperKit:
+        case .notConfigured, .whisperKit, .fluidAudio:
             return false
         case .whisper:
             // For unified Whisper, check the user's protocol preference

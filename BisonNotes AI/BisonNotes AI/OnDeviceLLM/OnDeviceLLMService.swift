@@ -56,6 +56,11 @@ public class OnDeviceLLMService: ObservableObject {
     private var isLoaded = false
     @Published public var lastMetrics: InferenceMetrics?
 
+    /// Tracks background state at the service level so it survives model loading.
+    /// When the app backgrounds before the model is loaded, `llm` is nil and the
+    /// flag would be lost. This ensures newly loaded models inherit the correct state.
+    private var _isAppBackgrounded = false
+
     // MARK: - Initialization
 
     public init(config: OnDeviceLLMConfig = .current) {
@@ -105,7 +110,8 @@ public class OnDeviceLLMService: ObservableObject {
         )
 
         isLoaded = true
-        print("[OnDeviceLLMService] Model loaded: \(config.modelInfo.displayName)")
+        llm?.isAppBackgrounded = _isAppBackgrounded
+        print("[OnDeviceLLMService] Model loaded: \(config.modelInfo.displayName) (backgrounded: \(_isAppBackgrounded))")
     }
 
     /// Unload the model from memory
@@ -113,6 +119,17 @@ public class OnDeviceLLMService: ObservableObject {
         llm = nil
         isLoaded = false
         print("[OnDeviceLLMService] Model unloaded")
+    }
+
+    /// Set the app background state on the LLM to prevent Metal crashes
+    public func setAppBackgrounded(_ backgrounded: Bool) {
+        _isAppBackgrounded = backgrounded
+        llm?.isAppBackgrounded = backgrounded
+    }
+
+    /// Whether the last inference was interrupted because the app entered background
+    public var wasInterruptedByBackground: Bool {
+        llm?.wasInterruptedByBackground ?? false
     }
 
     /// Check if a model is loaded

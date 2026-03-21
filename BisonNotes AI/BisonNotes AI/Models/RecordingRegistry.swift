@@ -85,21 +85,26 @@ public enum ProcessingStatus: String, Codable, CaseIterable {
     case completed = "Completed"
     case failed = "Failed"
     case cancelled = "Cancelled"
-    
+    case interrupted = "Interrupted"
+
     public var description: String {
         return self.rawValue
     }
-    
+
     public var isActive: Bool {
         return self == .queued || self == .processing
     }
-    
+
     public var isComplete: Bool {
         return self == .completed
     }
-    
+
     public var hasError: Bool {
         return self == .failed || self == .cancelled
+    }
+
+    public var isResumable: Bool {
+        return self == .interrupted
     }
 }
 
@@ -131,18 +136,7 @@ public class RecordingRegistryManager: ObservableObject {
     
     // MARK: - iCloud Integration
     
-    private let iCloudManager: iCloudStorageManager = {
-        // Use preview instance in preview environments
-        let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
-                       ProcessInfo.processInfo.processName.contains("PreviewShell") ||
-                       ProcessInfo.processInfo.arguments.contains("--enable-previews")
-        
-        if isPreview {
-            print("🔍 RecordingRegistryManager using preview iCloudManager")
-            return iCloudStorageManager.preview
-        }
-        return iCloudStorageManager()
-    }()
+    private let iCloudManager = iCloudStorageManager.shared
     
     init() {
         loadRecordings()

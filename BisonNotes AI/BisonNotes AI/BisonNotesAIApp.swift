@@ -89,10 +89,10 @@ struct BisonNotesAIApp: App {
         // Migrate transcription engine if not configured
         if currentTranscriptionEngine == "Not Configured" || currentTranscriptionEngine == nil {
             if hasOnDeviceAISupport {
-                // Use WhisperKit (On Device) for devices with 6GB+ RAM
-                UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
-                UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
-                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'On Device' (device has 6GB+ RAM)")
+                // Use FluidAudio (On Device) as the default for devices with 4GB+ RAM
+                UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: transcriptionEngineKey)
+                UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
+                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to '\(TranscriptionEngine.fluidAudio.rawValue)' (device has 6GB+ RAM)")
             } else {
                 // Set OpenAI as default for devices with less than 6GB RAM
                 UserDefaults.standard.set("OpenAI", forKey: transcriptionEngineKey)
@@ -167,6 +167,37 @@ struct BisonNotesAIApp: App {
         }
         
         // Mark migration as complete
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
+    /// Migrates users from WhisperKit "On Device" to the new naming where
+    /// FluidAudio (Parakeet) is "On Device" and WhisperKit is "On Device (WhisperKit)".
+    /// Existing WhisperKit users keep WhisperKit under its new name.
+    private func migrateWhisperKitToParakeetNaming() {
+        let transcriptionEngineKey = "selectedTranscriptionEngine"
+        let migrationKey = "whisperKitToParakeetNaming_v1.7"
+
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+
+        let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
+
+        // "On Device" was previously WhisperKit's rawValue. Now it belongs to FluidAudio.
+        // Existing WhisperKit users need to be moved to the new "On Device (WhisperKit)" rawValue.
+        if let storedValue = currentTranscription,
+           storedValue == "On Device" {
+            UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
+            NSLog("✅ Migrated transcription engine from 'On Device' to '\(TranscriptionEngine.whisperKit.rawValue)' (WhisperKit naming update)")
+        }
+
+        // Also migrate "On Device (Parakeet)" to "On Device" for anyone who was already using Parakeet
+        if let storedValue = currentTranscription,
+           storedValue == "On Device (Parakeet)" {
+            UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: transcriptionEngineKey)
+            NSLog("✅ Migrated transcription engine from 'On Device (Parakeet)' to '\(TranscriptionEngine.fluidAudio.rawValue)'")
+        }
+
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
@@ -250,6 +281,7 @@ struct BisonNotesAIApp: App {
         migrateAIEngineSelection()
         migrateAppleIntelligenceToOnDeviceLLM()
         migrateAppleTranscriptionToWhisperKit()
+        migrateWhisperKitToParakeetNaming()
         migrateWhisperKitNameIfNeeded()
         migrateOnDeviceLLMNameToOnDeviceAI()
         setupDarwinNotificationObserver()

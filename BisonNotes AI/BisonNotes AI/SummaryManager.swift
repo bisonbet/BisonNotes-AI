@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 // MARK: - Engine Availability Status
 
@@ -54,26 +55,22 @@ class SummaryManager: ObservableObject {
     private let reminderExtractor = ReminderExtractor()
     private let transcriptManager = TranscriptManager.shared
     
+    // MARK: - Background Task Management
+
+    /// Background task ID for keeping summarization alive when the app is backgrounded.
+    /// Cloud AI calls (OpenAI, Bedrock, Gemini) use network requests that iOS will
+    /// terminate after ~30s without a background task.
+    private var summaryBackgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+
     // MARK: - Error Handling Integration
-    
+
     private let errorHandler = ErrorHandler()
     @Published var currentError: AppError?
     @Published var showingErrorAlert = false
     
     // MARK: - iCloud Integration
     
-    private let iCloudManager: iCloudStorageManager = {
-        // Use preview instance in preview environments
-        let isPreview = ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" ||
-                       ProcessInfo.processInfo.processName.contains("PreviewShell") ||
-                       ProcessInfo.processInfo.arguments.contains("--enable-previews")
-        
-        if isPreview {
-            print("🔍 SummaryManager using preview iCloudManager")
-            return iCloudStorageManager.preview
-        }
-        return iCloudStorageManager()
-    }()
+    private let iCloudManager = iCloudStorageManager.shared
     
     private init() {
         loadEnhancedSummariesLegacy()
@@ -1008,7 +1005,12 @@ class SummaryManager: ObservableObject {
             handleError(validationError, context: "Input Validation", recordingName: recordingName)
             throw validationError
         }
-        
+
+        // Begin a background task so cloud AI calls (OpenAI, Bedrock, Gemini, etc.)
+        // can complete even if the user backgrounds the app during summarization.
+        beginSummaryBackgroundTask()
+        defer { endSummaryBackgroundTask() }
+
         // Ensure we're using the currently selected engine from settings
         syncCurrentEngineWithSettings()
         
@@ -1035,11 +1037,20 @@ class SummaryManager: ObservableObject {
             // Use the AI engine to process the complete text
             result = try await engine.processComplete(text: text)
         } catch {
+            // If the task was cancelled, propagate CancellationError immediately — don't retry
+            if Task.isCancelled || error is CancellationError || (error as NSError).code == NSURLErrorCancelled {
+                throw CancellationError()
+            }
             AppLogger.shared.error("AI engine failed: \(error) – retrying once", category: "SummaryManager")
             do {
+                try Task.checkCancellation()
                 result = try await engine.processComplete(text: text)
                 AppLogger.shared.info("AI engine retry succeeded", category: "SummaryManager")
             } catch {
+                // If cancelled during retry, propagate CancellationError
+                if Task.isCancelled || error is CancellationError || (error as NSError).code == NSURLErrorCancelled {
+                    throw CancellationError()
+                }
                 AppLogger.shared.error("AI engine retry failed: \(error)", category: "SummaryManager")
 
                 // Handle the error and provide recovery options
@@ -1140,6 +1151,32 @@ class SummaryManager: ObservableObject {
         return enhancedSummary
     }
     
+    // MARK: - Background Task Helpers
+
+    private func beginSummaryBackgroundTask() {
+        guard summaryBackgroundTaskID == .invalid else { return }
+        summaryBackgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "AISummarization") { [weak self] in
+            // Expiration handler — iOS is about to kill us
+            print("⚠️ [SummaryManager] Background task expiring for summarization")
+            self?.endSummaryBackgroundTask()
+        }
+        if summaryBackgroundTaskID != .invalid {
+            let remaining = UIApplication.shared.backgroundTimeRemaining
+            if remaining != Double.greatestFiniteMagnitude {
+                print("[SummaryManager] Background task started — \(Int(remaining))s remaining")
+            } else {
+                print("[SummaryManager] Background task started — unlimited time (foreground or audio session active)")
+            }
+        }
+    }
+
+    private func endSummaryBackgroundTask() {
+        guard summaryBackgroundTaskID != .invalid else { return }
+        print("[SummaryManager] Ending summarization background task")
+        UIApplication.shared.endBackgroundTask(summaryBackgroundTaskID)
+        summaryBackgroundTaskID = .invalid
+    }
+
     // MARK: - Fallback Basic Summary Generation
     
     private func generateBasicSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator?) async throws -> EnhancedSummaryData {

@@ -15,7 +15,7 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Build & Test]
 
 ## Project Structure
 - `BisonNotes AI/`: iOS app source
-  - Notable folders: `Models/`, `Views/`, `ViewModels/`, `OpenAI/`, `AWS/`, `Wyoming/`, `WatchConnectivity/`, `OnDeviceLLM/`, `WhisperKit/`
+  - Notable folders: `Models/`, `Views/`, `ViewModels/`, `OpenAI/`, `AWS/`, `Wyoming/`, `WatchConnectivity/`, `OnDeviceLLM/`, `WhisperKit/`, `FluidAudio/`
   - Assets: `Assets.xcassets`; config: `Info.plist`, `.entitlements`
   - Uses Xcode's file-system synchronized groups, so dropping new Swift files into these folders automatically adds them to the project—no manual `.xcodeproj` edits are necessary.
 - `BisonNotes Share/`: Share Extension target for importing audio from other apps
@@ -50,11 +50,12 @@ The project uses Swift Package Manager for dependency management. Major dependen
 - **MarkdownUI**: Professional markdown rendering for AI-generated summaries, headers, lists, and formatted text
 
 ### **On-Device Transcription**
-- **WhisperKit**: High-quality on-device speech recognition
-  - GitHub: https://github.com/argmaxinc/whisperkit
-  - Supports multiple model sizes (Higher Quality ~520MB, Faster Processing ~150MB)
+- **FluidAudio Parakeet** (Default): On-device transcription using NVIDIA Parakeet models. Faster and more accurate than WhisperKit.
   - Complete privacy - audio never leaves device
   - Works offline after model download
+- **WhisperKit** (Deprecated): Legacy on-device speech recognition. May be removed in a future release.
+  - GitHub: https://github.com/argmaxinc/whisperkit
+  - Supports multiple model sizes (Higher Quality ~520MB, Faster Processing ~150MB)
 
 ### **Apple Frameworks**
 - **WatchConnectivity**: Syncing between iPhone and Apple Watch
@@ -74,17 +75,19 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - **Watch App**: Full recording control from Apple Watch with automatic sync via WatchConnectivity
 - **Multiple AI Engines**: Support for OpenAI, AWS Bedrock, Google AI Studio, Mistral AI, Ollama, and On-Device AI
 - **Mistral AI Transcription**: Cloud transcription via Voxtral Mini with speaker diarization support ($0.003/min)
-- **On-Device Processing**: Complete privacy with WhisperKit transcription and On-Device AI summarization (default for new installs)
+- **On-Device Processing**: Complete privacy with WhisperKit transcription, FluidAudio Parakeet transcription, and On-Device AI summarization (default for new installs)
+- **FluidAudio Parakeet**: Optional on-device transcription engine using NVIDIA Parakeet models for high-quality offline speech recognition
 - **Share Extension**: Import audio files directly from Voice Memos, Files, and other apps via the iOS share sheet
 - **Combine Recordings**: Merge two separate recordings into a single continuous audio file
 - **PDF Export**: Professional PDF reports with three-pane header (metadata, local map, regional map), pagination, and dedicated tasks/reminders sections
-- **Background Processing**: Long recordings and complex processing handled automatically in the background
+- **Background Processing**: Long recordings and complex processing handled automatically in the background with intelligent stale job detection and automatic recovery
+- **iCloud Backup & Sync**: Automatic backup on recording creation, CloudKit summary sync with paginated queries and schema-safe fallback, deferred auto-backup
 - **Search Functionality**: Powerful search across recordings, transcripts, and summaries. Search by recording name, transcript text, summary content, tasks, reminders, and titles.
 - **Date Filters**: Filter recordings, transcripts, and summaries by date range. Select start and end dates to quickly find content from specific time periods.
 
 ## Key Modules
 - Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel`, `RecordingCombiner`
-- Transcription: `WhisperKitManager` (On Device), `OpenAITranscribeService`, `MistralTranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`
+- Transcription: `WhisperKitManager` (On Device), `FluidAudioManager` (Parakeet), `OpenAITranscribeService`, `MistralTranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`
 - Summarization: `OpenAISummarizationService`, `MistralAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `OnDeviceLLMService`
 - Export: `PDFExportService`, `SummaryExportFormatter`
 - UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI), `CombineRecordingsView`
@@ -100,7 +103,8 @@ The app supports multiple transcription engines for converting audio to text:
 
 | Engine | Description | Requirements |
 |--------|-------------|--------------|
-| **On Device** | High-quality on-device transcription. Your audio never leaves your device, ensuring complete privacy. | iOS 17.0+, 4GB+ RAM, model download (150-520MB) |
+| **On Device (Parakeet)** | Default. On-device transcription using NVIDIA Parakeet models. Faster and more accurate than WhisperKit. Complete privacy. | iOS 17.0+, model download |
+| **On Device (WhisperKit)** | Deprecated. Legacy on-device transcription. May be removed in a future release. | iOS 17.0+, 4GB+ RAM, model download (150-520MB) |
 | **OpenAI** | Cloud-based transcription using OpenAI's GPT-4o models and Whisper API | API key, internet |
 | **Mistral AI** | Cloud transcription using Voxtral Mini with speaker diarization ($0.003/min) | API key, internet |
 | **Whisper (Local Server)** | High-quality transcription using OpenAI's Whisper model on your local server | Whisper server running (REST API or Wyoming protocol) |
@@ -116,7 +120,17 @@ OpenAI transcription supports multiple models:
 
 ### On Device Transcription
 
-On Device transcription provides completely private, offline transcription:
+#### FluidAudio Parakeet (Default)
+
+Parakeet is the default on-device transcription engine as of v1.7. It provides faster and more accurate transcription than WhisperKit:
+
+- **Privacy**: 100% local processing - audio never leaves your device
+- **Offline**: Works completely offline after initial model download
+- **Requirements**: iOS 17.0 or later
+
+#### WhisperKit (Deprecated)
+
+WhisperKit is the legacy on-device transcription engine. It is still available but may be removed in a future release. We recommend switching to Parakeet.
 
 - **Models**:
   - **Higher Quality** (~520MB): Best accuracy and quality. Takes longer to process but produces more accurate transcriptions.
@@ -126,10 +140,8 @@ On Device transcription provides completely private, offline transcription:
   - iOS 17.0 or later
   - 4GB+ RAM (most modern iPhones and iPads)
   - 150-520MB free storage space
-- **Privacy**: 100% local processing - audio never leaves your device
-- **Offline**: Works completely offline after initial model download
 
-**Model Selection Guide**:
+**WhisperKit Model Selection Guide**:
 - **Voice Notes / Journaling** → Use "Faster Processing" (you're close to mic; speed is better)
 - **Meeting / Interview** → Use "Higher Quality" (handling multiple voices requires extra accuracy)
 - **Noisy Environment** → Use "Higher Quality" (Faster Processing will fail to separate voice from noise)
@@ -145,7 +157,7 @@ Mistral AI transcription uses the Voxtral Mini model for cloud-based speech-to-t
 - **Language**: Automatic detection or explicit language code (e.g., `en`, `fr`, `es`)
 - **Supported Formats**: MP3, MP4, M4A, WAV, FLAC, OGG, WebM
 - **Chunking**: Automatic chunking for files over 24MB or ~22 minutes (combined size/duration strategy)
-- **Setup**: Uses the same API key as Mistral AI summarization. Configure in Settings → AI Settings → Mistral AI, then select Mistral AI as your transcription engine in Transcription Settings.
+- **Setup**: Uses the same API key as Mistral AI summarization. Configure in Setup → AI Settings → Mistral AI, then select Mistral AI as your transcription engine in Transcription Settings.
 
 ## AI Engines
 
@@ -215,16 +227,16 @@ The on-device AI feature enables completely private, offline AI processing:
 - **Storage**: Models stored in Application Support (731 MB - 4.5 GB each)
 - **Context Window**: 16K tokens (automatically adjusted based on device RAM)
 - **Requirements**:
-  - **Transcription**: iOS 17.0+, 4GB+ RAM (most modern iPhones and iPads). Uses On Device transcription (requires model download: 150-520MB)
+  - **Transcription**: iOS 17.0+, 4GB+ RAM (most modern iPhones and iPads). Uses Parakeet on-device transcription by default (requires model download)
   - **AI Summary**: iPhone 15 Pro, iPhone 16 or newer, iOS 18.1+ (requires more processing power)
   - Device capability check prevents downloads on unsupported devices
   - Models are filtered based on available RAM (6GB+ for most models, 8GB+ for larger models)
 - **Downloads**: WiFi by default with optional cellular download support
 
 ## Configuration
-- Secrets are entered in‑app via settings views (OpenAI, Mistral AI, Google, AWS, Ollama, Whisper). Do not commit API keys.
+- Secrets are entered in‑app via setup views (OpenAI, Mistral AI, Google, AWS, Ollama, Whisper). Do not commit API keys.
 - Enable required capabilities in Xcode (Microphone, Background Modes, iCloud if used). Keep `Info.plist` and `.entitlements` aligned with features.
-- For On Device transcription, download a model (Higher Quality or Faster Processing) in Settings → Transcription Settings → On Device.
+- For On Device transcription, Parakeet is the default. Download the model in Setup → Transcription Settings → On Device. WhisperKit is available as a deprecated alternative.
 - For on-device AI, device capability checks ensure your device meets requirements (iPhone 15 Pro+ for AI summaries) before allowing downloads.
 
 ## iPhone Action Button Setup
@@ -342,7 +354,7 @@ The AWS SDK and other direct dependencies bring in a number of excellent open-so
 All dependencies are MIT or Apache 2.0 licensed. See each project's repository for full license terms.
 
 ## Contributing
-See AGENTS.md for repository guidelines (style, structure, commands, testing, PRs). Follow the Local Dev Setup above to run and validate changes before opening a PR.
+Follow the Local Dev Setup above to run and validate changes before opening a PR.
 
 ## License
 See LICENSE.
