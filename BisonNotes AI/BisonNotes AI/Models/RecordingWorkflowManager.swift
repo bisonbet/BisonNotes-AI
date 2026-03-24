@@ -213,7 +213,14 @@ class RecordingWorkflowManager: ObservableObject {
         print("📝 Creating summary for recording: \(recordingEntry.recordingName ?? "unknown")")
         print("🆔 Recording UUID: \(recordingId)")
         print("🆔 Transcript UUID: \(transcriptId)")
-        
+
+        // Capture existing summary IDs BEFORE creating new one
+        // We'll delete these only AFTER successfully saving the new summary
+        let existingSummaryIds = appCoordinator?.coreDataManager.getAllSummaryIds(for: recordingId) ?? []
+        if !existingSummaryIds.isEmpty {
+            print("📋 Found \(existingSummaryIds.count) existing summary(ies) to clean up after save")
+        }
+
         // Create summary data with proper UUID linking
         // Use proper URL resolution instead of force unwrapping
         let recordingURL = appCoordinator?.coreDataManager.getAbsoluteURL(for: recordingEntry) ?? URL(fileURLWithPath: "")
@@ -279,7 +286,23 @@ class RecordingWorkflowManager: ObservableObject {
         do {
             try context.save()
             print("✅ Summary saved to Core Data with ID: \(summaryData.id)")
-            
+
+            // NOW clean up old summaries (only after new one is safely saved)
+            if !existingSummaryIds.isEmpty {
+                var deletedCount = 0
+                for oldId in existingSummaryIds {
+                    do {
+                        try appCoordinator?.coreDataManager.deleteSummary(id: oldId)
+                        deletedCount += 1
+                    } catch {
+                        print("⚠️ Could not delete old summary \(oldId): \(error.localizedDescription)")
+                    }
+                }
+                if deletedCount > 0 {
+                    print("🧹 Cleaned up \(deletedCount) old summary(ies) for recording \(recordingId)")
+                }
+            }
+
             // Post notification to refresh UI views
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
@@ -290,9 +313,10 @@ class RecordingWorkflowManager: ObservableObject {
             }
         } catch {
             print("❌ Failed to save summary to Core Data: \(error)")
+            // Note: We did NOT delete old summaries, so user still has their previous data
             return nil
         }
-        
+
         return summaryData.id
     }
     

@@ -175,6 +175,18 @@ struct SummaryDetailView: View {
             }
         }
         .onAppear {
+            // Debug summary data being displayed
+            print("📊 [SummaryDetailView] Summary ID: \(summaryData.id)")
+            print("📊 [SummaryDetailView] Summary length: \(summaryData.summary.count) chars")
+            print("📊 [SummaryDetailView] Tasks count: \(summaryData.tasks.count)")
+            print("📊 [SummaryDetailView] Reminders count: \(summaryData.reminders.count)")
+            print("📊 [SummaryDetailView] Titles count: \(summaryData.titles.count)")
+            if summaryData.summary.isEmpty {
+                print("⚠️ [SummaryDetailView] Summary text is EMPTY!")
+            } else {
+                print("📊 [SummaryDetailView] Summary preview: \(summaryData.summary.prefix(200))...")
+            }
+
             // Debug location data availability
             if let locationData = recording.locationData {
                 print("📍 SummaryDetailView: Recording has location data - lat: \(locationData.latitude), lon: \(locationData.longitude)")
@@ -188,6 +200,8 @@ struct SummaryDetailView: View {
                let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
                let latestSummary = completeData.summary,
                latestSummary.id != summaryData.id {
+                print("🔄 [SummaryDetailView] Refreshing summary from Core Data")
+                print("📊 [SummaryDetailView] New summary length: \(latestSummary.summary.count) chars")
                 summaryData = latestSummary
             }
 

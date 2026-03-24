@@ -490,20 +490,10 @@ actor AudioCleanupService {
             throw AudioCleanupError.exportSessionFailed
         }
 
-        exportSession.outputURL = url
-        exportSession.outputFileType = .m4a
+        // Clean up temp CAF file after export completes (success or failure)
+        defer { try? FileManager.default.removeItem(at: tempCAFURL) }
 
-        await exportSession.export()
-
-        // Clean up temp CAF file
-        try? FileManager.default.removeItem(at: tempCAFURL)
-
-        guard exportSession.status == .completed else {
-            if let error = exportSession.error {
-                throw error
-            }
-            throw AudioCleanupError.exportSessionFailed
-        }
+        try await exportSession.export(to: url, as: .m4a)
     }
 }
 

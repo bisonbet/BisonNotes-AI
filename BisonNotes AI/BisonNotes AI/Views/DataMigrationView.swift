@@ -26,6 +26,10 @@ struct DataMigrationView: View {
     @State private var showingCleanupAlert = false
     @State private var isPerformingCleanup = false
     @State private var cleanupResults: CleanupResults?
+
+    // Duplicate summary/transcript cleanup
+    @State private var showingDuplicateCleanupAlert = false
+    @State private var duplicateCleanupResults: (summaries: Int, transcripts: Int)?
     // Safety confirmations for data-changing operations
     @State private var confirmRecoverCloud = false
     @State private var confirmFullSyncToCloud = false
@@ -111,6 +115,15 @@ struct DataMigrationView: View {
                 }
             } message: {
                 Text("This will remove summaries and transcripts for recordings that no longer exist. This action cannot be undone.")
+            }
+            .alert("Cleanup Duplicate Summaries", isPresented: $showingDuplicateCleanupAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Clean Up") {
+                    let results = appCoordinator.coreDataManager.cleanupDuplicates()
+                    duplicateCleanupResults = results
+                }
+            } message: {
+                Text("This will scan for duplicate summaries and transcripts for the same recording and keep only the most recent one.\n\nThis is useful after failed summarization runs that may have created multiple entries.\n\nThis action cannot be undone.")
             }
             .alert("Upload All Summaries to iCloud", isPresented: $confirmFullSyncToCloud) {
                 Button("Cancel", role: .cancel) { }
@@ -347,7 +360,48 @@ struct DataMigrationView: View {
                     .cornerRadius(12)
                 }
                 .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-                
+
+                // Cleanup duplicate summaries/transcripts
+                Button(action: {
+                    showingDuplicateCleanupAlert = true
+                }) {
+                    HStack {
+                        Image(systemName: "doc.on.doc")
+                        Text("Cleanup Duplicate Summaries")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.purple)
+                    .cornerRadius(12)
+                }
+                .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+
+                // Show duplicate cleanup results if available
+                if let results = duplicateCleanupResults {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            Text("Duplicate Cleanup Complete")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                        }
+                        Text("• Removed \(results.summaries) duplicate summaries")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("• Removed \(results.transcripts) duplicate transcripts")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.purple.opacity(0.1))
+                    )
+                }
+
                 // Background Processing
                 Button(action: {
                     showingBackgroundProcessing = true

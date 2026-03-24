@@ -63,6 +63,16 @@ struct AITextView: View {
         // Use Textual with our text cleaning pipeline and emoji support
         let cleanedText = cleanTextForMarkdown(text)
 
+        // Debug logging for empty content detection
+        let _ = {
+            if text.isEmpty {
+                print("⚠️ [AITextView] Received empty text")
+            } else if cleanedText.isEmpty {
+                print("⚠️ [AITextView] Text was cleaned to empty! Original length: \(text.count)")
+                print("⚠️ [AITextView] First 200 chars: \(text.prefix(200))")
+            }
+        }()
+
         StructuredText(
             markdown: cleanedText,
             baseURL: nil,

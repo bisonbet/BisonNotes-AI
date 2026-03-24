@@ -388,14 +388,126 @@ class CoreDataManager: ObservableObject {
         return repairedCount
     }
 
+    // MARK: - Duplicate Cleanup
+
+    /// Cleans up duplicate summaries and transcripts, keeping only the most recent for each recording.
+    /// Returns a tuple with (summariesDeleted, transcriptsDeleted)
+    func cleanupDuplicates() -> (summaries: Int, transcripts: Int) {
+        var summariesDeleted = 0
+        var transcriptsDeleted = 0
+
+        print("🧹 [CoreDataManager] Starting duplicate cleanup...")
+
+        // Get all recordings
+        let recordings = getAllRecordings()
+        print("🧹 [CoreDataManager] Checking \(recordings.count) recordings for duplicates")
+
+        for recording in recordings {
+            guard let recordingId = recording.id else { continue }
+
+            // Check for duplicate summaries
+            let summaryFetch: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+            summaryFetch.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
+            summaryFetch.sortDescriptors = [NSSortDescriptor(keyPath: \SummaryEntry.generatedAt, ascending: false)]
+
+            if let summaries = try? context.fetch(summaryFetch), summaries.count > 1 {
+                print("⚠️ Found \(summaries.count) summaries for recording '\(recording.recordingName ?? "unknown")' (ID: \(recordingId))")
+                // Keep the first (most recent), delete the rest
+                for (index, summary) in summaries.enumerated() {
+                    if index > 0 {
+                        let summaryLength = summary.summary?.count ?? 0
+                        print("  🗑️ Deleting duplicate summary ID: \(summary.id?.uuidString ?? "nil") (length: \(summaryLength) chars)")
+                        context.delete(summary)
+                        summariesDeleted += 1
+                    } else {
+                        let summaryLength = summary.summary?.count ?? 0
+                        print("  ✅ Keeping most recent summary ID: \(summary.id?.uuidString ?? "nil") (length: \(summaryLength) chars)")
+                    }
+                }
+            }
+
+            // Check for duplicate transcripts
+            let transcriptFetch: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+            transcriptFetch.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
+            transcriptFetch.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.createdAt, ascending: false)]
+
+            if let transcripts = try? context.fetch(transcriptFetch), transcripts.count > 1 {
+                print("⚠️ Found \(transcripts.count) transcripts for recording '\(recording.recordingName ?? "unknown")' (ID: \(recordingId))")
+                // Keep the first (most recent), delete the rest
+                for (index, transcript) in transcripts.enumerated() {
+                    if index > 0 {
+                        let segmentsLength = transcript.segments?.count ?? 0
+                        print("  🗑️ Deleting duplicate transcript ID: \(transcript.id?.uuidString ?? "nil") (segments: \(segmentsLength) chars)")
+                        context.delete(transcript)
+                        transcriptsDeleted += 1
+                    } else {
+                        let segmentsLength = transcript.segments?.count ?? 0
+                        print("  ✅ Keeping most recent transcript ID: \(transcript.id?.uuidString ?? "nil") (segments: \(segmentsLength) chars)")
+                    }
+                }
+            }
+        }
+
+        // Also check for orphaned summaries (no matching recording)
+        let orphanSummaryFetch: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        if let allSummaries = try? context.fetch(orphanSummaryFetch) {
+            let recordingIds = Set(recordings.compactMap { $0.id })
+            for summary in allSummaries {
+                if let summaryRecordingId = summary.recordingId, !recordingIds.contains(summaryRecordingId) {
+                    print("🗑️ Deleting orphaned summary (no recording): ID \(summary.id?.uuidString ?? "nil")")
+                    context.delete(summary)
+                    summariesDeleted += 1
+                }
+            }
+        }
+
+        // Also check for orphaned transcripts (no matching recording)
+        let orphanTranscriptFetch: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+        if let allTranscripts = try? context.fetch(orphanTranscriptFetch) {
+            let recordingIds = Set(recordings.compactMap { $0.id })
+            for transcript in allTranscripts {
+                if let transcriptRecordingId = transcript.recordingId, !recordingIds.contains(transcriptRecordingId) {
+                    print("🗑️ Deleting orphaned transcript (no recording): ID \(transcript.id?.uuidString ?? "nil")")
+                    context.delete(transcript)
+                    transcriptsDeleted += 1
+                }
+            }
+        }
+
+        if summariesDeleted > 0 || transcriptsDeleted > 0 {
+            do {
+                try saveContext()
+                print("✅ [CoreDataManager] Cleanup complete: deleted \(summariesDeleted) duplicate/orphaned summaries, \(transcriptsDeleted) duplicate/orphaned transcripts")
+            } catch {
+                print("❌ [CoreDataManager] Failed to save cleanup changes: \(error)")
+                context.rollback()
+                return (0, 0)
+            }
+        } else {
+            print("✅ [CoreDataManager] No duplicates or orphans found")
+        }
+
+        return (summariesDeleted, transcriptsDeleted)
+    }
+
     // MARK: - Summary Operations
     
     func getSummary(for recordingId: UUID) -> SummaryEntry? {
         let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
-        
+        // Sort by generatedAt descending to get the most recent summary
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \SummaryEntry.generatedAt, ascending: false)]
+
         do {
-            return try context.fetch(fetchRequest).first
+            let summaries = try context.fetch(fetchRequest)
+            if summaries.count > 1 {
+                print("⚠️ [CoreDataManager] Found \(summaries.count) summaries for recording \(recordingId)")
+                for (index, summary) in summaries.enumerated() {
+                    print("  Summary \(index + 1): ID=\(summary.id?.uuidString ?? "nil"), length=\(summary.summary?.count ?? 0), date=\(summary.generatedAt?.description ?? "nil")")
+                }
+                print("  Returning most recent summary")
+            }
+            return summaries.first
         } catch {
             print("❌ Error fetching summary: \(error)")
             return nil
@@ -460,8 +572,49 @@ class CoreDataManager: ObservableObject {
         }
     }
     
+    /// Get all summary IDs for a recording (used to capture IDs before creating new summary)
+    func getAllSummaryIds(for recordingId: UUID) -> [UUID] {
+        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
+
+        do {
+            let summaries = try context.fetch(fetchRequest)
+            return summaries.compactMap { $0.id }
+        } catch {
+            print("❌ Error fetching summary IDs: \(error)")
+            return []
+        }
+    }
+
+    /// Delete ALL summaries for a recording (useful for regeneration to clean up orphans)
+    func deleteAllSummaries(for recordingId: UUID) throws {
+        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
+
+        do {
+            let summaries = try context.fetch(fetchRequest)
+            if summaries.isEmpty {
+                print("ℹ️ No summaries found for recording: \(recordingId)")
+                return
+            }
+
+            print("🗑️ Deleting \(summaries.count) summary/summaries for recording: \(recordingId)")
+            for summary in summaries {
+                print("  - Deleting summary ID: \(summary.id?.uuidString ?? "nil")")
+                context.delete(summary)
+            }
+
+            try saveContext()
+            print("✅ Successfully deleted all summaries for recording: \(recordingId)")
+        } catch {
+            print("❌ Error deleting summaries for recording: \(error)")
+            context.rollback()
+            throw error
+        }
+    }
+
     // MARK: - Combined Operations
-    
+
     func getCompleteRecordingData(id: UUID) -> (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)? {
         guard let recording = getRecording(id: id) else {
             return nil

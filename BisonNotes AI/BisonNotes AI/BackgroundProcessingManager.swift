@@ -1391,12 +1391,8 @@ class BackgroundProcessingManager: ObservableObject {
         let summaryProgressJob = job.withProgress(0.8)
         await updateJob(summaryProgressJob)
 
-        // If this is a regeneration, delete the old summary first
-        if let oldSummaryId = regenerationSummaryIds[job.id] {
-            print("🗑️ Deleting old summary \(oldSummaryId) for regeneration")
-            try? coreDataManager.deleteSummary(id: oldSummaryId)
-            regenerationSummaryIds.removeValue(forKey: job.id)
-        }
+        // Clear regeneration tracking (cleanup now happens in RecordingWorkflowManager.createSummary)
+        regenerationSummaryIds.removeValue(forKey: job.id)
 
         // Save summary to Core Data using RecordingWorkflowManager
         let workflowManager = RecordingWorkflowManager()

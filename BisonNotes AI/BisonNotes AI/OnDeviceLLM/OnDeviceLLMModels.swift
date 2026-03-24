@@ -287,6 +287,7 @@ extension OnDeviceLLMModelInfo {
 
     /// Qwen3.5-2B - Alibaba's latest multimodal Qwen3.5 model (text-only mode)
     /// A 2B parameter model with strong summarization and instruction following
+    /// Uses thinking mode for better quality output - requires higher output token budget
     /// EXPERIMENTAL: Available for devices with 6GB+ RAM when experimental models are enabled
     public static let qwen3_5_2B = OnDeviceLLMModelInfo(
         id: "qwen3.5-2b",
@@ -300,14 +301,16 @@ extension OnDeviceLLMModelInfo {
         purpose: .summarization,
         contextWindow: 16384,
         defaultSettings: OnDeviceLLMDefaultSettings(
-            temperature: 0.7,
-            topK: 50,
-            topP: 0.9,
+            // Recommended settings for Qwen3.5 thinking mode:
+            // temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5, repetition_penalty=1.0
+            temperature: 1.0,
+            topK: 20,
+            topP: 0.95,
             minP: 0.0,
-            repeatPenalty: 1.25,
-            penaltyLastN: 256,
-            frequencyPenalty: 0.15,
-            presencePenalty: 0.05
+            repeatPenalty: 1.0,
+            penaltyLastN: 64,
+            frequencyPenalty: 0.0,
+            presencePenalty: 1.5
         ),
         isRecommended: false,
         maker: "Alibaba"
@@ -315,6 +318,7 @@ extension OnDeviceLLMModelInfo {
 
     /// Qwen3.5-4B - Alibaba's larger multimodal Qwen3.5 model (text-only mode)
     /// A 4B parameter model with excellent detail extraction and summarization
+    /// Uses thinking mode for better quality output - requires higher output token budget
     /// EXPERIMENTAL: Only available for 8GB+ devices when experimental models are enabled
     public static let qwen3_5_4B = OnDeviceLLMModelInfo(
         id: "qwen3.5-4b",
@@ -328,11 +332,16 @@ extension OnDeviceLLMModelInfo {
         purpose: .summarization,
         contextWindow: 16384,
         defaultSettings: OnDeviceLLMDefaultSettings(
-            temperature: 0.7,
+            // Recommended settings for Qwen3.5 thinking mode:
+            // temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5, repetition_penalty=1.0
+            temperature: 1.0,
             topK: 20,
-            topP: 0.80,
+            topP: 0.95,
             minP: 0.0,
-            repeatPenalty: 1.1
+            repeatPenalty: 1.0,
+            penaltyLastN: 64,
+            frequencyPenalty: 0.0,
+            presencePenalty: 1.5
         ),
         isRecommended: false,
         maker: "Alibaba"

@@ -91,8 +91,18 @@ public class OnDeviceLLMService: ObservableObject {
         let contextSize = Int32(min(config.modelInfo.contextWindow, deviceContextSize))
         
         // Small models (LFM, Qwen3-1.7B) use lower max output tokens
+        // Qwen3.5 models use thinking mode and need more output budget for thinking + response
         let isSmallModel = config.modelInfo.id == "lfm-2.5-1.2b" || config.modelInfo.id == "qwen3-1.7b"
-        let maxOutputTokens: Int32 = isSmallModel ? 1500 : 2700
+        let isQwen35ThinkingModel = config.modelInfo.id == "qwen3.5-2b" || config.modelInfo.id == "qwen3.5-4b"
+        let maxOutputTokens: Int32
+        if isSmallModel {
+            maxOutputTokens = 1500
+        } else if isQwen35ThinkingModel {
+            // Qwen3.5 thinking models need ~3000 tokens for thinking + ~1500 for actual response
+            maxOutputTokens = 4500
+        } else {
+            maxOutputTokens = 2700
+        }
 
         llm = OnDeviceLLM(
             from: modelURL,
@@ -1283,19 +1293,42 @@ public class OnDeviceLLMService: ObservableObject {
         var currentSection = ""
         // Sanitize the entire response first, including Gemma3 and LFM tokens
         var sanitizedResponse = response.sanitizedForDisplay()
-        
+
+        // Check for thinking content (Qwen3.5 models use <think>...</think>)
+        var hasThinkingContent = false
+        var thinkingContent = ""
+        var contentAfterThinking = sanitizedResponse
+
+        if let thinkStartRange = sanitizedResponse.range(of: "<think>", options: .caseInsensitive),
+           let thinkEndRange = sanitizedResponse.range(of: "</think>", options: .caseInsensitive) {
+            hasThinkingContent = true
+            thinkingContent = String(sanitizedResponse[thinkStartRange.upperBound..<thinkEndRange.lowerBound])
+            contentAfterThinking = String(sanitizedResponse[thinkEndRange.upperBound...])
+
+            if OnDeviceLLMFeatureFlags.verboseLogging {
+                print("🧠 [OnDeviceLLMService] Thinking content detected (\(thinkingContent.count) chars)")
+                print("📝 [OnDeviceLLMService] Content after thinking (\(contentAfterThinking.count) chars)")
+            }
+        }
+
         // Check if response is essentially just stop tokens - if so, return early
-        // Be more lenient - only return empty if response is truly empty after removing all stop tokens
+        // For thinking models, check the content AFTER the thinking block
+        let contentToCheck = hasThinkingContent ? contentAfterThinking : sanitizedResponse
         let stopTokenPatterns = ["<|im_end|>", "</|im_end|>", "<|endoftext|>", "</|endoftext|>"]
-        var testResponse = sanitizedResponse
+        var testResponse = contentToCheck
         for pattern in stopTokenPatterns {
             testResponse = testResponse.replacingOccurrences(of: pattern, with: "", options: .caseInsensitive)
         }
         let cleanedTest = testResponse.trimmingCharacters(in: .whitespacesAndNewlines)
-        
+
         // Only consider it "only stop tokens" if there's less than 10 characters of actual content
         if cleanedTest.isEmpty || cleanedTest.count < 10 {
-            print("⚠️ [OnDeviceLLMService] Response contains only stop tokens or minimal content (length: \(cleanedTest.count)), returning empty result")
+            if hasThinkingContent {
+                print("⚠️ [OnDeviceLLMService] Model generated thinking content (\(thinkingContent.count) chars) but no actual response after </think> (length: \(cleanedTest.count))")
+                print("⚠️ [OnDeviceLLMService] This may indicate the model hit the output token limit during thinking. Consider increasing max output tokens.")
+            } else {
+                print("⚠️ [OnDeviceLLMService] Response contains only stop tokens or minimal content (length: \(cleanedTest.count)), returning empty result")
+            }
             return (summary: "", tasks: [], reminders: [], titles: [])
         }
         
