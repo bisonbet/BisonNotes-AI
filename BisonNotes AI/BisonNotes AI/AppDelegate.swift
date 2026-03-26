@@ -26,16 +26,20 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Ensure stale badge counts are cleared whenever the app becomes active.
+        // Always clear the local badge immediately — this is unconditional so it
+        // succeeds even when notification authorization is denied and setBadgeCount throws.
+        application.applicationIconBadgeNumber = 0
+
+        // Best-effort async clear via the UNUserNotificationCenter API.
+        // Do NOT call removeAllDeliveredNotifications() here: actionable notifications
+        // such as RESUME_RECORDING may still be waiting for a user response, and
+        // clearing them would prevent the action from being delivered.
         Task {
-            let center = UNUserNotificationCenter.current()
             do {
-                try await center.setBadgeCount(0)
-                application.applicationIconBadgeNumber = 0
-                center.removeAllDeliveredNotifications()
-                NSLog("✅ Cleared app icon badge and delivered notifications on app activation")
+                try await UNUserNotificationCenter.current().setBadgeCount(0)
+                NSLog("✅ Cleared app icon badge on app activation")
             } catch {
-                NSLog("⚠️ Failed to clear app icon badge on activation: \(error)")
+                NSLog("⚠️ setBadgeCount failed on activation (badge already cleared via applicationIconBadgeNumber): \(error)")
             }
         }
     }
