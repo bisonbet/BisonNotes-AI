@@ -15,7 +15,7 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Build & Test]
 
 ## Project Structure
 - `BisonNotes AI/`: iOS app source
-  - Notable folders: `Models/`, `Views/`, `ViewModels/`, `OpenAI/`, `AWS/`, `Wyoming/`, `WatchConnectivity/`, `OnDeviceLLM/`, `WhisperKit/`, `FluidAudio/`
+  - Notable folders: `Models/`, `Views/`, `ViewModels/`, `OpenAI/`, `AWS/`, `Wyoming/`, `WatchConnectivity/`, `OnDeviceLLM/`, `FluidAudio/`, `Services/`
   - Assets: `Assets.xcassets`; config: `Info.plist`, `.entitlements`
   - Uses Xcode's file-system synchronized groups, so dropping new Swift files into these folders automatically adds them to the project—no manual `.xcodeproj` edits are necessary.
 - `BisonNotes Share/`: Share Extension target for importing audio from other apps
@@ -50,12 +50,10 @@ The project uses Swift Package Manager for dependency management. Major dependen
 - **MarkdownUI**: Professional markdown rendering for AI-generated summaries, headers, lists, and formatted text
 
 ### **On-Device Transcription**
-- **FluidAudio Parakeet** (Default): On-device transcription using NVIDIA Parakeet models. Faster and more accurate than WhisperKit.
+- **FluidAudio Parakeet**: On-device transcription using NVIDIA Parakeet models.
   - Complete privacy - audio never leaves device
   - Works offline after model download
-- **WhisperKit** (Deprecated): Legacy on-device speech recognition. May be removed in a future release.
-  - GitHub: https://github.com/argmaxinc/whisperkit
-  - Supports multiple model sizes (Higher Quality ~520MB, Faster Processing ~150MB)
+  - WhisperKit was removed in v1.8; existing users are automatically migrated to Parakeet
 
 ### **Apple Frameworks**
 - **WatchConnectivity**: Syncing between iPhone and Apple Watch
@@ -73,10 +71,14 @@ All external dependencies are resolved automatically via Swift Package Manager w
 ## Key Features
 - **iPhone Action Button Support**: Quick-start recording from the Action Button on iPhone 15 Pro/Pro Max, iPhone 16 Pro/Pro Max, and future Pro models. Press the Action Button to launch the app and start recording instantly, even when your phone is locked.
 - **Watch App**: Full recording control from Apple Watch with automatic sync via WatchConnectivity
-- **Multiple AI Engines**: Support for OpenAI, AWS Bedrock, Google AI Studio, Mistral AI, Ollama, and On-Device AI
+- **Multiple AI Engines**: Support for OpenAI, AWS Bedrock, Google AI Studio, Mistral AI, Ollama, On-Device AI, and Apple Native (Apple Intelligence)
+- **Apple Native AI Engine**: On-device summarization using Apple's Foundation Models framework (iOS 26+, iPhone 15 Pro+). No data leaves the device.
 - **Mistral AI Transcription**: Cloud transcription via Voxtral Mini with speaker diarization support ($0.003/min)
-- **On-Device Processing**: Complete privacy with WhisperKit transcription, FluidAudio Parakeet transcription, and On-Device AI summarization (default for new installs)
-- **FluidAudio Parakeet**: Optional on-device transcription engine using NVIDIA Parakeet models for high-quality offline speech recognition
+- **On-Device Processing**: Complete privacy with FluidAudio Parakeet transcription and On-Device AI summarization (default for new installs)
+- **Audio Export**: Share any recording as an audio file via the iOS share sheet
+- **Video Import**: Import video files; audio is automatically extracted to M4A
+- **Audio Cleanup**: Optional pre-transcription DSP processing — high-pass filter, noise gate, dynamic normalization, and peak limiting
+- **Live Transcription**: On-device live speech-to-text via SFSpeechRecognizer during recording; transcript auto-saved on stop
 - **Share Extension**: Import audio files directly from Voice Memos, Files, and other apps via the iOS share sheet
 - **Combine Recordings**: Merge two separate recordings into a single continuous audio file
 - **PDF Export**: Professional PDF reports with three-pane header (metadata, local map, regional map), pagination, and dedicated tasks/reminders sections
@@ -87,8 +89,8 @@ All external dependencies are resolved automatically via Swift Package Manager w
 
 ## Key Modules
 - Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel`, `RecordingCombiner`
-- Transcription: `WhisperKitManager` (On Device), `FluidAudioManager` (Parakeet), `OpenAITranscribeService`, `MistralTranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`
-- Summarization: `OpenAISummarizationService`, `MistralAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `OnDeviceLLMService`
+- Transcription: `FluidAudioManager` (Parakeet), `OpenAITranscribeService`, `MistralTranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`, `LiveTranscriptionService`
+- Summarization: `OpenAISummarizationService`, `MistralAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `OnDeviceLLMService`, `AppleNativeEngine`
 - Export: `PDFExportService`, `SummaryExportFormatter`
 - UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI), `CombineRecordingsView`
 - Persistence: `Persistence`, `CoreDataManager`, models under `Models/`
@@ -103,8 +105,7 @@ The app supports multiple transcription engines for converting audio to text:
 
 | Engine | Description | Requirements |
 |--------|-------------|--------------|
-| **On Device (Parakeet)** | Default. On-device transcription using NVIDIA Parakeet models. Faster and more accurate than WhisperKit. Complete privacy. | iOS 17.0+, model download |
-| **On Device (WhisperKit)** | Deprecated. Legacy on-device transcription. May be removed in a future release. | iOS 17.0+, 4GB+ RAM, model download (150-520MB) |
+| **On Device (Parakeet)** | Default. On-device transcription using NVIDIA Parakeet models. Complete privacy. | iOS 17.0+, model download |
 | **OpenAI** | Cloud-based transcription using OpenAI's GPT-4o models and Whisper API | API key, internet |
 | **Mistral AI** | Cloud transcription using Voxtral Mini with speaker diarization ($0.003/min) | API key, internet |
 | **Whisper (Local Server)** | High-quality transcription using OpenAI's Whisper model on your local server | Whisper server running (REST API or Wyoming protocol) |
@@ -122,30 +123,12 @@ OpenAI transcription supports multiple models:
 
 #### FluidAudio Parakeet (Default)
 
-Parakeet is the default on-device transcription engine as of v1.7. It provides faster and more accurate transcription than WhisperKit:
+Parakeet is the sole on-device transcription engine as of v1.8 (WhisperKit was removed). It provides fast, accurate, fully local transcription:
 
 - **Privacy**: 100% local processing - audio never leaves your device
 - **Offline**: Works completely offline after initial model download
 - **Requirements**: iOS 17.0 or later
-
-#### WhisperKit (Deprecated)
-
-WhisperKit is the legacy on-device transcription engine. It is still available but may be removed in a future release. We recommend switching to Parakeet.
-
-- **Models**:
-  - **Higher Quality** (~520MB): Best accuracy and quality. Takes longer to process but produces more accurate transcriptions.
-  - **Faster Processing** (~150MB): Faster transcription with good quality. Ideal for quick transcriptions with slightly lower accuracy.
-- **Storage**: Models stored in Documents directory (150-520MB depending on model)
-- **Requirements**:
-  - iOS 17.0 or later
-  - 4GB+ RAM (most modern iPhones and iPads)
-  - 150-520MB free storage space
-
-**WhisperKit Model Selection Guide**:
-- **Voice Notes / Journaling** → Use "Faster Processing" (you're close to mic; speed is better)
-- **Meeting / Interview** → Use "Higher Quality" (handling multiple voices requires extra accuracy)
-- **Noisy Environment** → Use "Higher Quality" (Faster Processing will fail to separate voice from noise)
-- **Long Battery Life Needed** → Use "Faster Processing" (Higher Quality uses significantly more power)
+- **Migration**: Existing users who had WhisperKit selected are automatically switched to Parakeet on first launch of v1.8
 
 ### Mistral AI Transcription
 
@@ -165,22 +148,22 @@ The app supports multiple AI engines for summarization and content analysis:
 
 | Engine | Description | Requirements |
 |--------|-------------|--------------|
-| **OpenAI** | GPT-4.1 models (GPT-4.1, GPT-4.1 Mini, GPT-4.1 Nano) and GPT-5 Mini | API key, internet |
+| **Apple Native** | Apple Intelligence (Foundation Models) — fully on-device | iOS 26+, iPhone 15 Pro+ |
+| **OpenAI** | GPT-4.1 Mini, GPT-5 Mini, GPT-5.4 Mini | API key, internet |
 | **OpenAI Compatible** | Any OpenAI-compatible API (Nebius, Groq, LiteLLM, llama.cpp, etc.) | API key, internet |
 | **Mistral AI** | Mistral Large (25.12), Medium (25.08), Magistral Medium (25.09) | API key, internet |
-| **Google AI Studio** | Gemini 2.5 Flash, 2.5 Flash Lite, 3 Pro Preview, 3 Flash Preview | API key, internet |
+| **Google AI Studio** | Gemini 3 Flash Preview (default), Gemini 3.1 Flash Lite Preview | API key, internet |
 | **AWS Bedrock** | Claude 4.5 Haiku, Claude Sonnet 4.5, Llama 4 Maverick 17B Instruct | AWS credentials |
 | **Ollama** | Local LLM server (recommended: qwen3:30b, gpt-oss:20b, mistral-small3.2) | Ollama server running |
-| **On-Device AI** | Fully offline, privacy-focused | iPhone 15 Pro+, model (2-4.5 GB) |
+| **On-Device AI** | Fully offline, privacy-focused — llama.cpp with GGUF models | iPhone 15 Pro+, model (2-4.5 GB) |
 
 ### OpenAI Models
 
 OpenAI summarization supports multiple models:
 
-- **GPT-4.1**: Most robust and comprehensive analysis with advanced reasoning capabilities (Premium tier)
 - **GPT-4.1 Mini**: Balanced performance and cost, suitable for most summarization tasks (Standard tier) - Default
-- **GPT-4.1 Nano**: Fastest and most economical for basic summarization needs (Economy tier)
-- **GPT-5 Mini**: Next-generation model with enhanced reasoning and efficiency (Premium tier)
+- **GPT-5 Mini**: Next-generation reasoning model with enhanced efficiency (Premium tier)
+- **GPT-5.4 Mini**: Latest GPT-5 mini with improved reasoning and efficiency (Premium tier)
 
 ### AWS Bedrock Models
 
@@ -202,26 +185,24 @@ Mistral AI summarization supports multiple models:
 
 Google AI Studio provides access to Gemini models:
 
-- **Gemini 2.5 Flash**: Fast and efficient, good for most summarization tasks - Default
-- **Gemini 2.5 Flash Lite**: Lightweight variant for quick processing
-- **Gemini 3 Pro Preview**: Advanced reasoning and analysis capabilities (Preview)
-- **Gemini 3 Flash Preview**: Fast next-generation model (Preview)
+- **Gemini 3 Flash Preview**: Fast and efficient — Default (`gemini-3-flash-preview`)
+- **Gemini 3.1 Flash Lite Preview**: Lightweight variant for quick processing (`gemini-3.1-flash-lite-preview`)
 
 ### On-Device AI
 
 The on-device AI feature enables completely private, offline AI processing:
 
 - **Recommended Models** (by device RAM):
-  - **8GB+ RAM**: Granite 4.0 H Tiny (4.3 GB) - Recommended for best quality
-  - **6GB+ RAM**: Granite 4.0 Micro (2.1 GB) - Recommended for fast processing
-  - **6GB+ RAM**: Gemma 3n E2B (3.0 GB) - Good quality, smaller size
   - **8GB+ RAM**: Gemma 3n E4B (4.5 GB) - Best overall quality
-  - **6GB+ RAM**: Ministral 3B (2.1 GB) - Best for tasks and reminders
+  - **6GB+ RAM**: Gemma 3n E2B (3.0 GB) - Good quality, smaller size
+  - **6GB+ RAM**: Granite 4.0 Micro (2.1 GB) - Very fast processing
 
 - **Experimental Models** (enable in settings):
-  - **4GB+ RAM**: LFM 2.5 1.2B (731 MB) - Fast, minimal summaries (summary only)
-  - **6GB+ RAM**: Qwen3.5 2B (1.3 GB) - Latest Qwen3.5 model (summary only)
-  - **8GB+ RAM**: Qwen3.5 4B (2.7 GB) - Excellent detail extraction
+  - **8GB+ RAM**: Granite 4.0 H Tiny (4.3 GB) - Reliable and accurate
+  - **6GB+ RAM**: Ministral 3B (2.1 GB) - Best for tasks and reminders
+  - **4GB+ RAM**: LFM 2.5 Thinking (731 MB) - Fast, minimal summaries (summary only)
+  - **6GB+ RAM**: Qwen3.5 2B (1.3 GB) - Latest Qwen3.5 model, thinking mode (summary only)
+  - **8GB+ RAM**: Qwen3.5 4B (2.7 GB) - Excellent detail extraction, thinking mode
 
 - **Quantization**: Q4_K_M only (optimal balance of quality and memory usage)
 - **Storage**: Models stored in Application Support (731 MB - 4.5 GB each)
@@ -236,8 +217,8 @@ The on-device AI feature enables completely private, offline AI processing:
 ## Configuration
 - Secrets are entered in‑app via setup views (OpenAI, Mistral AI, Google, AWS, Ollama, Whisper). Do not commit API keys.
 - Enable required capabilities in Xcode (Microphone, Background Modes, iCloud if used). Keep `Info.plist` and `.entitlements` aligned with features.
-- For On Device transcription, Parakeet is the default. Download the model in Setup → Transcription Settings → On Device. WhisperKit is available as a deprecated alternative.
-- For on-device AI, device capability checks ensure your device meets requirements (iPhone 15 Pro+ for AI summaries) before allowing downloads.
+- For On Device transcription, Parakeet is the only on-device engine (WhisperKit was removed in v1.8). Download the model in Setup → Transcription Settings → On Device.
+- For on-device AI, device capability checks ensure your device meets requirements (iPhone 15 Pro+ for llama.cpp models; iOS 26+ for Apple Native) before allowing downloads.
 
 ## iPhone Action Button Setup
 If you have an iPhone 15 Pro, iPhone 15 Pro Max, iPhone 16 Pro, iPhone 16 Pro Max, or future iPhone Pro models with an Action Button, you can configure it to start recording instantly:
@@ -326,7 +307,6 @@ BisonNotes AI is built on the shoulders of several outstanding open-source proje
 
 | Project | Description | License | Link |
 |---------|-------------|---------|------|
-| **WhisperKit** | On-device speech recognition using OpenAI Whisper models. We maintain a fork for iOS-specific fixes and optimizations. | MIT | [argmaxinc/WhisperKit](https://github.com/argmaxinc/whisperkit) |
 | **Textual** (swift-markdown-ui) | Markdown rendering library used to display AI-generated summaries, transcripts, and formatted content. We maintain a fork with custom styling adjustments. | MIT | [gonzalezreal/swift-markdown-ui](https://github.com/gonzalezreal/swift-markdown-ui) |
 | **llama.cpp** | C/C++ inference engine for on-device LLM processing. Embedded as a pre-compiled xcframework for Metal-accelerated local AI summarization. | MIT | [ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp) |
 | **AWS SDK for Swift** | Cloud services SDK powering AWS Bedrock (Claude, Llama), Transcribe, and S3 integrations. | Apache 2.0 | [awslabs/aws-sdk-swift](https://github.com/awslabs/aws-sdk-swift) |
@@ -336,7 +316,6 @@ BisonNotes AI is built on the shoulders of several outstanding open-source proje
 
 We maintain forks of the following projects at [github.com/bisonbet](https://github.com/bisonbet):
 
-- **[bisonbet/WhisperKit](https://github.com/bisonbet/WhisperKit)** — Fork of argmaxinc/WhisperKit
 - **[bisonbet/textual](https://github.com/bisonbet/textual)** — Fork of gonzalezreal/swift-markdown-ui
 
 ### Transitive Dependencies

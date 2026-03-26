@@ -31,10 +31,44 @@ final class AppleNativeEngine: SummarizationEngine {
     // MARK: - SummarizationEngine
 
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        let prompt = """
-        Summarize the following transcript in 4-7 concise bullet points. Keep factual details, decisions, action owners, and deadlines if present. Transcript:\n\n\(text)
+        let chunks = chunkText(text)
+
+        if chunks.count == 1 {
+            let prompt = """
+            Summarize the following transcript in 4-7 concise bullet points. Keep factual details, decisions, action owners, and deadlines if present. Transcript:\n\n\(chunks[0])
+            """
+            return try await askModelWithFallback(prompt)
+        }
+
+        // Multi-chunk: summarize each chunk then combine into a final summary.
+        AppLogger.shared.info(
+            "[AppleNativeEngine] Transcript too long – processing in \(chunks.count) chunks",
+            category: "AppleNativeEngine"
+        )
+        var chunkSummaries: [String] = []
+        for (index, chunk) in chunks.enumerated() {
+            let chunkPrompt = """
+            This is part \(index + 1) of \(chunks.count) of a longer transcript. \
+            Summarize this section in 2-4 concise bullet points covering key facts, decisions, and action items:
+
+            \(chunk)
+            """
+            let chunkSummary = try await askModelWithFallback(chunkPrompt)
+            chunkSummaries.append(chunkSummary)
+        }
+
+        let combined = chunkSummaries.enumerated()
+            .map { "Part \($0.offset + 1):\n\($0.element)" }
+            .joined(separator: "\n\n")
+
+        let finalPrompt = """
+        The following are summaries of sequential sections of a transcript. \
+        Combine them into a single cohesive summary of 4-7 bullet points, \
+        preserving all key decisions, action items, and deadlines:
+
+        \(combined)
         """
-        return try await askModel(prompt)
+        return try await askModelWithFallback(finalPrompt)
     }
 
     func extractTasks(from text: String) async throws -> [TaskItem] {
@@ -45,9 +79,9 @@ final class AppleNativeEngine: SummarizationEngine {
         Avoid tasks about news, public figures, or world events.
 
         Text:
-        \(text)
+        \(truncateText(text))
         """
-        let response = try await askModel(prompt)
+        let response = try await askModelWithFallback(prompt)
         return parseTasksFromResponse(response)
     }
 
@@ -59,9 +93,9 @@ final class AppleNativeEngine: SummarizationEngine {
         Avoid reminders about news, public events, or world happenings.
 
         Text:
-        \(text)
+        \(truncateText(text))
         """
-        let response = try await askModel(prompt)
+        let response = try await askModelWithFallback(prompt)
         return parseRemindersFromResponse(response)
     }
 
@@ -71,9 +105,9 @@ final class AppleNativeEngine: SummarizationEngine {
         Return each title on its own line starting with a bullet (- or •).
 
         Content:
-        \(text)
+        \(truncateText(text))
         """
-        let response = try await askModel(prompt)
+        let response = try await askModelWithFallback(prompt)
         return parseTitlesFromResponse(response)
     }
 
@@ -106,6 +140,45 @@ final class AppleNativeEngine: SummarizationEngine {
 
     // MARK: - Private helpers
 
+    /// Approximate character budget for user-supplied text.
+    /// Apple Foundation Models cap at 4,096 tokens; at ~4 chars/token that is
+    /// ~16 384 characters total.  We reserve ~2 000 chars for prompt instructions
+    /// and the model's response, leaving ~14 000 for the transcript/text.
+    private static let maxTextCharacters = 14_000
+
+    /// Maximum characters per chunk when splitting long transcripts.
+    private static let chunkCharacters = 12_000
+
+    /// Truncate `text` so the combined prompt stays inside the context window.
+    /// Keeps the first 85 % and the last 15 % so the opening topic and the
+    /// closing remarks are both represented.
+    private func truncateText(_ text: String) -> String {
+        guard text.count > Self.maxTextCharacters else { return text }
+        let keepStart = Int(Double(Self.maxTextCharacters) * 0.85)
+        let keepEnd   = Self.maxTextCharacters - keepStart
+        return String(text.prefix(keepStart))
+            + "\n\n[…transcript truncated to fit context window…]\n\n"
+            + String(text.suffix(keepEnd))
+    }
+
+    /// Split `text` into overlapping chunks that each fit comfortably inside
+    /// the context window.  A 500-character overlap ensures continuity.
+    private func chunkText(_ text: String) -> [String] {
+        guard text.count > Self.chunkCharacters else { return [text] }
+        var chunks: [String] = []
+        var start = text.startIndex
+        let overlap = 500
+        while start < text.endIndex {
+            let end = text.index(start, offsetBy: Self.chunkCharacters, limitedBy: text.endIndex) ?? text.endIndex
+            chunks.append(String(text[start..<end]))
+            guard end < text.endIndex else { break }
+            // Step forward by (chunk - overlap) so consecutive chunks share context
+            let nextOffset = Self.chunkCharacters - overlap
+            start = text.index(start, offsetBy: nextOffset, limitedBy: text.endIndex) ?? text.endIndex
+        }
+        return chunks
+    }
+
     private func summaryTitle(from summary: String) -> String {
         let cleaned = summary
             .replacingOccurrences(of: "•", with: "")
@@ -122,7 +195,7 @@ final class AppleNativeEngine: SummarizationEngine {
         #if canImport(FoundationModels)
         if #available(iOS 26.0, macOS 26.0, visionOS 26.0, *) {
             guard SystemLanguageModel.default.availability == .available else {
-                throw SummarizationError.aiServiceUnavailable(service: "Apple Foundation Models are not available on this device")
+                throw SummarizationError.aiServiceUnavailable(service: "Apple Native")
             }
             let session = LanguageModelSession()
             let response = try await session.respond(to: prompt)
@@ -132,6 +205,34 @@ final class AppleNativeEngine: SummarizationEngine {
                 throw SummarizationError.processingFailed(reason: "Apple Foundation Models returned an empty response")
             }
             return output
+        }
+        throw SummarizationError.aiServiceUnavailable(service: "Apple Native")
+        #else
+        throw SummarizationError.aiServiceUnavailable(service: "Apple Native")
+        #endif
+    }
+
+    /// Ask the model with automatic context-window handling.
+    /// For prompts that are too large the text portion is first truncated;
+    /// if the error persists a hard truncation of the entire prompt is applied.
+    private func askModelWithFallback(_ prompt: String) async throws -> String {
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, macOS 26.0, visionOS 26.0, *) {
+            do {
+                return try await askModel(prompt)
+            } catch {
+                let isContextError = error.localizedDescription.lowercased().contains("context")
+                    || String(describing: error).contains("exceededContextWindowSize")
+                guard isContextError else { throw error }
+
+                AppLogger.shared.warning(
+                    "[AppleNativeEngine] Context window exceeded – retrying with truncated prompt",
+                    category: "AppleNativeEngine"
+                )
+                // Hard-truncate the entire prompt to the safe budget and retry once.
+                let safePrompt = String(prompt.prefix(Self.maxTextCharacters + 500))
+                return try await askModel(safePrompt)
+            }
         }
         throw SummarizationError.aiServiceUnavailable(service: "Apple Native requires iOS/macOS/visionOS 26 or newer")
         #else

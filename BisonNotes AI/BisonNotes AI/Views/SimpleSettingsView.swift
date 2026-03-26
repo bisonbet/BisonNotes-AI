@@ -579,6 +579,10 @@ struct SimpleSettingsView: View {
         else if transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue && aiEngine == "On-Device AI" {
             selectedOption = .onDeviceLLM
         }
+        // Check if Apple Native (Foundation Models) is selected — also fully on-device
+        else if transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue && aiEngine == "Apple Native" {
+            selectedOption = .onDeviceLLM
+        }
         // Any other permutation should show Advanced & Other Options
         else {
             selectedOption = .chooseLater

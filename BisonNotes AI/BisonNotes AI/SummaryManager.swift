@@ -1015,7 +1015,7 @@ class SummaryManager: ObservableObject {
 
         let engineToUse: SummarizationEngine?
 
-        if let engineName = engineName, let engine = availableEngines[engineName] {
+        if let engineName = engineName, let engine = availableEngines[engineName], engine.isAvailable {
             engineToUse = engine
         } else {
             engineToUse = currentEngine

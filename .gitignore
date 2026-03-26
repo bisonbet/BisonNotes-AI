@@ -58,3 +58,10 @@ gha-creds-*.json
 # Local AI model packages
 OLMoE.swift/
 .gemini-clipboard/
+
+# llama.xcframework - exclude dSYMs and non-Apple-platform slices
+Frameworks/llama.xcframework/**/dSYMs/
+Frameworks/llama.xcframework/tvos-arm64/
+Frameworks/llama.xcframework/tvos-arm64_x86_64-simulator/
+Frameworks/llama.xcframework/xros-arm64/
+Frameworks/llama.xcframework/xros-arm64_x86_64-simulator/

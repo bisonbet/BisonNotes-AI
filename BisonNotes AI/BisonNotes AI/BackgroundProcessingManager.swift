@@ -1491,6 +1491,8 @@ class BackgroundProcessingManager: ObservableObject {
             engineType = "On-Device AI"
         } else if lowerEngine.contains("ollama") {
             engineType = "Ollama"
+        } else if lowerEngine.contains("apple") {
+            engineType = "Apple Native"
         } else {
             engineType = "Background Service"
         }
