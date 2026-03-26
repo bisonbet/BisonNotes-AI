@@ -501,11 +501,13 @@ class CoreDataManager: ObservableObject {
         do {
             let summaries = try context.fetch(fetchRequest)
             if summaries.count > 1 {
-                print("⚠️ [CoreDataManager] Found \(summaries.count) summaries for recording \(recordingId)")
-                for (index, summary) in summaries.enumerated() {
-                    print("  Summary \(index + 1): ID=\(summary.id?.uuidString ?? "nil"), length=\(summary.summary?.count ?? 0), date=\(summary.generatedAt?.description ?? "nil")")
+                print("⚠️ [CoreDataManager] Found \(summaries.count) summaries for recording \(recordingId) — auto-cleaning duplicates")
+                // Keep the most recent (index 0), delete the rest immediately
+                for summary in summaries.dropFirst() {
+                    print("  🗑️ Auto-deleting duplicate summary ID=\(summary.id?.uuidString ?? "nil"), length=\(summary.summary?.count ?? 0)")
+                    context.delete(summary)
                 }
-                print("  Returning most recent summary")
+                try? context.save()
             }
             return summaries.first
         } catch {

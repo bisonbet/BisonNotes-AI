@@ -199,37 +199,22 @@ extension LLMTemplate {
         )
     }
 
-    // MARK: - Qwen Format
+    // MARK: - Qwen3.5 Format
 
-    /// Qwen format for Alibaba's models
-    public static func qwen(_ systemPrompt: String? = nil) -> LLMTemplate {
-        return LLMTemplate(
-            system: ("<|im_start|>system\n", "<|im_end|>\n"),
-            user: ("<|im_start|>user\n", "<|im_end|>\n"),
-            bot: ("<|im_start|>assistant\n", "<|im_end|>\n"),
-            stopSequences: ["<|im_end|>", "<|endoftext|>"],
-            systemPrompt: systemPrompt
-        )
-    }
-
-    // MARK: - Qwen3 Format
-
-    /// Qwen3 format for Alibaba's Qwen3 models
-    /// (similar to ChatML but with specific handling)
-    /// Includes stop sequences to prevent repetitive generation
-    /// Used by: Qwen3-1.7B, Qwen3-4B
-    /// Note: We don't use section headers or triple newlines as stop sequences because they're part of the expected format
-    /// and can cause premature stopping. Only use model-specific end tokens.
-    public static func qwen3(_ systemPrompt: String? = nil) -> LLMTemplate {
+    /// Qwen3.5 format for Alibaba's Qwen3.5 models (2B, 4B, 9B)
+    /// Small models (0.8B–9B) have thinking DISABLED by default — no special prefix needed.
+    /// The official way to control thinking is via llama.cpp's --chat-template-kwargs
+    /// '{"enable_thinking":false}' (CLI/server only; framework API does not expose this).
+    /// Since thinking is off by default for these sizes, standard ChatML format is correct.
+    /// Any <think>...</think> blocks that do appear are stripped in cleanupResponse().
+    public static func qwen35(_ systemPrompt: String? = nil) -> LLMTemplate {
         return LLMTemplate(
             system: ("<|im_start|>system\n", "<|im_end|>\n"),
             user: ("<|im_start|>user\n", "<|im_end|>\n"),
             bot: ("<|im_start|>assistant\n", "<|im_end|>\n"),
             stopSequences: [
-                "<|im_end|>", 
+                "<|im_end|>",
                 "<|endoftext|>"
-                // Removed "\n\n\n" - too aggressive, causes premature stopping
-                // The model will naturally stop at <|im_end|> when done
             ],
             systemPrompt: systemPrompt
         )
@@ -238,8 +223,11 @@ extension LLMTemplate {
     // MARK: - Gemma 3 Format
 
     /// Gemma 3 format for Google's Gemma 3 models
+    /// Format: <start_of_turn>user\n{message}<end_of_turn>\n<start_of_turn>model\n
+    /// Note: llama.cpp automatically adds <bos> - do NOT add it manually
     public static func gemma3(_ systemPrompt: String? = nil) -> LLMTemplate {
-        // Gemma 3 uses a specific format with <start_of_turn> and <end_of_turn> markers
+        // Gemma 3 uses <start_of_turn>/<end_of_turn> markers
+        // <bos> is auto-added by llama.cpp inference engine
         let systemText = systemPrompt.map { "<start_of_turn>user\n\($0)<end_of_turn>\n" } ?? ""
         return LLMTemplate(
             prefix: systemText,

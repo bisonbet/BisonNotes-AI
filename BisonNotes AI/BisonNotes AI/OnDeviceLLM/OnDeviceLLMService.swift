@@ -90,16 +90,11 @@ public class OnDeviceLLMService: ObservableObject {
         let deviceContextSize = DeviceCapabilities.onDeviceLLMContextSize
         let contextSize = Int32(min(config.modelInfo.contextWindow, deviceContextSize))
         
-        // Small models (LFM, Qwen3-1.7B) use lower max output tokens
-        // Qwen3.5 models use thinking mode and need more output budget for thinking + response
-        let isSmallModel = config.modelInfo.id == "lfm-2.5-1.2b" || config.modelInfo.id == "qwen3-1.7b"
-        let isQwen35ThinkingModel = config.modelInfo.id == "qwen3.5-2b" || config.modelInfo.id == "qwen3.5-4b"
+        // LFM small model uses lower max output tokens
+        let isSmallModel = config.modelInfo.id == "lfm-2.5-1.2b"
         let maxOutputTokens: Int32
         if isSmallModel {
             maxOutputTokens = 1500
-        } else if isQwen35ThinkingModel {
-            // Qwen3.5 thinking models need ~3000 tokens for thinking + ~1500 for actual response
-            maxOutputTokens = 4500
         } else {
             maxOutputTokens = 2700
         }
@@ -167,14 +162,8 @@ public class OnDeviceLLMService: ObservableObject {
         guard let llm = llm else { throw OnDeviceLLMError.modelNotLoaded }
 
         // Create summarization prompt
-        var prompt = createSummarizationPrompt(text: text, contentType: contentType)
+        let prompt = createSummarizationPrompt(text: text, contentType: contentType)
         
-        // For Qwen3 models, add /no_think to disable thinking mode (must be in user message)
-        // Note: Placed at the end of the prompt to ensure it's processed correctly
-        if config.modelInfo.id == "qwen3-1.7b" {
-            prompt = prompt + "\n\n/no_think"
-        }
-
         // Update template with summarization system prompt
         // Use LFM-specific system prompt for LFM models to prevent hallucinated tokens
         let systemPrompt: String?
@@ -190,6 +179,16 @@ public class OnDeviceLLMService: ObservableObject {
 
         // Store metrics
         lastMetrics = llm.metrics
+
+        // Debug: Log raw model output before any cleanup
+        if OnDeviceLLMFeatureFlags.debugRawOutput {
+            print("🔍 [OnDeviceLLMService] RAW MODEL OUTPUT START (generateSummary, \(result.count) chars) ===")
+            print(result)
+            print("=== RAW MODEL OUTPUT END ===")
+            if let metrics = lastMetrics {
+                print("📊 [OnDeviceLLMService] Metrics: \(metrics.inferenceTokenCount) output tokens, \(String(format: "%.1f", metrics.inferenceTokensPerSecond)) tok/s")
+            }
+        }
 
         // For LFM models, check if response is just stop tokens before cleanup
         if config.modelInfo.templateType == .lfm {
@@ -297,11 +296,8 @@ public class OnDeviceLLMService: ObservableObject {
         // First, classify the content
         let contentType = classifyContent(text)
 
-        // Check if this is one of the small experimental models (LFM, Qwen3-1.7B)
-        // These models only generate summary and one title (no tasks/reminders)
-        // For small models, we use a two-step approach: summary first, then title from summary
-        let isSmallModel = config.modelInfo.id == "lfm-2.5-1.2b" || 
-                          config.modelInfo.id == "qwen3-1.7b"
+        // LFM uses a two-step approach: summary first, then title (no tasks/reminders)
+        let isSmallModel = config.modelInfo.id == "lfm-2.5-1.2b"
 
         if isSmallModel {
             // Two-step approach for small models: summary first, then title
@@ -310,13 +306,23 @@ public class OnDeviceLLMService: ObservableObject {
 
         // For larger models, use single-step complete processing
         let prompt = createCompleteProcessingPrompt(text: text)
-        
+
         llm.template = config.modelInfo.templateType.template(
             systemPrompt: LLMTemplate.completeProcessingSystemPrompt
         )
 
         let result = await llm.generate(from: prompt)
         lastMetrics = llm.metrics
+
+        // Debug: Log raw model output before any cleanup
+        if OnDeviceLLMFeatureFlags.debugRawOutput {
+            print("🔍 [OnDeviceLLMService] RAW MODEL OUTPUT START (\(result.count) chars) ===")
+            print(result)
+            print("=== RAW MODEL OUTPUT END ===")
+            if let metrics = lastMetrics {
+                print("📊 [OnDeviceLLMService] Metrics: \(metrics.inferenceTokenCount) output tokens, \(String(format: "%.1f", metrics.inferenceTokensPerSecond)) tok/s")
+            }
+        }
 
         // Parse the response
         let parsed = parseCompleteResponse(result)
@@ -345,20 +351,8 @@ public class OnDeviceLLMService: ObservableObject {
             throw OnDeviceLLMError.modelNotLoaded
         }
         
-        // This function is only called for small models (LFM, Qwen3-1.7B)
-        let isSmallModel = config.modelInfo.id == "lfm-2.5-1.2b" || config.modelInfo.id == "qwen3-1.7b"
-        
         // Step 1: Generate summary only
-        let summaryPrompt = createSmallModelSummarizationPrompt(text: text, contentType: contentType)
-
-        // For Qwen3 models, add /no_think to disable thinking mode
-        // Place it at the end of the prompt to ensure it's processed correctly
-        let finalSummaryPrompt: String
-        if config.modelInfo.id == "qwen3-1.7b" {
-            finalSummaryPrompt = summaryPrompt + "\n\n/no_think"
-        } else {
-            finalSummaryPrompt = summaryPrompt
-        }
+        let finalSummaryPrompt = createSmallModelSummarizationPrompt(text: text, contentType: contentType)
 
         // Use a minimal system prompt to guide the model
         let systemPrompt = "You are a helpful assistant that creates clear, structured summaries."
@@ -380,29 +374,20 @@ public class OnDeviceLLMService: ObservableObject {
             print("📝 [OnDeviceLLMService] Cleaned summary (first 500 chars): \(String(cleanedSummary.prefix(500)))")
         }
         
-        // For small models (LFM, Qwen3-1.7B), truncate if we detect repetitive content or if it's too long
-        // This helps prevent hitting the max token limit
-        if isSmallModel {
-            // If the response is very long, try to find where the summary actually ends
-            // Look for patterns that suggest the summary is complete
-            if cleanedSummary.count > 2000 {
-                // Try to find the end of the summary section
-                if let summaryEnd = cleanedSummary.range(of: #"\n\n\n"#, options: []) {
-                    cleanedSummary = String(cleanedSummary[..<summaryEnd.upperBound])
-                } else if let summaryEnd = cleanedSummary.range(of: #"\n\n##"#, options: []) {
-                    // If there's another section header, stop before it
-                    cleanedSummary = String(cleanedSummary[..<summaryEnd.lowerBound])
-                } else {
-                    // Otherwise, just take the first 2000 characters
-                    cleanedSummary = String(cleanedSummary.prefix(2000))
-                }
-                print("⚠️ [OnDeviceLLMService] Summary generation was too long, truncated for \(config.modelInfo.displayName)")
+        // Truncate if summary is too long (LFM tends to run on)
+        if cleanedSummary.count > 2000 {
+            if let summaryEnd = cleanedSummary.range(of: #"\n\n\n"#, options: []) {
+                cleanedSummary = String(cleanedSummary[..<summaryEnd.upperBound])
+            } else if let summaryEnd = cleanedSummary.range(of: #"\n\n##"#, options: []) {
+                cleanedSummary = String(cleanedSummary[..<summaryEnd.lowerBound])
+            } else {
+                cleanedSummary = String(cleanedSummary.prefix(2000))
             }
+            print("⚠️ [OnDeviceLLMService] Summary too long, truncated for \(config.modelInfo.displayName)")
         }
-        
-        // For small experimental models, validate the response isn't just stop tokens
-        if isSmallModel {
-            if cleanedSummary.isEmpty || cleanedSummary.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).count < 20 {
+
+        // Validate the response isn't empty or minimal
+        if cleanedSummary.isEmpty || cleanedSummary.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).count < 20 {
                 print("⚠️ [OnDeviceLLMService] Small experimental model (\(config.modelInfo.displayName)) generated empty or minimal summary")
                 return (
                     summary: "⚠️ This experimental model (\(config.modelInfo.displayName)) failed to generate a valid summary. Small models (1-2B parameters) are unreliable for summarization tasks. Please try a larger model like Gemma, Qwen 4B, or Ministral in Settings.",
@@ -411,9 +396,8 @@ public class OnDeviceLLMService: ObservableObject {
                     titles: [],
                     contentType: contentType
                 )
-            }
         }
-        
+
         // Extract summary from response (look for ## Summary section or use cleaned response)
         var finalSummary = cleanedSummary
         
@@ -474,13 +458,7 @@ public class OnDeviceLLMService: ObservableObject {
         // Step 2: Generate title from the summary
         let titlePrompt = createTitleFromSummaryPrompt(summary: finalSummary, originalTranscript: text)
 
-        // For Qwen3 models, add /no_think to disable thinking mode
-        let finalTitlePrompt: String
-        if config.modelInfo.id == "qwen3-1.7b" {
-            finalTitlePrompt = titlePrompt + "\n\n/no_think"
-        } else {
-            finalTitlePrompt = titlePrompt
-        }
+        let finalTitlePrompt = titlePrompt
 
         // Clear history before title generation to ensure clean context
         await llm.clearHistory()
@@ -540,34 +518,23 @@ public class OnDeviceLLMService: ObservableObject {
             }
         }
         
-        // For small models (LFM, Qwen3-1.7B), truncate if title generation goes on too long
-        // Title should be very short, so if it's long, it's likely repetitive or off-track
-        if isSmallModel {
-            // If the response is longer than 500 characters, it's likely generating too much
-            if cleanedTitleResult.count > 500 {
-                // Try to find where the title actually ends
-                if let titleEnd = cleanedTitleResult.range(of: #"\n\n\n"#, options: []) {
-                    cleanedTitleResult = String(cleanedTitleResult[..<titleEnd.upperBound])
-                } else if let titleEnd = cleanedTitleResult.range(of: #"\n\n##"#, options: []) {
-                    // If there's another section header, stop before it
-                    cleanedTitleResult = String(cleanedTitleResult[..<titleEnd.lowerBound])
+        // Truncate if title generation runs too long
+        if cleanedTitleResult.count > 500 {
+            if let titleEnd = cleanedTitleResult.range(of: #"\n\n\n"#, options: []) {
+                cleanedTitleResult = String(cleanedTitleResult[..<titleEnd.upperBound])
+            } else if let titleEnd = cleanedTitleResult.range(of: #"\n\n##"#, options: []) {
+                cleanedTitleResult = String(cleanedTitleResult[..<titleEnd.lowerBound])
+            } else if let titleStart = cleanedTitleResult.range(of: "## Title", options: .caseInsensitive) {
+                let afterTitle = String(cleanedTitleResult[titleStart.upperBound...])
+                if let endBreak = afterTitle.range(of: "\n\n", options: []) {
+                    cleanedTitleResult = String(cleanedTitleResult[..<titleStart.upperBound]) + String(afterTitle[..<endBreak.lowerBound])
                 } else {
-                    // Look for the first occurrence of "## Title" and take everything up to the next major break
-                    if let titleStart = cleanedTitleResult.range(of: "## Title", options: .caseInsensitive) {
-                        let afterTitle = String(cleanedTitleResult[titleStart.upperBound...])
-                        // Take up to 300 characters after "## Title" or until double newline
-                        if let endBreak = afterTitle.range(of: "\n\n", options: []) {
-                            cleanedTitleResult = String(cleanedTitleResult[..<titleStart.upperBound]) + String(afterTitle[..<endBreak.lowerBound])
-                        } else {
-                            cleanedTitleResult = String(cleanedTitleResult[..<titleStart.upperBound]) + String(afterTitle.prefix(300))
-                        }
-                    } else {
-                        // Just take the first 500 characters
-                        cleanedTitleResult = String(cleanedTitleResult.prefix(500))
-                    }
+                    cleanedTitleResult = String(cleanedTitleResult[..<titleStart.upperBound]) + String(afterTitle.prefix(300))
                 }
-                print("⚠️ [OnDeviceLLMService] Title generation was too long (\(cleanedTitleResult.count) chars), truncated for \(config.modelInfo.displayName)")
+            } else {
+                cleanedTitleResult = String(cleanedTitleResult.prefix(500))
             }
+            print("⚠️ [OnDeviceLLMService] Title generation was too long (\(cleanedTitleResult.count) chars), truncated for \(config.modelInfo.displayName)")
         }
         
         var finalTitles = parseTitlesFromResponse(cleanedTitleResult)
@@ -718,11 +685,21 @@ public class OnDeviceLLMService: ObservableObject {
     private func cleanupResponse(_ response: String) -> String {
         var cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Remove any remaining template tokens that might have leaked
-        // Include Gemma3-specific tokens, LFM-specific tokens, and Qwen3 thinking tags
-        // Handle both correct and malformed variations
+        // STEP 1: Remove thinking blocks FIRST, before stripping individual tags.
+        // This ensures <think>...</think> block content is removed along with the tags.
+        // If we remove <think>/<think> tags individually first, the regex can't match the block.
+        if let thinkRegex = try? NSRegularExpression(pattern: "<think>.*?</think>", options: [.dotMatchesLineSeparators, .caseInsensitive]) {
+            let range = NSRange(cleaned.startIndex..., in: cleaned)
+            cleaned = thinkRegex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
+        }
+        // Clean up any standalone tags that remain after block removal
+        cleaned = cleaned.replacingOccurrences(of: "<think>", with: "", options: .caseInsensitive)
+        cleaned = cleaned.replacingOccurrences(of: "</think>", with: "", options: .caseInsensitive)
+        cleaned = cleaned.replacingOccurrences(of: "<think/>", with: "", options: .caseInsensitive)
+
+        // STEP 2: Remove remaining template tokens
         let tokensToRemove = [
-            "<|im_end|>", "<|im_start|>", "<|end|>", 
+            "<|im_end|>", "<|im_start|>", "<|end|>",
             "<|assistant|>", "<|user|>", "<|system|>",
             "<end_of_turn>", "<start_of_turn>", "<eos>",
             "<start_of_turn>user", "<start_of_turn>model",
@@ -730,32 +707,26 @@ public class OnDeviceLLMService: ObservableObject {
             "</|im_end|>", "</|im_start|>", "</|end|>",  // Malformed variations
             "<|endoftext|>", "<|startoftext|>",
             "<|tool_call_start|>", "<|tool_call_end|>",
-            "</|endoftext|>", "</|startoftext|>",  // Malformed variations
-            "<think>", "</think>", "<think/>"  // Qwen3 thinking tags (should be disabled but clean up if present)
+            "</|endoftext|>", "</|startoftext|>"  // Malformed variations
         ]
         for token in tokensToRemove {
             cleaned = cleaned.replacingOccurrences(of: token, with: "")
-            // Also try case-insensitive and with different spacing
             cleaned = cleaned.replacingOccurrences(of: token.lowercased(), with: "", options: .caseInsensitive)
         }
-        
+
         // Remove any remaining patterns that look like stop tokens (more aggressive cleanup)
         // Match patterns like "</|...|>" or "<|...|>" anywhere in the text
         if let regex = try? NSRegularExpression(pattern: "</?\\|[^|]*\\|>", options: []) {
             let range = NSRange(cleaned.startIndex..., in: cleaned)
             cleaned = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
         }
-        
-        // Remove thinking blocks <think>...</think> if they appear (Qwen3, etc.)
-        // Use a more aggressive pattern that handles multiline thinking content
-        if let thinkRegex = try? NSRegularExpression(pattern: "<think>.*?</think>", options: [.dotMatchesLineSeparators, .caseInsensitive]) {
+
+        // STEP 3: Remove trailing role-name artifacts that appear when the model starts a
+        // new turn (e.g. "<|im_start|>assistant\n" gets <|im_start|> stripped but "assistant" remains)
+        if let trailingRole = try? NSRegularExpression(pattern: #"\n?(assistant|user|system)\s*$"#, options: .caseInsensitive) {
             let range = NSRange(cleaned.startIndex..., in: cleaned)
-            cleaned = thinkRegex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
+            cleaned = trailingRole.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
         }
-        // Also remove any standalone <think> or </think> tags that might remain
-        cleaned = cleaned.replacingOccurrences(of: "<think>", with: "", options: .caseInsensitive)
-        cleaned = cleaned.replacingOccurrences(of: "</think>", with: "", options: .caseInsensitive)
-        cleaned = cleaned.replacingOccurrences(of: "<think/>", with: "", options: .caseInsensitive)
         
         // Remove common introductory phrases and thinking-style content that models sometimes add
         let introPhrases = [
@@ -827,11 +798,6 @@ public class OnDeviceLLMService: ObservableObject {
         // Use LFM-specific prompts for better performance on small models
         if config.modelInfo.templateType == .lfm {
             return createLFMSummarizationPrompt(text: text, contentType: contentType)
-        }
-        
-        // Qwen3-1.7B uses simpler prompts
-        if config.modelInfo.id == "qwen3-1.7b" {
-            return createSmallModelSummarizationPrompt(text: text, contentType: contentType)
         }
         
         // Calculate approx 15% target length in words (min 200 words) to encourage longer output
@@ -1021,11 +987,6 @@ public class OnDeviceLLMService: ObservableObject {
         // Use LFM-specific prompts for better performance on small models
         if config.modelInfo.templateType == .lfm {
             return createLFMCompleteProcessingPrompt(text: text)
-        }
-        
-        // Qwen3-1.7B uses simpler prompts
-        if config.modelInfo.id == "qwen3-1.7b" {
-            return createSmallModelCompleteProcessingPrompt(text: text)
         }
         
         // Calculate approx 15% target length in words (min 200 words) to encourage longer output

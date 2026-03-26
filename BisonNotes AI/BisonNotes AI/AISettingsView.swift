@@ -57,12 +57,12 @@ final class AISettingsViewModel: ObservableObject {
     }
 
     /// Moves the engine selection logic into the view model.
-    func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) -> (shouldPrompt: Bool, oldEngine: String, error: String?) {
+    func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) -> String? {
         let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
         let newEngine = engineType.rawValue
 
         guard oldEngine != newEngine else {
-            return (shouldPrompt: false, oldEngine: "", error: nil)
+            return nil
         }
 
         // Allow selection of any engine - users need to be able to select engines to configure them
@@ -102,10 +102,9 @@ final class AISettingsViewModel: ObservableObject {
         // Update the regeneration manager
         self.regenerationManager.setEngine(newEngine)
 
-        let shouldPrompt = self.regenerationManager.shouldPromptForRegeneration(oldEngine: oldEngine, newEngine: newEngine)
-        return (shouldPrompt: shouldPrompt, oldEngine: oldEngine, error: nil)
+        return nil
     }
-    
+
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
         case .openAI:
@@ -154,8 +153,6 @@ struct AISettingsView: View {
     @AppStorage(SummarizationTimeouts.storageKey) private var summarizationTimeout: Double = SummarizationTimeouts.defaultTimeout
 
     @Environment(\.dismiss) private var dismiss
-    @State private var showingEngineChangePrompt = false
-    @State private var previousEngine = ""
     @State private var showingOllamaSettings = false
     @State private var showingOpenAISettings = false
     @State private var showingOpenAICompatibleSettings = false
@@ -264,7 +261,7 @@ struct AISettingsView: View {
             let modelName = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaModelName) ?? AppSettingsKeys.Defaults.ollamaModelName
             return modelName
         case .googleAIStudio:
-            let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-2.5-flash"
+            let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3-flash-preview"
             return model
         case .awsBedrock:
             let storedModelName = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
@@ -309,32 +306,6 @@ struct AISettingsView: View {
                 }
             }
 
-        }
-        .alert("Engine Change", isPresented: $showingEngineChangePrompt) {
-            Button("Skip") { /* Do nothing, just dismiss */ }
-            Button("Regenerate") {
-                Task { await viewModel.regenerationManager.regenerateAllSummaries() }
-            }
-        } message: {
-            Text("You've switched from \(previousEngine) to \(UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"). Would you like to regenerate your existing summaries with the new AI engine?")
-                .font(.headline)
-                .padding()
-            
-            HStack {
-                Button("Cancel") {
-                    showingEngineChangePrompt = false
-                }
-                .buttonStyle(.bordered)
-                
-                Button("Regenerate") {
-                    let defaultEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
-                    // TODO: Implement setEngine with new Core Data system
-                    viewModel.regenerationManager.setEngine(defaultEngine) // Use proper default instead of hardcoded "openai"
-                    showingEngineChangePrompt = false
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            .padding(.horizontal)
         }
         .alert("Regeneration Complete", isPresented: $viewModel.regenerationManager.showingRegenerationAlert) {
             Button("OK") { viewModel.regenerationManager.regenerationResults = nil }
@@ -504,13 +475,10 @@ private extension AISettingsView {
                     set: { newValue in
                         if let engineType = AIEngineType.allCases.first(where: { $0.rawValue == newValue }) {
                             let result = self.viewModel.selectEngine(engineType, recorderVM: self.recorderVM)
-                            if let error = result.error {
+                            if let error = result {
                                 let systemError = SystemError.configurationError(message: error)
                                 let appError = AppError.system(systemError)
                                 self.errorHandler.handle(appError, context: "Engine Selection")
-                            } else if result.shouldPrompt {
-                                self.previousEngine = result.oldEngine
-                                self.showingEngineChangePrompt = true
                             }
                             self.refreshEngineStatuses()
                         }
@@ -737,7 +705,7 @@ private extension AISettingsView {
     var googleAIStudioConfigurationSection: some View {
         // FIX: Logic moved outside the ViewBuilder closure.
         let apiKey = UserDefaults.standard.string(forKey: "googleAIStudioAPIKey") ?? ""
-        let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-2.5-flash"
+        let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3-flash-preview"
         let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
         
         // The return statement is now required because the property contains more than a single expression.

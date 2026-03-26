@@ -15,7 +15,7 @@ class GoogleAIStudioService: ObservableObject {
     private let logger = Logger(subsystem: "com.audiojournal.app", category: "GoogleAIStudio")
     
     @AppStorage("googleAIStudioAPIKey") private var apiKey: String = ""
-    @AppStorage("googleAIStudioModel") private var selectedModel: String = "gemini-2.5-flash"
+    @AppStorage("googleAIStudioModel") private var selectedModel: String = "gemini-3-flash-preview"
     @AppStorage("googleAIStudioTemperature") private var temperature: Double = 0.1
     @AppStorage("googleAIStudioMaxTokens") private var maxTokens: Int = 8192
     @AppStorage("enableGoogleAIStudio") private var enableGoogleAIStudio: Bool = false
@@ -597,10 +597,8 @@ class GoogleAIStudioService: ObservableObject {
     func loadAvailableModels() async throws -> [String] {
         // Return only the specific Gemini models
         return [
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-3-pro-preview",
-            "gemini-3-flash-preview"
+            "gemini-3-flash-preview",
+            "gemini-3.1-flash-lite-preview"
         ]
     }
 } 

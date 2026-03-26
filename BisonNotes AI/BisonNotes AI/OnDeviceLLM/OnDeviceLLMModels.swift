@@ -18,8 +18,7 @@ public enum OnDeviceLLMTemplateType: String, Codable, CaseIterable {
     case mistral
     case alpaca
     case olmoe
-    case qwen
-    case qwen3
+    case qwen35
     case gemma3
     case lfm
     case simple
@@ -41,10 +40,8 @@ public enum OnDeviceLLMTemplateType: String, Codable, CaseIterable {
             return .alpaca(systemPrompt)
         case .olmoe:
             return .olmoe(systemPrompt)
-        case .qwen:
-            return .qwen(systemPrompt)
-        case .qwen3:
-            return .qwen3(systemPrompt)
+        case .qwen35:
+            return .qwen35(systemPrompt)
         case .gemma3:
             return .gemma3(systemPrompt)
         case .lfm:
@@ -178,7 +175,7 @@ extension OnDeviceLLMModelInfo {
             minP: 0.0,
             repeatPenalty: 1.1
         ),
-        isRecommended: false,
+        isRecommended: true,
         maker: "Google"
     )
 
@@ -202,7 +199,7 @@ extension OnDeviceLLMModelInfo {
             minP: 0.0,
             repeatPenalty: 1.1
         ),
-        isRecommended: false,
+        isRecommended: true,
         maker: "Google"
     )
 
@@ -222,7 +219,7 @@ extension OnDeviceLLMModelInfo {
         purpose: .summarization,
         contextWindow: 16384,
         defaultSettings: OnDeviceLLMDefaultSettings(
-            temperature: 0.7,
+            temperature: 0.1,  // Low temp for non-reasoning tasks
             topK: 40,
             topP: 0.95,
             minP: 0.0,
@@ -234,11 +231,11 @@ extension OnDeviceLLMModelInfo {
 
     /// Granite 4.0 H Tiny - IBM's efficient on-device model
     /// A compact model optimized for edge devices with strong instruction following
-    /// Recommended for 8GB+ devices
+    /// EXPERIMENTAL: Only available for 8GB+ devices when experimental models are enabled
     public static let granite4H = OnDeviceLLMModelInfo(
         id: "granite-4.0-h-tiny",
         displayName: "Granite",
-        description: "Reliable and accurate • 4.3GB",
+        description: "Experimental • Reliable and accurate • 4.3GB",
         filename: "granite-4.0-h-tiny-Q4_K_M",
         downloadURL: "https://huggingface.co/unsloth/granite-4.0-h-tiny-GGUF/resolve/main/granite-4.0-h-tiny-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 4_250_000_000, // ~4.25 GB for Q4_K_M
@@ -253,7 +250,7 @@ extension OnDeviceLLMModelInfo {
             minP: 0.0,
             repeatPenalty: 1.1
         ),
-        isRecommended: true,
+        isRecommended: false,
         maker: "IBM"
     )
 
@@ -287,7 +284,7 @@ extension OnDeviceLLMModelInfo {
 
     /// Qwen3.5-2B - Alibaba's latest multimodal Qwen3.5 model (text-only mode)
     /// A 2B parameter model with strong summarization and instruction following
-    /// Uses thinking mode for better quality output - requires higher output token budget
+    /// Small models (0.8B-9B) have thinking mode DISABLED by default
     /// EXPERIMENTAL: Available for devices with 6GB+ RAM when experimental models are enabled
     public static let qwen3_5_2B = OnDeviceLLMModelInfo(
         id: "qwen3.5-2b",
@@ -297,15 +294,15 @@ extension OnDeviceLLMModelInfo {
         downloadURL: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-UD-Q4_K_XL.gguf?download=true",
         downloadSizeBytes: 1_340_000_000, // ~1.34 GB for UD-Q4_K_XL
         requiredRAM: 6.0,
-        templateType: .qwen3,
+        templateType: .qwen35,
         purpose: .summarization,
         contextWindow: 16384,
         defaultSettings: OnDeviceLLMDefaultSettings(
-            // Recommended settings for Qwen3.5 thinking mode:
-            // temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5, repetition_penalty=1.0
-            temperature: 1.0,
+            // Qwen3.5 small models (0.8B-9B) Instruct Mode settings (thinking disabled by default):
+            // temperature=0.7, top_p=0.8, top_k=20, presence_penalty=1.5, repetition_penalty=1.0
+            temperature: 0.7,
             topK: 20,
-            topP: 0.95,
+            topP: 0.8,
             minP: 0.0,
             repeatPenalty: 1.0,
             penaltyLastN: 64,
@@ -318,7 +315,7 @@ extension OnDeviceLLMModelInfo {
 
     /// Qwen3.5-4B - Alibaba's larger multimodal Qwen3.5 model (text-only mode)
     /// A 4B parameter model with excellent detail extraction and summarization
-    /// Uses thinking mode for better quality output - requires higher output token budget
+    /// Small models (0.8B-9B) have thinking mode DISABLED by default
     /// EXPERIMENTAL: Only available for 8GB+ devices when experimental models are enabled
     public static let qwen3_5_4B = OnDeviceLLMModelInfo(
         id: "qwen3.5-4b",
@@ -328,15 +325,15 @@ extension OnDeviceLLMModelInfo {
         downloadURL: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf?download=true",
         downloadSizeBytes: 2_740_000_000, // ~2.74 GB for Q4_K_M
         requiredRAM: 8.0,
-        templateType: .qwen3,
+        templateType: .qwen35,
         purpose: .summarization,
         contextWindow: 16384,
         defaultSettings: OnDeviceLLMDefaultSettings(
-            // Recommended settings for Qwen3.5 thinking mode:
-            // temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5, repetition_penalty=1.0
-            temperature: 1.0,
+            // Qwen3.5 small models (0.8B-9B) Instruct Mode settings (thinking disabled by default):
+            // temperature=0.7, top_p=0.8, top_k=20, presence_penalty=1.5, repetition_penalty=1.0
+            temperature: 0.7,
             topK: 20,
-            topP: 0.95,
+            topP: 0.8,
             minP: 0.0,
             repeatPenalty: 1.0,
             penaltyLastN: 64,
@@ -389,12 +386,12 @@ extension OnDeviceLLMModelInfo {
 
     /// Models available for the current device based on RAM requirements
     /// RAM-based model availability:
-    /// - 6GB+ but <8GB: Gemma Small (E2B), Ministral, Granite Micro (recommended)
-    /// - 8GB+: Full Gemma (E4B), Granite (H Tiny, recommended), Granite Micro, Ministral
+    /// - 6GB+ but <8GB: Gemma Small (E2B, recommended), Ministral, Granite Micro (recommended)
+    /// - 8GB+: Full Gemma (E4B, recommended), Granite Micro (recommended), Ministral
     /// NOTE: Experimental models are excluded unless explicitly enabled:
     ///   - Small experimental (LFM 2.5): Available for 4GB+ devices when enabled
     ///   - Medium experimental (Qwen3.5 2B): Available for 6GB+ devices when enabled
-    ///   - Large experimental (Qwen3.5 4B): Only available for 8GB+ devices when enabled
+    ///   - Large experimental (Qwen3.5 4B, Granite H Tiny): Only available for 8GB+ devices when enabled
     /// For devices with <6GB RAM, only small experimental models are shown if enabled
     /// Models are sorted with recommended ones first
     public static var availableModels: [OnDeviceLLMModelInfo] {
@@ -402,7 +399,7 @@ extension OnDeviceLLMModelInfo {
         let experimentalEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.enableExperimentalModels)
         let smallExperimentalModels = ["lfm-2.5-1.2b"] // 4GB+
         let mediumExperimentalModels = ["qwen3.5-2b"] // 6GB+
-        let largeExperimentalModels = ["qwen3.5-4b"] // 8GB+ only
+        let largeExperimentalModels = ["qwen3.5-4b", "granite-4.0-h-tiny"] // 8GB+ only
 
         let filtered = allModels.filter { model in
             // Check basic RAM requirement
@@ -429,10 +426,10 @@ extension OnDeviceLLMModelInfo {
             }
 
             // For devices with 8GB+ RAM:
-            // Show: Full Gemma (E4B), Granite (H Tiny), Granite Micro, Ministral
-            // Plus experimental models (Qwen 2B, Qwen 4B) if enabled
+            // Show: Full Gemma (E4B), Granite Micro, Ministral
+            // Plus experimental models (Qwen 2B, Qwen 4B, Granite H Tiny) if enabled
             if deviceRAM >= 8.0 {
-                let allowedModels = ["gemma-3n-e4b", "granite-4.0-h-tiny", "granite-4.0-micro", "ministral-3b"]
+                let allowedModels = ["gemma-3n-e4b", "granite-4.0-micro", "ministral-3b"]
                 // Check experimental models
                 if smallExperimentalModels.contains(model.id) || mediumExperimentalModels.contains(model.id) {
                     return experimentalEnabled
@@ -472,28 +469,28 @@ extension OnDeviceLLMModelInfo {
 
     /// Default model for summarization tasks
     /// Returns the recommended model based on RAM:
-    /// - 8GB+: Granite (H Tiny) - recommended
-    /// - 6GB+ but <8GB: Granite Micro - recommended
-    /// Never returns small experimental models (LFM 2.5, Qwen3.5 2B) due to reliability issues
+    /// - 8GB+: Gemma (E4B) - recommended
+    /// - 6GB+ but <8GB: Gemma Small (E2B) - recommended
+    /// Never returns experimental models due to reliability issues
     public static var defaultSummarizationModel: OnDeviceLLMModelInfo {
         let deviceRAM = DeviceCapabilities.totalRAMInGB
-        
-        // For devices with 8GB+ RAM: default to Granite H Tiny (recommended)
+
+        // For devices with 8GB+ RAM: default to Gemma (E4B) (recommended)
         if deviceRAM >= 8.0 {
-            if deviceRAM >= granite4H.requiredRAM {
-                return granite4H
+            if deviceRAM >= gemma3nE4B.requiredRAM {
+                return gemma3nE4B
             }
         }
-        
-        // For devices with 6GB+ but <8GB: default to Granite Micro (recommended)
+
+        // For devices with 6GB+ but <8GB: default to Gemma Small (E2B) (recommended)
         if deviceRAM >= 6.0 {
-            if deviceRAM >= granite4Micro.requiredRAM {
-                return granite4Micro
+            if deviceRAM >= gemma3nE2B.requiredRAM {
+                return gemma3nE2B
             }
         }
-        
-        // Fallback to first available model (which excludes small experimental models)
-        return availableModels.first ?? granite4Micro
+
+        // Fallback to first available model (which excludes experimental models)
+        return availableModels.first ?? gemma3nE2B
     }
 
     /// Find a model by its ID

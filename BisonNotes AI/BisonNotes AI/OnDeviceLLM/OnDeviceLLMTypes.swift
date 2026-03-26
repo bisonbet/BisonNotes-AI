@@ -125,6 +125,10 @@ enum OnDeviceLLMFeatureFlags {
 
     /// Enable verbose logging for debugging
     static let verboseLogging = false
+
+    /// Log raw model output before cleanup (helps debug empty/truncated responses)
+    /// Set to true to see exactly what the model generates
+    static let debugRawOutput = false
 }
 
 // MARK: - Helper Functions

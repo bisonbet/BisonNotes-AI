@@ -245,6 +245,58 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
     
+    /// Migrates removed OpenAI summarization and Google AI Studio models to current defaults
+    /// Handles users who had gpt-4.1, gpt-4.1-nano, gemini-2.5-flash, gemini-2.5-flash-lite,
+    /// or gemini-3-pro-preview saved and would now get a nil/broken model selection
+    private func migrateRemovedModels() {
+        let migrationKey = "removedModelsMigrated_v1.8"
+
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+
+        // OpenAI summarization: gpt-4.1 and gpt-4.1-nano were removed; default to gpt-4.1-mini
+        let openAIKey = "openAISummarizationModel"
+        if let storedModel = UserDefaults.standard.string(forKey: openAIKey) {
+            let removedOpenAIModels = ["gpt-4.1", "gpt-4.1-nano"]
+            if removedOpenAIModels.contains(storedModel) {
+                let newDefault = OpenAISummarizationModel.gpt41Mini.rawValue
+                UserDefaults.standard.set(newDefault, forKey: openAIKey)
+                NSLog("✅ OpenAI summarization model migrated from '\(storedModel)' to '\(newDefault)'")
+            }
+        }
+
+        // Google AI Studio: gemini-2.5-flash, gemini-2.5-flash-lite, gemini-3-pro-preview removed
+        let googleKey = "googleAIStudioModel"
+        if let storedModel = UserDefaults.standard.string(forKey: googleKey) {
+            let removedGoogleModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3-pro-preview"]
+            if removedGoogleModels.contains(storedModel) {
+                let newDefault = "gemini-3-flash-preview"
+                UserDefaults.standard.set(newDefault, forKey: googleKey)
+                NSLog("✅ Google AI Studio model migrated from '\(storedModel)' to '\(newDefault)'")
+            }
+        }
+
+        // On-Device LLM: qwen3-1.7b was removed; migrate to granite-4.0-micro
+        let onDeviceKey = OnDeviceLLMModelInfo.SettingsKeys.selectedModelId
+        if let storedModel = UserDefaults.standard.string(forKey: onDeviceKey),
+           storedModel == "qwen3-1.7b" {
+            let newDefault = OnDeviceLLMModelInfo.granite4Micro.id
+            UserDefaults.standard.set(newDefault, forKey: onDeviceKey)
+            NSLog("✅ On-Device LLM model migrated from 'qwen3-1.7b' to '\(newDefault)'")
+        }
+
+        // On-Device LLM: granite-4.0-h-tiny moved from standard to experimental
+        // Enable experimental models so it continues to appear in the picker for existing users
+        if let storedModel = UserDefaults.standard.string(forKey: onDeviceKey),
+           storedModel == OnDeviceLLMModelInfo.granite4H.id {
+            UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels)
+            NSLog("✅ Enabled experimental models because user had '\(OnDeviceLLMModelInfo.granite4H.id)' selected (now experimental)")
+        }
+
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
     /// Migrates users from old "On-Device LLM" name to "On-Device AI"
     /// Handles backward compatibility for users who have the old name saved
     private func migrateOnDeviceLLMNameToOnDeviceAI() {
@@ -284,6 +336,7 @@ struct BisonNotesAIApp: App {
         migrateWhisperKitToParakeetNaming()
         migrateWhisperKitNameIfNeeded()
         migrateOnDeviceLLMNameToOnDeviceAI()
+        migrateRemovedModels()
         setupDarwinNotificationObserver()
     }
 

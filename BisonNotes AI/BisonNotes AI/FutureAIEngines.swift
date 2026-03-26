@@ -1149,7 +1149,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
     let isAvailable: Bool
     let version = "1.0"
     var metadataName: String {
-        return UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-2.5-flash"
+        return UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3-flash-preview"
     }
     
     private let service = GoogleAIStudioService()

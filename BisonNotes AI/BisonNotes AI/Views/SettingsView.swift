@@ -16,8 +16,6 @@ struct SettingsView: View {
     @StateObject private var errorHandler = ErrorHandler()
     @ObservedObject private var iCloudManager = iCloudStorageManager.shared
     @StateObject private var importManager = FileImportManager()
-    @State private var showingEngineChangePrompt = false
-    @State private var previousEngine = ""
     @State private var showingTranscriptionSettings = false
     @State private var showingAISettings = false
     @State private var showingClearSummariesAlert = false
@@ -72,20 +70,6 @@ struct SettingsView: View {
             }
         } message: {
             Text("Regeneration completed successfully") // Use default message since regenerationAlertMessage doesn't exist
-        }
-        .alert("Engine Change", isPresented: $showingEngineChangePrompt) {
-            Button("Cancel") {
-                showingEngineChangePrompt = false
-            }
-            Button("Regenerate") {
-                Task {
-                    regenerationManager.setEngine(selectedAIEngine)
-                    await regenerationManager.regenerateAllSummaries()
-                }
-                showingEngineChangePrompt = false
-            }
-        } message: {
-            Text("You've switched from \(previousEngine) to \(selectedAIEngine). Would you like to regenerate your existing summaries with the new AI engine?")
         }
         .onAppear {
             refreshEngineStatuses()

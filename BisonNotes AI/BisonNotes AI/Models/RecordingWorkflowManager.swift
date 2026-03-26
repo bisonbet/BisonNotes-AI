@@ -209,16 +209,26 @@ class RecordingWorkflowManager: ObservableObject {
             return nil
         }
         
+        // Reject obviously-failed summaries before touching Core Data at all
+        let summaryTrimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard summaryTrimmed.count >= 30 else {
+            print("⚠️ [RecordingWorkflowManager] Summary too short (\(summaryTrimmed.count) chars) — skipping save to avoid storing a failed result")
+            return nil
+        }
+
         // Log recording for debugging/analytics
         print("📝 Creating summary for recording: \(recordingEntry.recordingName ?? "unknown")")
         print("🆔 Recording UUID: \(recordingId)")
         print("🆔 Transcript UUID: \(transcriptId)")
 
-        // Capture existing summary IDs BEFORE creating new one
+        // Capture existing summaries BEFORE creating new one using context directly
+        // (appCoordinator may be nil, so we use context to avoid silent no-ops)
         // We'll delete these only AFTER successfully saving the new summary
-        let existingSummaryIds = appCoordinator?.coreDataManager.getAllSummaryIds(for: recordingId) ?? []
-        if !existingSummaryIds.isEmpty {
-            print("📋 Found \(existingSummaryIds.count) existing summary(ies) to clean up after save")
+        let existingSummaryFetch: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        existingSummaryFetch.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
+        let existingSummaries = (try? context.fetch(existingSummaryFetch)) ?? []
+        if !existingSummaries.isEmpty {
+            print("📋 Found \(existingSummaries.count) existing summary(ies) to clean up after save")
         }
 
         // Create summary data with proper UUID linking
@@ -287,18 +297,17 @@ class RecordingWorkflowManager: ObservableObject {
             try context.save()
             print("✅ Summary saved to Core Data with ID: \(summaryData.id)")
 
-            // NOW clean up old summaries (only after new one is safely saved)
-            if !existingSummaryIds.isEmpty {
+            // NOW clean up old summaries using context directly (only after new one is safely saved)
+            if !existingSummaries.isEmpty {
                 var deletedCount = 0
-                for oldId in existingSummaryIds {
-                    do {
-                        try appCoordinator?.coreDataManager.deleteSummary(id: oldId)
-                        deletedCount += 1
-                    } catch {
-                        print("⚠️ Could not delete old summary \(oldId): \(error.localizedDescription)")
-                    }
+                for oldSummary in existingSummaries {
+                    let oldId = oldSummary.id?.uuidString ?? "nil"
+                    context.delete(oldSummary)
+                    deletedCount += 1
+                    print("🗑️ Deleted old summary \(oldId)")
                 }
                 if deletedCount > 0 {
+                    try? context.save()
                     print("🧹 Cleaned up \(deletedCount) old summary(ies) for recording \(recordingId)")
                 }
             }

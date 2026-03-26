@@ -10,59 +10,50 @@ import Foundation
 // MARK: - OpenAI Models for Summarization
 
 enum OpenAISummarizationModel: String, CaseIterable {
-    case gpt41 = "gpt-4.1"
     case gpt41Mini = "gpt-4.1-mini"
-    case gpt41Nano = "gpt-4.1-nano"
     case gpt5Mini = "gpt-5-mini"
+    case gpt54Mini = "gpt-5.4-mini"
 
     var displayName: String {
         switch self {
-        case .gpt41:
-            return "GPT-4.1"
         case .gpt41Mini:
             return "GPT-4.1 Mini"
-        case .gpt41Nano:
-            return "GPT-4.1 Nano"
         case .gpt5Mini:
             return "GPT-5 Mini"
+        case .gpt54Mini:
+            return "GPT-5.4 Mini"
         }
     }
 
     var description: String {
         switch self {
-        case .gpt41:
-            return "Most robust and comprehensive analysis with advanced reasoning capabilities"
         case .gpt41Mini:
             return "Balanced performance and cost, suitable for most summarization tasks"
-        case .gpt41Nano:
-            return "Fastest and most economical for basic summarization needs"
         case .gpt5Mini:
             return "Next-generation model with enhanced reasoning and efficiency"
+        case .gpt54Mini:
+            return "Latest GPT-5 mini model with improved reasoning and efficiency"
         }
     }
 
     var maxTokens: Int {
         switch self {
-        case .gpt41:
-            return 4096
         case .gpt41Mini:
             return 2048
-        case .gpt41Nano:
-            return 1024
         case .gpt5Mini:
+            return 8192
+        case .gpt54Mini:
             return 8192
         }
     }
 
     var costTier: String {
         switch self {
-        case .gpt41:
-            return "Premium"
         case .gpt41Mini:
             return "Standard"
-        case .gpt41Nano:
-            return "Economy"
         case .gpt5Mini:
+            return "Premium"
+        case .gpt54Mini:
             return "Premium"
         }
     }
@@ -734,23 +725,3 @@ extension ResponseFormat {
 
 // OpenAIErrorResponse and OpenAIError are defined in OpenAITranscribeService.swift
 
-// MARK: - Model Discovery Support for OpenAI Compatible APIs
-
-struct OpenAIModelsListResponse: Codable {
-    let data: [OpenAIModelInfo]
-    let object: String?
-}
-
-struct OpenAIModelInfo: Codable {
-    let id: String
-    let object: String
-    let created: Int?
-    let ownedBy: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case object
-        case created
-        case ownedBy = "owned_by"
-    }
-}
