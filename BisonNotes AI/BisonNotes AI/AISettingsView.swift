@@ -57,13 +57,11 @@ final class AISettingsViewModel: ObservableObject {
     }
 
     /// Moves the engine selection logic into the view model.
-    func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) -> String? {
+    func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) {
         let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
         let newEngine = engineType.rawValue
 
-        guard oldEngine != newEngine else {
-            return nil
-        }
+        guard oldEngine != newEngine else { return }
 
         // Allow selection of any engine - users need to be able to select engines to configure them
         // Note: Availability checks are used for display status only, not selection restrictions
@@ -98,53 +96,8 @@ final class AISettingsViewModel: ObservableObject {
             print("🔧 Selected Apple Native engine")
         }
 
-        // Sync UserDefaults immediately
-        UserDefaults.standard.synchronize()
-
         // Update the regeneration manager
         self.regenerationManager.setEngine(newEngine)
-
-        return nil
-    }
-
-    private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
-        switch engineType {
-        case .openAI:
-            let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
-            return !apiKey.isEmpty
-        case .openAICompatible:
-            let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
-            return !apiKey.isEmpty
-        case .mistralAI:
-            let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
-            let isEnabled = UserDefaults.standard.bool(forKey: "enableMistralAI")
-            return !apiKey.isEmpty && isEnabled
-        case .localLLM:
-            let isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.enableOllama)
-            return isEnabled
-        case .googleAIStudio:
-            let apiKey = UserDefaults.standard.string(forKey: "googleAIStudioAPIKey") ?? ""
-            let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
-            return !apiKey.isEmpty && isEnabled
-        case .awsBedrock:
-            let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
-            let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
-            let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
-
-            if useProfile {
-                return !profileName.isEmpty && isEnabled
-            } else {
-                // Use unified credentials manager instead of separate UserDefaults keys
-                let credentials = AWSCredentialsManager.shared.credentials
-                return credentials.isValid && isEnabled
-            }
-        case .onDeviceLLM:
-            let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
-            let selectedModel = OnDeviceLLMModelInfo.selectedModel
-            return isEnabled && selectedModel.isDownloaded
-        case .appleNative:
-            return AppleNativeEngine.modelAvailable
-        }
     }
 }
 
@@ -260,7 +213,8 @@ struct AISettingsView: View {
     private func getEngineVersion(_ engineType: AIEngineType) -> String {
         switch engineType {
         case .openAI:
-            return "GPT-4"
+            let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
+            return OpenAISummarizationModel(rawValue: modelString)?.displayName ?? modelString
         case .openAICompatible:
             return "API Compatible"
         case .mistralAI:
@@ -404,7 +358,8 @@ private extension AISettingsView {
                         .controlSize(.small)
                 } else if let engine = currentEngineType,
                           let status = engineStatuses[engine.rawValue] {
-                    Label(status.statusMessage, systemImage: status.isAvailable ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                    Label(status.isAvailable ? "Ready" : "Needs Setup",
+                          systemImage: status.isAvailable ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                         .font(.caption)
                         .foregroundColor(status.isAvailable ? .green : .orange)
                 }
@@ -417,11 +372,11 @@ private extension AISettingsView {
         let effectiveTimeout = SummarizationTimeouts.clamp(
             summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
         )
-        let isUnlimitedEngine = currentEngineType == .onDeviceLLM
+        let isUnlimitedEngine = currentEngineType == .onDeviceLLM || currentEngineType == .appleNative
         
         return Section("Request Timeout") {
             if isUnlimitedEngine {
-                Label("No timeout for On-Device AI.", systemImage: "infinity")
+                Label("No timeout — runs fully on-device.", systemImage: "infinity")
                     .font(.caption)
                     .foregroundColor(.secondary)
             } else {
@@ -478,7 +433,7 @@ private extension AISettingsView {
                             .foregroundColor(engineColor(for: currentEngine))
                         Spacer()
                         if let status {
-                            Text(status.statusMessage)
+                            Text(status.isAvailable ? "Ready" : "Needs Setup")
                                 .font(.caption)
                                 .foregroundColor(status.isAvailable ? .green : .orange)
                         }
@@ -498,14 +453,16 @@ private extension AISettingsView {
                             .font(.caption)
                     }
 
-                    Button {
-                        openSettings(for: currentEngine)
-                    } label: {
-                        Label("Configure \(currentEngine.rawValue)", systemImage: "gear")
-                            .font(.caption.weight(.semibold))
+                    if currentEngine != .appleNative {
+                        Button {
+                            openSettings(for: currentEngine)
+                        } label: {
+                            Label("Configure \(currentEngine.rawValue)", systemImage: "gear")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(engineColor(for: currentEngine))
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(engineColor(for: currentEngine))
                 }
             }
         }
@@ -555,11 +512,7 @@ private extension AISettingsView {
         let isSelected = selectedEngineName == engine.rawValue
 
         return Button {
-            let result = viewModel.selectEngine(engine, recorderVM: recorderVM)
-            if let error = result {
-                let systemError = SystemError.configurationError(message: error)
-                errorHandler.handle(.system(systemError), context: "Engine Selection")
-            }
+            viewModel.selectEngine(engine, recorderVM: recorderVM)
             refreshEngineStatuses()
         } label: {
             HStack(spacing: 10) {
@@ -573,9 +526,7 @@ private extension AISettingsView {
                         .foregroundColor(.secondary)
                 }
                 Spacer()
-                Text((status?.isAvailable ?? false) ? "Ready" : "Setup")
-                    .font(.caption2.weight(.medium))
-                    .foregroundColor((status?.isAvailable ?? false) ? .green : .orange)
+                engineBadge(for: engine, status: status)
             }
         }
         .buttonStyle(.plain)
@@ -619,7 +570,10 @@ private extension AISettingsView {
     func iconName(for engine: AIEngineType) -> String {
         switch engine {
         case .onDeviceLLM: return "iphone.gen3"
-        case .appleNative: return "apple.intelligence"
+        case .appleNative:
+            // apple.intelligence requires iOS 18.1+
+            if #available(iOS 18.1, *) { return "apple.intelligence" }
+            return "brain"
         case .openAI: return "sparkles"
         case .googleAIStudio: return "globe"
         case .mistralAI: return "wind"
@@ -629,10 +583,23 @@ private extension AISettingsView {
         }
     }
 
+    @ViewBuilder
+    func engineBadge(for engine: AIEngineType, status: EngineAvailabilityStatus?) -> some View {
+        if engine == .appleNative && !(status?.isAvailable ?? false) {
+            Text("Not Supported")
+                .font(.caption2.weight(.medium))
+                .foregroundColor(.secondary)
+        } else {
+            Text((status?.isAvailable ?? false) ? "Ready" : "Setup")
+                .font(.caption2.weight(.medium))
+                .foregroundColor((status?.isAvailable ?? false) ? .green : .orange)
+        }
+    }
+
     func engineColor(for engine: AIEngineType) -> Color {
         switch engine {
         case .onDeviceLLM: return .indigo
-        case .appleNative: return .blue
+        case .appleNative: return .mint
         case .openAI: return .blue
         case .googleAIStudio: return .purple
         case .mistralAI: return .orange
@@ -646,4 +613,5 @@ private extension AISettingsView {
 #Preview {
     AISettingsView()
         .environmentObject(AudioRecorderViewModel())
+        .environmentObject(AppDataCoordinator())
 }
