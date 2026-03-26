@@ -122,7 +122,6 @@ struct AISettingsView: View {
     @State private var showingRegenerateConfirmation = false
     @State private var showOnDeviceEngines = true
     @State private var showCloudEngines = true
-    @State private var showSelfHostedEngines = true
     
     init() {
         // Initialize with a placeholder coordinator - will be replaced by environment
@@ -245,8 +244,8 @@ struct AISettingsView: View {
         NavigationView {
             Form {
                 overviewSection
-                engineSelectionSection
                 selectedEngineConfigurationSection
+                engineSelectionSection
                 timeoutConfigurationSection
                 summaryManagementSection
             }
@@ -408,14 +407,8 @@ private extension AISettingsView {
                 }
             }
 
-            DisclosureGroup("Cloud", isExpanded: $showCloudEngines) {
-                ForEach(engines(in: .cloud), id: \.self) { engine in
-                    engineOptionRow(for: engine)
-                }
-            }
-
-            DisclosureGroup("Self-Hosted", isExpanded: $showSelfHostedEngines) {
-                ForEach(engines(in: .selfHosted), id: \.self) { engine in
+            DisclosureGroup("Cloud / Self-Hosted", isExpanded: $showCloudEngines) {
+                ForEach(engines(in: .cloud) + engines(in: .selfHosted), id: \.self) { engine in
                     engineOptionRow(for: engine)
                 }
             }

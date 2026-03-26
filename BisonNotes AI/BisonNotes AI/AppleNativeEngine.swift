@@ -129,7 +129,7 @@ final class AppleNativeEngine: SummarizationEngine {
             let output = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
 
             guard !output.isEmpty else {
-                throw SummarizationError.emptyResponse
+                throw SummarizationError.processingFailed(reason: "Apple Foundation Models returned an empty response")
             }
             return output
         }

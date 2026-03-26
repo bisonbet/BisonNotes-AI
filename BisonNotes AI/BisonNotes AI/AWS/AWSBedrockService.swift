@@ -40,7 +40,7 @@ class AWSBedrockService: ObservableObject {
         AWSCredentialsManager.shared.initializeEnvironment()
         
         do {
-            let clientConfig = try await BedrockRuntimeClient.BedrockRuntimeClientConfiguration(
+            let clientConfig = try await BedrockRuntimeClient.BedrockRuntimeClientConfig(
                 region: sharedCredentials.region
             )
             
