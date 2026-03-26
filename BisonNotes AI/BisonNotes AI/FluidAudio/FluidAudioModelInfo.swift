@@ -42,7 +42,7 @@ struct FluidAudioModelInfo {
     }
 
     static var selectedModelVersion: ModelVersion {
-        let raw = UserDefaults.standard.string(forKey: SettingsKeys.selectedModelVersion) ?? ModelVersion.v3.rawValue
-        return ModelVersion(rawValue: raw) ?? .v3
+        let raw = UserDefaults.standard.string(forKey: SettingsKeys.selectedModelVersion) ?? ModelVersion.v2.rawValue
+        return ModelVersion(rawValue: raw) ?? .v2
     }
 }

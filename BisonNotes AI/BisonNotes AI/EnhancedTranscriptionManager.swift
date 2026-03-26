@@ -456,10 +456,6 @@ if durationMinutes > 120 { // 2 hours max
             print("❌ Transcription engine not configured")
             throw TranscriptionError.engineNotConfigured
 
-        case .whisperKit:
-            switchToWhisperKitTranscription()
-            return try await transcribeWithWhisperKit(url: url)
-
         case .fluidAudio:
             switchToFluidAudioTranscription()
             return try await transcribeWithFluidAudio(url: url)
@@ -1516,42 +1512,6 @@ return result
         }
     }
 
-    // MARK: - WhisperKit Transcription
-
-    private func transcribeWithWhisperKit(url: URL) async throws -> TranscriptionResult {
-        beginBackgroundTask()
-        defer { endBackgroundTask() }
-
-        let manager = WhisperKitManager.shared
-
-        // Check if model is ready
-        guard manager.isModelReady else {
-            throw TranscriptionError.whisperKitNotReady
-        }
-
-        await MainActor.run {
-            isTranscribing = true
-            currentStatus = "Preparing WhisperKit transcription..."
-        }
-
-        do {
-            let result = try await manager.transcribe(audioURL: url)
-
-            await MainActor.run {
-                isTranscribing = false
-                currentStatus = "Transcription complete"
-            }
-
-            return result
-        } catch {
-            await MainActor.run {
-                isTranscribing = false
-                currentStatus = "WhisperKit transcription failed"
-            }
-            throw TranscriptionError.whisperKitTranscriptionFailed(error)
-        }
-    }
-
     // MARK: - FluidAudio (Parakeet) Transcription
 
     private func transcribeWithFluidAudio(url: URL) async throws -> TranscriptionResult {
@@ -1916,22 +1876,6 @@ func switchToWhisperTranscription() {
         }
     }
 
-    func switchToWhisperKitTranscription() {
-        // WhisperKit doesn't use background checking like AWS, so we stop any existing background processes
-        stopBackgroundChecking()
-
-        // Clear any pending AWS jobs since we're switching to WhisperKit
-        let pendingCount = getPendingJobNames().count
-        if pendingCount > 0 {
-            clearAllPendingJobs()
-        }
-
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("WhisperKit transcription selected", category: "EnhancedTranscriptionManager")
-        }
-    }
-
     func switchToFluidAudioTranscription() {
         stopBackgroundChecking()
 
@@ -1956,8 +1900,6 @@ func switchToWhisperTranscription() {
         case .notConfigured:
             // For unconfigured state, default to Apple Transcription which is always available
             switchToNativeSpeechTranscription()
-        case .whisperKit:
-            switchToWhisperKitTranscription()
         case .fluidAudio:
             switchToFluidAudioTranscription()
         case .awsTranscribe:
@@ -2108,8 +2050,6 @@ enum TranscriptionError: LocalizedError {
     case whisperConnectionFailed
     case whisperTranscriptionFailed(Error)
     case openAITranscriptionFailed(Error)
-    case whisperKitNotReady
-    case whisperKitTranscriptionFailed(Error)
     case fluidAudioNotAvailable
     case fluidAudioNotReady
     case fluidAudioTranscriptionFailed(Error)
@@ -2144,10 +2084,6 @@ enum TranscriptionError: LocalizedError {
             return "Whisper transcription failed: \(error.localizedDescription)"
         case .openAITranscriptionFailed(let error):
             return "OpenAI transcription failed: \(error.localizedDescription)"
-        case .whisperKitNotReady:
-            return "WhisperKit model is not downloaded. Please download the model in Settings > Transcription > WhisperKit."
-        case .whisperKitTranscriptionFailed(let error):
-            return "WhisperKit transcription failed: \(error.localizedDescription)"
         case .fluidAudioNotAvailable:
             return "FluidAudio is not available in this build. Add the FluidAudio Swift package and rebuild."
         case .fluidAudioNotReady:

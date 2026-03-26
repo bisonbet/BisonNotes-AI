@@ -186,13 +186,6 @@ private struct TransitiveProject: Identifiable {
 
 private let directDependencies: [DependencyCard] = [
     DependencyCard(
-        name: "WhisperKit",
-        description: "On-device speech recognition using OpenAI Whisper models with iOS-specific fixes and optimizations.",
-        license: "MIT",
-        linkText: "argmaxinc/WhisperKit",
-        url: URL(string: "https://github.com/argmaxinc/whisperkit")!
-    ),
-    DependencyCard(
         name: "Textual (swift-markdown-ui)",
         description: "Markdown rendering library for summaries and transcripts with custom styling adjustments.",
         license: "MIT",
@@ -223,11 +216,6 @@ private let directDependencies: [DependencyCard] = [
 ]
 
 private let forkedRepositories: [AcknowledgementLink] = [
-    AcknowledgementLink(
-        name: "bisonbet/WhisperKit",
-        description: "Fork of argmaxinc/WhisperKit.",
-        url: URL(string: "https://github.com/bisonbet/WhisperKit")!
-    ),
     AcknowledgementLink(
         name: "bisonbet/textual",
         description: "Fork of gonzalezreal/swift-markdown-ui.",
