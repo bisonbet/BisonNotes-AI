@@ -1962,7 +1962,8 @@ class BackgroundProcessingManager: ObservableObject {
         let lowerEngine = engine.lowercased()
 
         // On-device engines
-        if lowerEngine.contains("on-device") || lowerEngine.contains("apple intelligence") {
+        if lowerEngine.contains("on-device") || lowerEngine.contains("apple intelligence") ||
+           lowerEngine.contains("apple native") || lowerEngine.contains("foundation") {
             return (true, nil)
         }
 

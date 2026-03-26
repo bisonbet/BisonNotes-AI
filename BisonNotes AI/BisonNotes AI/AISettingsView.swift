@@ -94,6 +94,8 @@ final class AISettingsViewModel: ObservableObject {
         case .onDeviceLLM:
             UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             print("🔧 Auto-enabled On-Device AI engine")
+        case .appleNative:
+            print("🔧 Selected Apple Native engine")
         }
 
         // Sync UserDefaults immediately
@@ -140,6 +142,8 @@ final class AISettingsViewModel: ObservableObject {
             let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             let selectedModel = OnDeviceLLMModelInfo.selectedModel
             return isEnabled && selectedModel.isDownloaded
+        case .appleNative:
+            return AppleNativeEngine.modelAvailable
         }
     }
 }
@@ -245,6 +249,8 @@ struct AISettingsView: View {
             let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             let isModelReady = OnDeviceLLMDownloadManager.shared.isModelReady
             return isEnabled && isModelReady
+        case .appleNative:
+            return AppleNativeEngine.modelAvailable
         }
     }
 
@@ -273,6 +279,8 @@ struct AISettingsView: View {
             return "Claude 4.5 Haiku"
         case .onDeviceLLM:
             return OnDeviceLLMModelInfo.selectedModel.displayName
+        case .appleNative:
+            return "Foundation Models"
         }
     }
     
@@ -544,8 +552,33 @@ private extension AISettingsView {
                     } else {
                         EmptyView()
                     }
+                case .appleNative:
+                    appleNativeConfigurationSection
                 }
             }
+        }
+    }
+
+    var appleNativeConfigurationSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Apple Native Configuration")
+                .font(.headline)
+                .padding(.horizontal, 24)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("This engine uses Apple's Foundation Models framework directly on-device.")
+                    .font(.body)
+                Text("No API key is required. Availability depends on OS version and Apple Intelligence support on the current device.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.08))
+            )
+            .padding(.horizontal, 24)
         }
     }
 
