@@ -143,7 +143,7 @@ final class AISettingsViewModel: ObservableObject {
             let selectedModel = OnDeviceLLMModelInfo.selectedModel
             return isEnabled && selectedModel.isDownloaded
         case .appleNative:
-            return AppleNativeEngine().isAvailable
+            return AppleNativeEngine.modelAvailable
         }
     }
 }
@@ -250,7 +250,7 @@ struct AISettingsView: View {
             let isModelReady = OnDeviceLLMDownloadManager.shared.isModelReady
             return isEnabled && isModelReady
         case .appleNative:
-            return AppleNativeEngine().isAvailable
+            return AppleNativeEngine.modelAvailable
         }
     }
 
