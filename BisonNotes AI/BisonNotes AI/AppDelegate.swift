@@ -24,6 +24,22 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         return true
     }
 
+
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        // Ensure stale badge counts are cleared whenever the app becomes active.
+        Task {
+            let center = UNUserNotificationCenter.current()
+            do {
+                try await center.setBadgeCount(0)
+                application.applicationIconBadgeNumber = 0
+                center.removeAllDeliveredNotifications()
+                NSLog("✅ Cleared app icon badge and delivered notifications on app activation")
+            } catch {
+                NSLog("⚠️ Failed to clear app icon badge on activation: \(error)")
+            }
+        }
+    }
+
     // NOTE: application(_:open:url:options:) is intentionally NOT implemented.
     // In scene-based SwiftUI apps, iOS delivers file URLs through the scene delegate,
     // which SwiftUI translates to .onOpenURL on the WindowGroup. Implementing the
