@@ -94,6 +94,8 @@ final class AISettingsViewModel: ObservableObject {
         case .onDeviceLLM:
             UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             print("🔧 Auto-enabled On-Device AI engine")
+        case .appleNative:
+            print("🔧 Selected Apple Native engine")
         }
 
         // Sync UserDefaults immediately
@@ -140,6 +142,8 @@ final class AISettingsViewModel: ObservableObject {
             let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             let selectedModel = OnDeviceLLMModelInfo.selectedModel
             return isEnabled && selectedModel.isDownloaded
+        case .appleNative:
+            return AppleNativeEngine.modelAvailable
         }
     }
 }
@@ -248,6 +252,8 @@ struct AISettingsView: View {
             let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             let isModelReady = OnDeviceLLMDownloadManager.shared.isModelReady
             return isEnabled && isModelReady
+        case .appleNative:
+            return AppleNativeEngine.modelAvailable
         }
     }
 
@@ -276,6 +282,8 @@ struct AISettingsView: View {
             return "Claude 4.5 Haiku"
         case .onDeviceLLM:
             return OnDeviceLLMModelInfo.selectedModel.displayName
+        case .appleNative:
+            return "Foundation Models"
         }
     }
     
@@ -533,7 +541,7 @@ private extension AISettingsView {
         AIEngineType.availableCases.filter { engine in
             switch category {
             case .onDevice:
-                return engine == .onDeviceLLM
+                return [.onDeviceLLM, .appleNative].contains(engine)
             case .cloud:
                 return [.openAI, .googleAIStudio, .mistralAI, .awsBedrock, .openAICompatible].contains(engine)
             case .selfHosted:
@@ -576,6 +584,7 @@ private extension AISettingsView {
     func shortDescription(for engine: AIEngineType) -> String {
         switch engine {
         case .onDeviceLLM: return "Private, no internet after download"
+        case .appleNative: return "Apple Foundation Models, fully on-device"
         case .openAI: return "High quality summaries"
         case .googleAIStudio: return "Gemini model support"
         case .mistralAI: return "Fast cloud summaries"
@@ -602,12 +611,15 @@ private extension AISettingsView {
         case .onDeviceLLM:
             guard DeviceCapabilities.supportsOnDeviceLLM else { return }
             showingOnDeviceLLMSettings = true
+        case .appleNative:
+            break // No separate settings sheet — configured via Apple Intelligence system settings
         }
     }
 
     func iconName(for engine: AIEngineType) -> String {
         switch engine {
         case .onDeviceLLM: return "iphone.gen3"
+        case .appleNative: return "apple.intelligence"
         case .openAI: return "sparkles"
         case .googleAIStudio: return "globe"
         case .mistralAI: return "wind"
@@ -620,6 +632,7 @@ private extension AISettingsView {
     func engineColor(for engine: AIEngineType) -> Color {
         switch engine {
         case .onDeviceLLM: return .indigo
+        case .appleNative: return .blue
         case .openAI: return .blue
         case .googleAIStudio: return .purple
         case .mistralAI: return .orange
