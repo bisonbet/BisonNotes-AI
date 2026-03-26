@@ -163,6 +163,9 @@ struct AISettingsView: View {
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     @State private var showingRegenerateConfirmation = false
+    @State private var showOnDeviceEngines = true
+    @State private var showCloudEngines = true
+    @State private var showSelfHostedEngines = true
     
     init() {
         // Initialize with a placeholder coordinator - will be replaced by environment
@@ -278,23 +281,12 @@ struct AISettingsView: View {
     
     var body: some View {
         NavigationView {
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 24) {
-                    // Update the coordinator when the view appears
-                    Color.clear
-                        .onAppear {
-                            viewModel.updateCoordinator(appCoordinator)
-                        }
-
-                    headerSection
-                    engineSelectionSection
-                    selectedEngineConfigurationSection
-                    timeoutConfigurationSection
-                    summaryManagementSection
-
-                    Spacer(minLength: 40)
-                }
-                .padding(.horizontal, 16)
+            Form {
+                overviewSection
+                engineSelectionSection
+                selectedEngineConfigurationSection
+                timeoutConfigurationSection
+                summaryManagementSection
             }
             .navigationTitle("AI Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -321,6 +313,7 @@ struct AISettingsView: View {
             Text("This will regenerate all summaries using the current AI engine. Only summaries with existing transcripts will be processed. This may take some time depending on how many recordings you have.")
         }
         .onAppear {
+            viewModel.updateCoordinator(appCoordinator)
             summarizationTimeout = SummarizationTimeouts.clamp(
                 summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
             )
@@ -376,867 +369,264 @@ struct AISettingsView: View {
 
 // MARK: - View Components
 private extension AISettingsView {
-    
-    var headerSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "brain.head.profile")
-                    .foregroundColor(.blue)
-                    .font(.title2)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("AI Summarization Engine")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    
-                    Text("Choose the AI engine for generating summaries, extracting tasks, and identifying reminders from your recordings")
+
+    var selectedEngineName: String {
+        UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.onDeviceLLM.rawValue
+    }
+
+    var overviewSection: some View {
+        Section("Current Engine") {
+            HStack(spacing: 12) {
+                Image(systemName: iconName(for: currentEngineType ?? .onDeviceLLM))
+                    .foregroundColor(engineColor(for: currentEngineType ?? .onDeviceLLM))
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(selectedEngineName)
+                        .font(.body.weight(.semibold))
+                    Text("Used for summaries, tasks, and reminders.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+
+                Spacer()
+
+                if isRefreshingStatus {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if let engine = currentEngineType,
+                          let status = engineStatuses[engine.rawValue] {
+                    Label(status.statusMessage, systemImage: status.isAvailable ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .font(.caption)
+                        .foregroundColor(status.isAvailable ? .green : .orange)
+                }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
+            .padding(.vertical, 4)
         }
     }
-    
+
     var timeoutConfigurationSection: some View {
         let effectiveTimeout = SummarizationTimeouts.clamp(
             summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
         )
         let isUnlimitedEngine = currentEngineType == .onDeviceLLM
         
-        return VStack(alignment: .leading, spacing: 16) {
-            Text("Summary Request Timeout")
-                .font(.headline)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Set how long the app waits for AI models to respond when generating summaries and tasks.")
-                    .font(.body)
-                    .fontWeight(.medium)
-                
-                if isUnlimitedEngine {
-                    Text("On-Device AI runs locally with no timeout. It will continue processing until complete.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } else {
-                    Slider(
-                        value: Binding(
-                            get: { effectiveTimeout },
-                            set: { summarizationTimeout = SummarizationTimeouts.clamp($0) }
-                        ),
-                        in: SummarizationTimeouts.minimumTimeout...SummarizationTimeouts.maximumTimeout,
-                        step: 10
-                    )
-                    
-                    HStack {
-                        Text("Timeout: \(Int(effectiveTimeout)) seconds")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                        Spacer()
-                        Text("\(String(format: "%.1f", effectiveTimeout / 60)) minutes")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Text("Range: 30-600 seconds.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    
-                    Text("Applies to OpenAI, OpenAI Compatible, Mistral AI, AWS Bedrock, Google AI Studio, and Ollama engines.")
-                        .font(.caption)
+        return Section("Request Timeout") {
+            if isUnlimitedEngine {
+                Label("No timeout for On-Device AI.", systemImage: "infinity")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                Slider(
+                    value: Binding(
+                        get: { effectiveTimeout },
+                        set: { summarizationTimeout = SummarizationTimeouts.clamp($0) }
+                    ),
+                    in: SummarizationTimeouts.minimumTimeout...SummarizationTimeouts.maximumTimeout,
+                    step: 10
+                )
+
+                HStack {
+                    Text("\(Int(effectiveTimeout)) sec")
+                    Spacer()
+                    Text("\(String(format: "%.1f", effectiveTimeout / 60)) min")
                         .foregroundColor(.secondary)
                 }
+                .font(.caption)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.orange.opacity(0.1))
-            )
-            .padding(.horizontal, 24)
         }
     }
 
-    
     var engineSelectionSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("AI Engine Selection")
-                .font(.headline)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Select AI Engine")
-                    .font(.body)
-                    .fontWeight(.medium)
-                
-                Picker("AI Engine", selection: Binding(
-                    get: { UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI" },
-                    set: { newValue in
-                        if let engineType = AIEngineType.allCases.first(where: { $0.rawValue == newValue }) {
-                            let result = self.viewModel.selectEngine(engineType, recorderVM: self.recorderVM)
-                            if let error = result {
-                                let systemError = SystemError.configurationError(message: error)
-                                let appError = AppError.system(systemError)
-                                self.errorHandler.handle(appError, context: "Engine Selection")
-                            }
-                            self.refreshEngineStatuses()
-                        }
-                    }
-                )) {
-                    ForEach(AIEngineType.availableCases.filter { !$0.isComingSoon }, id: \.self) { engineType in
-                        VStack(alignment: .leading) {
-                            Text(engineType.rawValue)
-                                .font(.body)
-                            Text(engineType.description)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .tag(engineType.rawValue)
-                    }
-                }
-                .pickerStyle(MenuPickerStyle())
-                
-                if let currentEngine = currentEngineType {
-                    HStack {
-                        Circle()
-                            .fill(statusColor(for: currentEngine, status: engineStatuses[currentEngine.rawValue]))
-                            .frame(width: 8, height: 8)
-                        Text(statusText(for: currentEngine, status: engineStatuses[currentEngine.rawValue]))
-                            .font(.caption)
-                            .foregroundColor(statusColor(for: currentEngine, status: engineStatuses[currentEngine.rawValue]))
-                    }
-                    .padding(.top, 4)
+        Section("Engine Library") {
+            DisclosureGroup("On-Device", isExpanded: $showOnDeviceEngines) {
+                ForEach(engines(in: .onDevice), id: \.self) { engine in
+                    engineOptionRow(for: engine)
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.blue.opacity(0.1))
-            )
-            .padding(.horizontal, 24)
 
+            DisclosureGroup("Cloud", isExpanded: $showCloudEngines) {
+                ForEach(engines(in: .cloud), id: \.self) { engine in
+                    engineOptionRow(for: engine)
+                }
+            }
+
+            DisclosureGroup("Self-Hosted", isExpanded: $showSelfHostedEngines) {
+                ForEach(engines(in: .selfHosted), id: \.self) { engine in
+                    engineOptionRow(for: engine)
+                }
+            }
         }
     }
 
     var selectedEngineConfigurationSection: some View {
-        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
-
-        return Group {
-            if let currentEngine = AIEngineType.allCases.first(where: { $0.rawValue == currentEngineName }) {
-                switch currentEngine {
-                case .openAI:
-                    openAIConfigurationSection
-                case .openAICompatible:
-                    openAICompatibleConfigurationSection
-                case .localLLM:
-                    ollamaConfigurationSection
-                case .googleAIStudio:
-                    googleAIStudioConfigurationSection
-                case .mistralAI:
-                    mistralConfigurationSection
-                case .awsBedrock:
-                    awsBedrockConfigurationSection
-                case .onDeviceLLM:
-                    if DeviceCapabilities.supportsOnDeviceLLM {
-                        onDeviceLLMConfigurationSection
-                    } else {
-                        EmptyView()
-                    }
-                }
-            }
-        }
-    }
-
-    var ollamaConfigurationSection: some View {
-        // FIX: Logic moved outside the ViewBuilder closure.
-        let serverURL = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaServerURL) ?? AppSettingsKeys.Defaults.ollamaServerURL
-        let port = UserDefaults.standard.integer(forKey: AppSettingsKeys.ollamaPort)
-        let effectivePort = port > 0 ? port : AppSettingsKeys.Defaults.ollamaPort
-        let modelName = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaModelName) ?? AppSettingsKeys.Defaults.ollamaModelName
-        let isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.enableOllama)
-        
-        // The return statement is now required because the property contains more than a single expression.
-        return VStack(alignment: .leading, spacing: 16) {
-            Text("Ollama Configuration")
-                .font(.headline)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Local LLM Settings")
-                            .font(.body)
-                        Text("Configure Ollama server connection and model selection")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button(action: { showingOllamaSettings = true }) {
-                        HStack {
-                            Image(systemName: "gear")
-                            Text("Configure")
-                        }
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.green)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                    }
-                }
-                
+        Section("Selected Engine") {
+            if let currentEngine = currentEngineType {
+                let status = engineStatuses[currentEngine.rawValue]
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Server:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("\(serverURL):\(effectivePort)")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    }
-                    HStack {
-                        Text("Model:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(modelName)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    }
-                    HStack {
-                        Text("Status:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(isEnabled ? "Enabled" : "Disabled")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(isEnabled ? .green : .red)
-                    }
-                }
-                .padding(.top, 8)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.green.opacity(0.1))
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-    
-    var openAIConfigurationSection: some View {
-        // FIX: Logic moved outside the ViewBuilder closure.
-        let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
-        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
-        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt41Mini
-        
-        // The return statement is now required because the property contains more than a single expression.
-        return VStack(alignment: .leading, spacing: 16) {
-            Text("OpenAI Configuration")
-                .font(.headline)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("OpenAI API Settings")
-                            .font(.body)
-                        Text("Configure OpenAI API key and model selection for advanced summarization")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button(action: { self.showingOpenAISettings = true }) {
-                        HStack {
-                            Image(systemName: "gear")
-                            Text("Configure")
-                        }
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                    }
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("API Key:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(apiKey.isEmpty ? "Not configured" : "Configured (\(apiKey.count) chars)")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(apiKey.isEmpty ? .red : .green)
-                    }
-                    HStack {
-                        Text("Model:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(model.displayName)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    }
-                    HStack {
-                        Text("Status:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(apiKey.isEmpty ? "Needs Configuration" : "Ready")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(apiKey.isEmpty ? .orange : .green)
-                    }
-                }
-                .padding(.top, 8)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.blue.opacity(0.1))
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-    
-    var googleAIStudioConfigurationSection: some View {
-        // FIX: Logic moved outside the ViewBuilder closure.
-        let apiKey = UserDefaults.standard.string(forKey: "googleAIStudioAPIKey") ?? ""
-        let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3-flash-preview"
-        let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
-        
-        // The return statement is now required because the property contains more than a single expression.
-        return VStack(alignment: .leading, spacing: 16) {
-            Text("Google AI Studio Configuration")
-                .font(.headline)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Google AI Studio API Settings")
-                            .font(.body)
-                        Text("Configure Google AI Studio API key and model selection for advanced summarization")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button(action: { self.showingGoogleAIStudioSettings = true }) {
-                        HStack {
-                            Image(systemName: "gear")
-                            Text("Configure")
-                        }
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.purple)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                    }
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Status:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
+                        Label(currentEngine.rawValue, systemImage: iconName(for: currentEngine))
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(engineColor(for: currentEngine))
                         Spacer()
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(isEnabled && !apiKey.isEmpty ? Color.green : Color.red)
-                                .frame(width: 8, height: 8)
-                            Text(isEnabled && !apiKey.isEmpty ? "Configured" : "Not Configured")
+                        if let status {
+                            Text(status.statusMessage)
                                 .font(.caption)
-                                .foregroundColor(isEnabled && !apiKey.isEmpty ? .green : .red)
+                                .foregroundColor(status.isAvailable ? .green : .orange)
                         }
                     }
-                    
-                    HStack {
-                        Text("Model:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(model)
-                            .font(.body)
-                            .fontWeight(.medium)
-                    }
-                    
-                    HStack {
-                        Text("API Key:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(apiKey.isEmpty ? "Not Set" : "Set")
-                            .font(.body)
-                            .fontWeight(.medium)
-                            .foregroundColor(apiKey.isEmpty ? .red : .green)
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.purple.opacity(0.1))
-            )
-            .padding(.horizontal, 24)
-        }
-    }
 
-    var mistralConfigurationSection: some View {
-        let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
-        let modelName = UserDefaults.standard.string(forKey: "mistralModel") ?? MistralAIModel.mistralMedium2508.rawValue
-        let isEnabled = UserDefaults.standard.bool(forKey: "enableMistralAI")
-        let model = MistralAIModel(rawValue: modelName) ?? .mistralMedium2508
-
-        return VStack(alignment: .leading, spacing: 16) {
-            Text("Mistral AI Configuration")
-                .font(.headline)
-                .padding(.horizontal, 24)
-
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Mistral API Settings")
-                            .font(.body)
-                        Text("Configure Mistral API key and pick a chat model for summarization")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button(action: { self.showingMistralAISettings = true }) {
-                        HStack {
-                            Image(systemName: "gear")
-                            Text("Configure")
-                        }
+                    Text(currentEngine.description)
                         .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.orange)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                    }
-                }
+                        .foregroundColor(.secondary)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Status:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(isEnabled && !apiKey.isEmpty ? Color.green : Color.red)
-                                .frame(width: 8, height: 8)
-                            Text(isEnabled && !apiKey.isEmpty ? "Configured" : "Not Configured")
-                                .font(.caption)
-                                .foregroundColor(isEnabled && !apiKey.isEmpty ? .green : .red)
-                        }
-                    }
-
-                    HStack {
-                        Text("Model:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(model.displayName)
-                            .font(.body)
-                            .fontWeight(.medium)
-                    }
-
-                    HStack {
-                        Text("Pricing Tier:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(model.costTier)
-                            .font(.body)
-                            .fontWeight(.medium)
-                    }
-
-                    HStack {
-                        Text("API Key:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(apiKey.isEmpty ? "Not Set" : "Set")
-                            .font(.body)
-                            .fontWeight(.medium)
-                            .foregroundColor(apiKey.isEmpty ? .red : .green)
-                    }
-
-                    HStack {
-                        Text("Context Window:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text("\(model.contextWindow/1000)K tokens")
-                            .font(.body)
-                            .fontWeight(.medium)
-                    }
-                }
-                .padding(.top, 8)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.orange.opacity(0.12))
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-    
-    var awsBedrockConfigurationSection: some View {
-        // FIX: Logic moved outside the ViewBuilder closure.
-        let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
-        let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
-        let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
-        let storedModelName = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
-        // Migrate legacy model identifiers
-        let modelName = AWSBedrockModel.migrate(rawValue: storedModelName)
-        let model = AWSBedrockModel(rawValue: modelName) ?? .claude45Haiku
-        let region = UserDefaults.standard.string(forKey: "awsBedrockRegion") ?? "us-east-1"
-        
-        // Use unified credentials manager for configuration validation
-        let credentials = AWSCredentialsManager.shared.credentials
-        
-        // The return statement is now required because the property contains more than a single expression.
-        return VStack(alignment: .leading, spacing: 16) {
-            Text("AWS Bedrock Configuration")
-                .font(.headline)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("AWS Bedrock AI Settings")
-                            .font(.body)
-                        Text("Configure AWS Bedrock with Anthropic Claude, Amazon, and Meta models for advanced AI summarization")
+                    if let version = status?.version, !version.isEmpty {
+                        LabeledContent("Model", value: version)
                             .font(.caption)
-                            .foregroundColor(.secondary)
                     }
-                    Spacer()
-                    Button(action: { self.showingAWSBedrockSettings = true }) {
-                        HStack {
-                            Image(systemName: "gear")
-                            Text("Configure")
-                        }
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.orange)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
+
+                    if let requirement = currentEngine.requirements.first {
+                        LabeledContent("Needs", value: requirement)
+                            .font(.caption)
                     }
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Status:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        HStack(spacing: 4) {
-                            let isConfigured = isEnabled && (useProfile ? !profileName.isEmpty : credentials.isValid)
-                            Circle()
-                                .fill(isConfigured ? Color.green : Color.red)
-                                .frame(width: 8, height: 8)
-                            Text(isConfigured ? "Configured" : "Not Configured")
-                                .font(.caption)
-                                .foregroundColor(isConfigured ? .green : .red)
-                        }
+
+                    Button {
+                        openSettings(for: currentEngine)
+                    } label: {
+                        Label("Configure \(currentEngine.rawValue)", systemImage: "gear")
+                            .font(.caption.weight(.semibold))
                     }
-                    
-                    HStack {
-                        Text("Model:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(model.displayName)
-                            .font(.body)
-                            .fontWeight(.medium)
-                    }
-                    
-                    HStack {
-                        Text("Region:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(region)
-                            .font(.body)
-                            .fontWeight(.medium)
-                    }
-                    
-                    HStack {
-                        Text("Authentication:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(useProfile ? "AWS Profile (\(profileName.isEmpty ? "Not Set" : profileName))" : "Access Keys")
-                            .font(.body)
-                            .fontWeight(.medium)
-                            .foregroundColor(useProfile ? (profileName.isEmpty ? .red : .green) : (credentials.isValid ? .green : .red))
-                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(engineColor(for: currentEngine))
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.orange.opacity(0.1))
-            )
-            .padding(.horizontal, 24)
         }
     }
 
-    var onDeviceLLMConfigurationSection: some View {
-        let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
-        let selectedModel = OnDeviceLLMModelInfo.selectedModel
-        let isModelReady = selectedModel.isDownloaded
-
-        return VStack(alignment: .leading, spacing: 16) {
-            Text("On-Device AI Configuration")
-                .font(.headline)
-                .padding(.horizontal, 24)
-
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("On-Device AI Settings")
-                            .font(.body)
-                        Text("Privacy-focused local AI processing. No internet required after model download.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button(action: { 
-                        guard DeviceCapabilities.supportsOnDeviceLLM else { return }
-                        self.showingOnDeviceLLMSettings = true 
-                    }) {
-                        HStack {
-                            Image(systemName: "gear")
-                            Text("Configure")
-                        }
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.purple)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Status:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(isEnabled && isModelReady ? Color.green : Color.red)
-                                .frame(width: 8, height: 8)
-                            Text(isEnabled && isModelReady ? "Ready" : (isModelReady ? "Disabled" : "Model Not Downloaded"))
-                                .font(.caption)
-                                .foregroundColor(isEnabled && isModelReady ? .green : .red)
-                        }
-                    }
-
-                    HStack {
-                        Text("Model:")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(isModelReady ? selectedModel.displayName : "None")
-                            .font(.body)
-                            .fontWeight(.medium)
-                            .foregroundColor(isModelReady ? .primary : .secondary)
-                    }
-
-                    if isModelReady {
-                        HStack {
-                            Text("Size:")
-                                .font(.body)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text(selectedModel.downloadSize)
-                                .font(.body)
-                                .fontWeight(.medium)
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.purple.opacity(0.1))
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-
-    var openAICompatibleConfigurationSection: some View {
-        // FIX: Logic moved outside the ViewBuilder closure.
-        let compatibleApiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
-        let compatibleModel = UserDefaults.standard.string(forKey: "openAICompatibleModel") ?? "gpt-3.5-turbo"
-        
-        // The return statement is now required because the property contains more than a single expression.
-        return VStack(alignment: .leading, spacing: 16) {
-            Text("OpenAI Compatible Configuration")
-                .font(.headline)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("OpenAI Compatible API Settings")
-                            .font(.body)
-                        Text("Configure OpenAI-compatible API providers (Azure, etc.)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button(action: { self.showingOpenAICompatibleSettings = true }) {
-                        HStack {
-                            Image(systemName: "gear")
-                            Text("Configure")
-                        }
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.green)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                    }
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("API Key:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(compatibleApiKey.isEmpty ? "Not configured" : "Configured (\(compatibleApiKey.count) chars)")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(compatibleApiKey.isEmpty ? .red : .green)
-                    }
-                    HStack {
-                        Text("Model:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(compatibleModel)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    }
-                    HStack {
-                        Text("Status:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(compatibleApiKey.isEmpty ? "Needs Configuration" : "Ready")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(compatibleApiKey.isEmpty ? .orange : .green)
-                    }
-                }
-                .padding(.top, 8)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.green.opacity(0.1))
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-    
     var summaryManagementSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Summary Management")
-                .font(.headline)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 12) {
+        Section("Summary Management") {
+            Button {
+                showingRegenerateConfirmation = true
+            } label: {
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Regenerate All Summaries")
-                            .font(.body)
-                        Text("Update all existing summaries with the current AI engine. Only summaries with existing transcripts will be processed.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button(action: {
-                        showingRegenerateConfirmation = true
-                    }) {
-                        HStack {
-                            if viewModel.regenerationManager.isRegenerating {
-                                ProgressView().scaleEffect(0.8)
-                            } else {
-                                Image(systemName: "arrow.clockwise")
-                            }
-                            Text(viewModel.regenerationManager.isRegenerating ? "Processing..." : "Regenerate All")
-                        }
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(viewModel.regenerationManager.canRegenerate ? Color.blue : Color.gray)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                    }
-                    .disabled(!viewModel.regenerationManager.canRegenerate)
+                    Image(systemName: "arrow.clockwise")
+                    Text(viewModel.regenerationManager.isRegenerating ? "Processing..." : "Regenerate All Summaries")
                 }
-                
-                // Pass the regenerationManager from the viewModel to the progress view
-                RegenerationProgressView(regenerationManager: viewModel.regenerationManager)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.blue.opacity(0.1))
-            )
-            .padding(.horizontal, 24)
+            .disabled(!viewModel.regenerationManager.canRegenerate)
+
+            RegenerationProgressView(regenerationManager: viewModel.regenerationManager)
         }
     }
 }
 
 // MARK: - Helper Functions
 private extension AISettingsView {
-    
-    func statusColor(for engineType: AIEngineType, status: EngineAvailabilityStatus?) -> Color {
-        if engineType.isComingSoon {
-            return .orange
-        }
-        
-        guard let status = status else {
-            return .gray
-        }
-        
-        if status.isCurrentEngine {
-            return .green
-        } else if status.isAvailable {
-            return .blue
-        } else {
-            return .red
+
+    enum EngineCategory {
+        case onDevice
+        case cloud
+        case selfHosted
+    }
+
+    func engines(in category: EngineCategory) -> [AIEngineType] {
+        AIEngineType.availableCases.filter { engine in
+            switch category {
+            case .onDevice:
+                return engine == .onDeviceLLM
+            case .cloud:
+                return [.openAI, .googleAIStudio, .mistralAI, .awsBedrock, .openAICompatible].contains(engine)
+            case .selfHosted:
+                return engine == .localLLM
+            }
         }
     }
-    
-    func statusText(for engineType: AIEngineType, status: EngineAvailabilityStatus?) -> String {
-        if engineType.isComingSoon {
-            return "Coming Soon"
+
+    func engineOptionRow(for engine: AIEngineType) -> some View {
+        let status = engineStatuses[engine.rawValue]
+        let isSelected = selectedEngineName == engine.rawValue
+
+        return Button {
+            let result = viewModel.selectEngine(engine, recorderVM: recorderVM)
+            if let error = result {
+                let systemError = SystemError.configurationError(message: error)
+                errorHandler.handle(.system(systemError), context: "Engine Selection")
+            }
+            refreshEngineStatuses()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(isSelected ? engineColor(for: engine) : .secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(engine.rawValue)
+                        .font(.subheadline)
+                    Text(shortDescription(for: engine))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Text((status?.isAvailable ?? false) ? "Ready" : "Setup")
+                    .font(.caption2.weight(.medium))
+                    .foregroundColor((status?.isAvailable ?? false) ? .green : .orange)
+            }
         }
-        
-        guard let status = status else {
-            return "Unknown"
+        .buttonStyle(.plain)
+    }
+
+    func shortDescription(for engine: AIEngineType) -> String {
+        switch engine {
+        case .onDeviceLLM: return "Private, no internet after download"
+        case .openAI: return "High quality summaries"
+        case .googleAIStudio: return "Gemini model support"
+        case .mistralAI: return "Fast cloud summaries"
+        case .awsBedrock: return "Enterprise model routing"
+        case .openAICompatible: return "Works with compatible APIs"
+        case .localLLM: return "Use your local Ollama server"
         }
-        
-        return status.statusMessage
+    }
+
+    func openSettings(for engine: AIEngineType) {
+        switch engine {
+        case .openAI:
+            showingOpenAISettings = true
+        case .openAICompatible:
+            showingOpenAICompatibleSettings = true
+        case .localLLM:
+            showingOllamaSettings = true
+        case .googleAIStudio:
+            showingGoogleAIStudioSettings = true
+        case .mistralAI:
+            showingMistralAISettings = true
+        case .awsBedrock:
+            showingAWSBedrockSettings = true
+        case .onDeviceLLM:
+            guard DeviceCapabilities.supportsOnDeviceLLM else { return }
+            showingOnDeviceLLMSettings = true
+        }
+    }
+
+    func iconName(for engine: AIEngineType) -> String {
+        switch engine {
+        case .onDeviceLLM: return "iphone.gen3"
+        case .openAI: return "sparkles"
+        case .googleAIStudio: return "globe"
+        case .mistralAI: return "wind"
+        case .awsBedrock: return "shippingbox"
+        case .openAICompatible: return "link"
+        case .localLLM: return "server.rack"
+        }
+    }
+
+    func engineColor(for engine: AIEngineType) -> Color {
+        switch engine {
+        case .onDeviceLLM: return .indigo
+        case .openAI: return .blue
+        case .googleAIStudio: return .purple
+        case .mistralAI: return .orange
+        case .awsBedrock: return .brown
+        case .openAICompatible: return .green
+        case .localLLM: return .teal
+        }
     }
 }
 
