@@ -2577,8 +2577,6 @@ extension iCloudStorageManager {
         "whisperServerURL",
         "whisperPort",
         "whisperProtocol",
-        WhisperKitModelInfo.SettingsKeys.enableWhisperKit,
-        WhisperKitModelInfo.SettingsKeys.selectedModelId,
         OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM,
         OnDeviceLLMModelInfo.SettingsKeys.selectedModelId,
         OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels,

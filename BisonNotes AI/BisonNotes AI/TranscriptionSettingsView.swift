@@ -12,14 +12,11 @@ struct TranscriptionSettingsView: View {
     @AppStorage("showTranscriptionProgress") private var showTranscriptionProgress: Bool = true
     @AppStorage("enableLiveTranscription") private var enableLiveTranscription: Bool = false
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = TranscriptionEngine.fluidAudio.rawValue
-    @AppStorage(WhisperKitModelInfo.SettingsKeys.enableWhisperKit) private var enableWhisperKit = false
 
-    @StateObject private var whisperKitManager = WhisperKitManager.shared
     @StateObject private var fluidAudioManager = FluidAudioManager.shared
 
     @State private var showingAWSSettings = false
     @State private var showingWhisperSettings = false
-    @State private var showingWhisperKitSettings = false
     @State private var showingFluidAudioSettings = false
     @State private var showingOpenAISettings = false
     @State private var showingMistralTranscribeSettings = false
@@ -50,11 +47,6 @@ struct TranscriptionSettingsView: View {
             .sheet(isPresented: $showingWhisperSettings) {
                 WhisperSettingsView()
             }
-            .sheet(isPresented: $showingWhisperKitSettings) {
-                NavigationStack {
-                    WhisperKitSettingsView()
-                }
-            }
             .sheet(isPresented: $showingFluidAudioSettings) {
                 NavigationStack {
                     FluidAudioSettingsView()
@@ -74,13 +66,6 @@ struct TranscriptionSettingsView: View {
 
     private func handleEngineSelection(_ engineRawValue: String) {
         guard let engine = TranscriptionEngine(rawValue: engineRawValue) else { return }
-
-        if engine == .whisperKit {
-            enableWhisperKit = true
-            if !whisperKitManager.isModelReady {
-                showingWhisperKitSettings = true
-            }
-        }
 
         if engine == .fluidAudio {
             UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
@@ -166,14 +151,6 @@ struct TranscriptionSettingsView: View {
                         title: "Parakeet",
                         subtitle: "Fast, accurate, works offline",
                         isRecommended: true
-                    )
-
-                    engineOptionRow(
-                        engine: .whisperKit,
-                        title: "WhisperKit",
-                        subtitle: "Legacy on-device option",
-                        isRecommended: false,
-                        isDeprecated: true
                     )
                 }
 
@@ -353,8 +330,6 @@ struct TranscriptionSettingsView: View {
         switch engine {
         case .notConfigured:
             break
-        case .whisperKit:
-            showingWhisperKitSettings = true
         case .fluidAudio:
             showingFluidAudioSettings = true
         case .awsTranscribe:
@@ -374,8 +349,6 @@ struct TranscriptionSettingsView: View {
         switch engine {
         case .fluidAudio:
             return fluidAudioManager.isModelReady ? "Model downloaded and ready" : "Download required (~250-350 MB)"
-        case .whisperKit:
-            return whisperKitManager.isModelReady ? "Model downloaded and ready" : "Download required (~400 MB)"
         case .openAI:
             return "Requires OpenAI API key"
         case .awsTranscribe:
@@ -395,8 +368,6 @@ struct TranscriptionSettingsView: View {
             return .gray
         case .fluidAudio:
             return .indigo
-        case .whisperKit:
-            return .mint
         case .awsTranscribe:
             return .orange
         case .whisper:
@@ -427,7 +398,7 @@ struct TranscriptionSettingsView: View {
                 }
             }
 
-            if engine == .fluidAudio || engine == .whisperKit {
+            if engine == .fluidAudio {
                 HStack {
                     Text("Privacy:")
                         .font(.body)

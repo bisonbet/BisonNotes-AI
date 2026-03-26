@@ -1047,14 +1047,6 @@ class BackgroundProcessingManager: ObservableObject {
                 let manager = EnhancedTranscriptionManager()
                 result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .awsTranscribe)
 
-            case .whisperKit:
-                print("🤖 Using WhisperKit for transcription")
-                let whisperKitManager = WhisperKitManager.shared
-                guard whisperKitManager.isModelReady else {
-                    throw BackgroundProcessingError.processingFailed("WhisperKit model not downloaded. Please download the model in Settings.")
-                }
-                result = try await whisperKitManager.transcribe(audioURL: chunk.chunkURL)
-
             case .fluidAudio:
                 print("🤖 Using FluidAudio (Parakeet) for transcription")
                 let fluidAudioManager = FluidAudioManager.shared
@@ -1944,8 +1936,8 @@ class BackgroundProcessingManager: ObservableObject {
 
     private func checkTranscriptionEngineAvailability(_ engine: TranscriptionEngine) async -> (available: Bool, reason: String?) {
         switch engine {
-        case .whisperKit, .fluidAudio:
-            // On-device engines are always available
+        case .fluidAudio:
+            // On-device engine is always available
             return (true, nil)
         case .openAI, .openAIAPICompatible, .awsTranscribe, .mistralAI:
             // Cloud engines need network

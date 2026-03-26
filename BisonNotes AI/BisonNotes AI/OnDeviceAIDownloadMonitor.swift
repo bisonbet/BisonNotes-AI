@@ -18,18 +18,18 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
     
     private var cancellables = Set<AnyCancellable>()
     private var hasShownCompletion = false
-    private let whisperKitManager = WhisperKitManager.shared
+    private let fluidAudioManager = FluidAudioManager.shared
     private let onDeviceLLMManager = OnDeviceLLMDownloadManager.shared
-    
+
     private init() {
         setupMonitoring()
     }
-    
+
     private func setupMonitoring() {
-        // Monitor WhisperKit download completion
-        whisperKitManager.$isModelReady
-            .removeDuplicates() // Only fire when value actually changes
-            .dropFirst() // Skip initial value
+        // Monitor Parakeet (FluidAudio) download completion
+        fluidAudioManager.$isModelReady
+            .removeDuplicates()
+            .dropFirst()
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.checkBothDownloadsComplete()
@@ -39,8 +39,8 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
 
         // Monitor On-Device LLM download completion
         onDeviceLLMManager.$isModelReady
-            .removeDuplicates() // Only fire when value actually changes
-            .dropFirst() // Skip initial value
+            .removeDuplicates()
+            .dropFirst()
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.checkBothDownloadsComplete()
@@ -48,22 +48,18 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
             }
             .store(in: &cancellables)
     }
-    
+
     func checkBothDownloadsComplete() {
         guard !hasShownCompletion else { return }
 
-        // Don't call refreshModelStatus() here - it sets isModelReady which triggers
-        // the Combine publishers that call this function, creating an infinite loop.
-        // Just read the current values directly.
-        let whisperKitReady = whisperKitManager.isModelReady
+        let parakeetReady = fluidAudioManager.isModelReady
         let onDeviceLLMReady = onDeviceLLMManager.isModelReady
-        
-        if whisperKitReady && onDeviceLLMReady {
+
+        if parakeetReady && onDeviceLLMReady {
             hasShownCompletion = true
             completionMessage = "Both models have been downloaded successfully! You can now use on-device AI for transcription and summaries."
             showingCompletionAlert = true
-            
-            // Also send a notification
+
             Task {
                 await sendNotification(
                     title: "Models Ready",

@@ -53,10 +53,8 @@ struct SimpleSettingsView: View {
     @State private var isFirstLaunch = false
     @State private var deviceSupported = false
     @State private var showingOnDeviceLLMSettings = false
-    @State private var showingWhisperKitSettings = false
     @State private var showingHelpDocumentation = false
     @State private var showingOnDeviceAIDownload = false
-    @StateObject private var whisperKitManager = WhisperKitManager.shared
     
     var body: some View {
         AdaptiveNavigationWrapper {
@@ -98,18 +96,6 @@ struct SimpleSettingsView: View {
                 loadCurrentSettings()
             }
         }
-        .onChange(of: showingWhisperKitSettings) { oldValue, newValue in
-            // When WhisperKit settings is dismissed, check if model is ready and proceed to On-Device AI settings
-            if oldValue == true && newValue == false {
-                whisperKitManager.refreshModelStatus()
-                // If WhisperKit is now ready, show On-Device AI settings
-                if whisperKitManager.isModelReady && selectedOption == .onDeviceLLM {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        showingOnDeviceLLMSettings = true
-                    }
-                }
-            }
-        }
         .onChange(of: showingOnDeviceAIDownload) { oldValue, newValue in
             // When download view is dismissed, check if both models are ready and complete setup
             if oldValue == true && newValue == false {
@@ -148,11 +134,6 @@ struct SimpleSettingsView: View {
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
                 OnDeviceLLMSettingsView()
-            }
-        }
-        .sheet(isPresented: $showingWhisperKitSettings) {
-            NavigationStack {
-                WhisperKitSettingsView()
             }
         }
         .sheet(isPresented: $showingHelpDocumentation) {
@@ -594,8 +575,8 @@ struct SimpleSettingsView: View {
         if transcriptionEngine == "OpenAI" && aiEngine == "OpenAI" {
             selectedOption = .openai
         }
-        // Check if On-Device AI is selected for AI and on-device transcription (FluidAudio or WhisperKit)
-        else if (transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue || transcriptionEngine == TranscriptionEngine.whisperKit.rawValue) && aiEngine == "On-Device AI" {
+        // Check if On-Device AI is selected for AI and on-device transcription (FluidAudio/Parakeet)
+        else if transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue && aiEngine == "On-Device AI" {
             selectedOption = .onDeviceLLM
         }
         // Any other permutation should show Advanced & Other Options

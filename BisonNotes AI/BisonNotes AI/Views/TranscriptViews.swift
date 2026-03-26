@@ -1451,7 +1451,7 @@ struct EditableTranscriptView: View {
             
             // Get the selected transcription engine
             let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue
-            let engine = TranscriptionEngine(rawValue: engineString) ?? .whisperKit
+            let engine = TranscriptionEngine(rawValue: engineString) ?? .fluidAudio
             
             
             // Add the new transcript

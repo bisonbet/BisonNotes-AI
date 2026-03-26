@@ -26,10 +26,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Always clear the local badge immediately — this is unconditional so it
-        // succeeds even when notification authorization is denied and setBadgeCount throws.
-        application.applicationIconBadgeNumber = 0
-
         // Best-effort async clear via the UNUserNotificationCenter API.
         // Do NOT call removeAllDeliveredNotifications() here: actionable notifications
         // such as RESUME_RECORDING may still be waiting for a user response, and
