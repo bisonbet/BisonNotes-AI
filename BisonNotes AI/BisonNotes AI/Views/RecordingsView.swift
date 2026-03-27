@@ -152,32 +152,8 @@ struct RecordingsView: View {
                             .padding(.horizontal, 40)
                         }
 
-                        Button(action: {
-                            videoPickerCoordinator.selectVideoFiles { urls in
-                                if !urls.isEmpty {
-                                    Task {
-                                        await importManager.importAudioFiles(from: urls)
-                                    }
-                                }
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: "video.badge.plus")
-                                    .font(.title3)
-                                Text("Import Video")
-                                    .font(.title3)
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.orange)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .stroke(Color.orange, lineWidth: 2)
-                                    .background(Color.orange.opacity(0.1))
-                            )
-                            .padding(.horizontal, 40)
-                        }
+                        // Video import button hidden — feature not yet ready for users
+                        // videoPickerCoordinator.selectVideoFiles { ... }
 
                         Button(action: {
                             // Trigger document picker for text files
@@ -276,9 +252,8 @@ struct RecordingsView: View {
             .sheet(isPresented: $textDocumentPickerCoordinator.isShowingPicker) {
                 TextDocumentPicker(isPresented: $textDocumentPickerCoordinator.isShowingPicker, coordinator: textDocumentPickerCoordinator)
             }
-            .sheet(isPresented: $videoPickerCoordinator.isShowingPicker) {
-                VideoDocumentPicker(isPresented: $videoPickerCoordinator.isShowingPicker, coordinator: videoPickerCoordinator)
-            }
+            // Video picker sheet hidden — feature not yet ready for users
+            // .sheet(isPresented: $videoPickerCoordinator.isShowingPicker) { ... }
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()
             }
