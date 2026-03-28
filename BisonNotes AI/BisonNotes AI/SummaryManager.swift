@@ -1040,6 +1040,15 @@ class SummaryManager: ObservableObject {
             if Task.isCancelled || error is CancellationError || (error as NSError).code == NSURLErrorCancelled {
                 throw CancellationError()
             }
+            // Don't retry content safety blocks — they'll just fail again
+            if let sumError = error as? SummarizationError, case .contentSafetyBlock = sumError {
+                throw sumError
+            }
+            // Check for guardrail violations that weren't caught at the engine level
+            let errorDesc = String(describing: error)
+            if errorDesc.contains("guardrailViolation") || errorDesc.contains("unsafe content") {
+                throw SummarizationError.contentSafetyBlock(engine: engine.name)
+            }
             AppLogger.shared.error("AI engine failed: \(error) – retrying once", category: "SummaryManager")
             do {
                 try Task.checkCancellation()
@@ -1068,6 +1077,12 @@ class SummaryManager: ObservableObject {
                     } else if error.localizedDescription.contains("connection") || error.localizedDescription.contains("server") {
                         throw SummarizationError.networkError(underlying: error)
                     }
+                }
+
+                // Check for guardrail violations that weren't caught at the engine level
+                let retryErrorDesc = String(describing: error)
+                if retryErrorDesc.contains("guardrailViolation") || retryErrorDesc.contains("unsafe content") {
+                    throw SummarizationError.contentSafetyBlock(engine: engine.name)
                 }
 
                 // STOP HERE - Don't fall back to basic summary automatically

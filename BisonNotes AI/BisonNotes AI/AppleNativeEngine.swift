@@ -198,13 +198,26 @@ final class AppleNativeEngine: SummarizationEngine {
                 throw SummarizationError.aiServiceUnavailable(service: "Apple Native")
             }
             let session = LanguageModelSession()
-            let response = try await session.respond(to: prompt)
-            let output = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            do {
+                let response = try await session.respond(to: prompt)
+                let output = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            guard !output.isEmpty else {
-                throw SummarizationError.processingFailed(reason: "Apple Foundation Models returned an empty response")
+                guard !output.isEmpty else {
+                    throw SummarizationError.processingFailed(reason: "Apple Foundation Models returned an empty response")
+                }
+                return output
+            } catch let error as LanguageModelSession.GenerationError {
+                // Detect guardrail / safety violations and surface a clear message
+                let errorDesc = String(describing: error)
+                if errorDesc.contains("guardrailViolation") || errorDesc.contains("unsafe content") {
+                    AppLogger.shared.warning(
+                        "[AppleNativeEngine] Content blocked by Apple safety guardrails",
+                        category: "AppleNativeEngine"
+                    )
+                    throw SummarizationError.contentSafetyBlock(engine: "Apple Native")
+                }
+                throw error
             }
-            return output
         }
         throw SummarizationError.aiServiceUnavailable(service: "Apple Native")
         #else

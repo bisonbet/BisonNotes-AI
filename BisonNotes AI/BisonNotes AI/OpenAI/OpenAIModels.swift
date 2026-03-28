@@ -723,5 +723,24 @@ extension ResponseFormat {
     }
 }
 
+// MARK: - Models List Response (for /models endpoint)
+
+struct OpenAIModelsListResponse: Codable {
+    let data: [OpenAIModelInfo]
+    let object: String?
+}
+
+struct OpenAIModelInfo: Codable {
+    let id: String
+    let object: String?
+    let created: Int?
+    let ownedBy: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, object, created
+        case ownedBy = "owned_by"
+    }
+}
+
 // OpenAIErrorResponse and OpenAIError are defined in OpenAITranscribeService.swift
 

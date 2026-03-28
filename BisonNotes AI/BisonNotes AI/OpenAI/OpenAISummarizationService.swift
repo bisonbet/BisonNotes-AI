@@ -200,6 +200,108 @@ class OpenAISummarizationService: ObservableObject {
         }
     }
     
+    // MARK: - Static Methods
+
+    /// Fetch predefined OpenAI models (for official OpenAI API)
+    static func fetchModels(apiKey: String, baseURL: String) async throws -> [OpenAISummarizationModel] {
+        guard !apiKey.isEmpty else {
+            throw SummarizationError.aiServiceUnavailable(service: "API key is empty")
+        }
+
+        guard let url = URL(string: "\(baseURL)/models") else {
+            throw SummarizationError.aiServiceUnavailable(service: "Invalid base URL")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let session = URLSession.shared
+        let (_, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SummarizationError.aiServiceUnavailable(service: "Invalid response")
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw SummarizationError.aiServiceUnavailable(service: "HTTP \(httpResponse.statusCode)")
+        }
+
+        // For OpenAI, return the predefined models
+        // The actual API returns many models but we only support specific ones
+        return OpenAISummarizationModel.allCases
+    }
+
+    /// Fetch available models from an OpenAI-compatible API (for third-party providers)
+    /// Returns raw model IDs that can be used with any compatible API
+    static func fetchCompatibleModels(apiKey: String, baseURL: String) async throws -> [String] {
+        guard !apiKey.isEmpty else {
+            throw SummarizationError.aiServiceUnavailable(service: "API key is empty")
+        }
+
+        // Normalize base URL - remove trailing slash if present
+        var normalizedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedBaseURL.hasSuffix("/") {
+            normalizedBaseURL.removeLast()
+        }
+
+        guard let url = URL(string: "\(normalizedBaseURL)/models") else {
+            throw SummarizationError.aiServiceUnavailable(service: "Invalid base URL: \(baseURL)")
+        }
+
+        #if DEBUG
+        print("🔍 Fetching models from: \(url.absoluteString)")
+        #endif
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = OpenAISummarizationConfig.connectionTestTimeout
+
+        let session = URLSession.shared
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SummarizationError.aiServiceUnavailable(service: "Invalid response from server")
+        }
+
+        #if DEBUG
+        print("📡 Models endpoint response status: \(httpResponse.statusCode)")
+        #endif
+
+        guard httpResponse.statusCode == 200 else {
+            // Try to parse error response
+            if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                throw SummarizationError.aiServiceUnavailable(service: "API Error: \(errorResponse.error.message)")
+            }
+
+            let responseString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw SummarizationError.aiServiceUnavailable(service: "HTTP \(httpResponse.statusCode): \(responseString)")
+        }
+
+        // Parse the models response
+        do {
+            let modelsResponse = try JSONDecoder().decode(OpenAIModelsListResponse.self, from: data)
+            let modelIds = modelsResponse.data.map { $0.id }.sorted()
+
+            #if DEBUG
+            print("✅ Successfully fetched \(modelIds.count) models from OpenAI-compatible API")
+            if !modelIds.isEmpty {
+                print("📋 Available models: \(modelIds.prefix(10).joined(separator: ", "))\(modelIds.count > 10 ? "..." : "")")
+            }
+            #endif
+
+            return modelIds
+        } catch {
+            #if DEBUG
+            print("❌ Failed to parse models response: \(error)")
+            #endif
+            throw SummarizationError.aiServiceUnavailable(service: "Failed to parse models response: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Private Helper Methods
 
     /// Check if a base URL is the official OpenAI API

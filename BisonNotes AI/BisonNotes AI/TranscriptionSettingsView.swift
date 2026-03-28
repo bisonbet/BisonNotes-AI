@@ -164,21 +164,21 @@ struct TranscriptionSettingsView: View {
                         .foregroundColor(.blue)
 
                     engineOptionRow(
-                        engine: .openAI,
-                        title: "OpenAI Whisper",
-                        subtitle: "Best accuracy, requires API key"
-                    )
-
-                    engineOptionRow(
                         engine: .awsTranscribe,
                         title: "AWS Transcribe",
-                        subtitle: "Enterprise, speaker diarization"
+                        subtitle: "Enterprise, speaker diarization, expensive"
                     )
 
                     engineOptionRow(
                         engine: .mistralAI,
                         title: "Mistral AI",
-                        subtitle: "Fast cloud transcription"
+                        subtitle: "Enterprise, speaker diarization, cheap"
+                    )
+
+                    engineOptionRow(
+                        engine: .openAI,
+                        title: "OpenAI Whisper",
+                        subtitle: "Requires API key"
                     )
                 }
 

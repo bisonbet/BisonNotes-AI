@@ -195,6 +195,7 @@ enum JobType: Codable {
 }
 
 enum JobProcessingStatus: Codable, Equatable {
+    case ready
     case queued
     case processing
     case completed
@@ -252,6 +253,8 @@ enum JobProcessingStatus: Codable, Equatable {
 
     var displayName: String {
         switch self {
+        case .ready:
+            return "Ready"
         case .queued:
             return "Queued"
         case .processing:
@@ -276,7 +279,7 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - Published Properties
     
     @Published var activeJobs: [ProcessingJob] = []
-    @Published var processingStatus: JobProcessingStatus = .queued
+    @Published var processingStatus: JobProcessingStatus = .ready
     @Published var currentJob: ProcessingJob?
     
     // MARK: - Completion Handlers
@@ -397,7 +400,8 @@ class BackgroundProcessingManager: ObservableObject {
         await processNextJob()
     }
 
-    func startSummarizationJob(recordingURL: URL, recordingName: String, engine: String, modelName: String? = nil, replacingSummaryId: UUID? = nil) async throws {
+    @discardableResult
+    func startSummarizationJob(recordingURL: URL, recordingName: String, engine: String, modelName: String? = nil, replacingSummaryId: UUID? = nil) async throws -> UUID {
         // Queue size limit
         let queuedCount = activeJobs.filter { $0.status == .queued }.count
         guard queuedCount < 20 else {
@@ -416,8 +420,19 @@ class BackgroundProcessingManager: ObservableObject {
             regenerationSummaryIds[job.id] = oldSummaryId
         }
 
+        // Remove old terminal summarization jobs for this recording to prevent stale matches
+        activeJobs.removeAll { existingJob in
+            if case .summarization = existingJob.type,
+               existingJob.recordingPath == job.recordingPath,
+               existingJob.status.isTerminal {
+                return true
+            }
+            return false
+        }
+
         await addJob(job)
         await processNextJob()
+        return job.id
     }
     
     func cancelActiveJob() async {
@@ -630,7 +645,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Find the next queued job
         guard let nextJob = activeJobs.first(where: { $0.status == .queued }) else {
-            processingStatus = .queued
+            processingStatus = .ready
             await endBackgroundTask()
             return
         }

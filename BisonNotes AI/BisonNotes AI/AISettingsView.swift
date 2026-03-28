@@ -243,7 +243,6 @@ struct AISettingsView: View {
     var body: some View {
         NavigationView {
             Form {
-                overviewSection
                 selectedEngineConfigurationSection
                 engineSelectionSection
                 timeoutConfigurationSection
@@ -335,38 +334,6 @@ private extension AISettingsView {
         UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.onDeviceLLM.rawValue
     }
 
-    var overviewSection: some View {
-        Section("Current Engine") {
-            HStack(spacing: 12) {
-                Image(systemName: iconName(for: currentEngineType ?? .onDeviceLLM))
-                    .foregroundColor(engineColor(for: currentEngineType ?? .onDeviceLLM))
-                    .frame(width: 24)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(selectedEngineName)
-                        .font(.body.weight(.semibold))
-                    Text("Used for summaries, tasks, and reminders.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Spacer()
-
-                if isRefreshingStatus {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if let engine = currentEngineType,
-                          let status = engineStatuses[engine.rawValue] {
-                    Label(status.isAvailable ? "Ready" : "Needs Setup",
-                          systemImage: status.isAvailable ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                        .font(.caption)
-                        .foregroundColor(status.isAvailable ? .green : .orange)
-                }
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
     var timeoutConfigurationSection: some View {
         let effectiveTimeout = SummarizationTimeouts.clamp(
             summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
@@ -416,7 +383,7 @@ private extension AISettingsView {
     }
 
     var selectedEngineConfigurationSection: some View {
-        Section("Selected Engine") {
+        Section("Current Engine") {
             if let currentEngine = currentEngineType {
                 let status = engineStatuses[currentEngine.rawValue]
                 VStack(alignment: .leading, spacing: 8) {

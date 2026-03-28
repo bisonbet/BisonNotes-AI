@@ -259,10 +259,17 @@ struct OpenAICompatibleSettingsView: View {
     @State private var showingConnectionResult = false
     @State private var isConnectionSuccessful = false
     @State private var showingAPIKeyInfo = false
+    @State private var isLoadingModels = false
+    @State private var availableModels: [OpenAISummarizationModel] = []
+    @State private var availableModelIds: [String] = []
+    @State private var showingModelFetchError = false
+    @State private var modelFetchError = ""
+    @State private var useDynamicModels = false
+
     @Environment(\.dismiss) private var dismiss
-    
+
     var onConfigurationChanged: (() -> Void)?
-    
+
     init(onConfigurationChanged: (() -> Void)? = nil) {
         self.onConfigurationChanged = onConfigurationChanged
 
@@ -285,12 +292,62 @@ struct OpenAICompatibleSettingsView: View {
     
     // MARK: - Private Methods
 
+    private func loadAvailableModels() {
+        guard !apiKey.isEmpty else {
+            modelFetchError = "Please enter an API key first"
+            showingModelFetchError = true
+            return
+        }
+
+        guard !baseURL.isEmpty else {
+            modelFetchError = "Please enter a base URL first"
+            showingModelFetchError = true
+            return
+        }
+
+        isLoadingModels = true
+        availableModels = []
+        modelFetchError = ""
+        showingModelFetchError = false
+
+        Task {
+            do {
+                let modelIds = try await OpenAISummarizationService.fetchCompatibleModels(apiKey: apiKey, baseURL: baseURL)
+
+                await MainActor.run {
+                    availableModelIds = modelIds
+                    availableModels = modelIds.compactMap { id in
+                        OpenAISummarizationModel(rawValue: id)
+                    }
+
+                    if !modelIds.isEmpty && selectedModel.isEmpty {
+                        selectedModel = modelIds.first!
+                    }
+
+                    isLoadingModels = false
+
+                    print("✅ Successfully loaded \(modelIds.count) models")
+                    if !modelIds.isEmpty {
+                        print("📋 Models: \(modelIds.prefix(5).joined(separator: ", "))\(modelIds.count > 5 ? "..." : "")")
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    modelFetchError = error.localizedDescription
+                    showingModelFetchError = true
+                    isLoadingModels = false
+                    print("❌ Failed to load models: \(error)")
+                }
+            }
+        }
+    }
+
     private func testConnection() {
         guard !apiKey.isEmpty else { return }
-        
+
         isTestingConnection = true
         showingConnectionResult = false
-        
+
         Task {
             let model = OpenAISummarizationModel(rawValue: selectedModel) ?? .gpt41Mini
             let config = OpenAISummarizationConfig(
@@ -324,7 +381,12 @@ struct OpenAICompatibleSettingsView: View {
         baseURL = "https://api.openai.com/v1"
         temperature = 0.1
         maxTokens = 2048
+        useDynamicModels = false
+        availableModels = []
+        availableModelIds = []
         showingConnectionResult = false
+        showingModelFetchError = false
+        modelFetchError = ""
         manualFormatOverride = false
         manualFormat = "string"
     }
@@ -596,11 +658,91 @@ struct OpenAICompatibleSettingsView: View {
     
     private var modelSelectionSection: some View {
         Section {
+            Toggle("Fetch Available Models", isOn: $useDynamicModels)
+                .onChange(of: useDynamicModels) {
+                    if useDynamicModels {
+                        loadAvailableModels()
+                    } else {
+                        availableModels = []
+                    }
+                }
+
+            dynamicModelsContent
             manualModelContent
         } header: {
             Text("Model Selection")
         } footer: {
-            Text("Enter the model ID manually. Common examples: gpt-4o, claude-sonnet-4-5-20250929, llama-4-maverick, gemini-2.5-flash, deepseek-chat, etc.")
+            if useDynamicModels {
+                Text("Enable to discover models from your API endpoint automatically. If your provider supports the /models endpoint (like LiteLLM, vLLM, LocalAI), it will list all available models.")
+            } else {
+                Text("Enter the model ID manually. Common examples: gpt-4o, claude-sonnet-4-5-20250929, llama-4-maverick, gemini-2.5-flash, deepseek-chat, etc.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var dynamicModelsContent: some View {
+        if useDynamicModels {
+            if isLoadingModels {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("Loading available models...")
+                }
+            } else if !availableModelIds.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Found \(availableModelIds.count) Available Models")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.green)
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(availableModelIds, id: \.self) { modelId in
+                                Button(action: {
+                                    selectedModel = modelId
+                                }) {
+                                    HStack {
+                                        Text(modelId)
+                                            .font(.subheadline)
+                                            .foregroundColor(selectedModel == modelId ? .blue : .primary)
+                                        Spacer()
+                                        if selectedModel == modelId {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundColor(.blue)
+                                                .font(.caption)
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 150)
+                }
+            } else if showingModelFetchError {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.orange)
+                        Text("Model Discovery Failed")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.orange)
+                    }
+
+                    Text(modelFetchError)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Text("You can still enter a model ID manually below")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+                .background(Color.orange.opacity(0.1))
+                .cornerRadius(8)
+            }
         }
     }
 

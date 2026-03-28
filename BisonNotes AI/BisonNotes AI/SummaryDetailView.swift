@@ -33,6 +33,7 @@ struct SummaryDetailView: View {
     @State private var expandedSections: Set<String> = ["summary"]
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var isRegenerating = false
+    @State private var regeneratingJobId: UUID?
     @State private var showingRegenerationAlert = false
     @State private var regenerationError: String?
     @State private var showingDeleteConfirmation = false
@@ -212,29 +213,16 @@ struct SummaryDetailView: View {
             geocodingTask = nil
         }
         .onChange(of: processingManager.activeJobs.map { "\($0.id)-\($0.status.displayName)" }) { _, _ in
-            // Check if our regeneration job completed so we can dismiss
-            if isRegenerating {
-                let hasPendingSummaryJob = processingManager.activeJobs.contains { job in
-                    if case .summarization = job.type,
-                       job.recordingPath == summaryData.recordingURL.lastPathComponent {
-                        return job.status == .queued || job.status == .processing
-                    }
-                    return false
-                }
-                if !hasPendingSummaryJob {
-                    isRegenerating = false
-                    // Check final status of our job
-                    if let finishedJob = processingManager.activeJobs.first(where: { job in
-                        if case .summarization = job.type,
-                           job.recordingPath == summaryData.recordingURL.lastPathComponent {
-                            return job.status.isTerminal
-                        }
-                        return false
-                    }) {
-                        if finishedJob.status == .completed {
+            // Check if our specific regeneration job completed
+            if isRegenerating, let jobId = regeneratingJobId {
+                if let job = processingManager.activeJobs.first(where: { $0.id == jobId }) {
+                    if job.status.isTerminal {
+                        isRegenerating = false
+                        regeneratingJobId = nil
+                        if job.status == .completed {
                             dismiss()
-                        } else if finishedJob.status.isError {
-                            regenerationError = finishedJob.status.errorMessage ?? "Regeneration failed"
+                        } else if job.status.isError {
+                            regenerationError = job.status.errorMessage ?? "Regeneration failed"
                             showingRegenerationAlert = true
                         }
                     }
@@ -1156,14 +1144,17 @@ struct SummaryDetailView: View {
 
         Task {
             do {
-                try await BackgroundProcessingManager.shared.startSummarizationJob(
+                let jobId = try await BackgroundProcessingManager.shared.startSummarizationJob(
                     recordingURL: recordingURL,
                     recordingName: recordingName,
                     engine: selectedEngine,
                     modelName: selectedModel,
                     replacingSummaryId: oldSummaryId
                 )
-                print("✅ Summary regeneration job queued for: \(recordingName)")
+                await MainActor.run {
+                    regeneratingJobId = jobId
+                }
+                print("✅ Summary regeneration job queued for: \(recordingName) (jobId=\(jobId))")
             } catch {
                 print("❌ Failed to queue regeneration job: \(error)")
                 await MainActor.run {
