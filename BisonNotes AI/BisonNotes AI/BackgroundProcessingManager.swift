@@ -22,6 +22,11 @@ struct ProcessingJob: Identifiable, Codable {
     let recordingPath: String // Changed from URL to String for relative path
     let recordingName: String
     let modelName: String?
+    /// Optional alternative audio file to transcribe from (e.g. cleaned audio).
+    /// When set, transcription reads from this file instead of `recordingPath`,
+    /// but the recording identity and Core Data associations use `recordingPath`.
+    /// The file is automatically deleted when the job completes or fails.
+    let sourceAudioPath: String?
     let status: JobProcessingStatus
     let progress: Double
     let startTime: Date
@@ -34,7 +39,7 @@ struct ProcessingJob: Identifiable, Codable {
 
     // Exclude processingStartTime from Codable to avoid forward-compatibility issues
     private enum CodingKeys: String, CodingKey {
-        case id, type, recordingPath, recordingName, modelName, status, progress,
+        case id, type, recordingPath, recordingName, modelName, sourceAudioPath, status, progress,
              startTime, completionTime, chunks, error
     }
 
@@ -45,6 +50,7 @@ struct ProcessingJob: Identifiable, Codable {
         recordingPath = try container.decode(String.self, forKey: .recordingPath)
         recordingName = try container.decode(String.self, forKey: .recordingName)
         modelName = try container.decodeIfPresent(String.self, forKey: .modelName)
+        sourceAudioPath = try container.decodeIfPresent(String.self, forKey: .sourceAudioPath)
         status = try container.decode(JobProcessingStatus.self, forKey: .status)
         progress = try container.decode(Double.self, forKey: .progress)
         startTime = try container.decode(Date.self, forKey: .startTime)
@@ -63,13 +69,24 @@ struct ProcessingJob: Identifiable, Codable {
         return documentsURL.appendingPathComponent(recordingPath)
     }
 
-    init(type: JobType, recordingURL: URL, recordingName: String, modelName: String? = nil, chunks: [AudioChunk]? = nil) {
+    /// The URL to actually read audio from. Uses `sourceAudioPath` (cleaned audio) if set,
+    /// otherwise falls back to `recordingURL`.
+    var audioSourceURL: URL {
+        guard let sourcePath = sourceAudioPath else { return recordingURL }
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return URL(fileURLWithPath: "/tmp/\(sourcePath)")
+        }
+        return documentsURL.appendingPathComponent(sourcePath)
+    }
+
+    init(type: JobType, recordingURL: URL, recordingName: String, modelName: String? = nil, sourceAudioURL: URL? = nil, chunks: [AudioChunk]? = nil) {
         self.id = UUID()
         self.type = type
         // Store only the filename as relative path
         self.recordingPath = recordingURL.lastPathComponent
         self.recordingName = recordingName
         self.modelName = modelName
+        self.sourceAudioPath = sourceAudioURL?.lastPathComponent
         self.status = .queued
         self.progress = 0.0
         self.startTime = Date()
@@ -86,6 +103,7 @@ struct ProcessingJob: Identifiable, Codable {
             recordingPath: self.recordingPath,
             recordingName: self.recordingName,
             modelName: self.modelName,
+            sourceAudioPath: self.sourceAudioPath,
             status: status,
             progress: self.progress,
             startTime: self.startTime,
@@ -103,6 +121,7 @@ struct ProcessingJob: Identifiable, Codable {
             recordingPath: self.recordingPath,
             recordingName: self.recordingName,
             modelName: self.modelName,
+            sourceAudioPath: self.sourceAudioPath,
             status: self.status,
             progress: progress,
             startTime: self.startTime,
@@ -113,12 +132,13 @@ struct ProcessingJob: Identifiable, Codable {
         )
     }
 
-    init(id: UUID, type: JobType, recordingPath: String, recordingName: String, modelName: String? = nil, status: JobProcessingStatus, progress: Double, startTime: Date, processingStartTime: Date? = nil, completionTime: Date?, chunks: [AudioChunk]?, error: String?) {
+    init(id: UUID, type: JobType, recordingPath: String, recordingName: String, modelName: String? = nil, sourceAudioPath: String? = nil, status: JobProcessingStatus, progress: Double, startTime: Date, processingStartTime: Date? = nil, completionTime: Date?, chunks: [AudioChunk]?, error: String?) {
         self.id = id
         self.type = type
         self.recordingPath = recordingPath
         self.recordingName = recordingName
         self.modelName = modelName
+        self.sourceAudioPath = sourceAudioPath
         self.status = status
         self.progress = progress
         self.startTime = startTime
@@ -142,6 +162,16 @@ enum JobType: Codable {
         }
     }
     
+    var isTranscription: Bool {
+        if case .transcription = self { return true }
+        return false
+    }
+
+    var isSummarization: Bool {
+        if case .summarization = self { return true }
+        return false
+    }
+
     var engineName: String {
         switch self {
         case .transcription(let engine):
@@ -377,14 +407,14 @@ class BackgroundProcessingManager: ObservableObject {
     
     // MARK: - Job Management
     
-    func startTranscriptionJob(recordingURL: URL, recordingName: String, engine: TranscriptionEngine, modelName: String? = nil, chunks: [AudioChunk]? = nil) async throws {
+    func startTranscriptionJob(recordingURL: URL, recordingName: String, engine: TranscriptionEngine, modelName: String? = nil, sourceAudioURL: URL? = nil, chunks: [AudioChunk]? = nil) async throws {
         // Queue size limit
         let queuedCount = activeJobs.filter { $0.status == .queued }.count
         guard queuedCount < 20 else {
             throw BackgroundProcessingError.queueFull
         }
 
-        // Ensure recording exists in Core Data
+        // Ensure recording exists in Core Data (always use the original recording URL)
         await ensureRecordingExists(recordingURL: recordingURL, recordingName: recordingName)
 
         let job = ProcessingJob(
@@ -392,6 +422,7 @@ class BackgroundProcessingManager: ObservableObject {
             recordingURL: recordingURL,
             recordingName: recordingName,
             modelName: modelName,
+            sourceAudioURL: sourceAudioURL,
             chunks: chunks
         )
 
@@ -575,8 +606,8 @@ class BackgroundProcessingManager: ObservableObject {
     private func addTranscriptionJob(_ job: ProcessingJob) async {
         // For transcription jobs, we want to allow reruns by replacing existing completed/failed jobs
         let existingJobs = activeJobs.filter { existingJob in
-            existingJob.recordingPath == job.recordingPath && 
-            existingJob.type.displayName == job.type.displayName
+            existingJob.recordingPath == job.recordingPath &&
+            existingJob.type.isTranscription
         }
         
         // Remove any existing transcription jobs for this recording (to allow reruns)
@@ -666,7 +697,8 @@ class BackgroundProcessingManager: ObservableObject {
             print("   - Model: \(model)")
         }
         print("   - Recording URL: \(nextJob.recordingURL)")
-        print("   - File exists: \(FileManager.default.fileExists(atPath: nextJob.recordingURL.path))")
+        print("   - Audio source: \(nextJob.audioSourceURL)")
+        print("   - File exists: \(FileManager.default.fileExists(atPath: nextJob.audioSourceURL.path))")
 
         // Store the task handle so it can be cancelled
         currentTaskHandle = Task {
@@ -759,6 +791,17 @@ class BackgroundProcessingManager: ObservableObject {
                 }
             }
 
+            // Clean up source audio file on any terminal state (failure, cancellation, etc.)
+            // Success cleanup is handled in performCleanupTasks, but we also need to clean up
+            // on failure/cancellation so cleaned audio files don't leak.
+            if let sourcePath = nextJob.sourceAudioPath, sourcePath.hasPrefix("cleaned_") {
+                let sourceURL = nextJob.audioSourceURL
+                if FileManager.default.fileExists(atPath: sourceURL.path) {
+                    try? FileManager.default.removeItem(at: sourceURL)
+                    print("🗑️ Cleaned up source audio file after job ended: \(sourcePath)")
+                }
+            }
+
             // Clear current job and task handle
             regenerationSummaryIds.removeValue(forKey: nextJob.id)
             currentJob = nil
@@ -802,10 +845,16 @@ class BackgroundProcessingManager: ObservableObject {
 
         try Task.checkCancellation()
 
+        // Use the source audio URL (cleaned file) if available, otherwise the recording URL
+        let audioURL = job.audioSourceURL
+        if job.sourceAudioPath != nil {
+            print("🎛️ Using cleaned audio source: \(job.sourceAudioPath!) (recording identity: \(job.recordingPath))")
+        }
+
         // Update progress
         let progressJob = job.withProgress(0.1)
         await updateJob(progressJob)
-        
+
         // Get chunks or create them if needed
         let chunks: [AudioChunk]
         if let existingChunks = job.chunks {
@@ -813,18 +862,18 @@ class BackgroundProcessingManager: ObservableObject {
             EnhancedLogger.shared.logBackgroundProcessing("Using existing chunks: \(chunks.count)", level: .debug)
         } else {
             // Check if chunking is needed
-            let needsChunking = try await chunkingService.shouldChunkFile(job.recordingURL, for: engine)
-            
+            let needsChunking = try await chunkingService.shouldChunkFile(audioURL, for: engine)
+
             if needsChunking {
                 EnhancedLogger.shared.logBackgroundProcessing("File needs chunking for \(engine.rawValue)", level: .info)
-                let chunkingResult = try await chunkingService.chunkAudioFile(job.recordingURL, for: engine)
+                let chunkingResult = try await chunkingService.chunkAudioFile(audioURL, for: engine)
                 chunks = chunkingResult.chunks
             } else {
                 // Create a single "chunk" for the whole file
-                let fileInfo = try await chunkingService.getAudioFileInfo(job.recordingURL)
+                let fileInfo = try await chunkingService.getAudioFileInfo(audioURL)
                 chunks = [AudioChunk(
-                    originalURL: job.recordingURL,
-                    chunkURL: job.recordingURL,
+                    originalURL: audioURL,
+                    chunkURL: audioURL,
                     sequenceNumber: 0,
                     startTime: 0,
                     endTime: fileInfo.duration,
@@ -1640,8 +1689,17 @@ class BackgroundProcessingManager: ObservableObject {
     
     private func performCleanupTasks(for job: ProcessingJob) async {
         print("🧹 Performing cleanup tasks for job: \(job.recordingName)")
-        
-        // Clean up temporary files
+
+        // Clean up source audio file (e.g. cleaned audio copy) now that the job is done
+        if let sourcePath = job.sourceAudioPath, sourcePath.hasPrefix("cleaned_") {
+            let sourceURL = job.audioSourceURL
+            if FileManager.default.fileExists(atPath: sourceURL.path) {
+                try? FileManager.default.removeItem(at: sourceURL)
+                print("🗑️ Cleaned up source audio file: \(sourcePath)")
+            }
+        }
+
+        // Clean up temporary chunk files
         if let chunks = job.chunks {
             try? await chunkingService.cleanupChunks(chunks)
         }
