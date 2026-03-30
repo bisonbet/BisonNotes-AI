@@ -132,7 +132,7 @@ body.page .entry-header {
 <div class="bn-hero">
   <h1>BisonNotes AI</h1>
   <p>Complete User Guide</p>
-  <span class="bn-ver">v1.7</span>
+  <span class="bn-ver">v1.8</span>
 </div>
 
 <!-- ===== TOC ===== -->
@@ -361,24 +361,24 @@ body.page .entry-header {
     <h4>Requirements</h4>
     <ul>
       <li><strong>Transcription:</strong> iOS 17.0+, 4GB+ RAM. Uses Parakeet (default) for on-device transcription.</li>
-      <li><strong>AI Summary:</strong> iPhone 15 Pro, iPhone 16+, iOS 18.1+</li>
+      <li><strong>AI Summary (llama.cpp models):</strong> iPhone 15 Pro, iPhone 16+, iOS 18.1+</li>
       <li><strong>Storage:</strong> 2-3GB per AI model, plus transcription model download</li>
     </ul>
 
     <h4>Recommended Models (by RAM)</h4>
     <ul>
-      <li><strong>8GB+:</strong> Granite 4.0 H Tiny (4.3 GB) — Best quality</li>
-      <li><strong>6GB+:</strong> Granite 4.0 Micro (2.1 GB) — Fast processing</li>
-      <li><strong>6GB+:</strong> Gemma 3n E2B (3.0 GB) — Good quality, smaller</li>
       <li><strong>8GB+:</strong> Gemma 3n E4B (4.5 GB) — Best overall quality</li>
-      <li><strong>6GB+:</strong> Ministral 3B (2.1 GB) — Best for tasks/reminders</li>
+      <li><strong>6GB+:</strong> Gemma 3n E2B (3.0 GB) — Good quality, smaller size</li>
+      <li><strong>6GB+:</strong> Granite Micro (2.1 GB) — Very fast processing</li>
     </ul>
 
-    <h4>Experimental Models</h4>
+    <h4>Experimental Models (enable in settings)</h4>
     <ul>
-      <li><strong>4GB+:</strong> LFM 2.5 1.2B (731 MB) — Fast, minimal summaries</li>
-      <li><strong>4GB+:</strong> Qwen3 1.7B (1.1 GB) — Latest Qwen3</li>
-      <li><strong>8GB+:</strong> Qwen3 4B (2.7 GB) — Excellent detail</li>
+      <li><strong>8GB+:</strong> Granite (4.3 GB) — Reliable and accurate</li>
+      <li><strong>6GB+:</strong> Ministral (2.1 GB) — Best for tasks/reminders</li>
+      <li><strong>4GB+:</strong> LFM 2.5 Thinking (731 MB) — Fast, minimal summaries</li>
+      <li><strong>6GB+:</strong> Qwen3.5 2B (1.3 GB) — Thinking mode, summary only</li>
+      <li><strong>8GB+:</strong> Qwen3.5 4B (2.7 GB) — Thinking mode, excellent detail</li>
     </ul>
 
     <p><strong>Best for:</strong> Privacy-conscious users, offline use, recordings under 60 minutes</p>
@@ -405,10 +405,9 @@ body.page .entry-header {
       <table>
         <thead><tr><th>Model</th><th>Best For</th><th>Tier</th></tr></thead>
         <tbody>
-          <tr><td><strong>GPT-4.1</strong></td><td>Most comprehensive analysis</td><td>Premium</td></tr>
           <tr><td><strong>GPT-4.1 Mini</strong></td><td>Balanced performance (Default)</td><td>Standard</td></tr>
-          <tr><td><strong>GPT-4.1 Nano</strong></td><td>Fastest, most economical</td><td>Economy</td></tr>
           <tr><td><strong>GPT-5 Mini</strong></td><td>Next-gen reasoning</td><td>Premium</td></tr>
+          <tr><td><strong>GPT-5.4 Mini</strong></td><td>Latest GPT-5 Mini — improved reasoning</td><td>Premium</td></tr>
         </tbody>
       </table>
     </div>
@@ -445,10 +444,8 @@ body.page .entry-header {
 
     <h4>Available Models</h4>
     <ul>
-      <li><strong>Gemini 2.5 Flash</strong> (Default) — Fast and efficient</li>
-      <li><strong>Gemini 2.5 Flash Lite</strong> — Lightweight variant</li>
-      <li><strong>Gemini 3 Pro Preview</strong> — Advanced reasoning</li>
-      <li><strong>Gemini 3 Flash Preview</strong> — Fast next-gen</li>
+      <li><strong>Gemini 3 Flash Preview</strong> (Default) — Fast and efficient</li>
+      <li><strong>Gemini 3.1 Flash Lite Preview</strong> — Lightweight variant for quick processing</li>
     </ul>
     <p><strong>Best for:</strong> Balanced performance and cost, with free tier for getting started</p>
   </div>
@@ -547,9 +544,42 @@ body.page .entry-header {
   </div>
 </details>
 
+<!-- Apple Native -->
+<details>
+  <summary>7. Apple Native — Apple Intelligence</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-free">Free</span>
+    <span class="bn-badge bn-b-local">On-Device</span>
+    <p><strong>Type:</strong> On-device &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Not required</p>
+    <div class="bn-ok"><strong>New in v1.8:</strong> Apple Native uses Apple's Foundation Models framework to run AI summarization entirely on-device with no internet connection and no data leaving your device.</div>
+
+    <h4>Requirements</h4>
+    <ul>
+      <li>iOS 26.0 or later</li>
+      <li>iPhone 15 Pro or newer (Apple Intelligence–capable device)</li>
+      <li>Apple Intelligence enabled in Settings &rarr; Apple Intelligence &amp; Siri</li>
+    </ul>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li>Go to Setup &rarr; AI Settings.</li>
+      <li>Select <strong>Apple Native</strong> from the engine library.</li>
+      <li>No API key or model download required — uses the built-in Foundation Model.</li>
+    </ol>
+
+    <h4>Limitations</h4>
+    <ul>
+      <li>Context window is 4,096 tokens. Long transcripts are automatically chunked and summarized in segments.</li>
+      <li>Only available on devices that support Apple Intelligence.</li>
+    </ul>
+
+    <p><strong>Best for:</strong> Maximum privacy, no setup, and users with Apple Intelligence–capable devices on iOS 26+</p>
+  </div>
+</details>
+
 <!-- Ollama -->
 <details>
-  <summary>7. Ollama — Local LLM Server</summary>
+  <summary>8. Ollama — Local LLM Server</summary>
   <div class="dd">
     <span class="bn-badge bn-b-local">Local</span>
     <span class="bn-badge bn-b-free">Free</span>
@@ -589,8 +619,7 @@ ollama pull mistral-small3.2</code></pre>
 
 <h3>Available Engines</h3>
 <ul>
-  <li><strong>On Device (Parakeet)</strong> — Default. Free, private, works offline. Faster and more accurate than WhisperKit. Requires model download.</li>
-  <li><strong>On Device (WhisperKit)</strong> — Deprecated. Legacy on-device transcription. May be removed in a future release. Requires model download (150-520MB).</li>
+  <li><strong>On Device (Parakeet)</strong> — Default. Free, private, works offline. Requires model download.</li>
   <li><strong>OpenAI</strong> — GPT-4o Transcribe, GPT-4o Mini Transcribe, or Whisper-1.</li>
   <li><strong>Mistral AI</strong> — Voxtral Mini ($0.003/min) with optional speaker diarization.</li>
   <li><strong>Whisper (Local Server)</strong> — Your own Whisper server (REST API or Wyoming protocol).</li>
@@ -604,7 +633,6 @@ ollama pull mistral-small3.2</code></pre>
     <thead><tr><th>Engine</th><th>Type</th><th>Speakers</th><th>Cost</th></tr></thead>
     <tbody>
       <tr><td><strong>On-Device (Parakeet)</strong></td><td>Local</td><td>No</td><td>Free (Default)</td></tr>
-      <tr><td><strong>On-Device (WhisperKit)</strong></td><td>Local</td><td>No</td><td>Free (Deprecated)</td></tr>
       <tr><td><strong>OpenAI GPT-4o</strong></td><td>Cloud</td><td>No</td><td>Per token</td></tr>
       <tr><td><strong>OpenAI Whisper</strong></td><td>Cloud</td><td>No</td><td>Per minute</td></tr>
       <tr><td><strong>Mistral AI</strong></td><td>Cloud</td><td>Yes</td><td>~$0.003/min</td></tr>
@@ -618,7 +646,7 @@ ollama pull mistral-small3.2</code></pre>
 <details>
   <summary>On Device Transcription (Parakeet) — Default</summary>
   <div class="dd">
-    <div class="bn-ok"><strong>New in v1.7:</strong> FluidAudio Parakeet is now the default on-device transcription engine. It is faster and more accurate than WhisperKit.</div>
+    <div class="bn-ok"><strong>v1.8:</strong> Parakeet is now the sole on-device transcription engine. WhisperKit has been removed. Users who had WhisperKit selected are automatically migrated to Parakeet on first launch.</div>
 
     <h4>Initial Setup</h4>
     <ol class="bn-sl">
@@ -627,40 +655,7 @@ ollama pull mistral-small3.2</code></pre>
       <li><strong>Requirements:</strong> iOS 17.0+, model download required.</li>
     </ol>
 
-    <div class="bn-ok"><strong>Benefits:</strong> Complete privacy, works offline, no API costs, faster and more accurate than WhisperKit.</div>
-  </div>
-</details>
-
-<details>
-  <summary>On Device Transcription (WhisperKit) — Deprecated</summary>
-  <div class="dd">
-    <div class="bn-warn"><strong>Deprecated:</strong> WhisperKit transcription is still available but may be removed in a future release. We recommend switching to Parakeet for better speed and accuracy.</div>
-
-    <h4>Setup</h4>
-    <ol class="bn-sl">
-      <li><strong>Enable:</strong> Setup &rarr; Transcription Settings &rarr; select "On Device (WhisperKit)".</li>
-      <li><strong>Download a model:</strong>
-        <ul>
-          <li><strong>Higher Quality</strong> (~520MB) — Best accuracy, slower processing</li>
-          <li><strong>Faster Processing</strong> (~150MB) — Faster, slightly lower accuracy</li>
-        </ul>
-      </li>
-      <li><strong>Requirements:</strong> iOS 17.0+, 4GB+ RAM, 150-520MB free space.</li>
-      <li><strong>Test:</strong> Tap "Test Model Loading". First load may take 30-60 seconds.</li>
-    </ol>
-
-    <h4>Which WhisperKit Model Should I Use?</h4>
-    <div class="bn-tw">
-      <table>
-        <thead><tr><th>Use Case</th><th>Model</th><th>Why?</th></tr></thead>
-        <tbody>
-          <tr><td>Voice Notes / Journaling</td><td>Faster</td><td>Close to mic, clear audio</td></tr>
-          <tr><td>Meeting / Interview</td><td>Higher Quality</td><td>Multiple voices, distance</td></tr>
-          <tr><td>Noisy Environment</td><td>Higher Quality</td><td>Better noise separation</td></tr>
-          <tr><td>Battery Conservation</td><td>Faster</td><td>Uses less power</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <div class="bn-ok"><strong>Benefits:</strong> Complete privacy, works offline, no API costs.</div>
   </div>
 </details>
 
@@ -792,7 +787,7 @@ docker run -d -p 9000:9000 \
     <h4>Additional Settings</h4>
     <p>Full control over all options.</p>
     <ul>
-      <li>All 7 AI engines</li>
+      <li>All 8 AI engines</li>
       <li>All transcription engines</li>
       <li>Microphone selection</li>
       <li>Preferences, iCloud, background processing</li>
@@ -890,6 +885,8 @@ docker run -d -p 9000:9000 \
       <li><strong>Stale Job Detection</strong> (v1.7) — Intelligent detection and recovery of stuck jobs, with timeouts based on actual processing start time</li>
       <li><strong>Job Cancellation</strong> (v1.7) — Properly cancel and interrupt running jobs when the app is backgrounded or closed</li>
       <li><strong>On-Device AI Handling</strong> — On-device AI jobs are gracefully interrupted when the app is backgrounded, since GPU processing requires the app to stay open</li>
+      <li><strong>Live Transcription</strong> (v1.8) — On-device speech-to-text streamed in real time during recording via SFSpeechRecognizer; transcript auto-saved when recording stops</li>
+      <li><strong>Duplicate Summary Cleanup</strong> (v1.8) — Automatically detects and removes duplicate summaries; manual cleanup available in Database Tools</li>
     </ul>
   </div>
 </details>
@@ -899,6 +896,9 @@ docker run -d -p 9000:9000 \
   <div class="dd">
     <ul>
       <li><strong>Import/Export</strong> — M4A, MP3, WAV, CAF, AIFF, AIF</li>
+      <li><strong>Audio Export</strong> (v1.8) — Share any recording as an audio file via the iOS share sheet</li>
+      <li><strong>Video Import</strong> (v1.8) — Import video files; audio is automatically extracted to M4A</li>
+      <li><strong>Audio Cleanup</strong> (v1.8) — Optional pre-transcription DSP: high-pass filter, noise gate, dynamic normalization, peak limiting</li>
       <li><strong>Share Extension</strong> — Import from Voice Memos, Files, etc.</li>
       <li><strong>Combining Recordings</strong> — Merge two into one</li>
       <li><strong>PDF Export</strong> — Professional reports with metadata, maps, page numbers</li>

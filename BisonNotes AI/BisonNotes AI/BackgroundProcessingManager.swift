@@ -195,6 +195,7 @@ enum JobType: Codable {
 }
 
 enum JobProcessingStatus: Codable, Equatable {
+    case ready
     case queued
     case processing
     case completed
@@ -252,6 +253,8 @@ enum JobProcessingStatus: Codable, Equatable {
 
     var displayName: String {
         switch self {
+        case .ready:
+            return "Ready"
         case .queued:
             return "Queued"
         case .processing:
@@ -276,7 +279,7 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - Published Properties
     
     @Published var activeJobs: [ProcessingJob] = []
-    @Published var processingStatus: JobProcessingStatus = .queued
+    @Published var processingStatus: JobProcessingStatus = .ready
     @Published var currentJob: ProcessingJob?
     
     // MARK: - Completion Handlers
@@ -397,7 +400,8 @@ class BackgroundProcessingManager: ObservableObject {
         await processNextJob()
     }
 
-    func startSummarizationJob(recordingURL: URL, recordingName: String, engine: String, modelName: String? = nil, replacingSummaryId: UUID? = nil) async throws {
+    @discardableResult
+    func startSummarizationJob(recordingURL: URL, recordingName: String, engine: String, modelName: String? = nil, replacingSummaryId: UUID? = nil) async throws -> UUID {
         // Queue size limit
         let queuedCount = activeJobs.filter { $0.status == .queued }.count
         guard queuedCount < 20 else {
@@ -416,8 +420,19 @@ class BackgroundProcessingManager: ObservableObject {
             regenerationSummaryIds[job.id] = oldSummaryId
         }
 
+        // Remove old terminal summarization jobs for this recording to prevent stale matches
+        activeJobs.removeAll { existingJob in
+            if case .summarization = existingJob.type,
+               existingJob.recordingPath == job.recordingPath,
+               existingJob.status.isTerminal {
+                return true
+            }
+            return false
+        }
+
         await addJob(job)
         await processNextJob()
+        return job.id
     }
     
     func cancelActiveJob() async {
@@ -630,7 +645,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Find the next queued job
         guard let nextJob = activeJobs.first(where: { $0.status == .queued }) else {
-            processingStatus = .queued
+            processingStatus = .ready
             await endBackgroundTask()
             return
         }
@@ -1047,14 +1062,6 @@ class BackgroundProcessingManager: ObservableObject {
                 let manager = EnhancedTranscriptionManager()
                 result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .awsTranscribe)
 
-            case .whisperKit:
-                print("🤖 Using WhisperKit for transcription")
-                let whisperKitManager = WhisperKitManager.shared
-                guard whisperKitManager.isModelReady else {
-                    throw BackgroundProcessingError.processingFailed("WhisperKit model not downloaded. Please download the model in Settings.")
-                }
-                result = try await whisperKitManager.transcribe(audioURL: chunk.chunkURL)
-
             case .fluidAudio:
                 print("🤖 Using FluidAudio (Parakeet) for transcription")
                 let fluidAudioManager = FluidAudioManager.shared
@@ -1391,12 +1398,8 @@ class BackgroundProcessingManager: ObservableObject {
         let summaryProgressJob = job.withProgress(0.8)
         await updateJob(summaryProgressJob)
 
-        // If this is a regeneration, delete the old summary first
-        if let oldSummaryId = regenerationSummaryIds[job.id] {
-            print("🗑️ Deleting old summary \(oldSummaryId) for regeneration")
-            try? coreDataManager.deleteSummary(id: oldSummaryId)
-            regenerationSummaryIds.removeValue(forKey: job.id)
-        }
+        // Clear regeneration tracking (cleanup now happens in RecordingWorkflowManager.createSummary)
+        regenerationSummaryIds.removeValue(forKey: job.id)
 
         // Save summary to Core Data using RecordingWorkflowManager
         let workflowManager = RecordingWorkflowManager()
@@ -1503,6 +1506,8 @@ class BackgroundProcessingManager: ObservableObject {
             engineType = "On-Device AI"
         } else if lowerEngine.contains("ollama") {
             engineType = "Ollama"
+        } else if lowerEngine.contains("apple") {
+            engineType = "Apple Native"
         } else {
             engineType = "Background Service"
         }
@@ -1948,8 +1953,8 @@ class BackgroundProcessingManager: ObservableObject {
 
     private func checkTranscriptionEngineAvailability(_ engine: TranscriptionEngine) async -> (available: Bool, reason: String?) {
         switch engine {
-        case .whisperKit, .fluidAudio:
-            // On-device engines are always available
+        case .fluidAudio:
+            // On-device engine is always available
             return (true, nil)
         case .openAI, .openAIAPICompatible, .awsTranscribe, .mistralAI:
             // Cloud engines need network
@@ -1966,7 +1971,8 @@ class BackgroundProcessingManager: ObservableObject {
         let lowerEngine = engine.lowercased()
 
         // On-device engines
-        if lowerEngine.contains("on-device") || lowerEngine.contains("apple intelligence") {
+        if lowerEngine.contains("on-device") || lowerEngine.contains("apple intelligence") ||
+           lowerEngine.contains("apple native") || lowerEngine.contains("foundation") {
             return (true, nil)
         }
 
@@ -2077,7 +2083,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Convert job type string back to JobType enum
         let type: JobType
         if jobType.contains("Transcription") {
-            let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? TranscriptionEngine.whisperKit.rawValue) ?? .whisperKit
+            let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
             type = .transcription(engine: engine)
         } else {
             type = .summarization(engine: jobEntry.engine ?? "On-Device AI")

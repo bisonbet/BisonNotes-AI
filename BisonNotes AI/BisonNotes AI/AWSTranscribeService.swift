@@ -120,7 +120,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
         AWSCredentialsManager.shared.initializeEnvironment()
         
         do {
-            let clientConfig = try await TranscribeClient.TranscribeClientConfiguration(
+            let clientConfig = try await TranscribeClient.TranscribeClientConfig(
                 region: sharedCredentials.region
             )
             
@@ -147,7 +147,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
         AWSCredentialsManager.shared.initializeEnvironment()
         
         do {
-            let clientConfig = try await S3Client.S3ClientConfiguration(
+            let clientConfig = try await S3Client.S3ClientConfig(
                 region: sharedCredentials.region
             )
             

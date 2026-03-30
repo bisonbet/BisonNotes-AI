@@ -209,11 +209,28 @@ class RecordingWorkflowManager: ObservableObject {
             return nil
         }
         
+        // Reject obviously-failed summaries before touching Core Data at all
+        let summaryTrimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard summaryTrimmed.count >= 30 else {
+            print("⚠️ [RecordingWorkflowManager] Summary too short (\(summaryTrimmed.count) chars) — skipping save to avoid storing a failed result")
+            return nil
+        }
+
         // Log recording for debugging/analytics
         print("📝 Creating summary for recording: \(recordingEntry.recordingName ?? "unknown")")
         print("🆔 Recording UUID: \(recordingId)")
         print("🆔 Transcript UUID: \(transcriptId)")
-        
+
+        // Capture existing summaries BEFORE creating new one using context directly
+        // (appCoordinator may be nil, so we use context to avoid silent no-ops)
+        // We'll delete these only AFTER successfully saving the new summary
+        let existingSummaryFetch: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        existingSummaryFetch.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
+        let existingSummaries = (try? context.fetch(existingSummaryFetch)) ?? []
+        if !existingSummaries.isEmpty {
+            print("📋 Found \(existingSummaries.count) existing summary(ies) to clean up after save")
+        }
+
         // Create summary data with proper UUID linking
         // Use proper URL resolution instead of force unwrapping
         let recordingURL = appCoordinator?.coreDataManager.getAbsoluteURL(for: recordingEntry) ?? URL(fileURLWithPath: "")
@@ -279,7 +296,22 @@ class RecordingWorkflowManager: ObservableObject {
         do {
             try context.save()
             print("✅ Summary saved to Core Data with ID: \(summaryData.id)")
-            
+
+            // NOW clean up old summaries using context directly (only after new one is safely saved)
+            if !existingSummaries.isEmpty {
+                var deletedCount = 0
+                for oldSummary in existingSummaries {
+                    let oldId = oldSummary.id?.uuidString ?? "nil"
+                    context.delete(oldSummary)
+                    deletedCount += 1
+                    print("🗑️ Deleted old summary \(oldId)")
+                }
+                if deletedCount > 0 {
+                    try? context.save()
+                    print("🧹 Cleaned up \(deletedCount) old summary(ies) for recording \(recordingId)")
+                }
+            }
+
             // Post notification to refresh UI views
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
@@ -290,9 +322,10 @@ class RecordingWorkflowManager: ObservableObject {
             }
         } catch {
             print("❌ Failed to save summary to Core Data: \(error)")
+            // Note: We did NOT delete old summaries, so user still has their previous data
             return nil
         }
-        
+
         return summaryData.id
     }
     

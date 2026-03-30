@@ -954,6 +954,8 @@ class SummaryManager: ObservableObject {
     // MARK: - Enhanced Summary Generation
     
     func generateEnhancedSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator? = nil, engineName: String? = nil) async throws -> EnhancedSummaryData {
+        // Sync engine from settings before logging to avoid "No current engine set" warning
+        syncCurrentEngineWithSettings()
         AppLogger.shared.info("Starting enhanced summary generation using \(getCurrentEngineName())", category: "SummaryManager")
         
         let startTime = Date()
@@ -1011,12 +1013,9 @@ class SummaryManager: ObservableObject {
         beginSummaryBackgroundTask()
         defer { endSummaryBackgroundTask() }
 
-        // Ensure we're using the currently selected engine from settings
-        syncCurrentEngineWithSettings()
-        
         let engineToUse: SummarizationEngine?
 
-        if let engineName = engineName, let engine = availableEngines[engineName] {
+        if let engineName = engineName, let engine = availableEngines[engineName], engine.isAvailable {
             engineToUse = engine
         } else {
             engineToUse = currentEngine
@@ -1040,6 +1039,15 @@ class SummaryManager: ObservableObject {
             // If the task was cancelled, propagate CancellationError immediately — don't retry
             if Task.isCancelled || error is CancellationError || (error as NSError).code == NSURLErrorCancelled {
                 throw CancellationError()
+            }
+            // Don't retry content safety blocks — they'll just fail again
+            if let sumError = error as? SummarizationError, case .contentSafetyBlock = sumError {
+                throw sumError
+            }
+            // Check for guardrail violations that weren't caught at the engine level
+            let errorDesc = String(describing: error)
+            if errorDesc.contains("guardrailViolation") || errorDesc.contains("unsafe content") {
+                throw SummarizationError.contentSafetyBlock(engine: engine.name)
             }
             AppLogger.shared.error("AI engine failed: \(error) – retrying once", category: "SummaryManager")
             do {
@@ -1069,6 +1077,12 @@ class SummaryManager: ObservableObject {
                     } else if error.localizedDescription.contains("connection") || error.localizedDescription.contains("server") {
                         throw SummarizationError.networkError(underlying: error)
                     }
+                }
+
+                // Check for guardrail violations that weren't caught at the engine level
+                let retryErrorDesc = String(describing: error)
+                if retryErrorDesc.contains("guardrailViolation") || retryErrorDesc.contains("unsafe content") {
+                    throw SummarizationError.contentSafetyBlock(engine: engine.name)
                 }
 
                 // STOP HERE - Don't fall back to basic summary automatically

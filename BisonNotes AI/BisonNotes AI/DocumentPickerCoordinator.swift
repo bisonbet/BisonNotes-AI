@@ -28,6 +28,11 @@ class DocumentPickerCoordinator: NSObject, ObservableObject {
         self.isShowingPicker = true
     }
 
+    func selectVideoFiles(completion: @escaping ([URL]) -> Void) {
+        self.completionHandler = completion
+        self.isShowingPicker = true
+    }
+
     func handleSelectedURLs(_ urls: [URL]) {
         selectedURLs = urls
         completionHandler?(urls)
@@ -162,4 +167,51 @@ struct TextDocumentPicker: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: TextDocumentPickerViewController, context: Context) {
         // No updates needed
     }
-} 
+}
+
+// MARK: - Video Document Picker View Controller
+
+class VideoDocumentPickerViewController: UIDocumentPickerViewController {
+    private let coordinator: DocumentPickerCoordinator
+
+    init(coordinator: DocumentPickerCoordinator) {
+        self.coordinator = coordinator
+
+        var supportedTypes: [UTType] = [.movie, .video]
+
+        if let mp4Type = UTType(filenameExtension: "mp4") {
+            supportedTypes.append(mp4Type)
+        }
+        if let movType = UTType(filenameExtension: "mov") {
+            supportedTypes.append(movType)
+        }
+        if let m4vType = UTType(filenameExtension: "m4v") {
+            supportedTypes.append(m4vType)
+        }
+
+        super.init(forOpeningContentTypes: supportedTypes, asCopy: true)
+
+        self.delegate = coordinator
+        self.allowsMultipleSelection = true
+        self.shouldShowFileExtensions = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+// MARK: - SwiftUI Video Document Picker
+
+struct VideoDocumentPicker: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let coordinator: DocumentPickerCoordinator
+
+    func makeUIViewController(context: Context) -> VideoDocumentPickerViewController {
+        return VideoDocumentPickerViewController(coordinator: coordinator)
+    }
+
+    func updateUIViewController(_ uiViewController: VideoDocumentPickerViewController, context: Context) {
+        // No updates needed
+    }
+}

@@ -219,7 +219,15 @@ class RecordingNameGenerator {
         
         // Remove ALL punctuation at the end (more comprehensive)
         cleanedTitle = cleanedTitle.replacingOccurrences(of: #"[.!?;:,]+$"#, with: "", options: .regularExpression)
-        
+
+        // Strip role-name artifacts appended by the model when <|im_start|> is stripped
+        // e.g., "Work Requestassistant" → "Work Request"
+        for roleSuffix in ["assistant", "user", "system"] {
+            if cleanedTitle.lowercased().hasSuffix(roleSuffix) {
+                cleanedTitle = String(cleanedTitle.dropLast(roleSuffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
         // Trim whitespace and newlines
         cleanedTitle = cleanedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         

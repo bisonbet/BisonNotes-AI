@@ -20,12 +20,6 @@ struct OpenAISummarizationSettingsView: View {
     @State private var showingConnectionResult = false
     @State private var isConnectionSuccessful = false
     @State private var showingAPIKeyInfo = false
-    @State private var isLoadingModels = false
-    @State private var availableModels: [OpenAISummarizationModel] = []
-    @State private var showingModelFetchError = false
-    @State private var modelFetchError = ""
-    @State private var useDynamicModels = false
-    
     @Environment(\.dismiss) private var dismiss
     
     var onConfigurationChanged: (() -> Void)?
@@ -130,57 +124,17 @@ struct OpenAISummarizationSettingsView: View {
     
     private var modelSelectionSection: some View {
         Section {
-            Toggle("Fetch Available Models", isOn: $useDynamicModels)
-                .onChange(of: useDynamicModels) {
-                    if useDynamicModels {
-                        loadAvailableModels()
-                    } else {
-                        availableModels = []
-                    }
+            Picker("Model", selection: $selectedModel) {
+                ForEach(OpenAISummarizationModel.allCases, id: \.self) { model in
+                    Text(model.displayName)
+                        .tag(model.rawValue)
                 }
-            
-            if useDynamicModels {
-                if isLoadingModels {
-                    HStack {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                        Text("Loading models...")
-                            .font(.caption)
-                    }
-                } else if !availableModels.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Available Models (\(availableModels.count))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Picker("Model", selection: $selectedModel) {
-                            ForEach(availableModels, id: \.rawValue) { model in
-                                Text(model.displayName)
-                                    .tag(model.rawValue)
-                            }
-                        }
-                        .pickerStyle(MenuPickerStyle())
-                    }
-                }
-                
-                if showingModelFetchError {
-                    Text("Error: \(modelFetchError)")
-                        .font(.caption)
-                        .foregroundColor(.red)
-                }
-            } else {
-                Picker("Model", selection: $selectedModel) {
-                    ForEach(OpenAISummarizationModel.allCases, id: \.self) { model in
-                        Text(model.displayName)
-                            .tag(model.rawValue)
-                    }
-                }
-                .pickerStyle(MenuPickerStyle())
             }
+            .pickerStyle(MenuPickerStyle())
         } header: {
             Text("Model Selection")
         } footer: {
-            Text("Choose the AI model for summarization. Dynamic models are fetched from your API.")
+            Text("Choose the AI model for summarization.")
         }
     }
     
@@ -278,46 +232,13 @@ struct OpenAISummarizationSettingsView: View {
         }
     }
     
-    private func loadAvailableModels() {
-        guard !apiKey.isEmpty else { return }
-        
-        isLoadingModels = true
-        modelFetchError = ""
-        showingModelFetchError = false
-        
-        Task {
-            do {
-                let models = try await OpenAISummarizationService.fetchModels(apiKey: apiKey, baseURL: baseURL)
-                
-                await MainActor.run {
-                    availableModels = models
-                    isLoadingModels = false
-                    
-                    if !models.isEmpty && selectedModel.isEmpty {
-                        selectedModel = models.first?.rawValue ?? ""
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    modelFetchError = error.localizedDescription
-                    showingModelFetchError = true
-                    isLoadingModels = false
-                }
-            }
-        }
-    }
-    
     private func resetToDefaults() {
         apiKey = ""
         selectedModel = OpenAISummarizationModel.gpt41Mini.rawValue
         baseURL = "https://api.openai.com/v1"
         temperature = 0.1
         maxTokens = 0
-        useDynamicModels = false
-        availableModels = []
         showingConnectionResult = false
-        showingModelFetchError = false
-        modelFetchError = ""
     }
 }
 
@@ -340,15 +261,15 @@ struct OpenAICompatibleSettingsView: View {
     @State private var showingAPIKeyInfo = false
     @State private var isLoadingModels = false
     @State private var availableModels: [OpenAISummarizationModel] = []
-    @State private var availableModelIds: [String] = [] // Store raw model IDs from API
+    @State private var availableModelIds: [String] = []
     @State private var showingModelFetchError = false
     @State private var modelFetchError = ""
     @State private var useDynamicModels = false
-    
+
     @Environment(\.dismiss) private var dismiss
-    
+
     var onConfigurationChanged: (() -> Void)?
-    
+
     init(onConfigurationChanged: (() -> Void)? = nil) {
         self.onConfigurationChanged = onConfigurationChanged
 
@@ -370,7 +291,7 @@ struct OpenAICompatibleSettingsView: View {
     }
     
     // MARK: - Private Methods
-    
+
     private func loadAvailableModels() {
         guard !apiKey.isEmpty else {
             modelFetchError = "Please enter an API key first"
@@ -391,19 +312,14 @@ struct OpenAICompatibleSettingsView: View {
 
         Task {
             do {
-                // Use fetchCompatibleModels to get raw model IDs from the API
                 let modelIds = try await OpenAISummarizationService.fetchCompatibleModels(apiKey: apiKey, baseURL: baseURL)
 
                 await MainActor.run {
-                    // Store the raw model IDs
                     availableModelIds = modelIds
-
-                    // Also try to match with predefined models
                     availableModels = modelIds.compactMap { id in
                         OpenAISummarizationModel(rawValue: id)
                     }
 
-                    // Set the first model as selected if not already set
                     if !modelIds.isEmpty && selectedModel.isEmpty {
                         selectedModel = modelIds.first!
                     }
@@ -425,13 +341,13 @@ struct OpenAICompatibleSettingsView: View {
             }
         }
     }
-    
+
     private func testConnection() {
         guard !apiKey.isEmpty else { return }
-        
+
         isTestingConnection = true
         showingConnectionResult = false
-        
+
         Task {
             let model = OpenAISummarizationModel(rawValue: selectedModel) ?? .gpt41Mini
             let config = OpenAISummarizationConfig(
@@ -750,7 +666,7 @@ struct OpenAICompatibleSettingsView: View {
                         availableModels = []
                     }
                 }
-            
+
             dynamicModelsContent
             manualModelContent
         } header: {
@@ -759,11 +675,11 @@ struct OpenAICompatibleSettingsView: View {
             if useDynamicModels {
                 Text("Enable to discover models from your API endpoint automatically. If your provider supports the /models endpoint (like LiteLLM, vLLM, LocalAI), it will list all available models.")
             } else {
-                Text("Enter the model ID manually. Common examples: gpt-4o, claude-3-5-sonnet-20241022, llama-3.2-90b, gemini-2.0-flash, deepseek-chat, etc.")
+                Text("Enter the model ID manually. Common examples: gpt-4o, claude-sonnet-4-5-20250929, llama-4-maverick, gemini-2.5-flash, deepseek-chat, etc.")
             }
         }
     }
-    
+
     @ViewBuilder
     private var dynamicModelsContent: some View {
         if useDynamicModels {
@@ -829,7 +745,7 @@ struct OpenAICompatibleSettingsView: View {
             }
         }
     }
-    
+
     @ViewBuilder
     private var manualModelContent: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -837,7 +753,7 @@ struct OpenAICompatibleSettingsView: View {
                 .font(.subheadline)
                 .fontWeight(.medium)
 
-            TextField("e.g., gpt-4o, claude-3-5-sonnet, llama-3.2-90b", text: $selectedModel)
+            TextField("e.g., gpt-4o, claude-sonnet-4-5, llama-4-maverick", text: $selectedModel)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .autocapitalization(.none)
                 .disableAutocorrection(true)

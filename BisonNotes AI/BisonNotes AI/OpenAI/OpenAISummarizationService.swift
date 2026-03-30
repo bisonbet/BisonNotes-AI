@@ -301,7 +301,7 @@ class OpenAISummarizationService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "Failed to parse models response: \(error.localizedDescription)")
         }
     }
-    
+
     // MARK: - Private Helper Methods
 
     /// Check if a base URL is the official OpenAI API

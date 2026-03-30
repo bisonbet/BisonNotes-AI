@@ -24,6 +24,22 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         return true
     }
 
+
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        // Best-effort async clear via the UNUserNotificationCenter API.
+        // Do NOT call removeAllDeliveredNotifications() here: actionable notifications
+        // such as RESUME_RECORDING may still be waiting for a user response, and
+        // clearing them would prevent the action from being delivered.
+        Task {
+            do {
+                try await UNUserNotificationCenter.current().setBadgeCount(0)
+                NSLog("✅ Cleared app icon badge on app activation")
+            } catch {
+                NSLog("⚠️ setBadgeCount failed on activation (badge already cleared via applicationIconBadgeNumber): \(error)")
+            }
+        }
+    }
+
     // NOTE: application(_:open:url:options:) is intentionally NOT implemented.
     // In scene-based SwiftUI apps, iOS delivers file URLs through the scene delegate,
     // which SwiftUI translates to .onOpenURL on the WindowGroup. Implementing the

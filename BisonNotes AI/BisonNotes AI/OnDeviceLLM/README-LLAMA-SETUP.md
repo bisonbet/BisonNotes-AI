@@ -52,9 +52,23 @@ If you encounter "module not found" errors:
 
 ## Updating the Framework
 
-### Option 1: Build from Source (Recommended)
+### Option 1: Download Prebuilt Release (Recommended)
 
-This gives you the most control and ensures you have the latest features.
+The llama.cpp project provides prebuilt xcframeworks for each release:
+
+1. Go to [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases)
+2. Download `llama-bXXXX-xcframework.zip` (where XXXX is the build number)
+3. Extract and copy to your project:
+
+```bash
+cd ~/Downloads
+unzip llama-b8495-xcframework.zip
+cp -R llama.xcframework /Users/champ/Sources/BisonNotes-AI/Frameworks/
+```
+
+### Option 2: Build from Source
+
+This gives you the most control if you need custom build options.
 
 ```bash
 # Clone llama.cpp (if not already)
@@ -71,7 +85,7 @@ cd llama.cpp
 cp -R build/llama.xcframework /Users/champ/Sources/BisonNotes-AI/Frameworks/
 ```
 
-### Option 2: Copy from OLMoE.swift Updates
+### Option 3: Copy from OLMoE.swift Updates
 
 If the OLMoE.swift project is updated with a newer framework:
 
@@ -140,6 +154,7 @@ Track framework versions here for reference:
 
 | Date | llama.cpp Version | Notes |
 |------|-------------------|-------|
+| 2026-03-23 | b8495 | Updated from prebuilt release |
 | 2025-01-10 | b4000+ | Initial setup from OLMoE.swift |
 
 ---

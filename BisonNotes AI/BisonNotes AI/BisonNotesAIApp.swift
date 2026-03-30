@@ -110,92 +110,67 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
     
-    /// Migrates users from Apple Transcription to WhisperKit (On-Device)
-    /// Sets a flag to show WhisperKit settings for model download
-    private func migrateAppleTranscriptionToWhisperKit() {
-        let transcriptionEngineKey = "selectedTranscriptionEngine"
-        let migrationKey = "appleTranscriptionToWhisperKitMigrated_v1.4"
-
-        // Check if migration has already been performed
-        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
-            return
-        }
-
-        let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
-
-        // Check if user was using Apple Transcription
-        if currentTranscription == "Apple Transcription" {
-            // Migrate to WhisperKit
-            UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
-            UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
-
-            // Set flag to show WhisperKit settings on first launch
-            UserDefaults.standard.set(true, forKey: "showWhisperKitMigrationSettings")
-
-            NSLog("✅ Migrated transcription from Apple Transcription to WhisperKit (On-Device)")
-        }
-
-        // Mark migration as complete
-        UserDefaults.standard.set(true, forKey: migrationKey)
-    }
-    
-    /// Ensures users with old WhisperKit values still work if the enum rawValue changes
-    /// This handles backward compatibility for any future renames of the WhisperKit engine
-    private func migrateWhisperKitNameIfNeeded() {
-        let transcriptionEngineKey = "selectedTranscriptionEngine"
-        let migrationKey = "whisperKitNameMigration_v1.5"
-        
-        // Check if migration has already been performed
-        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
-            return
-        }
-        
-        let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
-        let currentWhisperKitRawValue = TranscriptionEngine.whisperKit.rawValue
-        
-        // If the stored value is an old WhisperKit name but doesn't match current rawValue, update it
-        // This handles cases where "On Device" might be renamed to something else (e.g., "WhisperKit")
-        if let storedValue = currentTranscription,
-           storedValue != currentWhisperKitRawValue {
-            // Check if it's an old WhisperKit value that needs updating
-            let oldWhisperKitNames = ["On Device", "WhisperKit", "On-Device"]
-            if oldWhisperKitNames.contains(storedValue) {
-                // Update to current WhisperKit rawValue
-                UserDefaults.standard.set(currentWhisperKitRawValue, forKey: transcriptionEngineKey)
-                NSLog("✅ Migrated transcription engine from '\(storedValue)' to '\(currentWhisperKitRawValue)'")
-            }
-        }
-        
-        // Mark migration as complete
-        UserDefaults.standard.set(true, forKey: migrationKey)
-    }
-
-    /// Migrates users from WhisperKit "On Device" to the new naming where
-    /// FluidAudio (Parakeet) is "On Device" and WhisperKit is "On Device (WhisperKit)".
-    /// Existing WhisperKit users keep WhisperKit under its new name.
-    private func migrateWhisperKitToParakeetNaming() {
-        let transcriptionEngineKey = "selectedTranscriptionEngine"
-        let migrationKey = "whisperKitToParakeetNaming_v1.7"
+    /// Migrates users off WhisperKit, which has been removed in v1.8.
+    /// Deletes downloaded Whisper model files, clears settings, switches the engine to
+    /// Parakeet (FluidAudio), sets the default Parakeet model to v2 (English), and
+    /// queues a one-time alert informing the user of the change.
+    private func migrateWhisperKitToParakeet() {
+        let migrationKey = "whisperKitRemovedMigration_v1.8"
 
         guard !UserDefaults.standard.bool(forKey: migrationKey) else {
             return
         }
 
-        let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
+        let transcriptionEngineKey = "selectedTranscriptionEngine"
+        let currentEngine = UserDefaults.standard.string(forKey: transcriptionEngineKey)
+        let wasUsingWhisperKit = currentEngine == "On Device (WhisperKit)"
 
-        // "On Device" was previously WhisperKit's rawValue. Now it belongs to FluidAudio.
-        // Existing WhisperKit users need to be moved to the new "On Device (WhisperKit)" rawValue.
-        if let storedValue = currentTranscription,
-           storedValue == "On Device" {
-            UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
-            NSLog("✅ Migrated transcription engine from 'On Device' to '\(TranscriptionEngine.whisperKit.rawValue)' (WhisperKit naming update)")
+        // Delete WhisperKit model files from the HuggingFace cache
+        let fileManager = FileManager.default
+        let docDirs = fileManager.urls(for: .documentDirectory, in: .userDomainMask)
+        if let hfCacheURL = docDirs.first?.appendingPathComponent("huggingface") {
+            try? fileManager.removeItem(at: hfCacheURL)
+            NSLog("✅ Deleted WhisperKit HuggingFace model cache at \(hfCacheURL.path)")
+        }
+        let appSupportDirs = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        if let whisperKitDir = appSupportDirs.first?.appendingPathComponent("WhisperKitModels") {
+            try? fileManager.removeItem(at: whisperKitDir)
+            NSLog("✅ Deleted WhisperKit models directory at \(whisperKitDir.path)")
         }
 
-        // Also migrate "On Device (Parakeet)" to "On Device" for anyone who was already using Parakeet
-        if let storedValue = currentTranscription,
-           storedValue == "On Device (Parakeet)" {
+        // Clear WhisperKit UserDefaults keys
+        for key in ["enableWhisperKit", "whisperKitSelectedModel", "whisperKitModelDownloaded", "whisperKitModelPath"] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+
+        // If the user was on WhisperKit or any legacy on-device value, switch to Parakeet
+        let legacyOnDeviceValues = ["On Device (WhisperKit)", "On Device", "WhisperKit", "On-Device", "Apple Transcription"]
+        if let engine = currentEngine, legacyOnDeviceValues.contains(engine) {
             UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: transcriptionEngineKey)
-            NSLog("✅ Migrated transcription engine from 'On Device (Parakeet)' to '\(TranscriptionEngine.fluidAudio.rawValue)'")
+            UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
+            NSLog("✅ Switched transcription engine from '\(engine)' to Parakeet (On Device)")
+        }
+
+        // Default Parakeet model to v2 (English) for all users who haven't explicitly chosen
+        let modelKey = FluidAudioModelInfo.SettingsKeys.selectedModelVersion
+        if UserDefaults.standard.string(forKey: modelKey) == nil
+            || UserDefaults.standard.string(forKey: modelKey) == FluidAudioModelInfo.ModelVersion.v3.rawValue {
+            UserDefaults.standard.set(FluidAudioModelInfo.ModelVersion.v2.rawValue, forKey: modelKey)
+            NSLog("✅ Set Parakeet default model to v2 (English)")
+        }
+
+        // Only alert users whose active engine was WhisperKit
+        if wasUsingWhisperKit {
+            let parakeetAlreadyDownloaded = UserDefaults.standard.bool(forKey: FluidAudioModelInfo.SettingsKeys.modelDownloaded)
+            if parakeetAlreadyDownloaded {
+                // Parakeet is ready — just inform them the switch was made automatically
+                UserDefaults.standard.set(true, forKey: "showWhisperKitSwitchedToParakeet")
+                NSLog("✅ Queued WhisperKit→Parakeet silent-switch alert (model already downloaded)")
+            } else {
+                // Parakeet needs to be downloaded
+                UserDefaults.standard.set(true, forKey: "showWhisperKitRemovedAlert")
+                NSLog("✅ Queued WhisperKit removal alert (Parakeet model not yet downloaded)")
+            }
         }
 
         UserDefaults.standard.set(true, forKey: migrationKey)
@@ -233,9 +208,9 @@ struct BisonNotesAIApp: App {
             let transcriptionEngineKey = "selectedTranscriptionEngine"
             let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
             if let transcription = currentTranscription, appleIntelligenceVariants.contains(transcription) {
-                UserDefaults.standard.set(TranscriptionEngine.whisperKit.rawValue, forKey: transcriptionEngineKey)
-                UserDefaults.standard.set(true, forKey: WhisperKitModelInfo.SettingsKeys.enableWhisperKit)
-                UserDefaults.standard.set(true, forKey: "showWhisperKitMigrationSettings")
+                UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: transcriptionEngineKey)
+                UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
+                UserDefaults.standard.set(true, forKey: "showParakeetMigrationSettings")
             }
             
             NSLog("✅ Migrated from Apple Intelligence (\(engine)) to On-Device AI")
@@ -245,6 +220,58 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
     
+    /// Migrates removed OpenAI summarization and Google AI Studio models to current defaults
+    /// Handles users who had gpt-4.1, gpt-4.1-nano, gemini-2.5-flash, gemini-2.5-flash-lite,
+    /// or gemini-3-pro-preview saved and would now get a nil/broken model selection
+    private func migrateRemovedModels() {
+        let migrationKey = "removedModelsMigrated_v1.8"
+
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+
+        // OpenAI summarization: gpt-4.1 and gpt-4.1-nano were removed; default to gpt-4.1-mini
+        let openAIKey = "openAISummarizationModel"
+        if let storedModel = UserDefaults.standard.string(forKey: openAIKey) {
+            let removedOpenAIModels = ["gpt-4.1", "gpt-4.1-nano"]
+            if removedOpenAIModels.contains(storedModel) {
+                let newDefault = OpenAISummarizationModel.gpt41Mini.rawValue
+                UserDefaults.standard.set(newDefault, forKey: openAIKey)
+                NSLog("✅ OpenAI summarization model migrated from '\(storedModel)' to '\(newDefault)'")
+            }
+        }
+
+        // Google AI Studio: gemini-2.5-flash, gemini-2.5-flash-lite, gemini-3-pro-preview removed
+        let googleKey = "googleAIStudioModel"
+        if let storedModel = UserDefaults.standard.string(forKey: googleKey) {
+            let removedGoogleModels = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3-pro-preview"]
+            if removedGoogleModels.contains(storedModel) {
+                let newDefault = "gemini-3-flash-preview"
+                UserDefaults.standard.set(newDefault, forKey: googleKey)
+                NSLog("✅ Google AI Studio model migrated from '\(storedModel)' to '\(newDefault)'")
+            }
+        }
+
+        // On-Device LLM: qwen3-1.7b was removed; migrate to granite-4.0-micro
+        let onDeviceKey = OnDeviceLLMModelInfo.SettingsKeys.selectedModelId
+        if let storedModel = UserDefaults.standard.string(forKey: onDeviceKey),
+           storedModel == "qwen3-1.7b" {
+            let newDefault = OnDeviceLLMModelInfo.granite4Micro.id
+            UserDefaults.standard.set(newDefault, forKey: onDeviceKey)
+            NSLog("✅ On-Device LLM model migrated from 'qwen3-1.7b' to '\(newDefault)'")
+        }
+
+        // On-Device LLM: granite-4.0-h-tiny moved from standard to experimental
+        // Enable experimental models so it continues to appear in the picker for existing users
+        if let storedModel = UserDefaults.standard.string(forKey: onDeviceKey),
+           storedModel == OnDeviceLLMModelInfo.granite4H.id {
+            UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels)
+            NSLog("✅ Enabled experimental models because user had '\(OnDeviceLLMModelInfo.granite4H.id)' selected (now experimental)")
+        }
+
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
     /// Migrates users from old "On-Device LLM" name to "On-Device AI"
     /// Handles backward compatibility for users who have the old name saved
     private func migrateOnDeviceLLMNameToOnDeviceAI() {
@@ -280,10 +307,9 @@ struct BisonNotesAIApp: App {
         migrateAWSBedrockSettings()
         migrateAIEngineSelection()
         migrateAppleIntelligenceToOnDeviceLLM()
-        migrateAppleTranscriptionToWhisperKit()
-        migrateWhisperKitToParakeetNaming()
-        migrateWhisperKitNameIfNeeded()
+        migrateWhisperKitToParakeet()
         migrateOnDeviceLLMNameToOnDeviceAI()
+        migrateRemovedModels()
         setupDarwinNotificationObserver()
     }
 

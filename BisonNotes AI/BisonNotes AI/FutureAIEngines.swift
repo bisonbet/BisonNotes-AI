@@ -1149,7 +1149,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
     let isAvailable: Bool
     let version = "1.0"
     var metadataName: String {
-        return UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-2.5-flash"
+        return UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3-flash-preview"
     }
     
     private let service = GoogleAIStudioService()
@@ -1745,6 +1745,8 @@ class AIEngineFactory {
             return GoogleAIStudioEngine()
         case .onDeviceLLM:
             return OnDeviceLLMEngine()
+        case .appleNative:
+            return AppleNativeEngine()
         }
     }
     
@@ -1768,6 +1770,7 @@ enum AIEngineType: String, CaseIterable {
     case localLLM = "Ollama"
     case googleAIStudio = "Google AI Studio"
     case onDeviceLLM = "On-Device AI"
+    case appleNative = "Apple Native"
 
     /// Returns all available engine types based on device capabilities
     static var availableCases: [AIEngineType] {
@@ -1796,12 +1799,14 @@ enum AIEngineType: String, CaseIterable {
             return "Advanced AI-powered summaries using Google's Gemini models"
         case .onDeviceLLM:
             return "Privacy-focused on-device AI processing using local AI models"
+        case .appleNative:
+            return "Uses Apple's on-device Foundation Models runtime for private summaries"
         }
     }
 
     var isComingSoon: Bool {
         switch self {
-        case .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM:
+        case .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM, .appleNative:
             return false
         }
     }
@@ -1822,6 +1827,8 @@ enum AIEngineType: String, CaseIterable {
             return ["Google AI Studio API Key", "Internet Connection", "Usage Credits"]
         case .onDeviceLLM:
             return ["Downloaded LLM Model (~2 GB)", "No Internet Required", "A16+ Chip Recommended"]
+        case .appleNative:
+            return ["Apple Intelligence-supported device", "iOS/iPadOS/macOS/visionOS 26+", "No Internet Required"]
         }
     }
 }

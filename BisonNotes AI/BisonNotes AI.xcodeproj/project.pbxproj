@@ -11,9 +11,6 @@
 		143196D22F128D16003BA61E /* llama.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 143196D02F128D16003BA61E /* llama.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		1435711D2F2137E1000BFF00 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 1435711C2F2137E1000BFF00 /* Textual */; };
 		1435735C2F2E92A500E93954 /* BisonNotes Share.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 143573522F2E92A500E93954 /* BisonNotes Share.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		14748E1C2F145C0D0016C521 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 14748E1B2F145C0D0016C521 /* WhisperKit */; };
-		14748E1E2F145C0D0016C521 /* whisperkit-cli in Frameworks */ = {isa = PBXBuildFile; productRef = 14748E1D2F145C0D0016C521 /* whisperkit-cli */; };
-		14FA00012F30000000BBD2FA /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 14FA00022F30000000BBD2FA /* FluidAudio */; };
 		1485FEC52E526FB30044121F /* BisonNotes AI Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED42E5271970044121F /* WatchConnectivity.framework */; };
 		1485FED72E5271AF0044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED62E5271AF0044121F /* WatchConnectivity.framework */; };
@@ -26,6 +23,7 @@
 		14EA428D2E7F5ECA0059271B /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428C2E7F5ECA0059271B /* WidgetKit.framework */; };
 		14EA428F2E7F5ECA0059271B /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428E2E7F5ECA0059271B /* SwiftUI.framework */; };
 		14EA42A92E7F66370059271B /* BisonNotes AI ControlsExtension.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 14EA428B2E7F5ECA0059271B /* BisonNotes AI ControlsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		14FA00012F30000000BBD2FA /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 14FA00022F30000000BBD2FA /* FluidAudio */; };
 		14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9072E3F8D5600BBD2FA /* AWSBedrock */; };
 		14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */; };
 		14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90B2E3F8D5600BBD2FA /* AWSS3 */; };
@@ -267,9 +265,7 @@
 			files = (
 				14FDF9102E3F8D5600BBD2FA /* AWSTranscribeStreaming in Frameworks */,
 				14FA00012F30000000BBD2FA /* FluidAudio in Frameworks */,
-				14748E1E2F145C0D0016C521 /* whisperkit-cli in Frameworks */,
 				14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */,
-				14748E1C2F145C0D0016C521 /* WhisperKit in Frameworks */,
 				14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */,
 				1435711D2F2137E1000BFF00 /* Textual in Frameworks */,
 				14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */,
@@ -483,8 +479,6 @@
 				14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */,
 				14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */,
 				14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */,
-				14748E1B2F145C0D0016C521 /* WhisperKit */,
-				14748E1D2F145C0D0016C521 /* whisperkit-cli */,
 				1435711C2F2137E1000BFF00 /* Textual */,
 				14FA00022F30000000BBD2FA /* FluidAudio */,
 			);
@@ -611,7 +605,6 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
-				14748E1A2F145C0D0016C521 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 				1435711B2F2137E1000BFF00 /* XCRemoteSwiftPackageReference "textual" */,
 				14FA00032F30000000BBD2FA /* XCRemoteSwiftPackageReference "FluidAudio" */,
 			);
@@ -807,7 +800,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.BisonNotes-Share";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -837,7 +830,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.BisonNotes-Share";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -873,7 +866,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.watchkitapp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -908,7 +901,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.watchkitapp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -928,7 +921,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-AppTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -948,7 +941,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-AppTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -967,7 +960,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-AppUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -986,7 +979,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI-Watch-AppUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -1145,7 +1138,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI";
 				PRODUCT_NAME = "BisonNotes AI";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1182,7 +1175,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI";
 				PRODUCT_NAME = "BisonNotes AI";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1204,7 +1197,7 @@
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.Audio-JournalTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1227,7 +1220,7 @@
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.Audio-JournalTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1248,7 +1241,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.Audio-JournalUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1269,7 +1262,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.Audio-JournalUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1303,7 +1296,7 @@
 					"@executable_path/../../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.controls";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1341,7 +1334,7 @@
 					"@executable_path/../../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.7;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.controls";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1454,12 +1447,12 @@
 				kind = branch;
 			};
 		};
-		14748E1A2F145C0D0016C521 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+		14FA00032F30000000BBD2FA /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/bisonbet/WhisperKit.git";
+			repositoryURL = "https://github.com/FluidInference/FluidAudio";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.7.8;
 			};
 		};
 		14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */ = {
@@ -1470,14 +1463,6 @@
 				minimumVersion = 1.5.12;
 			};
 		};
-		14FA00032F30000000BBD2FA /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/FluidInference/FluidAudio";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.7.8;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1486,15 +1471,10 @@
 			package = 1435711B2F2137E1000BFF00 /* XCRemoteSwiftPackageReference "textual" */;
 			productName = Textual;
 		};
-		14748E1B2F145C0D0016C521 /* WhisperKit */ = {
+		14FA00022F30000000BBD2FA /* FluidAudio */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14748E1A2F145C0D0016C521 /* XCRemoteSwiftPackageReference "WhisperKit" */;
-			productName = WhisperKit;
-		};
-		14748E1D2F145C0D0016C521 /* whisperkit-cli */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14748E1A2F145C0D0016C521 /* XCRemoteSwiftPackageReference "WhisperKit" */;
-			productName = "whisperkit-cli";
+			package = 14FA00032F30000000BBD2FA /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
 		};
 		14FDF9072E3F8D5600BBD2FA /* AWSBedrock */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -1525,11 +1505,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
 			productName = AWSBedrockRuntime;
-		};
-		14FA00022F30000000BBD2FA /* FluidAudio */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FA00032F30000000BBD2FA /* XCRemoteSwiftPackageReference "FluidAudio" */;
-			productName = FluidAudio;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -179,6 +179,8 @@ struct BackgroundProcessingView: View {
 
     private var statusIcon: String {
         switch processingManager.processingStatus {
+        case .ready:
+            return "circle.dashed"
         case .queued:
             return "clock"
         case .processing:
@@ -196,6 +198,8 @@ struct BackgroundProcessingView: View {
 
     private var statusColor: Color {
         switch processingManager.processingStatus {
+        case .ready:
+            return .mint
         case .queued:
             return .orange
         case .processing:
@@ -650,6 +654,8 @@ struct JobDetailView: View {
 
 private func convertJobStatus(_ jobStatus: JobProcessingStatus) -> ProcessingStatus {
     switch jobStatus {
+    case .ready:
+        return .notStarted
     case .queued:
         return .queued
     case .processing:

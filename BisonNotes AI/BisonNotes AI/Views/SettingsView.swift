@@ -16,8 +16,6 @@ struct SettingsView: View {
     @StateObject private var errorHandler = ErrorHandler()
     @ObservedObject private var iCloudManager = iCloudStorageManager.shared
     @StateObject private var importManager = FileImportManager()
-    @State private var showingEngineChangePrompt = false
-    @State private var previousEngine = ""
     @State private var showingTranscriptionSettings = false
     @State private var showingAISettings = false
     @State private var showingClearSummariesAlert = false
@@ -72,20 +70,6 @@ struct SettingsView: View {
             }
         } message: {
             Text("Regeneration completed successfully") // Use default message since regenerationAlertMessage doesn't exist
-        }
-        .alert("Engine Change", isPresented: $showingEngineChangePrompt) {
-            Button("Cancel") {
-                showingEngineChangePrompt = false
-            }
-            Button("Regenerate") {
-                Task {
-                    regenerationManager.setEngine(selectedAIEngine)
-                    await regenerationManager.regenerateAllSummaries()
-                }
-                showingEngineChangePrompt = false
-            }
-        } message: {
-            Text("You've switched from \(previousEngine) to \(selectedAIEngine). Would you like to regenerate your existing summaries with the new AI engine?")
         }
         .onAppear {
             refreshEngineStatuses()
@@ -767,7 +751,7 @@ struct SettingsView: View {
                             Text("Enable Experimental On-Device AI Models")
                                 .font(.body)
                                 .foregroundColor(.primary)
-                            Text("Allow use of experimental models (LFM 2.5, Qwen3-1.7B, Qwen 4B for 8GB+). These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only small experimental models available.")
+                            Text("Allow use of experimental models (LFM 2.5 for 4GB+, Qwen3.5 2B for 6GB+, Qwen3.5 4B for 8GB+). These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only LFM 2.5 available.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }

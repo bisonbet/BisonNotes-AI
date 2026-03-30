@@ -21,9 +21,9 @@ struct ContentView: View {
     @State private var pendingActionButtonRecording = false
     @State private var showingAppleIntelligenceMigrationAlert = false
     @State private var showingOnDeviceLLMSettings = false
-    @State private var showingWhisperKitMigrationAlert = false
-    @State private var showingWhisperKitSettings = false
-    @State private var showingParakeetUpgradeAlert = false
+    @State private var showingWhisperKitRemovedAlert = false
+    @State private var showingWhisperKitSwitchedAlert = false
+    @State private var showingParakeetMigrationAlert = false
     @State private var showingFluidAudioSettings = false
     @State private var showingUnsupportedFileAlert = false
     @StateObject private var downloadMonitor = OnDeviceAIDownloadMonitor.shared
@@ -125,30 +125,26 @@ struct ContentView: View {
                 OnDeviceLLMSettingsView()
             }
         }
-        .alert("Transcription Engine Updated", isPresented: $showingWhisperKitMigrationAlert) {
-            Button("Download Model") {
-                showingWhisperKitSettings = true
+        .alert("Switched to Parakeet", isPresented: $showingWhisperKitSwitchedAlert) {
+            Button("OK") { }
+        } message: {
+            Text("WhisperKit has been removed. We've automatically switched you to Parakeet, which is already downloaded and ready to use.")
+        }
+        .alert("On-Device Transcription Updated", isPresented: $showingWhisperKitRemovedAlert) {
+            Button("Download Parakeet Model") {
+                showingFluidAudioSettings = true
             }
             Button("Later", role: .cancel) { }
         } message: {
-            Text("Apple Transcription has been replaced with WhisperKit, a high-quality on-device transcription engine. Please download the WhisperKit model (~950MB) to continue transcribing audio.")
+            Text("WhisperKit has been removed and replaced by Parakeet, our faster and more accurate on-device transcription engine. Your WhisperKit model files have been deleted to free up space. Please download the Parakeet model (~250 MB) to continue using on-device transcription.")
         }
-        .sheet(isPresented: $showingWhisperKitSettings) {
-            NavigationStack {
-                WhisperKitSettingsView()
-            }
-        }
-        .alert("Faster On-Device Transcription Available", isPresented: $showingParakeetUpgradeAlert) {
-            Button("Switch to Parakeet") {
-                // Switch engine to FluidAudio
-                UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")
-                UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
-                // Open FluidAudio settings for model download
+        .alert("Transcription Engine Updated", isPresented: $showingParakeetMigrationAlert) {
+            Button("Download Model") {
                 showingFluidAudioSettings = true
             }
-            Button("Keep WhisperKit", role: .cancel) { }
+            Button("Later", role: .cancel) { }
         } message: {
-            Text("Parakeet is a newer, faster, and more accurate on-device transcription engine. It has the same device requirements as WhisperKit and keeps your audio fully on-device. Would you like to switch?")
+            Text("Your transcription engine has been upgraded to Parakeet, a fast and accurate on-device engine. Please download the Parakeet model (~250MB) to continue transcribing audio.")
         }
         .sheet(isPresented: $showingFluidAudioSettings) {
             NavigationStack {
@@ -313,24 +309,24 @@ struct ContentView: View {
                         }
                     }
 
-                    // Check if we need to show WhisperKit migration alert (Apple Transcription → WhisperKit)
-                    if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showWhisperKitMigrationSettings") {
+                    // Check if we need to show Parakeet migration alert (Apple Transcription → Parakeet)
+                    if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showParakeetMigrationSettings") {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            showingWhisperKitMigrationAlert = true
-                            UserDefaults.standard.removeObject(forKey: "showWhisperKitMigrationSettings")
+                            showingParakeetMigrationAlert = true
+                            UserDefaults.standard.removeObject(forKey: "showParakeetMigrationSettings")
                         }
                     }
 
-                    // One-time prompt for existing WhisperKit users to upgrade to Parakeet
-                    let parakeetUpgradeKey = "hasShownParakeetUpgradePrompt"
-                    let currentEngine = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine")
-                    if !isFirstLaunch
-                        && currentEngine == TranscriptionEngine.whisperKit.rawValue
-                        && !UserDefaults.standard.bool(forKey: parakeetUpgradeKey)
-                        && DeviceCompatibility.isFluidAudioSupported {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                            showingParakeetUpgradeAlert = true
-                            UserDefaults.standard.set(true, forKey: parakeetUpgradeKey)
+                    // Show appropriate alert for former WhisperKit users
+                    if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showWhisperKitSwitchedToParakeet") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showingWhisperKitSwitchedAlert = true
+                            UserDefaults.standard.removeObject(forKey: "showWhisperKitSwitchedToParakeet")
+                        }
+                    } else if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showWhisperKitRemovedAlert") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showingWhisperKitRemovedAlert = true
+                            UserDefaults.standard.removeObject(forKey: "showWhisperKitRemovedAlert")
                         }
                     }
                 } catch {

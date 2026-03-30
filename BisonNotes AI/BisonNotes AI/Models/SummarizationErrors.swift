@@ -13,7 +13,8 @@ enum SummarizationError: Error, LocalizedError {
     case invalidInput
     case processingFailed(reason: String)
     case configurationRequired(message: String)
-    
+    case contentSafetyBlock(engine: String)
+
     var errorDescription: String? {
         switch self {
         case .transcriptTooShort:
@@ -36,9 +37,11 @@ enum SummarizationError: Error, LocalizedError {
             return reason
         case .configurationRequired(let message):
             return message
+        case .contentSafetyBlock(let engine):
+            return "\(engine) blocked this content due to safety guardrails. Please try a different AI engine."
         }
     }
-    
+
     var recoverySuggestion: String? {
         switch self {
         case .transcriptTooShort:
@@ -61,6 +64,8 @@ enum SummarizationError: Error, LocalizedError {
             return "Try regenerating the summary or switch to a different AI method."
         case .configurationRequired:
             return "Go to Settings to configure an AI engine for summarization."
+        case .contentSafetyBlock:
+            return "This transcript triggered safety filters on this AI engine. Try a different AI engine in Settings (e.g., OpenAI, Claude, or Gemini)."
         }
     }
 }

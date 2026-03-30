@@ -168,9 +168,15 @@ class AppDataCoordinator: ObservableObject {
     func syncRecordingURLs() {
         // First, migrate any remaining absolute URLs to relative paths
         coreDataManager.migrateURLsToRelativePaths()
-        
+
         // Then run the legacy sync (should be minimal after migration)
         coreDataManager.syncRecordingURLs()
+    }
+
+    /// Cleans up duplicate and orphaned summaries/transcripts, keeping only the most recent for each recording.
+    /// Returns a tuple with (summariesDeleted, transcriptsDeleted)
+    func cleanupDuplicates() -> (summaries: Int, transcripts: Int) {
+        return coreDataManager.cleanupDuplicates()
     }
     
     // MARK: - Location Methods

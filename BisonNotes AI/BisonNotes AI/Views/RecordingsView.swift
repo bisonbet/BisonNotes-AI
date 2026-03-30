@@ -16,6 +16,7 @@ struct RecordingsView: View {
     @EnvironmentObject var transcriptImportManager: TranscriptImportManager
     @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
     @StateObject private var textDocumentPickerCoordinator = DocumentPickerCoordinator()
+    @StateObject private var videoPickerCoordinator = DocumentPickerCoordinator()
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [AudioRecordingFile] = []
     @State private var showingRecordingsList = false
@@ -151,6 +152,9 @@ struct RecordingsView: View {
                             .padding(.horizontal, 40)
                         }
 
+                        // Video import button hidden — feature not yet ready for users
+                        // videoPickerCoordinator.selectVideoFiles { ... }
+
                         Button(action: {
                             // Trigger document picker for text files
                             textDocumentPickerCoordinator.selectTextFiles { urls in
@@ -203,6 +207,31 @@ struct RecordingsView: View {
                                             .foregroundColor(.green)
                                     }
                                 }
+
+                                // Live transcript display
+                                if !recorderVM.liveTranscriptText.isEmpty {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "waveform")
+                                                .font(.caption)
+                                                .foregroundColor(.accentColor)
+                                            Text("Live Transcript")
+                                                .font(.caption)
+                                                .fontWeight(.semibold)
+                                                .foregroundColor(.accentColor)
+                                        }
+                                        Text(recorderVM.liveTranscriptText)
+                                            .font(.caption)
+                                            .foregroundColor(.primary)
+                                            .multilineTextAlignment(.leading)
+                                            .lineLimit(4)
+                                    }
+                                    .padding(10)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color(.systemGray6))
+                                    .cornerRadius(10)
+                                    .padding(.horizontal, 40)
+                                }
                             }
                         }
                     }
@@ -223,6 +252,8 @@ struct RecordingsView: View {
             .sheet(isPresented: $textDocumentPickerCoordinator.isShowingPicker) {
                 TextDocumentPicker(isPresented: $textDocumentPickerCoordinator.isShowingPicker, coordinator: textDocumentPickerCoordinator)
             }
+            // Video picker sheet hidden — feature not yet ready for users
+            // .sheet(isPresented: $videoPickerCoordinator.isShowingPicker) { ... }
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()
             }

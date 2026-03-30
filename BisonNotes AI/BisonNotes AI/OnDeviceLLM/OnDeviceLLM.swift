@@ -207,12 +207,23 @@ open class OnDeviceLLM: ObservableObject {
         let modelTrainCtx = llama_model_n_ctx_train(model)
         self.maxTokenCount = Int(min(maxTokenCount, modelTrainCtx))
         self.params.n_ctx = UInt32(self.maxTokenCount)
-        // Use smaller batch size (512) for better memory efficiency
-        // n_batch doesn't need to equal n_ctx - it's just the max tokens per decode call
-        self.params.n_batch = 512
+
+        // Dynamic batch size based on device RAM for optimal prefill performance
+        // Larger batch = better GPU parallelism = faster prompt processing
+        // n_batch is max tokens per llama_decode() call, not total context size
+        let deviceRAM = DeviceCapabilities.totalRAMInGB
+        let n_batch: UInt32
+        if deviceRAM >= 16.0 {
+            n_batch = 2048  // M-series iPads/Macs with plenty of headroom
+        } else if deviceRAM >= 8.0 {
+            n_batch = 1024  // Modern iPhones/iPads with 8GB+
+        } else {
+            n_batch = 512   // Conservative for 6GB devices
+        }
+        self.params.n_batch = n_batch
         self.params.n_threads = processorCount
         self.params.n_threads_batch = processorCount
-        print("[OnDeviceLLM] Context: n_ctx=\(self.maxTokenCount), n_batch=512, model_train_ctx=\(modelTrainCtx), threads=\(processorCount)")
+        print("[OnDeviceLLM] Context: n_ctx=\(self.maxTokenCount), n_batch=\(n_batch), model_train_ctx=\(modelTrainCtx), threads=\(processorCount)")
         self.topK = topK
         self.topP = topP
         self.minP = minP
@@ -420,8 +431,8 @@ open class OnDeviceLLM: ObservableObject {
             self.trimKvCache()
         }
 
-        // Process tokens in batches of n_batch (512) to avoid exceeding llama_decode limits
-        // n_batch is the max tokens per decode call, not the total context size
+        // Process tokens in batches of n_batch to avoid exceeding llama_decode limits
+        // n_batch is dynamically set based on device RAM (512-2048)
         let batchSize = Int(self.params.n_batch)
         let totalTokens = tokens.count
         var tokenIndex = 0
