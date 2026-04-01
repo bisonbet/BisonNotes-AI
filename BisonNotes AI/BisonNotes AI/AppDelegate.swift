@@ -21,21 +21,27 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         UNUserNotificationCenter.current().delegate = self
         NSLog("✅ AppDelegate initialized - notification delegate set")
 
+        clearAppBadge(reason: "launch")
+
         return true
     }
 
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Best-effort async clear via the UNUserNotificationCenter API.
+        clearAppBadge(reason: "activation")
+    }
+
+    private func clearAppBadge(reason: String) {
         // Do NOT call removeAllDeliveredNotifications() here: actionable notifications
-        // such as RESUME_RECORDING may still be waiting for a user response, and
-        // clearing them would prevent the action from being delivered.
+        // such as RESUME_RECORDING may still be waiting for a user response.
+        UIApplication.shared.applicationIconBadgeNumber = 0
+
         Task {
             do {
                 try await UNUserNotificationCenter.current().setBadgeCount(0)
-                NSLog("✅ Cleared app icon badge on app activation")
+                NSLog("✅ Cleared app icon badge on app \(reason)")
             } catch {
-                NSLog("⚠️ setBadgeCount failed on activation (badge already cleared via applicationIconBadgeNumber): \(error)")
+                NSLog("⚠️ setBadgeCount failed on \(reason) (badge already cleared via applicationIconBadgeNumber): \(error)")
             }
         }
     }
