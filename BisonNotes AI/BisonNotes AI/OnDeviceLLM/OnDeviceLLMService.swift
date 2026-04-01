@@ -804,9 +804,11 @@ public class OnDeviceLLMService: ObservableObject {
         let wordCount = text.split(separator: " ").count
         let targetWords = max(200, Int(Double(wordCount) * 0.15))
         
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+
         return """
         Please analyze the following \(contentType.rawValue) transcript and create a DETAILED STRUCTURED OUTLINE.
-        
+
         CRITICAL REQUIREMENTS:
         - The summary MUST be approximately \(targetWords) words long.
         - Use a hierarchical outline format with clear sections.
@@ -826,6 +828,7 @@ public class OnDeviceLLMService: ObservableObject {
 
         ## 4. Action Items & Conclusions
         (What needs to be done, decisions made, or final thoughts)
+        \(comedyModifier)
 
         Transcript:
         \(text)

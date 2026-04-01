@@ -307,6 +307,7 @@ class GoogleAIStudioService: ObservableObject {
         - Public figures or celebrities
         - General world events or politics
         - Events that don't directly affect the speaker
+        \(ComedyMode.current.promptModifier ?? "")
         """
     }
     

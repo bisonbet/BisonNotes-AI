@@ -33,6 +33,8 @@ struct SettingsView: View {
     @AppStorage("iCloudBackupIncludeSettings") private var iCloudBackupIncludeSettings: Bool = true
     @AppStorage("iCloudBackupIncludeSensitiveSettings") private var iCloudBackupIncludeSensitiveSettings: Bool = true
     @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels) private var enableExperimentalModels = false
+    @AppStorage(ComedyMode.SettingsKeys.enabled) private var comedyModeEnabled = false
+    @AppStorage(ComedyMode.SettingsKeys.style) private var comedyModeStyle = "snarky"
     @State private var isRunningCloudBackupAction = false
     @State private var cloudBackupActionMessage = ""
     @State private var cloudBackupActionIsError = false
@@ -758,6 +760,96 @@ struct SettingsView: View {
                         Spacer()
                         Toggle("", isOn: $enableExperimentalModels)
                             .labelsHidden()
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+                .background(
+                    Rectangle()
+                        .fill(Color(.systemGray6))
+                        .opacity(0.3)
+                )
+
+                // Comedy Mode
+                VStack(spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Comedy Mode")
+                                .font(.body)
+                                .foregroundColor(.primary)
+                            Text("Make AI summaries entertaining with a comedic twist. All information is preserved — just delivered with flair.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $comedyModeEnabled)
+                            .labelsHidden()
+                    }
+
+                    if comedyModeEnabled {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Comedy Style")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.secondary)
+
+                            HStack(spacing: 12) {
+                                Button(action: { comedyModeStyle = "snarky" }) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: comedyModeStyle == "snarky" ? "checkmark.circle.fill" : "circle")
+                                            .foregroundColor(comedyModeStyle == "snarky" ? .orange : .secondary)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Snarky")
+                                                .font(.subheadline)
+                                                .fontWeight(.medium)
+                                            Text("Dry wit & sarcasm")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(comedyModeStyle == "snarky" ? Color.orange.opacity(0.15) : Color(.systemGray5).opacity(0.5))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(comedyModeStyle == "snarky" ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 1)
+                                    )
+                                }
+                                .buttonStyle(PlainButtonStyle())
+
+                                Button(action: { comedyModeStyle = "funny" }) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: comedyModeStyle == "funny" ? "checkmark.circle.fill" : "circle")
+                                            .foregroundColor(comedyModeStyle == "funny" ? .purple : .secondary)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Funny")
+                                                .font(.subheadline)
+                                                .fontWeight(.medium)
+                                            Text("Goofy & absurd")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(comedyModeStyle == "funny" ? Color.purple.opacity(0.15) : Color(.systemGray5).opacity(0.5))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(comedyModeStyle == "funny" ? Color.purple.opacity(0.5) : Color.clear, lineWidth: 1)
+                                    )
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                        .padding(.top, 4)
                     }
                 }
                 .padding(.horizontal, 24)

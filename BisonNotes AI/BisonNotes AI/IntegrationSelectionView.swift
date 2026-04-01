@@ -14,6 +14,7 @@ struct IntegrationSelectionView: View {
     let subtitle: String
     let onRemindersSelected: () -> Void
     let onCalendarSelected: () -> Void
+    var onGoogleCalendarSelected: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -86,20 +87,20 @@ struct IntegrationSelectionView: View {
                                 .font(.title2)
                                 .foregroundColor(.blue)
                                 .frame(width: 32)
-                            
+
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Add to Calendar")
                                     .font(.headline)
                                     .fontWeight(.medium)
                                     .foregroundColor(.primary)
-                                
+
                                 Text("Create an event in the Calendar app")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
-                            
+
                             Spacer()
-                            
+
                             Image(systemName: "chevron.right")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -109,6 +110,42 @@ struct IntegrationSelectionView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(PlainButtonStyle())
+
+                    // Google Calendar Option
+                    if let onGoogleCalendar = onGoogleCalendarSelected {
+                        Button(action: {
+                            onGoogleCalendar()
+                            dismiss()
+                        }) {
+                            HStack(spacing: 16) {
+                                Image(systemName: "calendar.badge.plus")
+                                    .font(.title2)
+                                    .foregroundColor(.red)
+                                    .frame(width: 32)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Add to Google Calendar")
+                                        .font(.headline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.primary)
+
+                                    Text("Open in Google Calendar app or web")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+                                Image(systemName: "arrow.up.forward.square")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding()
+                            .background(Color(.systemGray6))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
                 }
                 .padding(.horizontal)
                 

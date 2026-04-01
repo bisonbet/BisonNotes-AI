@@ -572,7 +572,7 @@ class AWSBedrockService: ObservableObject {
     private func createSystemPrompt(for contentType: ContentType) -> String {
         let basePrompt = """
         You are an AI assistant specialized in analyzing and summarizing audio transcripts and conversations. Your role is to provide clear, actionable insights from the content provided.
-        
+
         **Key Guidelines:**
         - Focus on extracting meaningful, actionable information
         - Maintain accuracy and relevance to the source material
@@ -580,48 +580,50 @@ class AWSBedrockService: ObservableObject {
         - Structure responses logically and coherently
         - Prioritize the most important information first
         """
-        
+
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+
         switch contentType {
         case .meeting:
             return basePrompt + """
-            
+
             **Meeting Analysis Focus:**
             - Identify key decisions and action items
             - Note important deadlines and commitments
             - Highlight participant responsibilities
             - Capture meeting outcomes and next steps
             - Focus on business-relevant information
-            """
+            """ + comedyModifier
         case .personalJournal:
             return basePrompt + """
-            
+
             **Personal Journal Analysis Focus:**
             - Identify personal insights and reflections
             - Note emotional states and personal growth
             - Highlight personal goals and aspirations
             - Capture meaningful life events and experiences
             - Focus on personal development and self-awareness
-            """
+            """ + comedyModifier
         case .technical:
             return basePrompt + """
-            
+
             **Technical Analysis Focus:**
             - Identify technical problems and solutions
             - Note implementation details and requirements
             - Highlight technical decisions and trade-offs
             - Capture technical specifications and constraints
             - Focus on technical accuracy and precision
-            """
+            """ + comedyModifier
         case .general:
             return basePrompt + """
-            
+
             **General Analysis Focus:**
             - Identify main topics and themes
             - Note important information and insights
             - Highlight key points and takeaways
             - Capture relevant details and context
             - Focus on clarity and comprehensiveness
-            """
+            """ + comedyModifier
         }
     }
     

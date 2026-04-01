@@ -8,19 +8,26 @@
 import Foundation
 import EventKit
 import SwiftUI
+import UIKit
 
 // MARK: - System Integration Manager
 
 @MainActor
 class SystemIntegrationManager: NSObject, ObservableObject {
-    
+
     @Published var isAuthorized = false
     @Published var authorizationStatus: EKAuthorizationStatus = .notDetermined
     @Published var isProcessing = false
     @Published var lastError: String?
     @Published var showingError = false
-    
+
     private let eventStore = EKEventStore()
+
+    /// Whether the Google Calendar app is installed on this device
+    var isGoogleCalendarInstalled: Bool {
+        guard let url = URL(string: "googlecalendar://") else { return false }
+        return UIApplication.shared.canOpenURL(url)
+    }
     
     override init() {
         super.init()
@@ -281,8 +288,71 @@ class SystemIntegrationManager: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - Google Calendar Integration
+
+    /// Opens a task in Google Calendar using the web URL fallback.
+    /// If the Google Calendar app is installed it will handle the link;
+    /// otherwise Safari opens the pre-filled event creation page.
+    func addTaskToGoogleCalendar(_ task: TaskItem, recordingName: String) {
+        var startDate = Date()
+        var endDate = Calendar.current.date(byAdding: .hour, value: 1, to: startDate) ?? startDate
+
+        if let timeRef = task.timeReference, let parsed = parseDateFromTimeReference(timeRef) {
+            startDate = parsed
+            endDate = Calendar.current.date(byAdding: .hour, value: 1, to: parsed) ?? parsed
+        }
+
+        let details = "Created from BisonNotes AI recording: \(recordingName)"
+        openGoogleCalendarURL(title: task.text, details: details, startDate: startDate, endDate: endDate)
+    }
+
+    /// Opens a reminder in Google Calendar using the web URL fallback.
+    func addReminderToGoogleCalendar(_ reminder: ReminderItem, recordingName: String) {
+        var startDate = Date()
+        var endDate = Calendar.current.date(byAdding: .hour, value: 1, to: startDate) ?? startDate
+
+        if let parsed = reminder.timeReference.parsedDate {
+            startDate = parsed
+            endDate = Calendar.current.date(byAdding: .hour, value: 1, to: parsed) ?? parsed
+        } else if let relativeTime = reminder.timeReference.relativeTime,
+                  let parsed = parseRelativeTime(relativeTime) {
+            startDate = parsed
+            endDate = Calendar.current.date(byAdding: .hour, value: 1, to: parsed) ?? parsed
+        }
+
+        let details = "Created from BisonNotes AI recording: \(recordingName)"
+        openGoogleCalendarURL(title: reminder.text, details: details, startDate: startDate, endDate: endDate)
+    }
+
+    /// Builds a Google Calendar event creation URL and opens it.
+    private func openGoogleCalendarURL(title: String, details: String, startDate: Date, endDate: Date) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd'T'HHmmss"
+        formatter.timeZone = TimeZone.current
+
+        let startString = formatter.string(from: startDate)
+        let endString = formatter.string(from: endDate)
+
+        var components = URLComponents(string: "https://calendar.google.com/calendar/render")!
+        components.queryItems = [
+            URLQueryItem(name: "action", value: "TEMPLATE"),
+            URLQueryItem(name: "text", value: title),
+            URLQueryItem(name: "dates", value: "\(startString)/\(endString)"),
+            URLQueryItem(name: "details", value: details),
+            URLQueryItem(name: "sf", value: "true"),
+        ]
+
+        guard let url = components.url else {
+            lastError = "Failed to build Google Calendar URL."
+            showingError = true
+            return
+        }
+
+        UIApplication.shared.open(url)
+    }
+
     // MARK: - Helper Methods
-    
+
     private func parseDateFromTimeReference(_ timeRef: String) -> Date? {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium

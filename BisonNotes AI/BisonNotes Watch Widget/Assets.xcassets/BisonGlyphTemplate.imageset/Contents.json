@@ -1,15 +1,16 @@
 {
   "images" : [
     {
-      "filename" : "Complication-LightAndColor-Mask-modularsmall-58.png",
       "idiom" : "universal",
       "scale" : "1x"
     },
     {
+      "filename" : "BisonGlyphTemplate@2x.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
+      "filename" : "BisonGlyphTemplate@3x.png",
       "idiom" : "universal",
       "scale" : "3x"
     }

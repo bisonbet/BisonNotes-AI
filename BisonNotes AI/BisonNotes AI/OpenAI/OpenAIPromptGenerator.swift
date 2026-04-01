@@ -7,12 +7,70 @@
 
 import Foundation
 
+// MARK: - Comedy Mode
+
+enum ComedyMode: String {
+    case off = "off"
+    case snarky = "snarky"
+    case funny = "funny"
+
+    struct SettingsKeys {
+        static let enabled = "comedyModeEnabled"
+        static let style = "comedyModeStyle"
+    }
+
+    /// Returns the current comedy mode based on UserDefaults
+    static var current: ComedyMode {
+        guard UserDefaults.standard.bool(forKey: SettingsKeys.enabled) else {
+            return .off
+        }
+        let style = UserDefaults.standard.string(forKey: SettingsKeys.style) ?? "snarky"
+        return ComedyMode(rawValue: style) ?? .snarky
+    }
+
+    /// Returns prompt modifier text to append to summary system prompts, or nil if comedy mode is off
+    var promptModifier: String? {
+        switch self {
+        case .off:
+            return nil
+        case .snarky:
+            return """
+
+            **IMPORTANT STYLE OVERRIDE — Snarky Comedy Mode:**
+            - Write the summary in the voice of an AGGRESSIVELY snarky comedian who roasts absolutely everything
+            - Keep ALL the factual information accurate and complete — don't skip anything important
+            - Be ruthlessly sarcastic — drip with condescension, mock bad ideas, question obvious statements, and add biting commentary after nearly every point
+            - Use heavy sarcasm tags like "oh how groundbreaking", "truly shocking", "what a revelation", "nobody saw that coming"
+            - Editorialize constantly — if something is boring, say it's boring. If something is obvious, mock it for being obvious. If a decision is questionable, tear it apart
+            - Add parenthetical asides that break the fourth wall and commiserate with the reader about having to sit through this
+            - Channel the energy of a comedian who was forced to attend this meeting/conversation and is NOT happy about it
+            - Keep it PG and family-friendly — no profanity or crude humor, but absolutely DO NOT hold back on the snark, sarcasm, and roasting
+            - Every paragraph should have at least one zinger. If you're not making the reader smirk, you're not being snarky enough
+            - Think: the lovechild of a grumpy critic and a roast comedian, not a polite observer with mild wit
+            """
+        case .funny:
+            return """
+
+            **IMPORTANT STYLE OVERRIDE — Funny Comedy Mode:**
+            - Write the summary in an over-the-top, hilariously goofy style with wild descriptions and absurd analogies
+            - Keep ALL the factual information accurate and complete — don't skip anything important
+            - Use ridiculous metaphors, dramatic exaggerations, and colorful language to describe mundane things
+            - Throw in unexpected comparisons, silly sound effects (written out), and comedic tangents
+            - Write like an excited, slightly unhinged narrator who finds everything absolutely fascinating and bonkers
+            - Keep it PG and family-friendly — no profanity or crude humor, just wholesome absurdity
+            - The goal is to make the reader laugh out loud while still getting all the key information
+            - Think: an enthusiastic cartoon narrator meets a nature documentary voiceover
+            """
+        }
+    }
+}
+
 // MARK: - OpenAI Prompt Generator
 
 class OpenAIPromptGenerator {
-    
+
     // MARK: - Prompt Types
-    
+
     enum PromptType {
         case summary
         case tasks
@@ -37,9 +95,11 @@ class OpenAIPromptGenerator {
         
         let contentTypePrompt = createContentTypeSpecificPrompt(contentType)
         
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+
         switch type {
         case .summary:
-            return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createSummaryPrompt()
+            return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createSummaryPrompt() + comedyModifier
         case .tasks:
             return basePrompt + "\n\n" + createTasksPrompt()
         case .reminders:
@@ -47,7 +107,7 @@ class OpenAIPromptGenerator {
         case .titles:
             return basePrompt + "\n\n" + createTitlesPrompt()
         case .complete:
-            return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createCompletePrompt()
+            return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createCompletePrompt() + comedyModifier
         }
     }
     

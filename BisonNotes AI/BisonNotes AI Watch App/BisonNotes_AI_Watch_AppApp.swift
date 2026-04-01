@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import ClockKit
 
 @main
 struct BisonNotes_AI_Watch_App_Watch_AppApp: App {

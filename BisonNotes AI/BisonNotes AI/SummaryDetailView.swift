@@ -1581,6 +1581,9 @@ struct EnhancedTaskRowView: View {
                             }
                         }
                     }
+                },
+                onGoogleCalendarSelected: {
+                    integrationManager.addTaskToGoogleCalendar(task, recordingName: recordingName)
                 }
             )
         }
@@ -1721,6 +1724,9 @@ struct EnhancedReminderRowView: View {
                             }
                         }
                     }
+                },
+                onGoogleCalendarSelected: {
+                    integrationManager.addReminderToGoogleCalendar(reminder, recordingName: recordingName)
                 }
             )
         }
