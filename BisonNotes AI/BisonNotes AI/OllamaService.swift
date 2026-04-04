@@ -1064,6 +1064,8 @@ class OllamaService: ObservableObject {
         let finalTargetWords = min(targetWordCount, maxWordsFromTokens)
         let targetParagraphs = max(3, finalTargetWords / 100) // Rough estimate of paragraphs
 
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+
         return """
         <INSTRUCTIONS>
         You are a professional AI assistant specialized in analyzing and summarizing conversations, meetings, and transcripts. Your goal is to create comprehensive, well-structured summaries that capture the essential information.
@@ -1105,6 +1107,7 @@ class OllamaService: ObservableObject {
         - Avoid unnecessary repetition
         - Use active voice when possible
         - Be specific rather than vague
+        \(comedyModifier)
         </INSTRUCTIONS>
 
         <TRANSCRIPT>
@@ -1117,6 +1120,7 @@ class OllamaService: ObservableObject {
     }
     
     private func createRobustCompleteProcessingPrompt(from text: String) -> String {
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
         return """
         You MUST return ONLY valid JSON in the EXACT format specified below. Do not include any other text, explanations, or additional fields.
 
@@ -1166,12 +1170,13 @@ class OllamaService: ObservableObject {
         - Aim for 15-20% of original length
 
         CONTENT TYPE: Choose one: "Meeting", "Personal", "Technical", or "General"
+        \(comedyModifier)
 
         Now analyze this transcript and return the JSON:
         \(text)
         """
     }
-    
+
     func generateTitle(from text: String) async throws -> String {
         let prompt = RecordingNameGenerator.generateStandardizedTitlePrompt(from: text)
         
@@ -2679,6 +2684,7 @@ class OllamaService: ObservableObject {
     // MARK: - Structured Output Helper Methods
     
     private func createStructuredCompleteProcessingPrompt(from text: String) -> String {
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
         return """
         You are analyzing a transcript. Extract and summarize the ACTUAL CONTENT discussed, not a description of what type of document it is.
 
@@ -2729,12 +2735,14 @@ class OllamaService: ObservableObject {
         - Technical: Lectures, tutorials, technical content
         - General: News, media, general information
 
+        \(comedyModifier)
+
         Now analyze this transcript and extract the CONTENT (not meta-commentary about what it is):
 
         \(text)
         """
     }
-    
+
     private func parseStructuredCompleteResponse(_ response: String) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         guard let data = response.data(using: .utf8) else {
             throw OllamaError.parsingError("Failed to convert structured response to data")

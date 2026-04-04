@@ -62,16 +62,16 @@ class AWSBedrockService: ObservableObject {
         // Check if text needs chunking for this individual method
         let tokenCount = TokenManager.getTokenCount(text)
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
-        
+
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
             print("🔀 AWS Bedrock Summary: Large text detected (\(tokenCount) tokens), using chunked processing")
             let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
             var summaries: [String] = []
-            
+
             for chunk in chunks {
-                let systemPrompt = createSystemPrompt(for: contentType)
-                let userPrompt = createSummaryPrompt(text: chunk)
-                
+                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
+                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: chunk)
+
                 let response = try await invokeModel(
                     prompt: userPrompt,
                     systemPrompt: systemPrompt,
@@ -80,99 +80,99 @@ class AWSBedrockService: ObservableObject {
                 )
                 summaries.append(response)
             }
-            
+
             // Generate meta-summary from all chunk summaries
             return try await generateMetaSummary(from: summaries, contentType: contentType)
         } else {
             // Single chunk processing
-            let systemPrompt = createSystemPrompt(for: contentType)
-            let userPrompt = createSummaryPrompt(text: text)
-            
+            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
+            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: text)
+
             let response = try await invokeModel(
                 prompt: userPrompt,
                 systemPrompt: systemPrompt,
                 maxTokens: config.maxTokens,
                 temperature: config.temperature
             )
-            
+
             return response
         }
     }
-    
+
     func extractTasks(from text: String) async throws -> [TaskItem] {
         // Check if text needs chunking
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
-        
+
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
             let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
             var allTasks: [TaskItem] = []
-            
+
             for chunk in chunks {
-                let systemPrompt = "You are an AI assistant that extracts actionable tasks from text. Focus on personal, actionable items that require follow-up."
-                let userPrompt = createTaskExtractionPrompt(text: chunk)
-                
+                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
+                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .tasks, text: chunk)
+
                 let response = try await invokeModel(
                     prompt: userPrompt,
                     systemPrompt: systemPrompt,
                     maxTokens: 1024,
                     temperature: 0.1
                 )
-                
+
                 let chunkTasks = parseTasksFromResponse(response)
                 allTasks.append(contentsOf: chunkTasks)
             }
-            
+
             return deduplicateTasks(allTasks)
         } else {
-            let systemPrompt = "You are an AI assistant that extracts actionable tasks from text. Focus on personal, actionable items that require follow-up."
-            let userPrompt = createTaskExtractionPrompt(text: text)
-            
+            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
+            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .tasks, text: text)
+
             let response = try await invokeModel(
                 prompt: userPrompt,
                 systemPrompt: systemPrompt,
                 maxTokens: 1024,
                 temperature: 0.1
             )
-            
+
             return parseTasksFromResponse(response)
         }
     }
-    
+
     func extractReminders(from text: String) async throws -> [ReminderItem] {
         // Check if text needs chunking
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
-        
+
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
             let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
             var allReminders: [ReminderItem] = []
-            
+
             for chunk in chunks {
-                let systemPrompt = "You are an AI assistant that extracts time-sensitive reminders from text. Focus on deadlines, appointments, and scheduled events."
-                let userPrompt = createReminderExtractionPrompt(text: chunk)
-                
+                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
+                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .reminders, text: chunk)
+
                 let response = try await invokeModel(
                     prompt: userPrompt,
                     systemPrompt: systemPrompt,
                     maxTokens: 1024,
                     temperature: 0.1
                 )
-                
+
                 let chunkReminders = parseRemindersFromResponse(response)
                 allReminders.append(contentsOf: chunkReminders)
             }
-            
+
             return deduplicateReminders(allReminders)
         } else {
-            let systemPrompt = "You are an AI assistant that extracts time-sensitive reminders from text. Focus on deadlines, appointments, and scheduled events."
-            let userPrompt = createReminderExtractionPrompt(text: text)
-            
+            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
+            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .reminders, text: text)
+
             let response = try await invokeModel(
                 prompt: userPrompt,
                 systemPrompt: systemPrompt,
                 maxTokens: 1024,
                 temperature: 0.1
             )
-            
+
             return parseRemindersFromResponse(response)
         }
     }
@@ -180,38 +180,38 @@ class AWSBedrockService: ObservableObject {
     func extractTitles(from text: String) async throws -> [TitleItem] {
         // Check if text needs chunking
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
-        
+
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
             let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
             var allTitles: [TitleItem] = []
-            
+
             for chunk in chunks {
-                let systemPrompt = "You are an AI assistant that generates concise, descriptive titles for content. Create 3-5 titles that capture the main topics or themes."
-                let userPrompt = createTitleExtractionPrompt(text: chunk)
-                
+                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .titles, contentType: .general)
+                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .titles, text: chunk)
+
                 let response = try await invokeModel(
                     prompt: userPrompt,
                     systemPrompt: systemPrompt,
                     maxTokens: 512,
                     temperature: 0.2
                 )
-                
+
                 let chunkTitles = parseTitlesFromResponse(response)
                 allTitles.append(contentsOf: chunkTitles)
             }
-            
+
             return deduplicateTitles(allTitles)
         } else {
-            let systemPrompt = "You are an AI assistant that generates concise, descriptive titles for content. Create 3-5 titles that capture the main topics or themes."
-            let userPrompt = createTitleExtractionPrompt(text: text)
-            
+            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .titles, contentType: .general)
+            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .titles, text: text)
+
             let response = try await invokeModel(
                 prompt: userPrompt,
                 systemPrompt: systemPrompt,
                 maxTokens: 512,
                 temperature: 0.2
             )
-            
+
             return parseTitlesFromResponse(response)
         }
     }
@@ -363,8 +363,8 @@ class AWSBedrockService: ObservableObject {
     }
     
     private func processCompleteStructured(text: String, contentType: ContentType) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        let systemPrompt = createSystemPrompt(for: contentType)
-        let userPrompt = createCompleteProcessingPrompt(text: text)
+        let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
+        let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .complete, text: text)
         
         let response = try await invokeModel(
             prompt: userPrompt,
@@ -565,208 +565,6 @@ class AWSBedrockService: ObservableObject {
         
         return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
     }
-    
-    
-    // MARK: - Prompt Generators
-    
-    private func createSystemPrompt(for contentType: ContentType) -> String {
-        let basePrompt = """
-        You are an AI assistant specialized in analyzing and summarizing audio transcripts and conversations. Your role is to provide clear, actionable insights from the content provided.
-
-        **Key Guidelines:**
-        - Focus on extracting meaningful, actionable information
-        - Maintain accuracy and relevance to the source material
-        - Use clear, professional language
-        - Structure responses logically and coherently
-        - Prioritize the most important information first
-        """
-
-        let comedyModifier = ComedyMode.current.promptModifier ?? ""
-
-        switch contentType {
-        case .meeting:
-            return basePrompt + """
-
-            **Meeting Analysis Focus:**
-            - Identify key decisions and action items
-            - Note important deadlines and commitments
-            - Highlight participant responsibilities
-            - Capture meeting outcomes and next steps
-            - Focus on business-relevant information
-            """ + comedyModifier
-        case .personalJournal:
-            return basePrompt + """
-
-            **Personal Journal Analysis Focus:**
-            - Identify personal insights and reflections
-            - Note emotional states and personal growth
-            - Highlight personal goals and aspirations
-            - Capture meaningful life events and experiences
-            - Focus on personal development and self-awareness
-            """ + comedyModifier
-        case .technical:
-            return basePrompt + """
-
-            **Technical Analysis Focus:**
-            - Identify technical problems and solutions
-            - Note implementation details and requirements
-            - Highlight technical decisions and trade-offs
-            - Capture technical specifications and constraints
-            - Focus on technical accuracy and precision
-            """ + comedyModifier
-        case .general:
-            return basePrompt + """
-
-            **General Analysis Focus:**
-            - Identify main topics and themes
-            - Note important information and insights
-            - Highlight key points and takeaways
-            - Capture relevant details and context
-            - Focus on clarity and comprehensiveness
-            """ + comedyModifier
-        }
-    }
-    
-    private func createSummaryPrompt(text: String) -> String {
-        return """
-        Please provide a detailed and comprehensive summary of the following content using proper Markdown formatting (aim for 15-20% of the original transcript length):
-        
-        Use the following Markdown elements as appropriate:
-        - **Bold text** for key points and important information
-        - *Italic text* for emphasis
-        - ## Headers for main sections
-        - ### Subheaders for subsections
-        - • Bullet points for lists
-        - 1. Numbered lists for sequential items
-        - > Blockquotes for important quotes or statements
-        
-        Content to summarize:
-        \(text)
-        
-        Focus on capturing all important details, context, and nuances. Include:
-        - Key points and main ideas with sufficient detail
-        - Important context and background information
-        - Specific details that provide depth and understanding
-        - Relevant examples or explanations mentioned
-        - Overall themes and conclusions
-        
-        Make the summary thorough and informative while maintaining clarity and proper markdown formatting.
-        """
-    }
-    
-    private func createTaskExtractionPrompt(text: String) -> String {
-        return """
-        Extract actionable tasks from the following content. Return them as a JSON array of objects with the following structure:
-        [
-            {
-                "text": "task description",
-                "priority": "high|medium|low",
-                "category": "call|meeting|purchase|research|email|travel|health|general",
-                "timeReference": "today|tomorrow|this week|next week|specific date or null",
-                "confidence": 0.85
-            }
-        ]
-
-        Content:
-        \(text)
-        """
-    }
-    
-    private func createReminderExtractionPrompt(text: String) -> String {
-        return """
-        Extract reminders and time-sensitive items from the following content. Return them as a JSON array of objects with the following structure:
-        [
-            {
-                "text": "reminder description",
-                "urgency": "immediate|today|thisWeek|later",
-                "timeReference": "specific time or date mentioned",
-                "confidence": 0.85
-            }
-        ]
-
-        Content:
-        \(text)
-        """
-    }
-    
-    private func createTitleExtractionPrompt(text: String) -> String {
-        return """
-        Analyze the following transcript and extract 4 high-quality titles or headlines. Focus on:
-        - Main topics or themes discussed
-        - Key decisions or outcomes
-        - Important events or milestones
-        - Central questions or problems addressed
-
-        **Return the results in this exact JSON format:**
-        {
-          "titles": [
-            {
-              "text": "title text",
-              "category": "Meeting|Personal|Technical|General",
-              "confidence": 0.85
-            }
-          ]
-        }
-
-        Requirements:
-        - Generate exactly 4 titles with 85% or higher confidence
-        - Each title should be 40-60 characters and 4-6 words
-        - Focus on the most important and specific topics
-        - Avoid generic or vague titles
-        - If no suitable titles are found, return empty array
-
-        Transcript:
-        \(text)
-        """
-    }
-    
-    private func createCompleteProcessingPrompt(text: String) -> String {
-        return """
-        Please analyze the following content and provide a comprehensive response in VALID JSON format only. Do not include any text before or after the JSON. The response must be a single, well-formed JSON object with this exact structure:
-
-        {
-            "summary": "A detailed summary using Markdown formatting with **bold**, *italic*, ## headers, • bullet points, etc.",
-            "tasks": [
-                {
-                    "text": "task description",
-                    "priority": "high|medium|low",
-                    "category": "call|meeting|purchase|research|email|travel|health|general",
-                    "timeReference": "today|tomorrow|this week|next week|specific date or null",
-                    "confidence": 0.85
-                }
-            ],
-            "reminders": [
-                {
-                    "text": "reminder description",
-                    "urgency": "immediate|today|thisWeek|later",
-                    "timeReference": "specific time or date mentioned",
-                    "confidence": 0.85
-                }
-            ],
-            "titles": [
-                {
-                    "text": "Generate 4 high-quality titles (40-60 characters, 4-6 words each) that capture the main topics, decisions, or key subjects discussed. Focus on the most important and specific topics. Use proper capitalization (Title Case) and never end with punctuation marks.",
-                    "category": "meeting|personal|technical|general",
-                    "confidence": 0.85
-                }
-            ]
-        }
-
-        IMPORTANT: 
-        - Return ONLY valid JSON, no additional text or explanations
-        - The "summary" field must use Markdown formatting: **bold**, *italic*, ## headers, • bullets, etc.
-        - If no tasks are found, use an empty array: "tasks": []
-        - If no reminders are found, use an empty array: "reminders": []
-        - If no titles are found, use an empty array: "titles": []
-        - Ensure all strings are properly quoted and escaped (especially for Markdown characters)
-        - Do not include trailing commas
-        - Escape special characters in JSON strings (quotes, backslashes, newlines)
-
-        Content to analyze:
-        \(text)
-        """
-    }
-    
     // MARK: - Response Parsers
     
     private func parseCompleteResponseFromJSON(_ jsonString: String) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) {

@@ -859,7 +859,8 @@ public class OnDeviceLLMService: ObservableObject {
         let wordCount = text.split(separator: " ").count
         let minTargetWords = max(50, Int(Double(wordCount) * 0.05)) // 5% minimum
         let maxTargetWords = Int(Double(wordCount) * 0.10) // 10% maximum
-        
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+
         // For small models, place transcript first for better attention
         return """
         Transcript:
@@ -894,6 +895,7 @@ public class OnDeviceLLMService: ObservableObject {
         (Tasks or things to do)
         - [Action 1]
         - [Action 2]
+        \(comedyModifier)
         """
     }
 
@@ -991,10 +993,11 @@ public class OnDeviceLLMService: ObservableObject {
         if config.modelInfo.templateType == .lfm {
             return createLFMCompleteProcessingPrompt(text: text)
         }
-        
+
         // Calculate approx 15% target length in words (min 200 words) to encourage longer output
         let wordCount = text.split(separator: " ").count
         let targetWords = max(200, Int(Double(wordCount) * 0.15))
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
 
         return """
         Analyze the following transcript and extract the actual content discussed. Base your response ONLY on what is actually mentioned in the transcript.
@@ -1039,18 +1042,20 @@ public class OnDeviceLLMService: ObservableObject {
 
         ## Suggested Titles
         [Generate titles based on the actual main topics discussed in the transcript]
+        \(comedyModifier)
 
         Transcript:
         \(text)
         """
     }
-    
+
         /// LFM-specific complete processing prompt with chain-of-thought and examples
     private func createLFMCompleteProcessingPrompt(text: String) -> String {
         let wordCount = text.split(separator: " ").count
         let minTargetWords = max(50, Int(Double(wordCount) * 0.05)) // 5% minimum
         let maxTargetWords = Int(Double(wordCount) * 0.10) // 10% maximum
-        
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+
         return """
         Transcript:
         \(text)
@@ -1084,18 +1089,20 @@ public class OnDeviceLLMService: ObservableObject {
 
         ## Suggested Titles
         [Generate titles based on the actual main topics discussed]
+        \(comedyModifier)
 
         Now analyze the transcript and provide your response based ONLY on what is actually mentioned:
         """
     }
-    
+
     /// Complete processing prompt for small models (Qwen3-1.7B, LFM 2.5)
     /// Simplified to only generate summary and one title (no tasks/reminders)
     private func createSmallModelCompleteProcessingPrompt(text: String) -> String {
         let wordCount = text.split(separator: " ").count
         let minTargetWords = max(100, Int(Double(wordCount) * 0.05)) // 5% minimum
         let maxTargetWords = Int(Double(wordCount) * 0.10) // 10% maximum
-        
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+
         return """
         Analyze this transcript and provide a summary and one title.
 
@@ -1125,6 +1132,7 @@ public class OnDeviceLLMService: ObservableObject {
 
         ## Title
         - One descriptive title for this transcript
+        \(comedyModifier)
 
         Now analyze the transcript and provide your response:
         """
