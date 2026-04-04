@@ -2525,9 +2525,6 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func clearNotificationBadge() async {
-        // Keep both APIs for compatibility/reliability across iOS versions.
-        UIApplication.shared.applicationIconBadgeNumber = 0
-
         do {
             try await UNUserNotificationCenter.current().setBadgeCount(0)
         } catch {

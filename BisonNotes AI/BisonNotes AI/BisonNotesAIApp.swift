@@ -360,6 +360,12 @@ struct BisonNotesAIApp: App {
                 }
                 .onOpenURL(perform: handleOpenURL)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                    // Clear badge when the user actively opens the app. Using the
+                    // scene-phase notification here (rather than AppDelegate
+                    // applicationDidBecomeActive) ensures this fires reliably in
+                    // scene-based SwiftUI apps where the UIApplicationDelegate method
+                    // may be skipped.
+                    appDelegate.clearAppBadge(reason: "activation")
                     // Scan for files placed by the Share Extension (Voice Memos, etc.)
                     scanSharedContainerForImports()
                     // Also scan Documents/Inbox/ for files from "Open In" / document interaction.
