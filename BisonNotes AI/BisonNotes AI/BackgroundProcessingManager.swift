@@ -2469,7 +2469,8 @@ class BackgroundProcessingManager: ObservableObject {
         content.title = title
         content.body = body
         content.sound = .default
-        content.badge = NSNumber(value: getActiveJobCount())
+        let badgeCount = getActiveJobCount()
+        content.badge = NSNumber(value: badgeCount)
         
         // Add user info for handling notification taps
         var finalUserInfo = userInfo
@@ -2507,8 +2508,20 @@ class BackgroundProcessingManager: ObservableObject {
         )
     }
     
+    /// Returns the count used for the app icon badge.
+    ///
+    /// Only jobs that are actively pending work should contribute to the badge.
+    /// Interrupted/failed/cancelled jobs should not keep a stale badge visible,
+    /// because there is no active notification workload for the user to clear.
     private func getActiveJobCount() -> Int {
-        return activeJobs.filter { !$0.status.isError && $0.status != .completed }.count
+        activeJobs.filter { job in
+            switch job.status {
+            case .ready, .queued, .processing:
+                return true
+            case .completed, .failed, .cancelled, .interrupted:
+                return false
+            }
+        }.count
     }
     
     private func clearNotificationBadge() async {
