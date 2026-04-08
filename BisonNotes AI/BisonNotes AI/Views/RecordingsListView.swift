@@ -150,15 +150,8 @@ struct RecordingsListView: View {
                 LocationDetailView(locationData: locationData)
             }
             .sheet(item: $selectedRecordingForPlayer) { recording in
-                VStack {
-                    Text("Audio Player Test")
-                        .font(.title)
-                        .padding()
-                    Text("Recording: \(recording.name)")
-                        .padding()
-                    AudioPlayerView(recording: recording)
-                        .environmentObject(recorderVM)
-                }
+                AudioPlayerView(recording: recording)
+                    .environmentObject(recorderVM)
             }
             .sheet(isPresented: $showingCombineView) {
                 if let recordings = recordingsToCombine {
