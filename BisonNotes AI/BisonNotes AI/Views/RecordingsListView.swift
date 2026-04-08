@@ -28,10 +28,31 @@ struct RecordingsListView: View {
     @State private var preserveSummaryOnDelete = false
     @State private var showingEnhancedDeleteDialog = false
     @State private var selectedRecordingForPlayer: AudioRecordingFile?
+    enum SelectionAction {
+        case combine
+        // Future actions can be added here, e.g.:
+        // case export
+        // case delete
+
+        var instruction: String {
+            switch self {
+            case .combine: return "Select 2 recordings to combine"
+            }
+        }
+
+        var maxSelection: Int? {
+            switch self {
+            case .combine: return 2
+            }
+        }
+    }
+
     @State private var isSelectionMode = false
+    @State private var selectionAction: SelectionAction = .combine
     @State private var selectedRecordings: Set<URL> = []
     @State private var showingCombineView = false
     @State private var recordingsToCombine: (first: AudioRecordingFile, second: AudioRecordingFile)?
+    @State private var showSelectionWarning = false
     @State private var searchText = ""
     @State private var showDateFilter = false
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
@@ -50,7 +71,7 @@ struct RecordingsListView: View {
 
                     if isSelectionMode {
                         HStack(spacing: 12) {
-                            if selectedRecordings.count == 2 {
+                            if selectionAction == .combine && selectedRecordings.count >= 2 {
                                 Button("Combine") {
                                     handleCombineSelected()
                                 }
@@ -61,6 +82,7 @@ struct RecordingsListView: View {
                             Button("Cancel") {
                                 isSelectionMode = false
                                 selectedRecordings.removeAll()
+                                showSelectionWarning = false
                             }
                             .font(.headline)
                         }
@@ -72,10 +94,19 @@ struct RecordingsListView: View {
                             }
 
                             if recordings.count >= 2 {
-                                Button("Select") {
-                                    isSelectionMode = true
+                                Menu {
+                                    Button(action: {
+                                        selectionAction = .combine
+                                        isSelectionMode = true
+                                        selectedRecordings.removeAll()
+                                        showSelectionWarning = false
+                                    }) {
+                                        Label("Combine Recordings", systemImage: "link")
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis.circle")
+                                        .font(.title2)
                                 }
-                                .font(.headline)
                             }
 
                             Button("Done") {
@@ -86,6 +117,10 @@ struct RecordingsListView: View {
                     }
                 }
                 .padding()
+
+                if isSelectionMode {
+                    selectionBanner
+                }
 
                 recordingsContent
             }
@@ -665,23 +700,71 @@ struct RecordingsListView: View {
         }
     }
     
+    // MARK: - Selection Banner
+
+    private var selectionBanner: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Image(systemName: "info.circle")
+                    .foregroundColor(.blue)
+                Text(selectionAction.instruction)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Spacer()
+                if let max = selectionAction.maxSelection {
+                    Text("\(selectedRecordings.count) of \(max) selected")
+                        .font(.subheadline)
+                        .foregroundColor(selectedRecordings.count > max ? .orange : .secondary)
+                } else {
+                    Text("\(selectedRecordings.count) selected")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if showSelectionWarning, let max = selectionAction.maxSelection {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.caption)
+                    Text("Only the first \(max) selected will be combined. Deselect extras or tap Combine to continue.")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(Color(.systemGray6))
+        .animation(.easeInOut(duration: 0.2), value: showSelectionWarning)
+        .animation(.easeInOut(duration: 0.2), value: selectedRecordings.count)
+    }
+
     // MARK: - Helper Methods
-    
+
     private func toggleSelection(for recording: AudioRecordingFile) {
         if selectedRecordings.contains(recording.url) {
             selectedRecordings.remove(recording.url)
+            // Clear warning if we drop back to the max or below
+            if let max = selectionAction.maxSelection, selectedRecordings.count <= max {
+                showSelectionWarning = false
+            }
         } else {
-            // Only allow selecting up to 2 recordings
-            if selectedRecordings.count < 2 {
-                selectedRecordings.insert(recording.url)
+            selectedRecordings.insert(recording.url)
+            // Show warning if over the max for this action
+            if let max = selectionAction.maxSelection, selectedRecordings.count > max {
+                showSelectionWarning = true
             }
         }
     }
     
     private func handleCombineSelected() {
-        guard selectedRecordings.count == 2 else { return }
-        
-        let selectedURLs = Array(selectedRecordings)
+        guard selectedRecordings.count >= 2 else { return }
+
+        // Use the first 2 selected recordings (in the order they appear in the list)
+        let selectedURLs = recordings.filter { selectedRecordings.contains($0.url) }.prefix(2).map { $0.url }
         guard let firstRecording = recordings.first(where: { $0.url == selectedURLs[0] }),
               let secondRecording = recordings.first(where: { $0.url == selectedURLs[1] }) else {
             return
@@ -727,15 +810,17 @@ struct RecordingsListView: View {
             // Exit selection mode
             isSelectionMode = false
             selectedRecordings.removeAll()
+            showSelectionWarning = false
             return
         }
-        
+
         recordingsToCombine = (first: firstRecording, second: secondRecording)
         showingCombineView = true
-        
+
         // Exit selection mode
         isSelectionMode = false
         selectedRecordings.removeAll()
+        showSelectionWarning = false
     }
     
 }

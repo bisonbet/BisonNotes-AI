@@ -35,6 +35,12 @@ struct TranscriptsView: View {
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var dateFilterEnd: Date = Date()
     @State private var isDateFilterActive = false
+    /// The recording currently undergoing audio cleanup
+    @State private var activeCleaningRecordingId: UUID?
+    /// Recordings queued for audio cleanup (waiting for the active one to finish)
+    @State private var queuedCleanupRecordings: [RecordingEntry] = []
+    /// True while the cleanup queue is being processed
+    @State private var isProcessingCleanupQueue = false
 
     var body: some View {
         AdaptiveNavigationWrapper {
@@ -475,6 +481,11 @@ struct TranscriptsView: View {
     private func transcriptButtonView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
         let hasTranscript = recordingData.transcript != nil
         let hasActiveJob = hasActiveTranscriptionJob(for: recordingData.recording)
+        let recordingId = recordingData.recording.id ?? UUID()
+        let isCleaning = activeCleaningRecordingId == recordingId
+        let isQueuedForCleanup = queuedCleanupRecordings.contains { $0.id == recordingId }
+        let jobStatus = activeTranscriptionJobStatus(for: recordingData.recording)
+        let isProcessing = isCleaning || isQueuedForCleanup || hasActiveJob
 
         return Button(action: {
             if hasTranscript {
@@ -482,16 +493,17 @@ struct TranscriptsView: View {
                 selectedRecording = recordingData.recording
             } else {
                 // Generate new transcript - only if this recording doesn't already have an active job
-                if !hasActiveJob {
+                if !isProcessing {
                     generateTranscript(for: recordingData.recording)
                 }
             }
         }) {
-            HStack {
-                if hasActiveJob && !hasTranscript {
+            HStack(spacing: 6) {
+                if isProcessing && !hasTranscript {
                     ProgressView()
-                        .scaleEffect(0.8)
-                    Text("Generating...")
+                        .scaleEffect(0.7)
+                        .tint(.white)
+                    Text(processingButtonLabel(isCleaning: isCleaning, isQueuedForCleanup: isQueuedForCleanup, jobStatus: jobStatus))
                         .font(.caption2)
                 } else {
                     Image(systemName: hasTranscript ? "text.bubble.fill" : "text.bubble")
@@ -503,15 +515,33 @@ struct TranscriptsView: View {
             .padding(.vertical, 6)
             .background(
                 hasTranscript ? Color.green :
-                hasActiveJob ? Color.gray : Color.accentColor
+                isProcessing ? Color.orange : Color.accentColor
             )
             .foregroundColor(.white)
             .cornerRadius(8)
         }
-        .disabled(hasActiveJob && !hasTranscript) // Only disable if this recording has an active job
+        .disabled(isProcessing && !hasTranscript)
         .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(hasTranscript)-\(hasActiveJob)-\(refreshTrigger)")
+        .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(hasTranscript)-\(hasActiveJob)-\(isCleaning)-\(isQueuedForCleanup)-\(refreshTrigger)")
+    }
+
+    /// Returns the appropriate label for the processing button based on current phase
+    private func processingButtonLabel(isCleaning: Bool, isQueuedForCleanup: Bool, jobStatus: JobProcessingStatus?) -> String {
+        if isCleaning {
+            return "Cleaning Audio..."
+        }
+        if isQueuedForCleanup {
+            return "Queued..."
+        }
+        switch jobStatus {
+        case .queued:
+            return "Queued..."
+        case .processing:
+            return "Transcribing..."
+        default:
+            return "Processing..."
+        }
     }
 
     /// Check if a recording has an active transcription job (queued or processing)
@@ -527,6 +557,20 @@ struct TranscriptsView: View {
             job.type.isTranscription &&
             (job.status == .queued || job.status == .processing)
         }
+    }
+
+    /// Returns the current status of the active transcription job for this recording, if any
+    private func activeTranscriptionJobStatus(for recording: RecordingEntry) -> JobProcessingStatus? {
+        guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
+            return nil
+        }
+        let filename = recordingURL.lastPathComponent
+
+        return backgroundProcessingManager.activeJobs.first { job in
+            job.recordingPath == filename &&
+            job.type.isTranscription &&
+            (job.status == .queued || job.status == .processing)
+        }?.status
     }
     
     // MARK: - Search and Date Filtering
@@ -775,46 +819,67 @@ struct TranscriptsView: View {
         // No longer need global isGeneratingTranscript flag
 
         if cleanFirst {
-            Task {
-                guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
-                    // Job tracking handled by BackgroundProcessingManager - no local state to reset
-                    return
-                }
-                do {
-                    let tempCleanedURL = try await AudioCleanupService.shared.cleanAudio(at: recordingURL)
-                    print("🎛️ Cleaned audio created at temp location: \(tempCleanedURL.lastPathComponent)")
-
-                    // Copy cleaned file to Documents directory so the job can find it
-                    // (ProcessingJob resolves paths relative to Documents directory)
-                    guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-                        print("⚠️ Could not access Documents directory, using original file")
-                        self.performEnhancedTranscription(for: recording)
-                        return
-                    }
-
-                    let cleanedFilename = tempCleanedURL.lastPathComponent
-                    let documentsCleanedURL = documentsURL.appendingPathComponent(cleanedFilename)
-
-                    // Remove any existing file at destination
-                    try? FileManager.default.removeItem(at: documentsCleanedURL)
-
-                    // Copy from temp to Documents
-                    try FileManager.default.copyItem(at: tempCleanedURL, to: documentsCleanedURL)
-                    print("✅ Copied cleaned audio to Documents: \(cleanedFilename)")
-
-                    // Clean up temp file immediately since we've copied it to Documents
-                    await AudioCleanupService.shared.removeTempFile(at: tempCleanedURL)
-
-                    // Pass the original recording URL for identity, cleaned URL as source audio.
-                    // BackgroundProcessingManager will delete the cleaned file when the job finishes.
-                    self.performEnhancedTranscription(for: recording, sourceAudioURL: documentsCleanedURL)
-                } catch {
-                    print("⚠️ Audio cleanup failed, falling back to original: \(error)")
-                    self.performEnhancedTranscription(for: recording)
-                }
-            }
+            // Add to the cleanup queue and process serially (one cleanup at a time)
+            queuedCleanupRecordings.append(recording)
+            processCleanupQueueIfNeeded()
         } else {
             self.performEnhancedTranscription(for: recording)
+        }
+    }
+
+    /// Processes the cleanup queue one recording at a time to avoid concurrent heavy audio processing
+    private func processCleanupQueueIfNeeded() {
+        guard !isProcessingCleanupQueue, !queuedCleanupRecordings.isEmpty else { return }
+        isProcessingCleanupQueue = true
+
+        // Take the next recording from the front of the queue
+        let recording = queuedCleanupRecordings.removeFirst()
+        activeCleaningRecordingId = recording.id
+
+        Task {
+            defer {
+                // Clear active cleaning state and process next in queue
+                activeCleaningRecordingId = nil
+                isProcessingCleanupQueue = false
+                processCleanupQueueIfNeeded()
+            }
+
+            guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
+                self.performEnhancedTranscription(for: recording)
+                return
+            }
+            do {
+                let tempCleanedURL = try await AudioCleanupService.shared.cleanAudio(at: recordingURL)
+                print("🎛️ Cleaned audio created at temp location: \(tempCleanedURL.lastPathComponent)")
+
+                // Copy cleaned file to Documents directory so the job can find it
+                // (ProcessingJob resolves paths relative to Documents directory)
+                guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                    print("⚠️ Could not access Documents directory, using original file")
+                    self.performEnhancedTranscription(for: recording)
+                    return
+                }
+
+                let cleanedFilename = tempCleanedURL.lastPathComponent
+                let documentsCleanedURL = documentsURL.appendingPathComponent(cleanedFilename)
+
+                // Remove any existing file at destination
+                try? FileManager.default.removeItem(at: documentsCleanedURL)
+
+                // Copy from temp to Documents
+                try FileManager.default.copyItem(at: tempCleanedURL, to: documentsCleanedURL)
+                print("✅ Copied cleaned audio to Documents: \(cleanedFilename)")
+
+                // Clean up temp file immediately since we've copied it to Documents
+                await AudioCleanupService.shared.removeTempFile(at: tempCleanedURL)
+
+                // Pass the original recording URL for identity, cleaned URL as source audio.
+                // BackgroundProcessingManager will delete the cleaned file when the job finishes.
+                self.performEnhancedTranscription(for: recording, sourceAudioURL: documentsCleanedURL)
+            } catch {
+                print("⚠️ Audio cleanup failed, falling back to original: \(error)")
+                self.performEnhancedTranscription(for: recording)
+            }
         }
     }
     
