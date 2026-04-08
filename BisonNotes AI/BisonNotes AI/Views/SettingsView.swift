@@ -25,6 +25,7 @@ struct SettingsView: View {
     @State private var showingAcknowledgements = false
     @State private var showingTroubleshootingWarning = false
 
+    @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = "On Device"
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "On-Device AI"
     @AppStorage("WatchIntegrationEnabled") private var watchIntegrationEnabled: Bool = true
     @AppStorage("WatchAutoSync") private var watchAutoSync: Bool = true
@@ -332,7 +333,7 @@ struct SettingsView: View {
                 Text("Current Engine:")
                     .font(.body)
                     .foregroundColor(.secondary)
-                Text(TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue)?.rawValue ?? "On Device")
+                Text(TranscriptionEngine(rawValue: selectedTranscriptionEngine)?.rawValue ?? "On Device")
                     .font(.body)
                     .fontWeight(.medium)
                     .foregroundColor(.primary)

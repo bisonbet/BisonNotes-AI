@@ -117,6 +117,7 @@ struct AISettingsView: View {
     @State private var showingMistralAISettings = false
     @State private var showingAWSBedrockSettings = false
     @State private var showingOnDeviceLLMSettings = false
+    @State private var showingMistralOnboarding = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     @State private var showingRegenerateConfirmation = false
@@ -323,6 +324,11 @@ struct AISettingsView: View {
                 OnDeviceLLMSettingsView()
             }
         }
+        .fullScreenCover(isPresented: $showingMistralOnboarding) {
+            MistralOnboardingView(onSetupComplete: {
+                refreshEngineStatuses()
+            })
+        }
     }
 }
 
@@ -516,7 +522,12 @@ private extension AISettingsView {
         case .googleAIStudio:
             showingGoogleAIStudioSettings = true
         case .mistralAI:
-            showingMistralAISettings = true
+            let mistralKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+            if mistralKey.isEmpty {
+                showingMistralOnboarding = true
+            } else {
+                showingMistralAISettings = true
+            }
         case .awsBedrock:
             showingAWSBedrockSettings = true
         case .onDeviceLLM:
@@ -549,6 +560,19 @@ private extension AISettingsView {
             Text("Not Supported")
                 .font(.caption2.weight(.medium))
                 .foregroundColor(.secondary)
+        } else if engine == .mistralAI && !(status?.isAvailable ?? false) {
+            HStack(spacing: 4) {
+                Text("Free")
+                    .font(.caption2.weight(.bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.orange)
+                    .clipShape(Capsule())
+                Text("Setup")
+                    .font(.caption2.weight(.medium))
+                    .foregroundColor(.orange)
+            }
         } else {
             Text((status?.isAvailable ?? false) ? "Ready" : "Setup")
                 .font(.caption2.weight(.medium))

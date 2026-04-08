@@ -177,9 +177,9 @@ body.page .entry-header {
     <div class="bn-card bn-card-a">
       <h4>Initial Setup Options</h4>
       <ul>
-        <li><strong>OpenAI (Cloud):</strong> Cloud-based transcription and AI summaries. Requires OpenAI API key. Most powerful option with pay-per-use pricing.</li>
+        <li><strong>Mistral AI (Free):</strong> Free cloud AI &mdash; no credit card required. A guided wizard walks you through creating a free Mistral account and API key in about 2 minutes. Includes transcription (Voxtral Mini with speaker diarization) and AI summaries (Mistral Medium). Paid tiers available for higher rate limits.</li>
         <li><strong>On-Device AI:</strong> Private, on-device processing. No data leaves your device. Requires download of AI models (2-3GB each) and Parakeet transcription model. Best for recordings under 60 minutes.</li>
-        <li><strong>Advanced &amp; Other Options:</strong> Skip initial setup and configure later. Access to all engines: Google AI Studio, AWS Bedrock, Mistral AI, OpenAI Compatible, Ollama.</li>
+        <li><strong>Advanced &amp; Other Options:</strong> Configure providers manually. Includes OpenAI, Google AI Studio, AWS Bedrock, Mistral AI, OpenAI Compatible, Ollama. If you already have an AI provider configured, your existing settings are preserved.</li>
       </ul>
     </div>
     <div class="bn-info"><strong>Tip:</strong> The simple settings page automatically detects your current configuration. If you've configured something in advanced settings that doesn't match the simple options, it will automatically show "Advanced &amp; Other Options".</div>
@@ -486,16 +486,34 @@ body.page .entry-header {
 
 <!-- Mistral AI -->
 <details>
-  <summary>5. Mistral AI — Summarization &amp; Transcription</summary>
+  <summary>5. Mistral AI — Summarization &amp; Transcription <span class="bn-badge bn-b-free">Free Tier</span></summary>
   <div class="dd">
     <span class="bn-badge bn-b-cloud">Cloud</span>
-    <span class="bn-badge bn-b-paid">Pay-per-use</span>
-    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Pay-per-use (transcription $0.003/min) &bull; <strong>Internet:</strong> Required</p>
+    <span class="bn-badge bn-b-free">Free Tier Available</span>
+    <span class="bn-badge bn-b-paid">Paid Tiers Available</span>
+    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Free tier available (no credit card); paid tiers for higher rate limits &bull; <strong>Internet:</strong> Required</p>
+
+    <div class="bn-ok"><strong>Free Tier:</strong> Mistral AI offers a free Experiment plan with access to all models. No credit card required &mdash; just a verified phone number. Includes ~2 requests/second, 500K tokens/min, and 1B tokens/month. More than enough for personal use. You can upgrade to paid Build or Scale tiers anytime at <a href="https://console.mistral.ai" target="_blank" rel="noopener">console.mistral.ai</a> for higher rate limits and production use.</div>
+
+    <h4>Guided In-App Setup (Recommended)</h4>
+    <p>BisonNotes AI includes a step-by-step onboarding wizard that walks you through the entire process in about 2 minutes:</p>
+    <ol class="bn-sl">
+      <li><strong>Launch the wizard</strong> from any of these places:
+        <ul>
+          <li>First-time setup: Select "Mistral AI (Free)" and tap "Save &amp; Configure"</li>
+          <li>AI Settings: Tap Mistral AI (look for the orange "Free" badge), then "Configure" &rarr; "Set Up Free Account"</li>
+        </ul>
+      </li>
+      <li><strong>Create account</strong> &mdash; The wizard opens console.mistral.ai in an in-app browser. Sign up with email and verify your phone number.</li>
+      <li><strong>Generate API key</strong> &mdash; The wizard opens the API keys page. Create a key named "BisonNotes" and copy it.</li>
+      <li><strong>Paste &amp; validate</strong> &mdash; Paste your key (or use the clipboard button), then test the connection.</li>
+      <li><strong>Done!</strong> &mdash; The wizard auto-configures Mistral Medium for summaries, Voxtral Mini for transcription, and enables speaker diarization.</li>
+    </ol>
 
     <h4>Summarization Models</h4>
     <ul>
       <li><strong>Mistral Large (25.12)</strong> — Most capable, 128K context (Premium)</li>
-      <li><strong>Mistral Medium (25.08)</strong> — Balanced, 128K context (Standard)</li>
+      <li><strong>Mistral Medium (25.08)</strong> — Balanced, 128K context (Standard) &mdash; <em>default after guided setup</em></li>
       <li><strong>Magistral Medium (25.09)</strong> — Economy, 40K context</li>
     </ul>
 
@@ -507,14 +525,14 @@ body.page .entry-header {
       <li>Files over 24MB automatically chunked</li>
     </ul>
 
-    <h4>Setup</h4>
+    <h4>Manual Setup (Alternative)</h4>
     <ol class="bn-sl">
       <li>Get API key at <a href="https://console.mistral.ai" target="_blank" rel="noopener">console.mistral.ai</a></li>
-      <li>Go to Setup &rarr; AI Settings &rarr; Mistral AI</li>
+      <li>Go to Setup &rarr; AI Settings &rarr; Mistral AI &rarr; Configure</li>
       <li>Enter API key, select model, test connection.</li>
       <li>For transcription: Setup &rarr; Transcription Settings &rarr; select "Mistral AI".</li>
     </ol>
-    <p><strong>Best for:</strong> Fast summaries and affordable transcription with speaker diarization</p>
+    <p><strong>Best for:</strong> Free cloud AI with fast summaries and affordable transcription with speaker diarization</p>
   </div>
 </details>
 
@@ -621,7 +639,7 @@ ollama pull mistral-small3.2</code></pre>
 <ul>
   <li><strong>On Device (Parakeet)</strong> — Default. Free, private, works offline. Requires model download.</li>
   <li><strong>OpenAI</strong> — GPT-4o Transcribe, GPT-4o Mini Transcribe, or Whisper-1.</li>
-  <li><strong>Mistral AI</strong> — Voxtral Mini ($0.003/min) with optional speaker diarization.</li>
+  <li><strong>Mistral AI</strong> — Voxtral Mini with optional speaker diarization. Free tier available; $0.003/min on paid tiers.</li>
   <li><strong>Whisper (Local Server)</strong> — Your own Whisper server (REST API or Wyoming protocol).</li>
   <li><strong>AWS Transcribe</strong> — Cloud service for long audio files.</li>
   <li><strong>OpenAI API Compatible</strong> — Any compatible transcription endpoint.</li>
@@ -635,7 +653,7 @@ ollama pull mistral-small3.2</code></pre>
       <tr><td><strong>On-Device (Parakeet)</strong></td><td>Local</td><td>No</td><td>Free (Default)</td></tr>
       <tr><td><strong>OpenAI GPT-4o</strong></td><td>Cloud</td><td>No</td><td>Per token</td></tr>
       <tr><td><strong>OpenAI Whisper</strong></td><td>Cloud</td><td>No</td><td>Per minute</td></tr>
-      <tr><td><strong>Mistral AI</strong></td><td>Cloud</td><td>Yes</td><td>~$0.003/min</td></tr>
+      <tr><td><strong>Mistral AI</strong> <span class="bn-badge bn-b-free">Free Tier</span></td><td>Cloud</td><td>Yes</td><td>Free tier included; paid tiers for higher limits (~$0.003/min transcription)</td></tr>
       <tr><td><strong>AWS Transcribe</strong></td><td>Cloud</td><td>Yes</td><td>Per minute</td></tr>
       <tr><td><strong>Whisper (local)</strong></td><td>Local</td><td>No</td><td>Free</td></tr>
     </tbody>

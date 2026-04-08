@@ -22,6 +22,7 @@ struct MistralAISettingsView: View {
     @State private var isTestingConnection = false
     @State private var showingAlert = false
     @State private var alertMessage = ""
+    @State private var showingOnboarding = false
 
     private let logger = Logger(subsystem: "com.audiojournal.app", category: "MistralAISettings")
 
@@ -34,6 +35,33 @@ struct MistralAISettingsView: View {
     var body: some View {
         NavigationView {
             Form {
+                if apiKey.isEmpty {
+                    Section {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Image(systemName: "gift.fill")
+                                    .foregroundColor(.orange)
+                                Text("Free Tier Available")
+                                    .font(.headline)
+                                    .foregroundColor(.orange)
+                            }
+
+                            Text("Mistral AI offers a free tier with all models -- no credit card required. Use the guided setup to create an account and get your API key.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Button(action: { showingOnboarding = true }) {
+                                Label("Set Up Free Account", systemImage: "sparkles")
+                                    .fontWeight(.semibold)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.orange)
+                        }
+                    }
+                }
+
                 Section(header: Text("API Configuration")) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("API Key")
@@ -184,6 +212,11 @@ struct MistralAISettingsView: View {
                 Button("OK") { }
             } message: {
                 Text(alertMessage)
+            }
+            .fullScreenCover(isPresented: $showingOnboarding) {
+                MistralOnboardingView(onSetupComplete: {
+                    onConfigurationChanged()
+                })
             }
         }
     }
