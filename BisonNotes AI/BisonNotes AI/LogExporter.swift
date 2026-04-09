@@ -22,14 +22,17 @@ struct LogExporter {
     /// 1. Current session OSLog entries
     /// 2. Persistent error buffer (survives crashes)
     /// 3. MetricKit crash/hang diagnostics (if any)
-    static func exportLogs() throws -> URL {
+    static func exportLogs() async throws -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
 
         var sections = [String]()
 
         // ── Header ──
-        let device = UIDevice.current
+        // Capture UIDevice info on the main thread (UIKit is main-thread-only)
+        let (deviceModel, systemVersion) = await MainActor.run {
+            (UIDevice.current.model, UIDevice.current.systemVersion)
+        }
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
         let previousCrash = AppLog.shared.previousSessionCrashed
@@ -37,7 +40,7 @@ struct LogExporter {
         let header = """
         BisonNotes AI Diagnostic Log
         App Version: \(appVersion) (\(buildNumber))
-        Device: \(device.model), iOS \(device.systemVersion)
+        Device: \(deviceModel), iOS \(systemVersion)
         Exported: \(formatter.string(from: Date()))
         Previous session crashed: \(previousCrash ? "YES" : "No")
         """
@@ -122,11 +125,19 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
     static let shared = LogEmailPresenter()
 
     private var onDismiss: (() -> Void)?
+    private var onPresented: (() -> Void)?
 
-    func presentLogEmail(logFileURL: URL, onDismiss: @escaping () -> Void) {
+    func presentLogEmail(
+        logFileURL: URL,
+        onPresented: @escaping () -> Void = {},
+        onDismiss: @escaping () -> Void
+    ) {
+        self.onPresented = onPresented
         self.onDismiss = onDismiss
 
         guard let rootVC = Self.topViewController() else {
+            // No root VC — signal failure via onDismiss only so the call site
+            // can distinguish "presented" from "failed to find a window".
             onDismiss()
             return
         }
@@ -147,14 +158,20 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
                 mail.addAttachmentData(data, mimeType: "text/plain", fileName: logFileURL.lastPathComponent)
             }
 
-            rootVC.present(mail, animated: true)
+            rootVC.present(mail, animated: true) { [weak self] in
+                self?.onPresented?()
+                self?.onPresented = nil
+            }
         } else {
             // Mail not configured — fall back to share sheet
             let activityVC = UIActivityViewController(activityItems: [logFileURL], applicationActivities: nil)
             activityVC.completionWithItemsHandler = { _, _, _, _ in
                 onDismiss()
             }
-            rootVC.present(activityVC, animated: true)
+            rootVC.present(activityVC, animated: true) { [weak self] in
+                self?.onPresented?()
+                self?.onPresented = nil
+            }
         }
     }
 
@@ -162,6 +179,7 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
         controller.dismiss(animated: true) {
             self.onDismiss?()
             self.onDismiss = nil
+            self.onPresented = nil
         }
     }
 

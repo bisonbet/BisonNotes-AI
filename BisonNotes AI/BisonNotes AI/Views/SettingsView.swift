@@ -25,6 +25,7 @@ struct SettingsView: View {
     @State private var showingAcknowledgements = false
     @State private var showingTroubleshootingWarning = false
     @State private var logExportError: String?
+    @State private var isPreparingLogs = false
 
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = "On Device"
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "On-Device AI"
@@ -109,6 +110,30 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showingAcknowledgements) {
             AcknowledgementsView()
+        }
+        .overlay {
+            if isPreparingLogs {
+                ZStack {
+                    Color.black.opacity(0.25)
+                        .ignoresSafeArea()
+
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                        Text("Preparing logs…")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color(.systemBackground))
+                            .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 2)
+                    )
+                }
+                .transition(.opacity)
+            }
         }
     }
     
@@ -876,11 +901,31 @@ struct SettingsView: View {
                         Spacer()
                         Button(action: {
                             logExportError = nil
-                            do {
-                                let url = try LogExporter.exportLogs()
-                                LogEmailPresenter.shared.presentLogEmail(logFileURL: url) {}
-                            } catch {
-                                logExportError = error.localizedDescription
+                            withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = true }
+
+                            Task {
+                                do {
+                                    let url = try await Task.detached(priority: .userInitiated) {
+                                        try await LogExporter.exportLogs()
+                                    }.value
+
+                                    await MainActor.run {
+                                        LogEmailPresenter.shared.presentLogEmail(
+                                            logFileURL: url,
+                                            onPresented: {
+                                                withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
+                                            }
+                                        ) {
+                                            // Overlay is already gone; called on mail-sheet dismiss
+                                            withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
+                                        }
+                                    }
+                                } catch {
+                                    await MainActor.run {
+                                        withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
+                                        logExportError = error.localizedDescription
+                                    }
+                                }
                             }
                         }) {
                             HStack {
@@ -896,6 +941,8 @@ struct SettingsView: View {
                                     .fill(Color.blue.opacity(0.1))
                             )
                         }
+                        .disabled(isPreparingLogs)
+                        .opacity(isPreparingLogs ? 0.5 : 1.0)
                     }
                     if let logExportError {
                         Text("Error: \(logExportError)")
