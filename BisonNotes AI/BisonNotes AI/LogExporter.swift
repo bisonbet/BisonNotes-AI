@@ -22,14 +22,17 @@ struct LogExporter {
     /// 1. Current session OSLog entries
     /// 2. Persistent error buffer (survives crashes)
     /// 3. MetricKit crash/hang diagnostics (if any)
-    static func exportLogs() throws -> URL {
+    static func exportLogs() async throws -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
 
         var sections = [String]()
 
         // ── Header ──
-        let device = UIDevice.current
+        // Capture UIDevice info on the main thread (UIKit is main-thread-only)
+        let (deviceModel, systemVersion) = await MainActor.run {
+            (UIDevice.current.model, UIDevice.current.systemVersion)
+        }
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
         let previousCrash = AppLog.shared.previousSessionCrashed
@@ -37,7 +40,7 @@ struct LogExporter {
         let header = """
         BisonNotes AI Diagnostic Log
         App Version: \(appVersion) (\(buildNumber))
-        Device: \(device.model), iOS \(device.systemVersion)
+        Device: \(deviceModel), iOS \(systemVersion)
         Exported: \(formatter.string(from: Date()))
         Previous session crashed: \(previousCrash ? "YES" : "No")
         """
@@ -133,7 +136,8 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
         self.onDismiss = onDismiss
 
         guard let rootVC = Self.topViewController() else {
-            onPresented()
+            // No root VC — signal failure via onDismiss only so the call site
+            // can distinguish "presented" from "failed to find a window".
             onDismiss()
             return
         }

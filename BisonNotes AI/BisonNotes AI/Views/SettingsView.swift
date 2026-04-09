@@ -901,27 +901,28 @@ struct SettingsView: View {
                         Spacer()
                         Button(action: {
                             logExportError = nil
-                            isPreparingLogs = true
+                            withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = true }
 
                             Task {
                                 do {
                                     let url = try await Task.detached(priority: .userInitiated) {
-                                        try LogExporter.exportLogs()
+                                        try await LogExporter.exportLogs()
                                     }.value
 
                                     await MainActor.run {
                                         LogEmailPresenter.shared.presentLogEmail(
                                             logFileURL: url,
                                             onPresented: {
-                                                isPreparingLogs = false
+                                                withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
                                             }
                                         ) {
-                                            // no-op
+                                            // Overlay is already gone; called on mail-sheet dismiss
+                                            withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
                                         }
                                     }
                                 } catch {
                                     await MainActor.run {
-                                        isPreparingLogs = false
+                                        withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
                                         logExportError = error.localizedDescription
                                     }
                                 }
@@ -940,6 +941,8 @@ struct SettingsView: View {
                                     .fill(Color.blue.opacity(0.1))
                             )
                         }
+                        .disabled(isPreparingLogs)
+                        .opacity(isPreparingLogs ? 0.5 : 1.0)
                     }
                     if let logExportError {
                         Text("Error: \(logExportError)")
