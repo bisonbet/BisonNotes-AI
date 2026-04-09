@@ -51,11 +51,11 @@ public class LLMContext {
         
         if ret < 0 {
             lastDecodeError = .decodeFailed(code: ret)
-            print("[LLMContext] llama_decode failed with code: \(ret)")
+            AppLog.shared.summarization("[LLMContext] llama_decode failed with code: \(ret)", level: .error)
             return false
         } else if ret > 0 {
             if OnDeviceLLMFeatureFlags.verboseLogging {
-                print("[LLMContext] llama_decode returned \(ret)")
+                AppLog.shared.summarization("[LLMContext] llama_decode returned \(ret)", level: .debug)
             }
         }
         return true

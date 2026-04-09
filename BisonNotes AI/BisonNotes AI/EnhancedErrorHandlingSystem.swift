@@ -21,7 +21,7 @@ class EnhancedErrorHandler: ObservableObject {
     @Published var errorHistory: [EnhancedErrorLogEntry] = []
     @Published var recoverySuggestions: [RecoverySuggestion] = []
     
-    private let logger: os.Logger = os.Logger(subsystem: "com.audiojournal.app", category: "EnhancedErrorHandler")
+    private let logger: os.Logger = os.Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "EnhancedErrorHandler")
     private let maxHistoryCount = 100
     
     // MARK: - Error Handling Methods
@@ -114,7 +114,7 @@ class EnhancedErrorHandler: ObservableObject {
         }
         
         // Log additional context for debugging
-        os.Logger(subsystem: "com.audiojournal.app", category: "EnhancedErrorHandler").debug("Error context: \(context), severity: \(severity.description), recovery suggestions: \(error.recoverySuggestion ?? "None")")
+        os.Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "EnhancedErrorHandler").debug("Error context: \(context), severity: \(severity.description), recovery suggestions: \(error.recoverySuggestion ?? "None")")
     }
     
     private func addToHistory(_ error: EnhancedAppError, context: String) {

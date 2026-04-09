@@ -16,51 +16,51 @@ extension AudioRecorderViewModel {
 	@MainActor
 	func setupWatchSyncHandler() {
 		let watchManager = WatchConnectivityManager.shared
-		print("🔄 Setting up watch sync handler in AudioRecorderViewModel")
+		AppLog.shared.watchConnectivity("Setting up watch sync handler in AudioRecorderViewModel")
 
 		watchManager.onWatchSyncRecordingReceived = { [weak self] audioData, syncRequest in
-			print("📱 AudioRecorderViewModel received watch sync callback for: \(syncRequest.recordingId)")
+			AppLog.shared.watchConnectivity("Received watch sync callback for recording: \(syncRequest.recordingId)")
 			Task { @MainActor in
 				self?.handleWatchSyncRecordingReceived(audioData, syncRequest: syncRequest)
 			}
 		}
 
 		// Also set up the completion callback here since BisonNotesAIApp setup might not be working
-		print("🔄 Also setting up onWatchRecordingSyncCompleted callback in AudioRecorderViewModel")
+		AppLog.shared.watchConnectivity("Setting up onWatchRecordingSyncCompleted callback")
 		watchManager.onWatchRecordingSyncCompleted = { recordingId, success in
-			print("📱 onWatchRecordingSyncCompleted called for: \(recordingId), success: \(success)")
+			AppLog.shared.watchConnectivity("onWatchRecordingSyncCompleted called for: \(recordingId), success: \(success)")
 
 			if success {
 				let coreDataId = "core_data_\(recordingId.uuidString)"
-				print("📱 About to call confirmSyncComplete with success=true")
+				AppLog.shared.watchConnectivity("Calling confirmSyncComplete with success=true", level: .debug)
 				watchManager.confirmSyncComplete(recordingId: recordingId, success: true, coreDataId: coreDataId)
-				print("✅ Confirmed reliable watch transfer in Core Data: \(recordingId)")
+				AppLog.shared.watchConnectivity("Confirmed reliable watch transfer: \(recordingId)")
 			} else {
-				print("📱 About to call confirmSyncComplete with success=false")
+				AppLog.shared.watchConnectivity("Calling confirmSyncComplete with success=false", level: .debug)
 				watchManager.confirmSyncComplete(recordingId: recordingId, success: false)
-				print("❌ Failed to confirm watch transfer: \(recordingId)")
+				AppLog.shared.watchConnectivity("Failed to confirm watch transfer: \(recordingId)", level: .error)
 			}
 		}
 
-		print("✅ AudioRecorderViewModel connected to WatchConnectivityManager sync handler")
+		AppLog.shared.watchConnectivity("AudioRecorderViewModel connected to WatchConnectivityManager sync handler")
 
 		// Verify the callbacks were set
 		if watchManager.onWatchSyncRecordingReceived != nil {
-			print("✅ Callback verification: onWatchSyncRecordingReceived is set")
+			AppLog.shared.watchConnectivity("Callback verification: onWatchSyncRecordingReceived is set", level: .debug)
 		} else {
-			print("❌ Callback verification: onWatchSyncRecordingReceived is nil!")
+			AppLog.shared.watchConnectivity("Callback verification: onWatchSyncRecordingReceived is nil", level: .error)
 		}
 
 		if watchManager.onWatchRecordingSyncCompleted != nil {
-			print("✅ Callback verification: onWatchRecordingSyncCompleted is set")
+			AppLog.shared.watchConnectivity("Callback verification: onWatchRecordingSyncCompleted is set", level: .debug)
 		} else {
-			print("❌ Callback verification: onWatchRecordingSyncCompleted is nil!")
+			AppLog.shared.watchConnectivity("Callback verification: onWatchRecordingSyncCompleted is nil", level: .error)
 		}
 	}
 
 	/// Handle synchronized recording received from watch
 	func handleWatchSyncRecordingReceived(_ audioData: Data, syncRequest: WatchSyncRequest) {
-		print("⌚ Received synchronized recording from watch: \(syncRequest.filename)")
+		AppLog.shared.watchConnectivity("Received synchronized recording from watch: \(syncRequest.recordingId)")
 
 		Task {
 			do {
@@ -96,7 +96,7 @@ extension AudioRecorderViewModel {
 					quality: .whisperOptimized
 				)
 
-				print("✅ Created Core Data entry for watch recording: \(recordingId)")
+				AppLog.shared.watchConnectivity("Created Core Data entry for watch recording: \(recordingId)")
 
 				// Notify UI to refresh recordings list
 				NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
@@ -104,19 +104,19 @@ extension AudioRecorderViewModel {
 				// Recording sync completed successfully - notify the completion callback
 				await MainActor.run {
 					let watchManager = WatchConnectivityManager.shared
-					print("🔍 About to call onWatchRecordingSyncCompleted - callback is nil: \(watchManager.onWatchRecordingSyncCompleted == nil)")
+					AppLog.shared.watchConnectivity("Calling onWatchRecordingSyncCompleted - callback is nil: \(watchManager.onWatchRecordingSyncCompleted == nil)", level: .debug)
 					watchManager.onWatchRecordingSyncCompleted?(syncRequest.recordingId, true)
-					print("✅ Called completion callback for successful watch recording: \(syncRequest.recordingId)")
+					AppLog.shared.watchConnectivity("Called completion callback for successful watch recording: \(syncRequest.recordingId)")
 				}
 
 			} catch {
-				print("❌ Failed to create Core Data entry for watch recording: \(error)")
+				AppLog.shared.watchConnectivity("Failed to create Core Data entry for watch recording: \(error)", level: .error)
 
 				// Recording sync failed - notify the completion callback
 				await MainActor.run {
 					let watchManager = WatchConnectivityManager.shared
 					watchManager.onWatchRecordingSyncCompleted?(syncRequest.recordingId, false)
-					print("❌ Called completion callback for failed watch recording: \(syncRequest.recordingId)")
+					AppLog.shared.watchConnectivity("Called completion callback for failed watch recording: \(syncRequest.recordingId)", level: .error)
 				}
 			}
 		}
@@ -172,7 +172,7 @@ extension AudioRecorderViewModel {
 	}
 
 	func handleWatchError(_ error: WatchErrorMessage) {
-		print("⌚ Watch error received: \(error.message)")
+		AppLog.shared.watchConnectivity("Watch error received: \(error.message)", level: .error)
 
 		// Display error to user
 		errorMessage = "Watch: \(error.message)"
@@ -216,14 +216,14 @@ extension AudioRecorderViewModel {
 
 			// If phone audio is substantial (> 10KB), keep it as primary
 			if phoneAudioSize > 10000 {
-				print("📱 Using phone audio as primary (\(phoneAudioSize) bytes), storing watch audio as backup")
+				AppLog.shared.watchConnectivity("Using phone audio as primary (\(phoneAudioSize) bytes), storing watch audio as backup")
 				await storeWatchAudioAsBackup(watchAudioData, for: recordingId)
 				return phoneAudioURL
 			}
 		}
 
 		// Use watch audio as primary
-		print("⌚ Using watch audio as primary (\(watchAudioData.count) bytes)")
+		AppLog.shared.watchConnectivity("Using watch audio as primary (\(watchAudioData.count) bytes)")
 		let watchAudioURL = try await createWatchAudioFile(from: watchAudioData, recordingId: recordingId)
 
 		// Store phone audio as backup if it exists
@@ -280,11 +280,11 @@ extension AudioRecorderViewModel {
 			// Write to file
 			try audioFile.write(from: audioBuffer)
 
-			print("✅ Created watch audio file: \(watchAudioURL.lastPathComponent)")
+			AppLog.shared.watchConnectivity("Created watch audio file")
 			return watchAudioURL
 
 		} catch {
-			print("❌ Failed to create watch audio file: \(error)")
+			AppLog.shared.watchConnectivity("Failed to create watch audio file: \(error)", level: .error)
 			throw AudioIntegrationError.fileCreationFailed(error.localizedDescription)
 		}
 	}
@@ -296,7 +296,7 @@ extension AudioRecorderViewModel {
 			let backupURL = documentsURL.appendingPathComponent("watch_backup_\(recordingId).pcm")
 
 			try watchAudioData.write(to: backupURL)
-			print("✅ Stored watch audio backup: \(backupURL.lastPathComponent)")
+			AppLog.shared.watchConnectivity("Stored watch audio backup")
 
 			// Optionally store metadata about the backup
 			let metadataURL = documentsURL.appendingPathComponent("watch_backup_\(recordingId).json")
@@ -314,7 +314,7 @@ extension AudioRecorderViewModel {
 			try metadataData.write(to: metadataURL)
 
 		} catch {
-			print("❌ Failed to store watch audio backup: \(error)")
+			AppLog.shared.watchConnectivity("Failed to store watch audio backup: \(error)", level: .error)
 		}
 	}
 
@@ -325,10 +325,10 @@ extension AudioRecorderViewModel {
 			let backupURL = documentsURL.appendingPathComponent("phone_backup_\(recordingId).m4a")
 
 			try FileManager.default.copyItem(at: phoneAudioURL, to: backupURL)
-			print("✅ Stored phone audio backup: \(backupURL.lastPathComponent)")
+			AppLog.shared.watchConnectivity("Stored phone audio backup")
 
 		} catch {
-			print("❌ Failed to store phone audio backup: \(error)")
+			AppLog.shared.watchConnectivity("Failed to store phone audio backup: \(error)", level: .error)
 		}
 	}
 }

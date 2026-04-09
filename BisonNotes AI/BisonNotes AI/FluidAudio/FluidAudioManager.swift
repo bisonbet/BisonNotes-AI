@@ -25,19 +25,33 @@ final class FluidAudioManager: ObservableObject {
 
     private init() {
         let downloaded = UserDefaults.standard.bool(forKey: FluidAudioModelInfo.SettingsKeys.modelDownloaded)
-        guard downloaded else { return }
+        guard downloaded else {
+            // UserDefaults says not downloaded — but check if files exist on disk anyway
+            // (handles case where UserDefaults was reset but model files survived an update)
+            if Self.modelFilesExistOnDisk() {
+                isModelReady = true
+                UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.modelDownloaded)
+                // We don't know which version, so check both
+                let selectedVersion = FluidAudioModelInfo.selectedModelVersion.rawValue
+                UserDefaults.standard.set(selectedVersion, forKey: FluidAudioModelInfo.SettingsKeys.downloadedModelVersion)
+                startNetworkMonitoring()
+            }
+            return
+        }
 
         let downloadedVersion = UserDefaults.standard.string(forKey: FluidAudioModelInfo.SettingsKeys.downloadedModelVersion)
         let selectedVersion = FluidAudioModelInfo.selectedModelVersion.rawValue
 
         if let dv = downloadedVersion {
-            // Version tracking present: only mark ready if versions match
             if dv == selectedVersion {
                 isModelReady = true
             } else {
-                // Selected version changed since last download — clear stale state
-                UserDefaults.standard.set(false, forKey: FluidAudioModelInfo.SettingsKeys.modelDownloaded)
-                UserDefaults.standard.removeObject(forKey: FluidAudioModelInfo.SettingsKeys.downloadedModelVersion)
+                // Selected version changed — but the downloaded version's files may still be on disk.
+                // Keep the downloaded version available rather than forcing a re-download.
+                // Update the selected version to match what's actually on disk.
+                UserDefaults.standard.set(dv, forKey: FluidAudioModelInfo.SettingsKeys.selectedModelVersion)
+                isModelReady = true
+                AppLog.shared.transcription("FluidAudio: kept downloaded \(dv) model (selected was \(selectedVersion))")
             }
         } else {
             // Legacy install without version tracking: trust the downloaded flag
@@ -45,6 +59,19 @@ final class FluidAudioManager: ObservableObject {
         }
 
         startNetworkMonitoring()
+    }
+
+    /// Check if FluidAudio model files exist on disk regardless of UserDefaults state.
+    private static func modelFilesExistOnDisk() -> Bool {
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return false
+        }
+        let modelsDir = appSupport.appendingPathComponent("FluidAudio").appendingPathComponent("Models")
+        // Check for any version subdirectory with contents
+        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: modelsDir.path) else {
+            return false
+        }
+        return !contents.isEmpty
     }
 
     /// Whether the FluidAudio SDK is linked in this build. Compile-time constant, safe to access from any isolation domain.
@@ -196,10 +223,10 @@ final class FluidAudioManager: ObservableObject {
     func deleteModel() {
         #if canImport(FluidAudio)
         asrManager = nil
-        // Clear cached model files if FluidAudio stores them in a known location
-        if let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
-            let fluidAudioCache = cacheDir.appendingPathComponent("FluidAudio")
-            try? FileManager.default.removeItem(at: fluidAudioCache)
+        // FluidAudio SDK stores ASR models in Application Support, not Caches
+        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            let fluidAudioDir = appSupport.appendingPathComponent("FluidAudio")
+            try? FileManager.default.removeItem(at: fluidAudioDir)
         }
         #endif
         loadedModelVersion = nil
@@ -216,7 +243,7 @@ final class FluidAudioManager: ObservableObject {
         asrManager = nil
         #endif
         loadedModelVersion = nil
-        print("[FluidAudio] Model unloaded from memory")
+        AppLog.shared.transcription("FluidAudio model unloaded from memory")
     }
 
     // MARK: - Transcription

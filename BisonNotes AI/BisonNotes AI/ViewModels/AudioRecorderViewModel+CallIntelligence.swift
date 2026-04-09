@@ -34,26 +34,26 @@ extension AudioRecorderViewModel: CXCallObserverDelegate {
 	@MainActor
 	private func handleCallStarted() {
 		callInterruptionStartTime = Date()
-		print("📞 Call started, tracking duration for auto-resume decision")
+		AppLog.shared.audioSession("Call started, tracking duration for auto-resume decision")
 	}
 
 	@MainActor
 	private func handleCallEnded(call: CXCall) async {
 		// Only process if we're currently in an interrupted state due to phone call
 		guard case .interrupted(.phoneCall, let startedAt) = recordingState else {
-			print("📞 Call ended but not in phoneCall interrupted state, ignoring")
+			AppLog.shared.audioSession("Call ended but not in phoneCall interrupted state, ignoring", level: .debug)
 			return
 		}
 
 		// Calculate call duration
 		let callDuration = Date().timeIntervalSince(callInterruptionStartTime ?? startedAt)
-		print("📞 Call ended after \(callDuration) seconds")
+		AppLog.shared.audioSession("Call ended after \(Int(callDuration))s")
 
 		// Don't attempt to resume while the app is backgrounded — the audio session is
 		// owned by the Phone app and any resume attempt will produce a bad segment.
 		// The interruption .ended handler or foreground handler will do the actual resume.
 		if appIsBackgrounding {
-			print("📞 App is backgrounded — deferring resume to interruption/foreground handler (duration: \(callDuration)s)")
+			AppLog.shared.audioSession("App is backgrounded - deferring resume to interruption/foreground handler (duration: \(Int(callDuration))s)")
 			deferredCallDuration = callDuration
 			callInterruptionStartTime = nil
 			return
@@ -61,14 +61,14 @@ extension AudioRecorderViewModel: CXCallObserverDelegate {
 
 		if callDuration < SHORT_CALL_THRESHOLD {
 			// Short call (< 3 minutes) - auto resume
-			print("✅ Short call detected (<3 min), auto-resuming recording")
+			AppLog.shared.audioSession("Short call detected (<3 min), auto-resuming recording")
 			recordingState = .recording
 			if let url = interruptionRecordingURL {
 				await resumeRecordingAfterInterruption(url: url)
 			}
 		} else {
 			// Long call (≥ 3 minutes) - ask user
-			print("⏱️ Long call detected (≥3 min), asking user whether to resume")
+			AppLog.shared.audioSession("Long call detected (>=3 min), asking user whether to resume")
 			recordingState = .waitingForUserDecision(callDuration: callDuration)
 			await promptUserForResumeDecision(callDuration: callDuration)
 		}
@@ -115,18 +115,18 @@ extension AudioRecorderViewModel: CXCallObserverDelegate {
 
 		do {
 			try await UNUserNotificationCenter.current().add(request)
-			print("✅ Sent user notification for resume decision")
+			AppLog.shared.audioSession("Sent user notification for resume decision")
 
 			// Set timeout: if user doesn't respond in 30 seconds, stop recording
 			try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds
 
 			if case .waitingForUserDecision = recordingState {
 				// User didn't respond, stop recording gracefully
-				print("⏱️ User didn't respond to resume prompt, stopping recording")
+				AppLog.shared.audioSession("User didn't respond to resume prompt, stopping recording")
 				handleInterruptedRecording(reason: "Call exceeded 3 minutes, user did not resume")
 			}
 		} catch {
-			print("❌ Failed to send resume notification: \(error)")
+			AppLog.shared.audioSession("Failed to send resume notification: \(error)", level: .error)
 			// Fallback: auto-resume after short delay
 			try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
 			if case .waitingForUserDecision = recordingState {

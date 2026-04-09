@@ -24,7 +24,7 @@ struct MistralAISettingsView: View {
     @State private var alertMessage = ""
     @State private var showingOnboarding = false
 
-    private let logger = Logger(subsystem: "com.audiojournal.app", category: "MistralAISettings")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "MistralAISettings")
 
     let onConfigurationChanged: () -> Void
 

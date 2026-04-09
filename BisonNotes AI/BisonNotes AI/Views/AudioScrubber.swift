@@ -122,7 +122,7 @@ struct AudioScrubber: View {
             currentTime: 125,
             duration: 300,
             onSeek: { time in
-                print("Seek to: \(time)")
+                AppLog.shared.recording("Seek to: \(time)", level: .debug)
             }
         )
         .padding()
@@ -131,7 +131,7 @@ struct AudioScrubber: View {
             currentTime: 0,
             duration: 3725, // Over 1 hour
             onSeek: { time in
-                print("Seek to: \(time)")
+                AppLog.shared.recording("Seek to: \(time)", level: .debug)
             }
         )
         .padding()

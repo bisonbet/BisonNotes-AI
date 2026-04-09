@@ -31,11 +31,11 @@ final class RTFExportService {
         locationData: LocationData?,
         locationAddress: String?
     ) throws -> Data {
-        print("✅ RTFExportService: Starting document generation for \(summaryData.recordingName)")
+        AppLog.shared.fileManagement("RTFExportService: Starting document generation")
 
         // Validate input data
         guard !summaryData.recordingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            print("❌ RTFExportService: Invalid summary data - recording name is empty")
+            AppLog.shared.fileManagement("RTFExportService: Invalid summary data - recording name is empty", level: .error)
             throw RTFExportError.invalidDocumentData
         }
         
@@ -78,14 +78,14 @@ final class RTFExportService {
             // Check document size before conversion
             let documentLength = document.length
             guard documentLength > 0 else {
-                print("❌ RTFExportService: Generated document is empty")
+                AppLog.shared.fileManagement("RTFExportService: Generated document is empty", level: .error)
                 throw RTFExportError.invalidDocumentData
             }
 
             // Conservative memory limit check (10MB of attributed string)
             let estimatedMemoryUsage = documentLength * 100 // Rough estimate
             if estimatedMemoryUsage > 10_000_000 {
-                print("❌ RTFExportService: Document too large, estimated memory usage: \(estimatedMemoryUsage) bytes")
+                AppLog.shared.fileManagement("RTFExportService: Document too large, estimated memory usage: \(estimatedMemoryUsage) bytes", level: .error)
                 throw RTFExportError.memoryLimitExceeded
             }
 
@@ -93,21 +93,21 @@ final class RTFExportService {
                 .documentType: NSAttributedString.DocumentType.rtf
             ]
 
-            print("✅ RTFExportService: Converting attributed string to RTF document data")
+            AppLog.shared.fileManagement("RTFExportService: Converting attributed string to RTF document data", level: .debug)
             let data = try document.data(from: NSRange(location: 0, length: documentLength), documentAttributes: documentAttributes)
 
             guard !data.isEmpty else {
-                print("❌ RTFExportService: Generated document data is empty")
+                AppLog.shared.fileManagement("RTFExportService: Generated document data is empty", level: .error)
                 throw RTFExportError.invalidDocumentData
             }
 
-            print("✅ RTFExportService: Successfully generated RTF document (\(data.count) bytes)")
+            AppLog.shared.fileManagement("RTFExportService: Successfully generated RTF document (\(data.count) bytes)")
             return data
 
         } catch let error as RTFExportError {
             throw error
         } catch {
-            print("❌ RTFExportService: Document generation failed with error: \(error.localizedDescription)")
+            AppLog.shared.fileManagement("RTFExportService: Document generation failed: \(error.localizedDescription)", level: .error)
             throw RTFExportError.documentGenerationFailed(error.localizedDescription)
         }
     }

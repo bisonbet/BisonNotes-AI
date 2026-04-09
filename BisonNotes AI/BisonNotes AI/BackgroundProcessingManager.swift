@@ -514,14 +514,10 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     func debugJobStatus() {
-        print("🔍 BackgroundProcessingManager Debug Status:")
-        print("   - Active jobs count: \(activeJobs.count)")
-        print("   - Current job: \(currentJob?.recordingName ?? "None")")
-        print("   - Processing status: \(processingStatus)")
-        print("   - Background task ID: \(backgroundTaskID.rawValue)")
-        
+        AppLog.shared.backgroundProcessing("Debug Status: activeJobs=\(activeJobs.count), currentJob=\(currentJob != nil), status=\(processingStatus), bgTaskID=\(backgroundTaskID.rawValue)", level: .debug)
+
         for (index, job) in activeJobs.enumerated() {
-            print("   - Job \(index): \(job.recordingName) - \(job.status) - Progress: \(job.progress)")
+            AppLog.shared.backgroundProcessing("Job \(index): status=\(job.status), progress=\(job.progress)", level: .debug)
         }
     }
     
@@ -538,9 +534,9 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - External Job Tracking
 
     func trackExternalJob(_ job: ProcessingJob) async {
-        print("📊 trackExternalJob called: \(job.recordingName) (\(job.type.displayName)) - activeJobs count before: \(activeJobs.count)")
+        AppLog.shared.backgroundProcessing("trackExternalJob: \(job.type.displayName) - activeJobs count before: \(activeJobs.count)", level: .debug)
         await addJob(job)
-        print("📊 trackExternalJob done: activeJobs count after: \(activeJobs.count)")
+        AppLog.shared.backgroundProcessing("trackExternalJob done: activeJobs count after: \(activeJobs.count)", level: .debug)
         objectWillChange.send()
     }
 
@@ -549,7 +545,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     func updateExternalJob(_ job: ProcessingJob) async {
-        print("📊 updateExternalJob: \(job.recordingName) status=\(job.status.displayName) - activeJobs count: \(activeJobs.count)")
+        AppLog.shared.backgroundProcessing("updateExternalJob: status=\(job.status.displayName), activeJobs count: \(activeJobs.count)", level: .debug)
         await updateJob(job)
         // Clean up task handle if job is terminal
         if job.status.isTerminal {
@@ -580,10 +576,10 @@ class BackgroundProcessingManager: ObservableObject {
         }
 
         if !existingJobs.isEmpty {
-            print("⚠️ Job already exists for \(job.recordingName) (\(job.type.displayName)). Skipping duplicate. Existing: \(existingJobs.map { "\($0.id) status=\($0.status.displayName)" })")
+            AppLog.shared.backgroundProcessing("Job already exists for \(job.type.displayName). Skipping duplicate. Existing: \(existingJobs.map { "\($0.id) status=\($0.status.displayName)" })")
             return
         }
-        print("📊 addJob: No duplicate found, adding \(job.recordingName) (\(job.type.displayName)) id=\(job.id)")
+        AppLog.shared.backgroundProcessing("addJob: adding \(job.type.displayName) id=\(job.id)", level: .debug)
 
         // Create Core Data entry
         let jobEntry = coreDataManager.createProcessingJob(
@@ -613,7 +609,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Remove any existing transcription jobs for this recording (to allow reruns)
         for existingJob in existingJobs {
             if let index = activeJobs.firstIndex(where: { $0.id == existingJob.id }) {
-                print("🔄 Removing existing transcription job for \(job.recordingName) to allow rerun")
+                AppLog.shared.backgroundProcessing("Removing existing transcription job to allow rerun")
                 activeJobs.remove(at: index)
                 
                 // Also remove from Core Data
@@ -639,7 +635,7 @@ class BackgroundProcessingManager: ObservableObject {
         coreDataManager.updateProcessingJob(jobEntry)
 
         activeJobs.append(job)
-        print("✅ Added new transcription job for \(job.recordingName) (replacing existing job)")
+        AppLog.shared.backgroundProcessing("Added new transcription job (replacing existing job)")
     }
     
     private func updateJob(_ updatedJob: ProcessingJob) async {
@@ -691,14 +687,7 @@ class BackgroundProcessingManager: ObservableObject {
         let processingJob = nextJob.withStatus(.processing)
         await updateJob(processingJob)
 
-        print("🚀 Starting job processing: \(nextJob.type.displayName) for \(nextJob.recordingName)")
-        print("   - Engine: \(nextJob.type.engineName)")
-        if let model = nextJob.modelName {
-            print("   - Model: \(model)")
-        }
-        print("   - Recording URL: \(nextJob.recordingURL)")
-        print("   - Audio source: \(nextJob.audioSourceURL)")
-        print("   - File exists: \(FileManager.default.fileExists(atPath: nextJob.audioSourceURL.path))")
+        AppLog.shared.backgroundProcessing("Starting job: \(nextJob.type.displayName), engine=\(nextJob.type.engineName)\(nextJob.modelName.map { ", model=\($0)" } ?? ""), fileExists=\(FileManager.default.fileExists(atPath: nextJob.audioSourceURL.path))")
 
         // Store the task handle so it can be cancelled
         currentTaskHandle = Task {
@@ -712,10 +701,10 @@ class BackgroundProcessingManager: ObservableObject {
 
                 switch nextJob.type {
                 case .transcription(let engine):
-                    print("📝 Processing transcription job with \(engine.rawValue)")
+                    AppLog.shared.backgroundProcessing("Processing transcription job with \(engine.rawValue)")
                     try await processTranscriptionJob(processingJob, engine: engine)
                 case .summarization(let engine):
-                    print("📋 Processing summarization job with \(engine)")
+                    AppLog.shared.backgroundProcessing("Processing summarization job with \(engine)")
                     try await processSummarizationJob(processingJob, engine: engine)
                 }
 
@@ -725,7 +714,7 @@ class BackgroundProcessingManager: ObservableObject {
                 let completedJob = processingJob.withStatus(.completed).withProgress(1.0)
                 await updateJob(completedJob)
 
-                print("✅ Job completed: \(nextJob.type.displayName) for \(nextJob.recordingName)")
+                AppLog.shared.backgroundProcessing("Job completed: \(nextJob.type.displayName)")
 
                 // Post-processing cleanup
                 await performCleanupTasks(for: processingJob)
@@ -736,12 +725,12 @@ class BackgroundProcessingManager: ObservableObject {
                 // stale job monitor), don't overwrite it — just clear the cancellation reason.
                 let currentStatus = activeJobs.first(where: { $0.id == nextJob.id })?.status
                 if let currentStatus, currentStatus.isTerminal {
-                    print("⏭️ Job already terminal (\(currentStatus.displayName)): \(nextJob.type.displayName) for \(nextJob.recordingName)")
+                    AppLog.shared.backgroundProcessing("Job already terminal (\(currentStatus.displayName)): \(nextJob.type.displayName)")
                     cancellationReason = nil
                 } else if let reason = cancellationReason {
                     let interruptedJob = processingJob.withStatus(.interrupted(reason))
                     await updateJob(interruptedJob)
-                    print("⏸️ Job interrupted (\(reason)): \(nextJob.type.displayName) for \(nextJob.recordingName)")
+                    AppLog.shared.backgroundProcessing("Job interrupted (\(reason)): \(nextJob.type.displayName)")
 
                     // Send detailed notification for interruptions
                     let jobTypeDesc = switch nextJob.type {
@@ -757,7 +746,7 @@ class BackgroundProcessingManager: ObservableObject {
                 } else {
                     let cancelledJob = processingJob.withStatus(.cancelled)
                     await updateJob(cancelledJob)
-                    print("🛑 Job cancelled: \(nextJob.type.displayName) for \(nextJob.recordingName)")
+                    AppLog.shared.backgroundProcessing("Job cancelled: \(nextJob.type.displayName)")
                 }
 
             } catch {
@@ -768,14 +757,12 @@ class BackgroundProcessingManager: ObservableObject {
                 // stale job monitor), don't overwrite it or attempt recovery.
                 let currentStatus = activeJobs.first(where: { $0.id == nextJob.id })?.status
                 if let currentStatus, currentStatus.isTerminal {
-                    print("⏭️ Job already terminal (\(currentStatus.displayName)): \(nextJob.type.displayName) for \(nextJob.recordingName) (error was: \(error.localizedDescription))")
+                    AppLog.shared.backgroundProcessing("Job already terminal (\(currentStatus.displayName)): \(nextJob.type.displayName), error was: \(error.localizedDescription)", level: .error)
                 } else {
                     let failedJob = processingJob.withStatus(.failed(error.localizedDescription))
                     await updateJob(failedJob)
 
-                    print("❌ Job failed: \(nextJob.type.displayName) for \(nextJob.recordingName)")
-                    print("   - Error: \(error)")
-                    print("   - Localized description: \(error.localizedDescription)")
+                    AppLog.shared.backgroundProcessing("Job failed: \(nextJob.type.displayName), error: \(error.localizedDescription)", level: .error)
 
                     // Save detailed error log
                     await saveErrorLog(for: processingJob, error: error)
@@ -798,7 +785,7 @@ class BackgroundProcessingManager: ObservableObject {
                 let sourceURL = nextJob.audioSourceURL
                 if FileManager.default.fileExists(atPath: sourceURL.path) {
                     try? FileManager.default.removeItem(at: sourceURL)
-                    print("🗑️ Cleaned up source audio file after job ended: \(sourcePath)")
+                    AppLog.shared.backgroundProcessing("Cleaned up source audio file after job ended")
                 }
             }
 
@@ -827,7 +814,7 @@ class BackgroundProcessingManager: ObservableObject {
     private func applyBatteryOptimization(for job: ProcessingJob) async {
         // Apply battery-aware settings based on current conditions
         if performanceOptimizer.batteryInfo.shouldOptimizeForBattery {
-            print("🔋 Applying battery optimization for job: \(job.recordingName)")
+            AppLog.shared.backgroundProcessing("Applying battery optimization for job")
             
             // Reduce processing frequency
             try? await Task.sleep(nanoseconds: 100_000_000) // 100ms delay
@@ -835,7 +822,7 @@ class BackgroundProcessingManager: ObservableObject {
             // Use lower quality settings for battery optimization
             if case .transcription(let engine) = job.type {
                 // Adjust engine settings for battery optimization
-                print("🔋 Using battery-optimized settings for \(engine.rawValue)")
+                AppLog.shared.backgroundProcessing("Using battery-optimized settings for \(engine.rawValue)")
             }
         }
     }
@@ -848,7 +835,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Use the source audio URL (cleaned file) if available, otherwise the recording URL
         let audioURL = job.audioSourceURL
         if job.sourceAudioPath != nil {
-            print("🎛️ Using cleaned audio source: \(job.sourceAudioPath!) (recording identity: \(job.recordingPath))")
+            AppLog.shared.backgroundProcessing("Using cleaned audio source for job", level: .debug)
         }
 
         // Update progress
@@ -934,16 +921,16 @@ class BackgroundProcessingManager: ObservableObject {
                 if let recordingEntry = appCoordinator.getRecording(url: job.recordingURL),
                    let entryId = recordingEntry.id {
                     recordingId = entryId
-                    print("🆔 Found recording ID for reassembly: \(recordingId)")
+                    AppLog.shared.backgroundProcessing("Found recording ID for reassembly", level: .debug)
                 } else {
-                    print("❌ No recording found for URL: \(job.recordingURL), using new UUID")
+                    AppLog.shared.backgroundProcessing("No recording found for reassembly, using new UUID", level: .error)
                     recordingId = UUID()
                 }
             } else {
-                print("❌ AppCoordinator not available")
+                AppLog.shared.backgroundProcessing("AppCoordinator not available for reassembly", level: .error)
                 recordingId = UUID()
             }
-            
+
             let reassemblyResult = try await chunkingService.reassembleTranscript(
                 from: transcriptChunks,
                 originalURL: job.recordingURL,
@@ -972,16 +959,16 @@ class BackgroundProcessingManager: ObservableObject {
                 if let recordingEntry = appCoordinator.getRecording(url: job.recordingURL),
                    let entryId = recordingEntry.id {
                     recordingId = entryId
-                    print("🆔 Found recording ID for single chunk: \(recordingId)")
+                    AppLog.shared.backgroundProcessing("Found recording ID for single chunk", level: .debug)
                 } else {
-                    print("❌ No recording found for URL: \(job.recordingURL), using new UUID")
+                    AppLog.shared.backgroundProcessing("No recording found for single chunk, using new UUID", level: .error)
                     recordingId = UUID()
                 }
             } else {
-                print("❌ AppCoordinator not available")
+                AppLog.shared.backgroundProcessing("AppCoordinator not available for single chunk", level: .error)
                 recordingId = UUID()
             }
-            
+
             let transcriptData = TranscriptData(
                 recordingId: recordingId,
                 recordingURL: job.recordingURL,
@@ -1001,11 +988,7 @@ class BackgroundProcessingManager: ObservableObject {
         let hasTranscriptContent = transcriptChunks.contains { !$0.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         
         if !hasTranscriptContent {
-            print("❌ WARNING: Transcription job completed but no transcript content found!")
-            print("   - Total chunks: \(transcriptChunks.count)")
-            for (index, chunk) in transcriptChunks.enumerated() {
-                print("   - Chunk \(index): '\(chunk.transcript.prefix(50))...' (\(chunk.transcript.count) chars)")
-            }
+            AppLog.shared.backgroundProcessing("Transcription job completed but no transcript content found! Total chunks: \(transcriptChunks.count)", level: .error)
             
             // Mark as failed instead of completed
             let failedJob = job.withStatus(.failed("No transcript content generated")).withProgress(1.0)
@@ -1028,42 +1011,28 @@ class BackgroundProcessingManager: ObservableObject {
             body: "Successfully transcribed \(job.recordingName)"
         )
         
-        print("✅ Transcription job completed for: \(job.recordingName) with valid content")
+        AppLog.shared.backgroundProcessing("Transcription job completed with valid content")
     }
     
     private func transcribeChunk(_ chunk: AudioChunk, engine: TranscriptionEngine) async throws -> TranscriptionResult {
-        let message = "🎯 Starting transcription of chunk: \(chunk.chunkURL.lastPathComponent) with engine: \(engine.rawValue)"
-        print(message)
-        
-        // Enhanced chunk diagnostics
-        print("🔍 Chunk details:")
-        print("   - ID: \(chunk.id)")
-        print("   - Sequence: \(chunk.sequenceNumber)")
-        print("   - Duration: \(chunk.duration)s (\(chunk.duration/60) minutes)")
-        print("   - Start time: \(chunk.startTime)s")
-        print("   - End time: \(chunk.endTime)s")
-        print("   - File size: \(chunk.fileSize) bytes (\(chunk.fileSize/1024/1024) MB)")
-        print("   - Original URL: \(chunk.originalURL.lastPathComponent)")
-        print("   - Chunk URL: \(chunk.chunkURL.lastPathComponent)")
-        print("   - URLs match: \(chunk.originalURL == chunk.chunkURL)")
+        AppLog.shared.backgroundProcessing("Starting transcription of chunk with engine: \(engine.rawValue)", level: .debug)
+        AppLog.shared.backgroundProcessing("Chunk details: seq=\(chunk.sequenceNumber), duration=\(chunk.duration)s, size=\(chunk.fileSize) bytes, isWholeFile=\(chunk.originalURL == chunk.chunkURL)", level: .debug)
         
         // Verify chunk file exists and has content
         guard FileManager.default.fileExists(atPath: chunk.chunkURL.path) else {
             let error = BackgroundProcessingError.fileNotFound("Chunk file not found: \(chunk.chunkURL.path)")
-            let errorMsg = "❌ Chunk file missing: \(chunk.chunkURL.path)"
-            print(errorMsg)
+            AppLog.shared.backgroundProcessing("Chunk file missing: \(chunk.chunkURL.lastPathComponent)", level: .error)
             throw error
         }
         
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: chunk.chunkURL.path)[.size] as? Int64) ?? 0
         if fileSize == 0 {
             let error = BackgroundProcessingError.invalidAudioFormat("Chunk file is empty: \(chunk.chunkURL.path)")
-            let errorMsg = "❌ Chunk file is empty: \(chunk.chunkURL.path)"
-            print(errorMsg)
+            AppLog.shared.backgroundProcessing("Chunk file is empty: \(chunk.chunkURL.lastPathComponent)", level: .error)
             throw error
         }
         
-        print("📁 Chunk file verified: \(fileSize) bytes, duration: \(chunk.duration)s")
+        AppLog.shared.backgroundProcessing("Chunk file verified: \(fileSize) bytes, duration: \(chunk.duration)s", level: .debug)
         
         // Get the recording ID for this chunk
         let recordingId: UUID
@@ -1074,7 +1043,7 @@ class BackgroundProcessingManager: ObservableObject {
         } else {
             // Fallback to new UUID if recording not found
             recordingId = UUID()
-            print("⚠️ Recording not found in Core Data for chunk, using fallback UUID: \(recordingId)")
+            AppLog.shared.backgroundProcessing("Recording not found in Core Data for chunk, using fallback UUID", level: .debug)
         }
         
         let startTime = Date()
@@ -1085,7 +1054,7 @@ class BackgroundProcessingManager: ObservableObject {
             case .notConfigured:
                 throw BackgroundProcessingError.processingFailed("Transcription engine not configured. Please configure a transcription engine in Settings.")
             case .openAI:
-                print("🤖 Using OpenAI for transcription")
+                AppLog.shared.backgroundProcessing("Using OpenAI for transcription")
                 let config = getOpenAIConfig()
                 let service = OpenAITranscribeService(config: config, chunkingService: chunkingService)
                 let openAIResult = try await service.transcribeAudioFile(at: chunk.chunkURL, recordingId: recordingId)
@@ -1112,7 +1081,7 @@ class BackgroundProcessingManager: ObservableObject {
                 result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .awsTranscribe)
 
             case .fluidAudio:
-                print("🤖 Using FluidAudio (Parakeet) for transcription")
+                AppLog.shared.backgroundProcessing("Using FluidAudio (Parakeet) for transcription")
                 let fluidAudioManager = FluidAudioManager.shared
                 guard fluidAudioManager.isAvailableInCurrentBuild else {
                     throw BackgroundProcessingError.processingFailed("FluidAudio SDK is not available in this build.")
@@ -1123,7 +1092,7 @@ class BackgroundProcessingManager: ObservableObject {
                 result = try await fluidAudioManager.transcribe(audioURL: chunk.chunkURL)
 
             case .mistralAI:
-                print("🤖 Using Mistral AI for transcription")
+                AppLog.shared.backgroundProcessing("Using Mistral AI for transcription")
                 let config = getMistralTranscribeConfig()
                 let service = MistralTranscribeService(config: config, chunkingService: chunkingService)
                 let mistralResult = try await service.transcribeAudioFile(at: chunk.chunkURL, recordingId: recordingId)
@@ -1141,22 +1110,15 @@ class BackgroundProcessingManager: ObservableObject {
             }
             
             let processingTime = Date().timeIntervalSince(startTime)
-            print("⏱️ Transcription completed in \(processingTime)s")
+            AppLog.shared.backgroundProcessing("Transcription completed in \(String(format: "%.1f", processingTime))s")
             
             // Validate result
             if result.fullText.isEmpty {
-                let warningMsg = "⚠️ WARNING: Transcription result is empty! Success: \(result.success), Segments: \(result.segments.count)"
-                print(warningMsg)
-                if let error = result.error {
-                    print("   - Error: \(error.localizedDescription)")
-                }
-                
-                // Check if this is a silent audio chunk or processing issue
+                AppLog.shared.backgroundProcessing("Transcription result is empty. Success: \(result.success), Segments: \(result.segments.count)\(result.error.map { ", error: \($0.localizedDescription)" } ?? "")")
                 if result.success && result.segments.count > 0 {
-                    print("   - Audio chunk processed successfully but contains no speech content")
-                    print("   - This may indicate a silent audio segment or background noise only")
+                    AppLog.shared.backgroundProcessing("Audio chunk contains no speech content (silent or background noise)", level: .debug)
                 } else {
-                    print("   - This may indicate a processing error or invalid audio format")
+                    AppLog.shared.backgroundProcessing("Empty result may indicate processing error or invalid audio format", level: .error)
                 }
                 
                 // Return a result indicating no speech detected instead of empty transcription
@@ -1169,20 +1131,17 @@ class BackgroundProcessingManager: ObservableObject {
                     error: nil
                 )
             } else {
-                let successMsg = "✅ Transcription successful: \(result.fullText.count) characters, \(result.segments.count) segments"
-                print(successMsg)
+                AppLog.shared.backgroundProcessing("Transcription successful: \(result.fullText.count) characters, \(result.segments.count) segments")
             }
             
             return result
             
         } catch is CancellationError {
-            print("🛑 Transcription cancelled for \(engine.rawValue)")
+            AppLog.shared.backgroundProcessing("Transcription cancelled for \(engine.rawValue)")
             throw CancellationError()
         } catch {
             let processingTime = Date().timeIntervalSince(startTime)
-            print("❌ Transcription failed after \(processingTime)s: \(error)")
-            print("   - Error type: \(type(of: error))")
-            print("   - Localized: \(error.localizedDescription)")
+            AppLog.shared.backgroundProcessing("Transcription failed after \(String(format: "%.1f", processingTime))s: \(error.localizedDescription)", level: .error)
 
             // Re-throw with more context
             throw BackgroundProcessingError.processingFailed("Transcription failed for \(engine.rawValue): \(error.localizedDescription)")
@@ -1229,7 +1188,7 @@ class BackgroundProcessingManager: ObservableObject {
         let protocolString = UserDefaults.standard.string(forKey: "whisperProtocol") ?? WhisperProtocol.rest.rawValue
         let selectedProtocol = WhisperProtocol(rawValue: protocolString) ?? .rest
         
-        print("🔍 BackgroundProcessingManager - Whisper config: serverURL=\(serverURL), port=\(port), protocol=\(selectedProtocol.rawValue)")
+        AppLog.shared.backgroundProcessing("Whisper config: port=\(port), protocol=\(selectedProtocol.rawValue)", level: .debug)
         
         // Use default port if not set (UserDefaults.integer returns 0 if key doesn't exist)
         let effectivePort = port > 0 ? port : (selectedProtocol == .wyoming ? 10300 : 9000)
@@ -1264,13 +1223,13 @@ class BackgroundProcessingManager: ObservableObject {
     private func ensureRecordingExists(recordingURL: URL, recordingName: String) async {
         if let appCoordinator = enhancedFileManager.getCoordinator() {
             // Check if recording already exists
-            if let existingRecording = appCoordinator.getRecording(url: recordingURL) {
-                print("✅ Recording already exists in Core Data: \(existingRecording.recordingName ?? "unknown")")
+            if appCoordinator.getRecording(url: recordingURL) != nil {
+                AppLog.shared.backgroundProcessing("Recording already exists in Core Data")
                 return
             }
             
             // Create recording entry if it doesn't exist
-            print("📝 Creating recording entry in Core Data for: \(recordingName)")
+            AppLog.shared.backgroundProcessing("Creating recording entry in Core Data")
             
             // Get file metadata
             let fileSize = getFileSize(url: recordingURL)
@@ -1287,10 +1246,10 @@ class BackgroundProcessingManager: ObservableObject {
                     locationData: nil
                 )
                 
-                print("✅ Created recording entry with ID: \(recordingId)")
+                AppLog.shared.backgroundProcessing("Created recording entry with ID: \(recordingId)")
             }
         } else {
-            print("❌ AppCoordinator not available for recording creation")
+            AppLog.shared.backgroundProcessing("AppCoordinator not available for recording creation", level: .error)
         }
     }
     
@@ -1299,7 +1258,7 @@ class BackgroundProcessingManager: ObservableObject {
             let resourceValues = try url.resourceValues(forKeys: [.fileSizeKey])
             return Int64(resourceValues.fileSize ?? 0)
         } catch {
-            print("❌ Error getting file size: \(error)")
+            AppLog.shared.backgroundProcessing("Error getting file size: \(error.localizedDescription)", level: .error)
             return 0
         }
     }
@@ -1310,7 +1269,7 @@ class BackgroundProcessingManager: ObservableObject {
             let duration = try await asset.load(.duration)
             return CMTimeGetSeconds(duration)
         } catch {
-            print("❌ Error getting audio duration: \(error)")
+            AppLog.shared.backgroundProcessing("Error getting audio duration: \(error.localizedDescription)", level: .error)
             return 0
         }
     }
@@ -1328,12 +1287,12 @@ class BackgroundProcessingManager: ObservableObject {
                 // Get the recording ID from the URL
                 guard let recordingEntry = appCoordinator.getRecording(url: transcriptData.recordingURL),
                       let recordingId = recordingEntry.id else {
-                    print("❌ No recording found for URL: \(transcriptData.recordingURL)")
+                    AppLog.shared.backgroundProcessing("No recording found for transcript save", level: .error)
                     // print("❌ DEBUG: URL absoluteString: \(transcriptData.recordingURL.absoluteString)")
                     return
                 }
                 
-                print("🆔 Found recording ID: \(recordingId) for URL: \(transcriptData.recordingURL)")
+                AppLog.shared.backgroundProcessing("Found recording ID for transcript save", level: .debug)
                 
                 let transcriptId = appCoordinator.addTranscript(
                     for: recordingId,
@@ -1344,15 +1303,15 @@ class BackgroundProcessingManager: ObservableObject {
                     confidence: transcriptData.confidence
                 )
                 if transcriptId != nil {
-                    print("✅ Transcript saved to Core Data with ID: \(transcriptId!)")
+                    AppLog.shared.backgroundProcessing("Transcript saved to Core Data")
                 } else {
-                    print("❌ Failed to save transcript to Core Data")
+                    AppLog.shared.backgroundProcessing("Failed to save transcript to Core Data", level: .error)
                 }
             } else {
-                print("❌ AppCoordinator not available for transcript saving")
+                AppLog.shared.backgroundProcessing("AppCoordinator not available for transcript saving", level: .error)
             }
         }
-        print("💾 Saved transcript: \(transcriptData.segments.count) segments, \(transcriptData.fullText.count) characters")
+        AppLog.shared.backgroundProcessing("Saved transcript: \(transcriptData.segments.count) segments, \(transcriptData.fullText.count) characters", level: .debug)
         
         // Call completion handler if set
         if let completionHandler = onTranscriptionCompleted {
@@ -1366,7 +1325,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func processSummarizationJob(_ job: ProcessingJob, engine: String) async throws {
-        print("🚀 Starting summarization job for: \(job.recordingName)")
+        AppLog.shared.backgroundProcessing("Starting summarization job")
 
         try Task.checkCancellation()
 
@@ -1414,7 +1373,7 @@ class BackgroundProcessingManager: ObservableObject {
             throw BackgroundProcessingError.processingFailed("Transcript is empty for \(job.recordingName)")
         }
 
-        print("📝 Found transcript with \(transcriptText.count) characters")
+        AppLog.shared.backgroundProcessing("Found transcript with \(transcriptText.count) characters", level: .debug)
 
         // Update progress after getting transcript
         let transcriptProgressJob = job.withProgress(0.3)
@@ -1470,11 +1429,11 @@ class BackgroundProcessingManager: ObservableObject {
             throw BackgroundProcessingError.processingFailed("Failed to save summary for \(job.recordingName)")
         }
 
-        print("💾 Summary saved with ID: \(summaryId?.uuidString ?? "nil")")
+        AppLog.shared.backgroundProcessing("Summary saved with ID: \(summaryId?.uuidString ?? "nil")", level: .debug)
 
         // Update recording name if the AI generated a better one
         if enhancedSummary.recordingName != job.recordingName {
-            print("📝 Updating recording name: '\(job.recordingName)' → '\(enhancedSummary.recordingName)'")
+            AppLog.shared.backgroundProcessing("Updating recording name from AI-generated title", level: .debug)
             try? coreDataManager.updateRecordingName(for: recordingId, newName: enhancedSummary.recordingName)
         }
 
@@ -1494,7 +1453,7 @@ class BackgroundProcessingManager: ObservableObject {
             body: notificationBody
         )
 
-        print("✅ Summarization job completed for: \(job.recordingName)")
+        AppLog.shared.backgroundProcessing("Summarization job completed")
     }
     
     private func generateSummary(_ transcriptText: String, engine: String, recordingURL: URL, recordingName: String) async throws -> EnhancedSummaryData {
@@ -1613,11 +1572,11 @@ class BackgroundProcessingManager: ObservableObject {
     private func saveSummary(_ summaryData: EnhancedSummaryData) async {
         // TODO: Integrate with existing summary storage system
         // For now, just log that we would save it
-        print("💾 Would save summary: \(summaryData.summary.count) characters, \(summaryData.tasks.count) tasks, \(summaryData.reminders.count) reminders")
+        AppLog.shared.backgroundProcessing("Would save summary: \(summaryData.summary.count) characters, \(summaryData.tasks.count) tasks, \(summaryData.reminders.count) reminders", level: .debug)
     }
     
     private func performPostProcessing(for job: ProcessingJob, transcriptText: String) async {
-        print("🔧 Starting post-processing for: \(job.recordingName)")
+        AppLog.shared.backgroundProcessing("Starting post-processing")
         
         // Generate and save title
         await generateAndSaveTitle(for: job.recordingURL, from: transcriptText)
@@ -1628,7 +1587,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Update file metadata if needed
         await updateFileMetadata(for: job)
         
-        print("✅ Post-processing completed for: \(job.recordingName)")
+        AppLog.shared.backgroundProcessing("Post-processing completed")
     }
     
     private func generateAndSaveTitle(for recordingURL: URL, from transcriptText: String) async {
@@ -1641,15 +1600,15 @@ class BackgroundProcessingManager: ObservableObject {
             
             if let bestTitle = titles.first {
                 await saveGeneratedTitle(bestTitle.text, for: recordingURL)
-                print("🏷️ Generated title: \(bestTitle.text)")
+                AppLog.shared.backgroundProcessing("Generated title for recording")
             } else {
                 // Fallback to a simple title based on content
                 let fallbackTitle = generateFallbackTitle(from: transcriptText, recordingURL: recordingURL)
                 await saveGeneratedTitle(fallbackTitle, for: recordingURL)
-                print("🏷️ Generated fallback title: \(fallbackTitle)")
+                AppLog.shared.backgroundProcessing("Generated fallback title for recording")
             }
         } catch {
-            print("⚠️ Failed to generate title: \(error)")
+            AppLog.shared.backgroundProcessing("Failed to generate title: \(error.localizedDescription)", level: .error)
             // Generate a simple fallback title
             let fallbackTitle = generateFallbackTitle(from: transcriptText, recordingURL: recordingURL)
             await saveGeneratedTitle(fallbackTitle, for: recordingURL)
@@ -1684,18 +1643,18 @@ class BackgroundProcessingManager: ObservableObject {
     private func saveGeneratedTitle(_ title: String, for recordingURL: URL) async {
         // TODO: Integrate with existing title storage system
         // For now, just log that we would save it
-        print("💾 Would save title '\(title)' for recording: \(recordingURL.lastPathComponent)")
+        AppLog.shared.backgroundProcessing("Would save generated title for recording", level: .debug)
     }
     
     private func performCleanupTasks(for job: ProcessingJob) async {
-        print("🧹 Performing cleanup tasks for job: \(job.recordingName)")
+        AppLog.shared.backgroundProcessing("Performing cleanup tasks for job")
 
         // Clean up source audio file (e.g. cleaned audio copy) now that the job is done
         if let sourcePath = job.sourceAudioPath, sourcePath.hasPrefix("cleaned_") {
             let sourceURL = job.audioSourceURL
             if FileManager.default.fileExists(atPath: sourceURL.path) {
                 try? FileManager.default.removeItem(at: sourceURL)
-                print("🗑️ Cleaned up source audio file: \(sourcePath)")
+                AppLog.shared.backgroundProcessing("Cleaned up source audio file")
             }
         }
 
@@ -1716,7 +1675,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func updateFileMetadata(for job: ProcessingJob) async {
-        print("📝 Updating file metadata for job: \(job.recordingName)")
+        AppLog.shared.backgroundProcessing("Updating file metadata for job")
         
         // Update file relationships to reflect new transcript
         await enhancedFileManager.updateFileRelationships(for: job.recordingURL, relationships: FileRelationships(
@@ -1731,7 +1690,7 @@ class BackgroundProcessingManager: ObservableObject {
     
     private func clearProcessingCache(for recordingURL: URL) async {
         // TODO: Clear any cached processing data
-        print("🗑️ Would clear processing cache for: \(recordingURL.lastPathComponent)")
+        AppLog.shared.backgroundProcessing("Would clear processing cache", level: .debug)
     }
     
     // MARK: - Job Status Management
@@ -1763,15 +1722,14 @@ class BackgroundProcessingManager: ObservableObject {
         =================
         """
         
-        print("💾 Saving error log for job: \(job.recordingName)")
-        print(errorLog)
+        AppLog.shared.backgroundProcessing("Saving error log for job: \(job.id)", level: .error)
         
         // Also log to the enhanced logger
         EnhancedLogger.shared.logBackgroundProcessing("Detailed error log:\n\(errorLog)", level: .error)
     }
     
     private func handleJobFailure(_ job: ProcessingJob, error: Error) async {
-        print("🔄 Handling job failure: \(job.recordingName) - \(error.localizedDescription)")
+        AppLog.shared.backgroundProcessing("Handling job failure: \(error.localizedDescription)", level: .error)
         
         // Log the error for debugging
         EnhancedLogger.shared.logBackgroundProcessing("Job failed: \(error.localizedDescription)", level: .error)
@@ -1781,14 +1739,14 @@ class BackgroundProcessingManager: ObservableObject {
             switch processingError {
             case .chunkingFailed:
                 // Try processing without chunking
-                print("🔄 Attempting to process without chunking")
+                AppLog.shared.backgroundProcessing("Attempting to process without chunking", level: .error)
                 // Implementation would go here
             case .backgroundProcessingFailed:
                 // Queue for retry when app returns to foreground
-                print("🔄 Queuing job for retry")
+                AppLog.shared.backgroundProcessing("Queuing job for retry", level: .error)
                 // Implementation would go here
             default:
-                print("🔄 No specific recovery strategy for this error")
+                AppLog.shared.backgroundProcessing("No specific recovery strategy for this error", level: .error)
             }
         }
     }
@@ -1821,28 +1779,28 @@ class BackgroundProcessingManager: ObservableObject {
 
     
     @objc private func appDidEnterBackground() {
-        print("📱 App entered background")
+        AppLog.shared.backgroundProcessing("App entered background")
         Task { @MainActor in
             await handleAppBackgrounding()
         }
     }
     
     @objc private func appWillEnterForeground() {
-        print("📱 App will enter foreground")
+        AppLog.shared.backgroundProcessing("App will enter foreground")
         Task { @MainActor in
             await handleAppForegrounding()
         }
     }
     
     @objc private func appWillTerminate() {
-        print("📱 App will terminate")
+        AppLog.shared.backgroundProcessing("App will terminate")
         Task { @MainActor in
             await handleAppTermination()
         }
     }
     
     private func handleAppBackgrounding() async {
-        print("🔄 Handling app backgrounding")
+        AppLog.shared.backgroundProcessing("Handling app backgrounding")
 
         // If there's an active job, ensure background task is running
         if currentJob != nil && backgroundTaskID == .invalid {
@@ -1886,14 +1844,14 @@ class BackgroundProcessingManager: ObservableObject {
         
         do {
             try BGTaskScheduler.shared.submit(request)
-            print("✅ Scheduled background processing task for queued jobs")
+            AppLog.shared.backgroundProcessing("Scheduled background processing task for queued jobs")
         } catch {
-            print("❌ Failed to schedule background processing: \(error)")
+            AppLog.shared.backgroundProcessing("Failed to schedule background processing: \(error.localizedDescription)", level: .error)
         }
     }
     
     private func handleAppForegrounding() async {
-        print("🔄 Handling app foregrounding")
+        AppLog.shared.backgroundProcessing("Handling app foregrounding")
 
         // Clear notification badge
         await clearNotificationBadge()
@@ -1909,7 +1867,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Resume processing if needed (interrupted jobs that were re-queued + existing queued jobs)
         if currentJob == nil && !activeJobs.filter({ $0.status == .queued }).isEmpty {
-            print("🚀 Resuming queued background processing jobs")
+            AppLog.shared.backgroundProcessing("Resuming queued background processing jobs")
             await processNextJob()
         }
     }
@@ -1931,7 +1889,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         guard !allInterrupted.isEmpty else { return }
 
-        print("🔄 Found \(allInterrupted.count) interrupted jobs to resume")
+        AppLog.shared.backgroundProcessing("Found \(allInterrupted.count) interrupted jobs to resume")
 
         // Deduplicate by recording path
         var seenRecordings: Set<String> = []
@@ -1944,7 +1902,7 @@ class BackgroundProcessingManager: ObservableObject {
                 jobsToResume.append(job)
             } else {
                 jobsToRemove.append(job)
-                print("🗑️ Removing duplicate interrupted job: \(job.type.displayName) for \(job.recordingName)")
+                AppLog.shared.backgroundProcessing("Removing duplicate interrupted job: \(job.type.displayName)")
             }
         }
 
@@ -1969,14 +1927,14 @@ class BackgroundProcessingManager: ObservableObject {
                 let resumedJob = job.withStatus(.queued).withProgress(0.0)
                 await updateJob(resumedJob)
                 resumedCount += 1
-                print("↻ Resumed job: \(job.type.displayName) for \(job.recordingName)")
+                AppLog.shared.backgroundProcessing("Resumed job: \(job.type.displayName)")
             } else {
                 // Keep as interrupted with updated reason
                 let reason = availability.reason ?? "Engine unavailable"
                 let waitingJob = job.withStatus(.interrupted(reason))
                 await updateJob(waitingJob)
                 waitingCount += 1
-                print("⏸️ Job waiting: \(job.recordingName) — \(reason)")
+                AppLog.shared.backgroundProcessing("Job waiting: \(job.type.displayName) — \(reason)")
             }
         }
 
@@ -1994,7 +1952,7 @@ class BackgroundProcessingManager: ObservableObject {
         }
 
         if jobsToRemove.count > 0 {
-            print("✅ Cleaned up \(jobsToRemove.count) duplicate interrupted jobs")
+            AppLog.shared.backgroundProcessing("Cleaned up \(jobsToRemove.count) duplicate interrupted jobs")
         }
     }
 
@@ -2080,7 +2038,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func handleAppTermination() async {
-        print("🔄 Handling app termination")
+        AppLog.shared.backgroundProcessing("Handling app termination")
 
         // Set reason so the Task's CancellationError catch uses .interrupted instead of .cancelled
         cancellationReason = "App was closed"
@@ -2114,7 +2072,7 @@ class BackgroundProcessingManager: ObservableObject {
         
         // This would check with external services (like AWS) for job completion
         // For now, we mainly focus on cleaning up stale local jobs
-        print("🔍 Checked for completed and stale background jobs")
+        AppLog.shared.backgroundProcessing("Checked for completed and stale background jobs", level: .debug)
     }
     
     // MARK: - Core Data Persistence
@@ -2188,7 +2146,7 @@ class BackgroundProcessingManager: ObservableObject {
     private func startKeepAliveAudio() {
         guard keepAlivePlayer == nil else { return }
         
-        print("🔈 Starting keep-alive silent audio")
+        AppLog.shared.backgroundProcessing("Starting keep-alive silent audio")
         do {
             // Create a temporary silent WAV file
             let tempDir = FileManager.default.temporaryDirectory
@@ -2202,7 +2160,7 @@ class BackgroundProcessingManager: ObservableObject {
                 
                 guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
                       let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)) else {
-                    print("❌ Failed to create audio buffer for keep-alive")
+                    AppLog.shared.backgroundProcessing("Failed to create audio buffer for keep-alive", level: .error)
                     return
                 }
                 
@@ -2223,18 +2181,18 @@ class BackgroundProcessingManager: ObservableObject {
             // (Handled by configureBackgroundRecording, but safe to verify/retry if needed? No, rely on existing flow)
             
             if keepAlivePlayer?.play() == true {
-                print("✅ Keep-alive audio started")
+                AppLog.shared.backgroundProcessing("Keep-alive audio started")
             } else {
-                print("⚠️ Keep-alive audio failed to start playing")
+                AppLog.shared.backgroundProcessing("Keep-alive audio failed to start playing", level: .error)
             }
         } catch {
-            print("❌ Failed to start keep-alive audio: \(error)")
+            AppLog.shared.backgroundProcessing("Failed to start keep-alive audio: \(error.localizedDescription)", level: .error)
         }
     }
     
     private func stopKeepAliveAudio() {
         if keepAlivePlayer != nil {
-            print("🔇 Stopping keep-alive silent audio")
+            AppLog.shared.backgroundProcessing("Stopping keep-alive silent audio")
             keepAlivePlayer?.stop()
             keepAlivePlayer = nil
         }
@@ -2245,7 +2203,7 @@ class BackgroundProcessingManager: ObservableObject {
     private func beginBackgroundTask() async {
         // Don't start a new background task if one is already running
         guard backgroundTaskID == .invalid else {
-            print("⚠️ Background task already running: \(backgroundTaskID.rawValue)")
+            AppLog.shared.backgroundProcessing("Background task already running: \(backgroundTaskID.rawValue)", level: .debug)
             return
         }
         
@@ -2257,18 +2215,17 @@ class BackgroundProcessingManager: ObservableObject {
             // Wait a moment for the audio session to be fully configured
             try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
             
-            print("✅ Audio session configured for background processing")
-            
+            AppLog.shared.backgroundProcessing("Audio session configured for background processing")
+
             // Verify we actually got extended background time
             let backgroundTime = UIApplication.shared.backgroundTimeRemaining
             if backgroundTime != Double.greatestFiniteMagnitude {
-                print("🕐 After audio session config: \(Int(backgroundTime))s background time")
+                AppLog.shared.backgroundProcessing("After audio session config: \(Int(backgroundTime))s background time", level: .debug)
             } else {
-                print("🕐 After audio session config: Unlimited background time")
+                AppLog.shared.backgroundProcessing("After audio session config: Unlimited background time", level: .debug)
             }
         } catch {
-            print("❌ CRITICAL: Could not configure background audio session: \(error)")
-            print("   - This will severely limit background processing time")
+            AppLog.shared.backgroundProcessing("CRITICAL: Could not configure background audio session: \(error.localizedDescription). This will severely limit background processing time.", level: .error)
             // Continue anyway, we'll still get some background time
         }
         
@@ -2280,41 +2237,32 @@ class BackgroundProcessingManager: ObservableObject {
         }
         
         backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: taskName) { [weak self] in
-            print("⚠️ Background task is about to expire: \(taskName)")
+            AppLog.shared.backgroundProcessing("Background task is about to expire", level: .error)
             Task { @MainActor in
                 await self?.handleBackgroundTaskExpiration()
             }
         }
         
         if backgroundTaskID == .invalid {
-            print("❌ Failed to start background task")
-            print("   - This usually means:")
-            print("   - 1. App doesn't have proper background modes configured")
-            print("   - 2. Device is low on resources")
-            print("   - 3. Background App Refresh is disabled")
+            AppLog.shared.backgroundProcessing("Failed to start background task. Check background modes, device resources, or Background App Refresh setting.", level: .error)
             backgroundTaskStartTime = nil
         } else {
             // Record when this background task started
             backgroundTaskStartTime = Date()
-            print("🔄 Started background task: \(backgroundTaskID.rawValue)")
+            AppLog.shared.backgroundProcessing("Started background task: \(backgroundTaskID.rawValue)")
 
             // Check remaining background time immediately
             let remainingTime = UIApplication.shared.backgroundTimeRemaining
             if remainingTime == Double.greatestFiniteMagnitude {
-                print("🕐 Background time: Unlimited (likely in foreground or audio session active)")
+                AppLog.shared.backgroundProcessing("Background time: Unlimited (likely in foreground or audio session active)", level: .debug)
             } else {
-                print("🕐 Background time remaining: \(Int(remainingTime))s")
+                AppLog.shared.backgroundProcessing("Background time remaining: \(Int(remainingTime))s", level: .debug)
 
                 // Diagnose potential issues
                 if remainingTime < 30 {
-                    print("❌ CRITICAL: Very limited background time! Background task may fail immediately")
-                    print("   - Background App Refresh may be disabled")
-                    print("   - Device may be in Low Power Mode")
-                    print("   - App may have been backgrounded too long")
+                    AppLog.shared.backgroundProcessing("CRITICAL: Very limited background time (\(Int(remainingTime))s). Check Background App Refresh, Low Power Mode.", level: .error)
                 } else if remainingTime < 300 {
-                    print("⚠️ WARNING: Limited background time (\(Int(remainingTime))s)")
-                    print("   - Standard iOS background limit (30s) may be in effect")
-                    print("   - Audio session may not be properly configured")
+                    AppLog.shared.backgroundProcessing("Limited background time (\(Int(remainingTime))s). Audio session may not be properly configured.", level: .error)
                 }
             }
 
@@ -2336,7 +2284,7 @@ class BackgroundProcessingManager: ObservableObject {
         backgroundTimeMonitor = nil
 
         if backgroundTaskID != .invalid {
-            print("⏹️ Ending background task: \(backgroundTaskID.rawValue)")
+            AppLog.shared.backgroundProcessing("Ending background task: \(backgroundTaskID.rawValue)")
             UIApplication.shared.endBackgroundTask(backgroundTaskID)
             backgroundTaskID = .invalid
             backgroundTaskStartTime = nil
@@ -2345,22 +2293,22 @@ class BackgroundProcessingManager: ObservableObject {
             Task {
                 do {
                     try await audioSessionManager.deactivateSession()
-                    print("✅ Audio session deactivated after background task")
+                    AppLog.shared.backgroundProcessing("Audio session deactivated after background task")
                 } catch {
-                    print("⚠️ Could not deactivate audio session: \(error)")
+                    AppLog.shared.backgroundProcessing("Could not deactivate audio session: \(error.localizedDescription)", level: .error)
                 }
             }
         }
     }
     
     private func handleBackgroundTaskExpiration() async {
-        print("⚠️ Background task is expiring, attempting graceful shutdown")
+        AppLog.shared.backgroundProcessing("Background task is expiring, attempting graceful shutdown", level: .error)
 
         // Set reason so the Task's CancellationError catch uses .interrupted instead of .cancelled
         cancellationReason = "App went to background"
         currentTaskHandle?.cancel()
 
-        print("✅ Background task expiration handled — Task catch block will complete cleanup")
+        AppLog.shared.backgroundProcessing("Background task expiration handled — Task catch block will complete cleanup")
     }
     
     private func monitorBackgroundTime() {
@@ -2376,7 +2324,7 @@ class BackgroundProcessingManager: ObservableObject {
         if let startTime = backgroundTaskStartTime {
             let taskAge = Date().timeIntervalSince(startTime)
             if taskAge > 25 {
-                print("🔄 Background task age: \(Int(taskAge))s - refreshing to avoid iOS warning")
+                AppLog.shared.backgroundProcessing("Background task age: \(Int(taskAge))s - refreshing to avoid iOS warning", level: .debug)
                 Task { @MainActor in
                     await self.refreshBackgroundTask()
                 }
@@ -2386,23 +2334,23 @@ class BackgroundProcessingManager: ObservableObject {
 
         // For long-running audio processing, manage time intelligently
         if remainingTime < 600 { // Less than 10 minutes
-            print("⚠️ Background time running low (\(Int(remainingTime))s remaining)")
+            AppLog.shared.backgroundProcessing("Background time running low (\(Int(remainingTime))s remaining)", level: .debug)
 
             // Notify current job about time constraints
             if let job = currentJob {
-                print("📊 Current job: \(job.type.displayName) for \(job.recordingName) - Progress: \(Int(job.progress * 100))%")
+                AppLog.shared.backgroundProcessing("Current job: \(job.type.displayName) - Progress: \(Int(job.progress * 100))%", level: .debug)
             }
         }
 
         // Try to complete processing gracefully when very low on time
         if remainingTime < 120 { // Less than 2 minutes
-            print("⚠️ Background time critically low (\(Int(remainingTime))s), will attempt graceful shutdown soon")
+            AppLog.shared.backgroundProcessing("Background time critically low (\(Int(remainingTime))s), will attempt graceful shutdown soon", level: .error)
             // Allow the current processing chunk to complete if possible
         }
 
         // Force shutdown when almost expired to prevent sudden termination
         if remainingTime < 30 {
-            print("⚠️ Background time almost expired (\(Int(remainingTime))s), initiating graceful shutdown")
+            AppLog.shared.backgroundProcessing("Background time almost expired (\(Int(remainingTime))s), initiating graceful shutdown", level: .error)
             Task { @MainActor in
                 await self.handleBackgroundTaskExpiration()
             }
@@ -2414,7 +2362,7 @@ class BackgroundProcessingManager: ObservableObject {
     private func refreshBackgroundTask() async {
         guard backgroundTaskID != .invalid else { return }
 
-        print("♻️ Refreshing background task to avoid iOS 30-second warning")
+        AppLog.shared.backgroundProcessing("Refreshing background task to avoid iOS 30-second warning", level: .debug)
 
         // Get the current task name before ending
         let hasActiveJob = currentJob != nil
@@ -2424,7 +2372,7 @@ class BackgroundProcessingManager: ObservableObject {
         UIApplication.shared.endBackgroundTask(backgroundTaskID)
         backgroundTaskID = .invalid
         backgroundTaskStartTime = nil
-        print("   Ended old task: \(oldTaskID.rawValue)")
+        AppLog.shared.backgroundProcessing("Ended old task: \(oldTaskID.rawValue)", level: .debug)
 
         // Immediately start a new one if we still have an active job
         if hasActiveJob {
@@ -2438,7 +2386,7 @@ class BackgroundProcessingManager: ObservableObject {
     private func setupNotifications() {
         // Set up notification center but don't request permission yet
         // Permission will be requested when we actually implement user notifications
-        print("📱 Notification center configured (permission request deferred)")
+        AppLog.shared.backgroundProcessing("Notification center configured (permission request deferred)")
     }
     
     func sendNotification(title: String, body: String, identifier: String? = nil, userInfo: [String: Any] = [:]) async {
@@ -2451,17 +2399,17 @@ class BackgroundProcessingManager: ObservableObject {
             do {
                 let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
                 if granted {
-                    print("✅ Notification permission granted")
+                    AppLog.shared.backgroundProcessing("Notification permission granted")
                 } else {
-                    print("❌ Notification permission denied by user")
+                    AppLog.shared.backgroundProcessing("Notification permission denied by user")
                     return
                 }
             } catch {
-                print("❌ Error requesting notification permission: \(error)")
+                AppLog.shared.backgroundProcessing("Error requesting notification permission: \(error.localizedDescription)", level: .error)
                 return
             }
         } else if settings.authorizationStatus != .authorized {
-            print("📱 Notification not sent - permission denied or restricted")
+            AppLog.shared.backgroundProcessing("Notification not sent - permission denied or restricted")
             return
         }
         
@@ -2485,9 +2433,9 @@ class BackgroundProcessingManager: ObservableObject {
         
         do {
             try await UNUserNotificationCenter.current().add(request)
-            print("📱 Sent notification: \(title)")
+            AppLog.shared.backgroundProcessing("Sent notification: \(title)", level: .debug)
         } catch {
-            print("❌ Failed to send notification: \(error)")
+            AppLog.shared.backgroundProcessing("Failed to send notification: \(error.localizedDescription)", level: .error)
         }
     }
     
@@ -2528,7 +2476,7 @@ class BackgroundProcessingManager: ObservableObject {
         do {
             try await UNUserNotificationCenter.current().setBadgeCount(0)
         } catch {
-            print("⚠️ Failed to clear notification badge: \(error)")
+            AppLog.shared.backgroundProcessing("Failed to clear notification badge: \(error.localizedDescription)", level: .error)
         }
     }
     
@@ -2585,7 +2533,7 @@ class BackgroundProcessingManager: ObservableObject {
         }
 
         if reconciledCount > 0 {
-            print("🧹 Reconciled \(reconciledCount) stale/orphaned processing job(s)")
+            AppLog.shared.backgroundProcessing("Reconciled \(reconciledCount) stale/orphaned processing job(s)")
             objectWillChange.send()
 
             // Re-queue interrupted jobs after reconciliation (suppress notifications from periodic monitor).
@@ -2620,7 +2568,7 @@ class BackgroundProcessingManager: ObservableObject {
             do {
                 try coreDataManager.saveContext()
             } catch {
-                print("❌ Failed to update job in Core Data: \(error)")
+                AppLog.shared.backgroundProcessing("Failed to update job in Core Data: \(error.localizedDescription)", level: .error)
             }
         }
     }
@@ -2645,7 +2593,7 @@ class BackgroundProcessingManager: ObservableObject {
             job.status.isTerminal
         }
         
-        print("🧹 Cleaned up \(jobsToRemove.count) completed/failed jobs")
+        AppLog.shared.backgroundProcessing("Cleaned up \(jobsToRemove.count) completed/failed jobs")
         
         // Update UI
         await MainActor.run {
@@ -2680,7 +2628,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         let totalCancelled = (currentJob != nil ? 1 : 0) + externalCount + queuedJobs.count
         if totalCancelled > 0 {
-            print("🛑 Cancelling \(totalCancelled) jobs")
+            AppLog.shared.backgroundProcessing("Cancelling \(totalCancelled) jobs")
         }
     }
     
@@ -2696,7 +2644,7 @@ class BackgroundProcessingManager: ObservableObject {
         activeJobs.removeAll()
         currentJob = nil
         
-        print("🧹 Cleared all background processing jobs")
+        AppLog.shared.backgroundProcessing("Cleared all background processing jobs")
         
         // Update UI
         await MainActor.run {

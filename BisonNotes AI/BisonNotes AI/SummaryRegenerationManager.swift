@@ -81,21 +81,18 @@ class SummaryRegenerationManager: ObservableObject {
                 // Note: Old summary cleanup now happens in RecordingWorkflowManager.createSummary
 
                 // Debug: Show what names we're comparing (bulk regeneration)
-                print("🔍 Bulk regeneration name check for '\(summary.recordingName)':")
-                print("   Old name: '\(summary.recordingName)'")
-                print("   New name: '\(newEnhancedSummary.recordingName)'")
-                print("   Names equal: \(newEnhancedSummary.recordingName == summary.recordingName)")
+                AppLog.shared.summarization("Bulk regeneration name check: old='\(summary.recordingName)', new='\(newEnhancedSummary.recordingName)', equal=\(newEnhancedSummary.recordingName == summary.recordingName)", level: .debug)
                 
                 // Update the recording name if it changed during regeneration
                 if newEnhancedSummary.recordingName != summary.recordingName {
-                    print("📝 Bulk regeneration: Recording name updated from '\(summary.recordingName)' to '\(newEnhancedSummary.recordingName)'")
+                    AppLog.shared.summarization("Bulk regeneration: Recording name updated from '\(summary.recordingName)' to '\(newEnhancedSummary.recordingName)'")
                     // Update recording name in Core Data
                     try appCoordinator.coreDataManager.updateRecordingName(
                         for: recordingId,
                         newName: newEnhancedSummary.recordingName
                     )
                 } else {
-                    print("⚠️ Bulk regeneration: Recording name did not change")
+                    AppLog.shared.summarization("Bulk regeneration: Recording name did not change", level: .debug)
                 }
                 
                 // Create new summary entry in Core Data with the updated name
@@ -115,7 +112,7 @@ class SummaryRegenerationManager: ObservableObject {
                 
                 if newSummaryId != nil {
                     successful += 1
-                    print("✅ Regenerated summary for: \(summary.recordingName)")
+                    AppLog.shared.summarization("Regenerated summary for: \(summary.recordingName)")
                 } else {
                     failed += 1
                     errors.append("\(summary.recordingName): Failed to save new summary")
@@ -150,12 +147,12 @@ class SummaryRegenerationManager: ObservableObject {
               let recordingData = appCoordinator.getCompleteRecordingData(id: recordingId),
               let summary = recordingData.summary,
               let transcript = recordingData.transcript else {
-            print("❌ No summary or transcript found for URL: \(recordingURL.lastPathComponent)")
+            AppLog.shared.summarization("No summary or transcript found for URL: \(recordingURL.lastPathComponent)", level: .error)
             return false
         }
         
         do {
-            print("🔄 Regenerating summary for: \(summary.recordingName)")
+            AppLog.shared.summarization("Regenerating summary for: \(summary.recordingName)")
             
             // Generate new summary using the current AI engine
             let newEnhancedSummary = try await summaryManager.generateEnhancedSummary(
@@ -167,22 +164,18 @@ class SummaryRegenerationManager: ObservableObject {
             
             // Note: Old summary cleanup now happens in RecordingWorkflowManager.createSummary
             
-            // Debug: Show what names we're comparing
-            print("🔍 Regeneration name check:")
-            print("   Old name: '\(summary.recordingName)'")
-            print("   New name: '\(newEnhancedSummary.recordingName)'")
-            print("   Names equal: \(newEnhancedSummary.recordingName == summary.recordingName)")
+            AppLog.shared.summarization("Regeneration name check: old='\(summary.recordingName)', new='\(newEnhancedSummary.recordingName)', equal=\(newEnhancedSummary.recordingName == summary.recordingName)", level: .debug)
             
             // Update the recording name if it changed during regeneration
             if newEnhancedSummary.recordingName != summary.recordingName {
-                print("📝 Recording name updated from '\(summary.recordingName)' to '\(newEnhancedSummary.recordingName)'")
+                AppLog.shared.summarization("Recording name updated from '\(summary.recordingName)' to '\(newEnhancedSummary.recordingName)'")
                 // Update recording name in Core Data
                 try appCoordinator.coreDataManager.updateRecordingName(
                     for: recordingId,
                     newName: newEnhancedSummary.recordingName
                 )
             } else {
-                print("⚠️ Recording name did not change during regeneration")
+                AppLog.shared.summarization("Recording name did not change during regeneration", level: .debug)
             }
             
             // Create new summary entry in Core Data with the updated name
@@ -201,15 +194,15 @@ class SummaryRegenerationManager: ObservableObject {
             )
             
             if newSummaryId != nil {
-                print("✅ Successfully regenerated summary for: \(summary.recordingName)")
+                AppLog.shared.summarization("Successfully regenerated summary for: \(summary.recordingName)")
                 return true
             } else {
-                print("❌ Failed to save new summary for: \(summary.recordingName)")
+                AppLog.shared.summarization("Failed to save new summary for: \(summary.recordingName)", level: .error)
                 return false
             }
             
         } catch {
-            print("❌ Failed to regenerate summary for \(summary.recordingName): \(error)")
+            AppLog.shared.summarization("Failed to regenerate summary for \(summary.recordingName): \(error)", level: .error)
             return false
         }
     }

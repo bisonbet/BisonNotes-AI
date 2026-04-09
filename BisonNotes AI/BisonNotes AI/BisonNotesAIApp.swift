@@ -337,9 +337,9 @@ struct BisonNotesAIApp: App {
 
     /// Logs device capabilities on app startup
     private func logDeviceCapabilities() {
-        print(String(repeating: "=", count: 50))
-        print(DeviceCapabilities.getCapabilityReport())
-        print(String(repeating: "=", count: 50))
+        AppLog.shared.general(String(repeating: "=", count: 50))
+        AppLog.shared.general(DeviceCapabilities.getCapabilityReport())
+        AppLog.shared.general(String(repeating: "=", count: 50))
     }
     
     var body: some Scene {
@@ -359,6 +359,12 @@ struct BisonNotesAIApp: App {
                     _ = OnDeviceAIDownloadMonitor.shared
                 }
                 .onOpenURL(perform: handleOpenURL)
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+                    AppLog.shared.markCleanShutdown()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                    AppLog.shared.markCleanShutdown()
+                }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                     // Clear badge when the user actively opens the app. Using the
                     // scene-phase notification here (rather than AppDelegate
@@ -651,7 +657,7 @@ struct BisonNotesAIApp: App {
     private func requestBackgroundAppRefreshPermission() {
         // Background app refresh is now handled via BGTaskScheduler in setupBackgroundTasks()
         // No need for the deprecated setMinimumBackgroundFetchInterval
-        print("📱 Background app refresh configured via BGTaskScheduler")
+        AppLog.shared.general("Background app refresh configured via BGTaskScheduler")
     }
     
     private func requestNotificationPermission() {
@@ -659,22 +665,22 @@ struct BisonNotesAIApp: App {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
             DispatchQueue.main.async {
                 if granted {
-                    print("✅ Notification permission granted")
+                    AppLog.shared.general("Notification permission granted")
                 } else if let error = error {
-                    print("❌ Notification permission denied: \(error.localizedDescription)")
+                    AppLog.shared.general("Notification permission denied: \(error.localizedDescription)", level: .error)
                 } else {
-                    print("❌ Notification permission denied by user")
+                    AppLog.shared.general("Notification permission denied by user", level: .error)
                 }
             }
         }
     }
     
     private func handleBackgroundProcessing(task: BGProcessingTask) {
-        print("📱 Background processing task started: \(task.identifier)")
-        
+        AppLog.shared.general("Background processing task started: \(task.identifier)")
+
         // Set expiration handler
         task.expirationHandler = {
-            print("⚠️ Background processing task expired")
+            AppLog.shared.general("Background processing task expired", level: .error)
             task.setTaskCompleted(success: false)
         }
         
@@ -684,22 +690,22 @@ struct BisonNotesAIApp: App {
             
             // Process any queued jobs
             if !backgroundManager.activeJobs.filter({ $0.status == .queued }).isEmpty {
-                print("🚀 Processing queued jobs in background")
+                AppLog.shared.general("Processing queued jobs in background")
                 // The background manager will handle the actual processing
                 await backgroundManager.processNextJob()
                 task.setTaskCompleted(success: true)
             } else {
-                print("📭 No queued jobs found for background processing")
+                AppLog.shared.general("No queued jobs found for background processing", level: .debug)
                 task.setTaskCompleted(success: true)
             }
         }
     }
     
     private func handleAppRefresh(task: BGAppRefreshTask) {
-        print("📱 Background app refresh started")
-        
+        AppLog.shared.general("Background app refresh started")
+
         task.expirationHandler = {
-            print("⚠️ Background app refresh expired")
+            AppLog.shared.general("Background app refresh expired", level: .error)
             task.setTaskCompleted(success: false)
         }
         
@@ -709,46 +715,46 @@ struct BisonNotesAIApp: App {
             let backgroundManager = BackgroundProcessingManager.shared
             await backgroundManager.cleanupStaleJobs()
             
-            print("✅ Background app refresh completed")
+            AppLog.shared.general("Background app refresh completed")
             task.setTaskCompleted(success: true)
         }
     }
     
     private func setupWatchConnectivity() {
-        print("🚀 setupWatchConnectivity() called in BisonNotesAIApp")
-        
+        AppLog.shared.general("setupWatchConnectivity() called in BisonNotesAIApp")
+
         // Initialize watch connectivity for background sync
         let watchManager = WatchConnectivityManager.shared
-        print("📱 Got WatchConnectivityManager.shared instance")
-        
+        AppLog.shared.general("Got WatchConnectivityManager.shared instance", level: .debug)
+
         // The sync handler will be set up by AudioRecorderViewModel when it's ready
         // We just need to ensure the WatchConnectivityManager singleton is initialized
-        
+
         // Note: onWatchSyncRecordingReceived is set up by AudioRecorderViewModel
         // Don't override it here - let the proper Core Data integration handle it
-        
-        print("📱 Setting up onWatchRecordingSyncCompleted callback in BisonNotesAIApp")
+
+        AppLog.shared.general("Setting up onWatchRecordingSyncCompleted callback", level: .debug)
         watchManager.onWatchRecordingSyncCompleted = { recordingId, success in
-            print("📱 onWatchRecordingSyncCompleted called for: \(recordingId), success: \(success)")
-            
+            AppLog.shared.general("onWatchRecordingSyncCompleted called, success: \(success)", level: .debug)
+
             // Confirm sync completion back to watch with Core Data ID if successful
             if success {
                 // In a real implementation, we'd get the actual Core Data object ID
                 // For now, we'll use a placeholder to indicate successful Core Data creation
                 let coreDataId = "core_data_\(recordingId.uuidString)"
-                print("📱 About to call confirmSyncComplete with success=true")
+                AppLog.shared.general("Calling confirmSyncComplete with success=true", level: .debug)
                 watchManager.confirmSyncComplete(recordingId: recordingId, success: true, coreDataId: coreDataId)
-                print("✅ Confirmed reliable watch transfer in Core Data: \(recordingId)")
+                AppLog.shared.general("Confirmed reliable watch transfer in Core Data")
             } else {
-                print("📱 About to call confirmSyncComplete with success=false")
+                AppLog.shared.general("Calling confirmSyncComplete with success=false", level: .debug)
                 watchManager.confirmSyncComplete(recordingId: recordingId, success: false)
-                print("❌ Failed to confirm watch transfer: \(recordingId)")
+                AppLog.shared.general("Failed to confirm watch transfer", level: .error)
             }
         }
-        
-        print("📱 onWatchRecordingSyncCompleted callback has been set: \(watchManager.onWatchRecordingSyncCompleted != nil)")
-        
-        print("📱 iPhone watch connectivity initialized for background sync")
+
+        AppLog.shared.general("onWatchRecordingSyncCompleted callback configured", level: .debug)
+
+        AppLog.shared.general("iPhone watch connectivity initialized for background sync")
     }
     
     private func setupAppShortcuts() {
@@ -762,7 +768,7 @@ struct BisonNotesAIApp: App {
             if let plugInsURL = Bundle.main.builtInPlugInsURL,
                let _ = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {
             } else {
-                print("⚠️ Unable to enumerate built-in PlugIns")
+                AppLog.shared.general("Unable to enumerate built-in PlugIns", level: .debug)
             }
             ControlCenter.shared.reloadAllControls()
             ControlCenter.shared.reloadControls(ofKind: "com.bisonnotesai.controls.recording")
@@ -772,7 +778,7 @@ struct BisonNotesAIApp: App {
                     let controls = try await ControlCenter.shared.currentControls()
                     let _ = controls.map { $0.kind }
                 } catch {
-                    print("❌ Failed to fetch current controls: \(error)")
+                    AppLog.shared.general("Failed to fetch current controls: \(error)", level: .error)
                 }
             }
         }
@@ -786,7 +792,7 @@ struct BisonNotesAIApp: App {
         let uniqueName = "BisonNotesAI-\(ProcessInfo.processInfo.globallyUniqueString).profraw"
         let destination = (tempDirectory as NSString).appendingPathComponent(uniqueName)
         setenv("LLVM_PROFILE_FILE", destination, 1)
-        print("🧪 Code coverage output redirected to \(destination)")
+        AppLog.shared.general("Code coverage output redirected to \(destination)", level: .debug)
     }
 #endif
 }

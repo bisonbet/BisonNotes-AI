@@ -37,7 +37,7 @@ class CoreDataManager: ObservableObject {
         do {
             return try context.fetch(fetchRequest)
         } catch {
-            print("❌ Error fetching recordings: \(error)")
+            AppLog.shared.coreData("Error fetching recordings: \(error)", level: .error)
             return []
         }
     }
@@ -57,7 +57,7 @@ class CoreDataManager: ObservableObject {
         }
         
         if needsMigration {
-            print("🔄 Migrating absolute URLs to relative paths...")
+            AppLog.shared.coreData("Migrating absolute URLs to relative paths...")
         }
         
         for recording in allRecordings {
@@ -76,12 +76,12 @@ class CoreDataManager: ObservableObject {
         if updatedCount > 0 {
             do {
                 try context.save()
-                print("✅ Migrated \(updatedCount) URLs to relative paths")
+                AppLog.shared.coreData("Migrated \(updatedCount) URLs to relative paths")
             } catch {
-                print("❌ Failed to save URL migrations: \(error)")
+                AppLog.shared.coreData("Failed to save URL migrations: \(error)", level: .error)
             }
         } else if needsMigration {
-            print("ℹ️ No URLs needed migration")
+            AppLog.shared.coreData("No URLs needed migration")
         }
     }
     
@@ -156,14 +156,14 @@ class CoreDataManager: ObservableObject {
                     return absoluteURL
                 }
                 
-                print("⚠️ File not found at relative path, trying filename search")
+                AppLog.shared.coreData("File not found at relative path, trying filename search", level: .debug)
                 // File doesn't exist, try to find by filename
                 if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
                     let filename = absoluteURL.lastPathComponent
                     let newURL = documentsURL.appendingPathComponent(filename)
-                    print("🔍 Searching for file: \(newURL.path)")
+                    AppLog.shared.coreData("Searching for file: \(newURL.lastPathComponent)", level: .debug)
                     if FileManager.default.fileExists(atPath: newURL.path) {
-                        print("✅ File found by filename, updating stored path")
+                        AppLog.shared.coreData("File found by filename, updating stored path")
                         // Update the stored relative path
                         recording.recordingURL = urlToRelativePath(newURL)
                         try? context.save()
@@ -171,11 +171,11 @@ class CoreDataManager: ObservableObject {
                     }
                 }
             } else {
-                print("❌ Failed to convert relative path to absolute URL")
+                AppLog.shared.coreData("Failed to convert relative path to absolute URL", level: .error)
             }
         }
         
-        print("❌ File not found anywhere for recording: \(recording.recordingName ?? "unknown")")
+        AppLog.shared.coreData("File not found anywhere for recording ID: \(recording.id?.uuidString ?? "nil")", level: .error)
         return nil
     }
     
@@ -224,7 +224,7 @@ class CoreDataManager: ObservableObject {
         do {
             return try context.fetch(fetchRequest).first
         } catch {
-            print("❌ Error fetching recording: \(error)")
+            AppLog.shared.coreData("Error fetching recording: \(error)", level: .error)
             return nil
         }
     }
@@ -256,7 +256,7 @@ class CoreDataManager: ObservableObject {
                 return recording
             }
         } catch {
-            print("❌ Error fetching recording by URL: \(error)")
+            AppLog.shared.coreData("Error fetching recording by URL: \(error)", level: .error)
         }
         
         return nil
@@ -269,7 +269,7 @@ class CoreDataManager: ObservableObject {
         do {
             return try context.fetch(fetchRequest).first
         } catch {
-            print("❌ Error fetching recording by name: \(error)")
+            AppLog.shared.coreData("Error fetching recording by name: \(error)", level: .error)
             return nil
         }
     }
@@ -286,7 +286,7 @@ class CoreDataManager: ObservableObject {
             let results = try context.fetch(fetchRequest)
             return results.first
         } catch {
-            print("❌ Error fetching transcript: \(error)")
+            AppLog.shared.coreData("Error fetching transcript: \(error)", level: .error)
             return nil
         }
     }
@@ -307,7 +307,7 @@ class CoreDataManager: ObservableObject {
         do {
             return try context.fetch(fetchRequest)
         } catch {
-            print("❌ Error fetching transcripts: \(error)")
+            AppLog.shared.coreData("Error fetching transcripts: \(error)", level: .error)
             return []
         }
     }
@@ -324,9 +324,9 @@ class CoreDataManager: ObservableObject {
                 context.delete(transcript)
             }
             try? saveContext()
-            print("✅ Deleted transcript with ID: \(id)")
+            AppLog.shared.coreData("Deleted transcript with ID: \(id)")
         } catch {
-            print("❌ Error deleting transcript: \(error)")
+            AppLog.shared.coreData("Error deleting transcript: \(error)", level: .error)
         }
     }
     
@@ -337,11 +337,11 @@ class CoreDataManager: ObservableObject {
         let allSummaries = getAllSummaries()
         var repairedCount = 0
 
-        print("🔧 Starting repair of \(allSummaries.count) summaries...")
+        AppLog.shared.coreData("Starting repair of \(allSummaries.count) summaries...", level: .debug)
 
         for (index, summary) in allSummaries.enumerated() {
             if summary.recording == nil {
-                print("🔧 Repairing orphaned summary \(index): ID \(summary.id?.uuidString ?? "nil")")
+                AppLog.shared.coreData("Repairing orphaned summary \(index): ID \(summary.id?.uuidString ?? "nil")", level: .debug)
 
                 // Create a recording entry for this summary
                 let recordingEntry = RecordingEntry(context: context)
@@ -361,28 +361,28 @@ class CoreDataManager: ObservableObject {
                 summary.recording = recordingEntry
                 recordingEntry.summary = summary
 
-                print("   ✅ Created recording \(newRecordingId.uuidString) for summary \(summary.id?.uuidString ?? "nil")")
+                AppLog.shared.coreData("Created recording \(newRecordingId.uuidString) for summary \(summary.id?.uuidString ?? "nil")", level: .debug)
                 repairedCount += 1
             } else {
-                print("   ✓ Summary \(index) already has recording relationship")
+                AppLog.shared.coreData("Summary \(index) already has recording relationship", level: .debug)
             }
         }
 
         if repairedCount > 0 {
             do {
                 try context.save()
-                print("✅ Successfully repaired \(repairedCount) orphaned summaries in Core Data")
+                AppLog.shared.coreData("Successfully repaired \(repairedCount) orphaned summaries in Core Data")
 
                 // Verify the repair worked
                 let newRecordingCount = getAllRecordings().count
                 let newSummaryCount = getAllSummaries().count
-                print("📊 After repair: \(newRecordingCount) recordings, \(newSummaryCount) summaries")
+                AppLog.shared.coreData("After repair: \(newRecordingCount) recordings, \(newSummaryCount) summaries", level: .debug)
             } catch {
-                print("❌ Failed to save repaired summaries: \(error)")
+                AppLog.shared.coreData("Failed to save repaired summaries: \(error)", level: .error)
                 return 0
             }
         } else {
-            print("ℹ️ No orphaned summaries found to repair")
+            AppLog.shared.coreData("No orphaned summaries found to repair")
         }
 
         return repairedCount
@@ -396,11 +396,11 @@ class CoreDataManager: ObservableObject {
         var summariesDeleted = 0
         var transcriptsDeleted = 0
 
-        print("🧹 [CoreDataManager] Starting duplicate cleanup...")
+        AppLog.shared.coreData("Starting duplicate cleanup...")
 
         // Get all recordings
         let recordings = getAllRecordings()
-        print("🧹 [CoreDataManager] Checking \(recordings.count) recordings for duplicates")
+        AppLog.shared.coreData("Checking \(recordings.count) recordings for duplicates", level: .debug)
 
         for recording in recordings {
             guard let recordingId = recording.id else { continue }
@@ -411,17 +411,17 @@ class CoreDataManager: ObservableObject {
             summaryFetch.sortDescriptors = [NSSortDescriptor(keyPath: \SummaryEntry.generatedAt, ascending: false)]
 
             if let summaries = try? context.fetch(summaryFetch), summaries.count > 1 {
-                print("⚠️ Found \(summaries.count) summaries for recording '\(recording.recordingName ?? "unknown")' (ID: \(recordingId))")
+                AppLog.shared.coreData("Found \(summaries.count) summaries for recording ID: \(recordingId)", level: .debug)
                 // Keep the first (most recent), delete the rest
                 for (index, summary) in summaries.enumerated() {
                     if index > 0 {
                         let summaryLength = summary.summary?.count ?? 0
-                        print("  🗑️ Deleting duplicate summary ID: \(summary.id?.uuidString ?? "nil") (length: \(summaryLength) chars)")
+                        AppLog.shared.coreData("Deleting duplicate summary ID: \(summary.id?.uuidString ?? "nil") (length: \(summaryLength) chars)", level: .debug)
                         context.delete(summary)
                         summariesDeleted += 1
                     } else {
                         let summaryLength = summary.summary?.count ?? 0
-                        print("  ✅ Keeping most recent summary ID: \(summary.id?.uuidString ?? "nil") (length: \(summaryLength) chars)")
+                        AppLog.shared.coreData("Keeping most recent summary ID: \(summary.id?.uuidString ?? "nil") (length: \(summaryLength) chars)", level: .debug)
                     }
                 }
             }
@@ -432,17 +432,17 @@ class CoreDataManager: ObservableObject {
             transcriptFetch.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.createdAt, ascending: false)]
 
             if let transcripts = try? context.fetch(transcriptFetch), transcripts.count > 1 {
-                print("⚠️ Found \(transcripts.count) transcripts for recording '\(recording.recordingName ?? "unknown")' (ID: \(recordingId))")
+                AppLog.shared.coreData("Found \(transcripts.count) transcripts for recording ID: \(recordingId)", level: .debug)
                 // Keep the first (most recent), delete the rest
                 for (index, transcript) in transcripts.enumerated() {
                     if index > 0 {
                         let segmentsLength = transcript.segments?.count ?? 0
-                        print("  🗑️ Deleting duplicate transcript ID: \(transcript.id?.uuidString ?? "nil") (segments: \(segmentsLength) chars)")
+                        AppLog.shared.coreData("Deleting duplicate transcript ID: \(transcript.id?.uuidString ?? "nil") (segments: \(segmentsLength) chars)", level: .debug)
                         context.delete(transcript)
                         transcriptsDeleted += 1
                     } else {
                         let segmentsLength = transcript.segments?.count ?? 0
-                        print("  ✅ Keeping most recent transcript ID: \(transcript.id?.uuidString ?? "nil") (segments: \(segmentsLength) chars)")
+                        AppLog.shared.coreData("Keeping most recent transcript ID: \(transcript.id?.uuidString ?? "nil") (segments: \(segmentsLength) chars)", level: .debug)
                     }
                 }
             }
@@ -454,7 +454,7 @@ class CoreDataManager: ObservableObject {
             let recordingIds = Set(recordings.compactMap { $0.id })
             for summary in allSummaries {
                 if let summaryRecordingId = summary.recordingId, !recordingIds.contains(summaryRecordingId) {
-                    print("🗑️ Deleting orphaned summary (no recording): ID \(summary.id?.uuidString ?? "nil")")
+                    AppLog.shared.coreData("Deleting orphaned summary (no recording): ID \(summary.id?.uuidString ?? "nil")", level: .debug)
                     context.delete(summary)
                     summariesDeleted += 1
                 }
@@ -467,7 +467,7 @@ class CoreDataManager: ObservableObject {
             let recordingIds = Set(recordings.compactMap { $0.id })
             for transcript in allTranscripts {
                 if let transcriptRecordingId = transcript.recordingId, !recordingIds.contains(transcriptRecordingId) {
-                    print("🗑️ Deleting orphaned transcript (no recording): ID \(transcript.id?.uuidString ?? "nil")")
+                    AppLog.shared.coreData("Deleting orphaned transcript (no recording): ID \(transcript.id?.uuidString ?? "nil")", level: .debug)
                     context.delete(transcript)
                     transcriptsDeleted += 1
                 }
@@ -477,14 +477,14 @@ class CoreDataManager: ObservableObject {
         if summariesDeleted > 0 || transcriptsDeleted > 0 {
             do {
                 try saveContext()
-                print("✅ [CoreDataManager] Cleanup complete: deleted \(summariesDeleted) duplicate/orphaned summaries, \(transcriptsDeleted) duplicate/orphaned transcripts")
+                AppLog.shared.coreData("Cleanup complete: deleted \(summariesDeleted) duplicate/orphaned summaries, \(transcriptsDeleted) duplicate/orphaned transcripts")
             } catch {
-                print("❌ [CoreDataManager] Failed to save cleanup changes: \(error)")
+                AppLog.shared.coreData("Failed to save cleanup changes: \(error)", level: .error)
                 context.rollback()
                 return (0, 0)
             }
         } else {
-            print("✅ [CoreDataManager] No duplicates or orphans found")
+            AppLog.shared.coreData("No duplicates or orphans found")
         }
 
         return (summariesDeleted, transcriptsDeleted)
@@ -501,17 +501,17 @@ class CoreDataManager: ObservableObject {
         do {
             let summaries = try context.fetch(fetchRequest)
             if summaries.count > 1 {
-                print("⚠️ [CoreDataManager] Found \(summaries.count) summaries for recording \(recordingId) — auto-cleaning duplicates")
+                AppLog.shared.coreData("Found \(summaries.count) summaries for recording \(recordingId) — auto-cleaning duplicates", level: .debug)
                 // Keep the most recent (index 0), delete the rest immediately
                 for summary in summaries.dropFirst() {
-                    print("  🗑️ Auto-deleting duplicate summary ID=\(summary.id?.uuidString ?? "nil"), length=\(summary.summary?.count ?? 0)")
+                    AppLog.shared.coreData("Auto-deleting duplicate summary ID=\(summary.id?.uuidString ?? "nil"), length=\(summary.summary?.count ?? 0)", level: .debug)
                     context.delete(summary)
                 }
                 try? context.save()
             }
             return summaries.first
         } catch {
-            print("❌ Error fetching summary: \(error)")
+            AppLog.shared.coreData("Error fetching summary: \(error)", level: .error)
             return nil
         }
     }
@@ -532,14 +532,14 @@ class CoreDataManager: ObservableObject {
         do {
             return try context.fetch(fetchRequest)
         } catch {
-            print("❌ Error fetching summaries: \(error)")
+            AppLog.shared.coreData("Error fetching summaries: \(error)", level: .error)
             return []
         }
     }
     
     func deleteSummary(id: UUID?) throws {
         guard let id = id else { 
-            print("❌ Cannot delete summary: ID is nil")
+            AppLog.shared.coreData("Cannot delete summary: ID is nil", level: .error)
             return 
         }
         
@@ -549,27 +549,27 @@ class CoreDataManager: ObservableObject {
         do {
             let summaries = try context.fetch(fetchRequest)
             if summaries.isEmpty {
-                print("⚠️ No summary found with ID: \(id)")
+                AppLog.shared.coreData("No summary found with ID: \(id)", level: .debug)
                 return
             }
             
             for summary in summaries {
-                print("🗑️ Deleting summary with ID: \(id)")
+                AppLog.shared.coreData("Deleting summary with ID: \(id)", level: .debug)
                 context.delete(summary)
             }
             
             // Properly handle save errors
             do {
                 try saveContext()
-                print("✅ Successfully deleted summary with ID: \(id)")
+                AppLog.shared.coreData("Successfully deleted summary with ID: \(id)")
             } catch {
-                print("❌ Failed to save context after deleting summary: \(error)")
+                AppLog.shared.coreData("Failed to save context after deleting summary: \(error)", level: .error)
                 // Rollback the deletion
                 context.rollback()
                 throw error
             }
         } catch {
-            print("❌ Error deleting summary: \(error)")
+            AppLog.shared.coreData("Error deleting summary: \(error)", level: .error)
             throw error
         }
     }
@@ -583,7 +583,7 @@ class CoreDataManager: ObservableObject {
             let summaries = try context.fetch(fetchRequest)
             return summaries.compactMap { $0.id }
         } catch {
-            print("❌ Error fetching summary IDs: \(error)")
+            AppLog.shared.coreData("Error fetching summary IDs: \(error)", level: .error)
             return []
         }
     }
@@ -596,20 +596,20 @@ class CoreDataManager: ObservableObject {
         do {
             let summaries = try context.fetch(fetchRequest)
             if summaries.isEmpty {
-                print("ℹ️ No summaries found for recording: \(recordingId)")
+                AppLog.shared.coreData("No summaries found for recording: \(recordingId)", level: .debug)
                 return
             }
 
-            print("🗑️ Deleting \(summaries.count) summary/summaries for recording: \(recordingId)")
+            AppLog.shared.coreData("Deleting \(summaries.count) summary/summaries for recording: \(recordingId)", level: .debug)
             for summary in summaries {
-                print("  - Deleting summary ID: \(summary.id?.uuidString ?? "nil")")
+                AppLog.shared.coreData("Deleting summary ID: \(summary.id?.uuidString ?? "nil")", level: .debug)
                 context.delete(summary)
             }
 
             try saveContext()
-            print("✅ Successfully deleted all summaries for recording: \(recordingId)")
+            AppLog.shared.coreData("Successfully deleted all summaries for recording: \(recordingId)")
         } catch {
-            print("❌ Error deleting summaries for recording: \(error)")
+            AppLog.shared.coreData("Error deleting summaries for recording: \(error)", level: .error)
             context.rollback()
             throw error
         }
@@ -646,7 +646,7 @@ class CoreDataManager: ObservableObject {
     
     func deleteRecording(id: UUID) {
         guard let recording = getRecording(id: id) else {
-            print("❌ Recording not found for deletion: \(id)")
+            AppLog.shared.coreData("Recording not found for deletion: \(id)", level: .error)
             return
         }
         
@@ -655,9 +655,9 @@ class CoreDataManager: ObservableObject {
         
         do {
             try context.save()
-            print("✅ Recording deleted: \(recording.recordingName ?? "unknown")")
+            AppLog.shared.coreData("Recording deleted: \(id)")
         } catch {
-            print("❌ Error deleting recording: \(error)")
+            AppLog.shared.coreData("Error deleting recording: \(error)", level: .error)
         }
     }
     
@@ -671,7 +671,7 @@ class CoreDataManager: ObservableObject {
         guard let _ = transcriptEntry.id,
               let recordingId = recordingEntry.id,
               let url = getAbsoluteURL(for: recordingEntry) else {
-            print("❌ Could not get absolute URL for recording: \(recordingEntry.recordingName ?? "unknown")")
+            AppLog.shared.coreData("Could not get absolute URL for recording ID: \(recordingEntry.id?.uuidString ?? "nil")", level: .error)
             return nil
         }
         
@@ -711,7 +711,7 @@ class CoreDataManager: ObservableObject {
     private func convertToEnhancedSummaryData(summaryEntry: SummaryEntry, recordingEntry: RecordingEntry) -> EnhancedSummaryData? {
         guard let _ = summaryEntry.id,
               let recordingId = recordingEntry.id else {
-            print("❌ Missing IDs for summary/recording conversion")
+            AppLog.shared.coreData("Missing IDs for summary/recording conversion", level: .error)
             return nil
         }
         // Allow preserved summaries without an audio URL by falling back to an empty URL
@@ -776,7 +776,7 @@ class CoreDataManager: ObservableObject {
         do {
             return try context.fetch(fetchRequest)
         } catch {
-            print("❌ Error fetching processing jobs: \(error)")
+            AppLog.shared.coreData("Error fetching processing jobs: \(error)", level: .error)
             return []
         }
     }
@@ -788,7 +788,7 @@ class CoreDataManager: ObservableObject {
         do {
             return try context.fetch(fetchRequest).first
         } catch {
-            print("❌ Error fetching processing job: \(error)")
+            AppLog.shared.coreData("Error fetching processing job: \(error)", level: .error)
             return nil
         }
     }
@@ -801,7 +801,7 @@ class CoreDataManager: ObservableObject {
         do {
             return try context.fetch(fetchRequest)
         } catch {
-            print("❌ Error fetching active processing jobs: \(error)")
+            AppLog.shared.coreData("Error fetching active processing jobs: \(error)", level: .error)
             return []
         }
     }
@@ -834,9 +834,9 @@ class CoreDataManager: ObservableObject {
         
         do {
             try saveContext()
-            print("✅ Created processing job: \(recordingName)")
+            AppLog.shared.coreData("Created processing job: \(id)")
         } catch {
-            print("❌ Error saving processing job: \(error)")
+            AppLog.shared.coreData("Error saving processing job: \(error)", level: .error)
         }
         return job
     }
@@ -849,7 +849,7 @@ class CoreDataManager: ObservableObject {
     func deleteProcessingJob(_ job: ProcessingJobEntry) {
         context.delete(job)
         try? saveContext()
-        print("✅ Deleted processing job: \(job.recordingName ?? "unknown")")
+        AppLog.shared.coreData("Deleted processing job: \(job.id?.uuidString ?? "nil")")
     }
     
     func deleteCompletedProcessingJobs() {
@@ -862,9 +862,9 @@ class CoreDataManager: ObservableObject {
                 context.delete(job)
             }
             try? saveContext()
-            print("✅ Deleted \(completedJobs.count) completed processing jobs")
+            AppLog.shared.coreData("Deleted \(completedJobs.count) completed processing jobs")
         } catch {
-            print("❌ Error deleting completed processing jobs: \(error)")
+            AppLog.shared.coreData("Error deleting completed processing jobs: \(error)", level: .error)
         }
     }
     
@@ -883,7 +883,7 @@ class CoreDataManager: ObservableObject {
             
             // Only clean up recordings that have absolutely no content
             if hasNoURL && hasNoTranscript && hasNoSummary {
-                print("🗑️ Cleaning up orphaned recording: \(recording.recordingName ?? "unknown")")
+                AppLog.shared.coreData("Cleaning up orphaned recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                 context.delete(recording)
                 cleanedCount += 1
             }
@@ -894,9 +894,9 @@ class CoreDataManager: ObservableObject {
         if cleanedCount > 0 {
             do {
                 try context.save()
-                print("✅ Cleaned up \(cleanedCount) orphaned recordings")
+                AppLog.shared.coreData("Cleaned up \(cleanedCount) orphaned recordings")
             } catch {
-                print("❌ Failed to save cleanup: \(error)")
+                AppLog.shared.coreData("Failed to save cleanup: \(error)", level: .error)
             }
         }
         
@@ -924,9 +924,9 @@ class CoreDataManager: ObservableObject {
         if fixedCount > 0 {
             do {
                 try context.save()
-                print("✅ Fixed \(fixedCount) incompletely deleted recordings")
+                AppLog.shared.coreData("Fixed \(fixedCount) incompletely deleted recordings")
             } catch {
-                print("❌ Failed to save fixes: \(error)")
+                AppLog.shared.coreData("Failed to save fixes: \(error)", level: .error)
             }
         }
         
@@ -949,9 +949,7 @@ class CoreDataManager: ObservableObject {
             // Check if the file actually exists
             if let url = getAbsoluteURL(for: recording) {
                 if !FileManager.default.fileExists(atPath: url.path) {
-                    let recordingName = recording.recordingName ?? "unknown"
-                    print("🗑️ Cleaning up recording with missing file: \(recordingName)")
-                    print("   - Missing file: \(url.lastPathComponent)")
+                    AppLog.shared.coreData("Cleaning up recording with missing file: \(url.lastPathComponent)", level: .debug)
                     
                     // Only delete if there's no transcript or summary to preserve
                     let hasTranscript = recording.transcript != nil
@@ -963,15 +961,14 @@ class CoreDataManager: ObservableObject {
                         cleanedCount += 1
                     } else {
                         // Has transcript or summary, just clear the URL
-                        print("   - Preserving recording with transcript/summary, clearing URL")
+                        AppLog.shared.coreData("Preserving recording with transcript/summary, clearing URL", level: .debug)
                         recording.recordingURL = nil
                         recording.lastModified = Date()
                     }
                 }
             } else {
                 // Could not resolve URL at all
-                let recordingName = recording.recordingName ?? "unknown"
-                print("🗑️ Recording with unresolvable URL: \(recordingName)")
+                AppLog.shared.coreData("Recording with unresolvable URL, ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                 
                 let hasTranscript = recording.transcript != nil
                 let hasSummary = recording.summary != nil
@@ -989,9 +986,9 @@ class CoreDataManager: ObservableObject {
         if cleanedCount > 0 {
             do {
                 try context.save()
-                print("✅ Cleaned up \(cleanedCount) recordings with missing files")
+                AppLog.shared.coreData("Cleaned up \(cleanedCount) recordings with missing files")
             } catch {
-                print("❌ Failed to save missing file cleanup: \(error)")
+                AppLog.shared.coreData("Failed to save missing file cleanup: \(error)", level: .error)
             }
         }
         
@@ -1002,21 +999,13 @@ class CoreDataManager: ObservableObject {
     
     func debugDatabaseContents() {
         let recordings = getAllRecordings()
-        print("📊 Core Data contains \(recordings.count) recordings:")
-        
+        AppLog.shared.coreData("Core Data contains \(recordings.count) recordings", level: .debug)
+
         for recording in recordings {
-            print("  - \(recording.recordingName ?? "unknown") (ID: \(recording.id?.uuidString ?? "nil"))")
-            print("    Has transcript: \(recording.transcript != nil)")
-            print("    Has summary: \(recording.summary != nil)")
-            print("    Transcription status: \(recording.transcriptionStatus ?? "unknown")")
-            print("    Summary status: \(recording.summaryStatus ?? "unknown")")
-            
-            // Show location data if available
-            if let locationData = getLocationData(for: recording) {
-                print("    Location: \(locationData.displayLocation)")
-            } else {
-                print("    Location: None")
-            }
+            let hasTranscript = recording.transcript != nil
+            let hasSummary = recording.summary != nil
+            let hasLocation = getLocationData(for: recording) != nil
+            AppLog.shared.coreData("Recording ID: \(recording.id?.uuidString ?? "nil") | transcript: \(hasTranscript) | summary: \(hasSummary) | transcriptionStatus: \(recording.transcriptionStatus ?? "unknown") | summaryStatus: \(recording.summaryStatus ?? "unknown") | location: \(hasLocation)", level: .debug)
         }
     }
     
@@ -1039,7 +1028,7 @@ class CoreDataManager: ObservableObject {
         }
         
         if needsWork {
-            print("🔄 Starting URL synchronization...")
+            AppLog.shared.coreData("Starting URL synchronization...")
         }
         
         for recording in allRecordings {
@@ -1073,9 +1062,9 @@ class CoreDataManager: ObservableObject {
                         updatedCount += 1
                         // Only log if the filename actually changed or if this is a real path change
                         if oldURL.lastPathComponent != newURL.lastPathComponent {
-                            print("✅ Updated URL for \(recording.recordingName ?? "unknown"): \(oldURL.lastPathComponent) → \(newURL.lastPathComponent)")
+                            AppLog.shared.coreData("Updated URL for recording ID \(recording.id?.uuidString ?? "nil"): \(oldURL.lastPathComponent) -> \(newURL.lastPathComponent)", level: .debug)
                         } else {
-                            print("🔗 Fixed path for \(recording.recordingName ?? "unknown"): \(newURL.lastPathComponent)")
+                            AppLog.shared.coreData("Fixed path for recording ID \(recording.id?.uuidString ?? "nil"): \(newURL.lastPathComponent)", level: .debug)
                         }
                     } else {
                         // If no exact filename match, try to find by recording name
@@ -1092,19 +1081,16 @@ class CoreDataManager: ObservableObject {
                                 recording.recordingURL = urlToRelativePath(newURL)
                                 recording.lastModified = Date()
                                 updatedCount += 1
-                                print("✅ Updated URL by name match for \(recording.recordingName ?? "unknown"): \(oldURL.lastPathComponent) → \(newURL.lastPathComponent)")
+                                AppLog.shared.coreData("Updated URL by name match for recording ID \(recording.id?.uuidString ?? "nil"): \(oldURL.lastPathComponent) -> \(newURL.lastPathComponent)", level: .debug)
                             } else {
-                                print("⚠️ Could not find file for recording: \(recording.recordingName ?? "unknown")")
-                                print("   - Expected filename: \(filename)")
-                                print("   - Recording name: \(recordingName)")
-                                print("   - Available files: \(fileURLs.map { $0.lastPathComponent })")
+                                AppLog.shared.coreData("Could not find file for recording ID \(recording.id?.uuidString ?? "nil"), expected filename: \(filename), available files: \(fileURLs.count)", level: .error)
                             }
                         } else {
-                            print("⚠️ Could not find file for recording: \(recording.recordingName ?? "unknown")")
+                            AppLog.shared.coreData("Could not find file for recording ID \(recording.id?.uuidString ?? "nil")", level: .error)
                         }
                     }
                 } catch {
-                    print("❌ Error scanning documents directory: \(error)")
+                    AppLog.shared.coreData("Error scanning documents directory: \(error)", level: .error)
                 }
             }
         }
@@ -1113,12 +1099,12 @@ class CoreDataManager: ObservableObject {
         if updatedCount > 0 {
             do {
                 try context.save()
-                print("✅ Saved \(updatedCount) URL updates to Core Data")
+                AppLog.shared.coreData("Saved \(updatedCount) URL updates to Core Data")
             } catch {
-                print("❌ Failed to save URL updates: \(error)")
+                AppLog.shared.coreData("Failed to save URL updates: \(error)", level: .error)
             }
         } else if needsWork {
-            print("ℹ️ No URL updates needed")
+            AppLog.shared.coreData("No URL updates needed")
         }
         // If needsWork was false, we don't log anything to reduce console spam
     }
@@ -1130,9 +1116,9 @@ class CoreDataManager: ObservableObject {
         
         do {
             try context.save()
-            print("✅ Updated recording URL: \(recording.recordingName ?? "unknown") → \(newURL.lastPathComponent)")
+            AppLog.shared.coreData("Updated recording URL for ID \(recording.id?.uuidString ?? "nil"): \(newURL.lastPathComponent)")
         } catch {
-            print("❌ Failed to save URL update: \(error)")
+            AppLog.shared.coreData("Failed to save URL update: \(error)", level: .error)
         }
     }
     
@@ -1140,8 +1126,6 @@ class CoreDataManager: ObservableObject {
         guard let recording = getRecording(id: recordingId) else {
             throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found with ID: \(recordingId)"])
         }
-        
-        let oldName = recording.recordingName ?? "Unknown"
         
         // Clean any legacy [Watch] tags from the name
         let finalName = newName.replacingOccurrences(of: " [Watch]", with: "")
@@ -1151,9 +1135,9 @@ class CoreDataManager: ObservableObject {
         
         do {
             try context.save()
-            print("✅ Updated recording name: '\(oldName)' → '\(finalName)'")
+            AppLog.shared.coreData("Updated recording name for ID: \(recordingId)")
         } catch {
-            print("❌ Failed to save recording name update: \(error)")
+            AppLog.shared.coreData("Failed to save recording name update: \(error)", level: .error)
             throw error
         }
     }

@@ -82,7 +82,7 @@ struct SummariesView: View {
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SummaryDeleted"))) { _ in
                     // Refresh when a summary is deleted
-                    print("📱 SummariesView: Received summary deletion notification, refreshing...")
+                    AppLog.shared.summarization("Received summary deletion notification, refreshing...", level: .debug)
                     loadRecordings()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
@@ -171,10 +171,10 @@ struct SummariesView: View {
                 Task {
                     do {
                         let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator)
-                        print("✅ Downloaded \(count) summaries from iCloud")
+                        AppLog.shared.summarization("Downloaded \(count) summaries from iCloud")
                         loadRecordings() // Refresh the view
                     } catch {
-                        print("❌ Failed to download summaries: \(error)")
+                        AppLog.shared.summarization("Failed to download summaries: \(error)", level: .error)
                         await MainActor.run {
                             errorMessage = "Failed to download summaries: \(error.localizedDescription)"
                             errorRecoverySuggestion = ""
@@ -200,10 +200,10 @@ struct SummariesView: View {
                     // Now download the summaries
                     do {
                         let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator)
-                        print("✅ Downloaded \(count) summaries from iCloud")
+                        AppLog.shared.summarization("Downloaded \(count) summaries from iCloud")
                         loadRecordings() // Refresh the view
                     } catch {
-                        print("❌ Failed to download summaries: \(error)")
+                        AppLog.shared.summarization("Failed to download summaries: \(error)", level: .error)
                         await MainActor.run {
                             errorMessage = "Failed to download summaries: \(error.localizedDescription)"
                             errorRecoverySuggestion = ""
@@ -465,7 +465,7 @@ struct SummariesView: View {
                     } else {
                         Button(action: {
                             guard !isGeneratingSummary else { return }
-                            print("🔘 Generate Summary button pressed for: \(recording.recordingName ?? "Unknown")")
+                            AppLog.shared.summarization("Generate Summary button pressed", level: .debug)
                             generateSummary(for: recording)
                         }) {
                             HStack {
@@ -547,7 +547,7 @@ struct SummariesView: View {
                 let repairedCount = appCoordinator.coreDataManager.repairOrphanedSummaries()
 
                 if repairedCount > 0 {
-                    print("✅ Repaired \(repairedCount) orphaned summaries")
+                    AppLog.shared.summarization("Repaired \(repairedCount) orphaned summaries")
                     // Reload the view after repair
                     DispatchQueue.main.async {
                         self.loadRecordings()
@@ -561,9 +561,7 @@ struct SummariesView: View {
     }
     
     private func generateSummary(for recording: RecordingEntry) {
-        print("🚀 generateSummary called for recording: \(recording.recordingName ?? "unknown")")
-        print("📁 Recording URL: \(recording.recordingURL ?? "unknown")")
-        print("📅 Recording date: \(recording.recordingDate ?? Date())")
+        AppLog.shared.summarization("generateSummary called", level: .debug)
 
         isGeneratingSummary = true
         generatingSummaryRecordingId = recording.id
@@ -578,7 +576,7 @@ struct SummariesView: View {
         }
         let recordingName = recording.recordingName ?? "Unknown Recording"
 
-        print("🔧 Queueing summary job via BackgroundProcessingManager...")
+        AppLog.shared.summarization("Queueing summary job via BackgroundProcessingManager...", level: .debug)
 
         Task {
             do {
@@ -588,9 +586,9 @@ struct SummariesView: View {
                     engine: selectedEngine,
                     modelName: selectedModel
                 )
-                print("✅ Summary job queued successfully for: \(recordingName)")
+                AppLog.shared.summarization("Summary job queued successfully")
             } catch {
-                print("❌ Failed to queue summary job: \(error)")
+                AppLog.shared.summarization("Failed to queue summary job: \(error)", level: .error)
                 await MainActor.run {
                     if let summarizationError = error as? SummarizationError {
                         errorMessage = summarizationError.localizedDescription
@@ -689,7 +687,7 @@ struct SummariesView: View {
                 do {
                     cloudSummaries = try await iCloudManager.fetchAllSummariesUsingRecordOperation()
                 } catch {
-                    print("⚠️ Schema-safe fetch failed, trying standard fetch: \(error)")
+                    AppLog.shared.summarization("Schema-safe fetch failed, trying standard fetch: \(error)", level: .error)
                     cloudSummaries = try await iCloudManager.fetchAllSummariesFromCloud()
                 }
 
@@ -716,7 +714,7 @@ struct SummariesView: View {
                 }
             } catch {
                 // If we can't check iCloud (offline, no access, etc.), don't show prompt
-                print("ℹ️ Could not check iCloud for summaries: \(error)")
+                AppLog.shared.summarization("Could not check iCloud for summaries: \(error)", level: .debug)
                 // Still mark initial launch as completed
                 UserDefaults.standard.set(true, forKey: "hasCompletedInitialLaunch")
             }
@@ -729,7 +727,7 @@ struct SummariesView: View {
         let currentEnabled = UserDefaults.standard.bool(forKey: "unifiedICloudSyncEnabled")
 
         if legacyEnabled && !currentEnabled {
-            print("🔄 Migrating legacy iCloud sync setting from 'iCloudSyncEnabled' to 'unifiedICloudSyncEnabled'")
+            AppLog.shared.summarization("Migrating legacy iCloud sync setting to unifiedICloudSyncEnabled")
             UserDefaults.standard.set(true, forKey: "unifiedICloudSyncEnabled")
 
             // Also enable the current iCloud manager if it wasn't enabled
@@ -747,7 +745,7 @@ struct SummariesView: View {
         do {
             try await iCloudManager.syncAllSummaries()
         } catch {
-            print("❌ Sync error: \(error)")
+            AppLog.shared.summarization("Sync error: \(error)", level: .error)
             await MainActor.run {
                 errorMessage = "iCloud sync failed: \(error.localizedDescription)"
                 errorRecoverySuggestion = ""

@@ -34,9 +34,9 @@ extension AudioRecorderViewModel {
 
 		do {
 			try await UNUserNotificationCenter.current().add(request)
-			print("✅ Sent warning notification: \(title)")
+			AppLog.shared.recording("Sent warning notification: \(title)")
 		} catch {
-			print("❌ Failed to send warning notification: \(error)")
+			AppLog.shared.recording("Failed to send warning notification: \(error)", level: .error)
 		}
 	}
 
@@ -45,7 +45,7 @@ extension AudioRecorderViewModel {
 	func checkRecordingLimitsAndWarnings() async {
 		// 1. DURATION CHECK
 		if recordingTime >= MAX_RECORDING_DURATION {
-			print("⏱️ Maximum recording duration (3 hours) reached")
+			AppLog.shared.recording("Maximum recording duration (3 hours) reached")
 			await sendWarningNotification(
 				title: "Recording Limit Reached",
 				body: "Maximum recording duration (3 hours) reached. Stopping recording.",
@@ -71,7 +71,7 @@ extension AudioRecorderViewModel {
 			let freeStorageMB = freeStorage / (1024 * 1024)
 
 			if freeStorageMB < MIN_STORAGE_REQUIRED_MB {
-				print("💾 Critical storage: Only \(freeStorageMB) MB remaining")
+				AppLog.shared.recording("Critical storage: Only \(freeStorageMB) MB remaining", level: .error)
 				await sendWarningNotification(
 					title: "Storage Full",
 					body: "Less than 100 MB remaining. Stopping recording to prevent data loss.",
@@ -96,7 +96,7 @@ extension AudioRecorderViewModel {
 		let batteryLevel = UIDevice.current.batteryLevel
 
 		if batteryLevel >= 0 && batteryLevel < MIN_BATTERY_LEVEL {
-			print("🔋 Critical battery: \(Int(batteryLevel * 100))%")
+			AppLog.shared.recording("Critical battery: \(Int(batteryLevel * 100))%", level: .error)
 			await sendWarningNotification(
 				title: "Critical Battery",
 				body: "Battery at \(Int(batteryLevel * 100))%. Stopping recording to preserve battery.",
@@ -123,7 +123,7 @@ extension AudioRecorderViewModel {
 			let values = try fileURL.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
 			return values.volumeAvailableCapacityForImportantUsage
 		} catch {
-			print("❌ Failed to get available storage: \(error)")
+			AppLog.shared.recording("Failed to get available storage: \(error)", level: .error)
 			return nil
 		}
 	}

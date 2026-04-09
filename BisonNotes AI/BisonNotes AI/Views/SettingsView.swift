@@ -24,6 +24,7 @@ struct SettingsView: View {
     @State private var showingPreferences = false
     @State private var showingAcknowledgements = false
     @State private var showingTroubleshootingWarning = false
+    @State private var logExportError: String?
 
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = "On Device"
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "On-Device AI"
@@ -59,7 +60,6 @@ struct SettingsView: View {
                     microphoneSection
                     advancedSection
                     debugSection
-                    databaseMaintenanceSection
 
 
                     Spacer(minLength: 40)
@@ -84,7 +84,7 @@ struct SettingsView: View {
         .onChange(of: selectedAIEngine) { _, newEngine in
             // Immediately update the SummaryManager when user changes AI engine selection
             SummaryManager.shared.setEngine(newEngine)
-            print("🔄 SettingsView: Updated AI engine to '\(newEngine)'")
+            AppLog.shared.log("SettingsView: Updated AI engine to '\(newEngine)'", level: .debug, category: .general)
         }
         .onChange(of: enableExperimentalModels) { oldValue, newValue in
             // Refresh model list when experimental models toggle changes
@@ -604,9 +604,9 @@ struct SettingsView: View {
                                                 Task {
                                                     do {
                                                         let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
-                                                        print("✅ Downloaded \(count) summaries from iCloud")
+                                                        AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
                                                     } catch {
-                                                        print("❌ Failed to download summaries: \(error)")
+                                                        AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
                                                     }
                                                 }
                                             })
@@ -634,7 +634,7 @@ struct SettingsView: View {
                                         }
                                     }
                                 } catch {
-                                    print("❌ Failed to check for iCloud data: \(error)")
+                                    AppLog.shared.log("Failed to check for iCloud data: \(error)", level: .error, category: .general)
                                     await MainActor.run {
                                         let alert = UIAlertController(
                                             title: "Check Failed",
@@ -681,6 +681,121 @@ struct SettingsView: View {
     
     private var debugSection: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // Comedy Mode
+            VStack(spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Comedy Mode")
+                            .font(.body)
+                            .foregroundColor(.primary)
+                        Text("Make AI summaries entertaining with a comedic twist. All information is preserved — just delivered with flair.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $comedyModeEnabled)
+                        .labelsHidden()
+                }
+
+                if comedyModeEnabled {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Comedy Style")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+
+                        HStack(spacing: 12) {
+                            Button(action: { comedyModeStyle = "snarky" }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: comedyModeStyle == "snarky" ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(comedyModeStyle == "snarky" ? .orange : .secondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Snarky")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                        Text("Dry wit & sarcasm")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(comedyModeStyle == "snarky" ? Color.orange.opacity(0.15) : Color(.systemGray5).opacity(0.5))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(comedyModeStyle == "snarky" ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+
+                            Button(action: { comedyModeStyle = "funny" }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: comedyModeStyle == "funny" ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(comedyModeStyle == "funny" ? .purple : .secondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Funny")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                        Text("Goofy & absurd")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(comedyModeStyle == "funny" ? Color.purple.opacity(0.15) : Color(.systemGray5).opacity(0.5))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(comedyModeStyle == "funny" ? Color.purple.opacity(0.5) : Color.clear, lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
+            .background(
+                Rectangle()
+                    .fill(Color(.systemGray6))
+                    .opacity(0.3)
+            )
+
+            // Experimental On-Device AI Models
+            VStack(spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Enable Experimental On-Device AI Models")
+                            .font(.body)
+                            .foregroundColor(.primary)
+                        Text("Allow use of experimental models (LFM 2.5 for 4GB+, Qwen3.5 2B for 6GB+, Qwen3.5 4B for 8GB+). These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only LFM 2.5 available.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $enableExperimentalModels)
+                        .labelsHidden()
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
+            .background(
+                Rectangle()
+                    .fill(Color(.systemGray6))
+                    .opacity(0.3)
+            )
+
+            // Debug & Troubleshooting
             Text("Debug & Troubleshooting")
                 .font(.headline)
                 .foregroundColor(.primary)
@@ -746,111 +861,46 @@ struct SettingsView: View {
                         .fill(Color(.systemGray6))
                         .opacity(0.3)
                 )
-                
-                // Experimental On-Device AI Models
+
+                // Export Diagnostic Logs
                 VStack(spacing: 8) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Enable Experimental On-Device AI Models")
+                            Text("Export Diagnostic Logs")
                                 .font(.body)
                                 .foregroundColor(.primary)
-                            Text("Allow use of experimental models (LFM 2.5 for 4GB+, Qwen3.5 2B for 6GB+, Qwen3.5 4B for 8GB+). These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only LFM 2.5 available.")
+                            Text("Email logs to developer for troubleshooting")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
-                        Toggle("", isOn: $enableExperimentalModels)
-                            .labelsHidden()
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    Rectangle()
-                        .fill(Color(.systemGray6))
-                        .opacity(0.3)
-                )
-
-                // Comedy Mode
-                VStack(spacing: 8) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Comedy Mode")
-                                .font(.body)
-                                .foregroundColor(.primary)
-                            Text("Make AI summaries entertaining with a comedic twist. All information is preserved — just delivered with flair.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: $comedyModeEnabled)
-                            .labelsHidden()
-                    }
-
-                    if comedyModeEnabled {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Comedy Style")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundColor(.secondary)
-
-                            HStack(spacing: 12) {
-                                Button(action: { comedyModeStyle = "snarky" }) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: comedyModeStyle == "snarky" ? "checkmark.circle.fill" : "circle")
-                                            .foregroundColor(comedyModeStyle == "snarky" ? .orange : .secondary)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("Snarky")
-                                                .font(.subheadline)
-                                                .fontWeight(.medium)
-                                            Text("Dry wit & sarcasm")
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(comedyModeStyle == "snarky" ? Color.orange.opacity(0.15) : Color(.systemGray5).opacity(0.5))
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(comedyModeStyle == "snarky" ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 1)
-                                    )
-                                }
-                                .buttonStyle(PlainButtonStyle())
-
-                                Button(action: { comedyModeStyle = "funny" }) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: comedyModeStyle == "funny" ? "checkmark.circle.fill" : "circle")
-                                            .foregroundColor(comedyModeStyle == "funny" ? .purple : .secondary)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("Funny")
-                                                .font(.subheadline)
-                                                .fontWeight(.medium)
-                                            Text("Goofy & absurd")
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(comedyModeStyle == "funny" ? Color.purple.opacity(0.15) : Color(.systemGray5).opacity(0.5))
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(comedyModeStyle == "funny" ? Color.purple.opacity(0.5) : Color.clear, lineWidth: 1)
-                                    )
-                                }
-                                .buttonStyle(PlainButtonStyle())
+                        Button(action: {
+                            logExportError = nil
+                            do {
+                                let url = try LogExporter.exportLogs()
+                                LogEmailPresenter.shared.presentLogEmail(logFileURL: url) {}
+                            } catch {
+                                logExportError = error.localizedDescription
                             }
+                        }) {
+                            HStack {
+                                Text("Send Logs")
+                                Image(systemName: "envelope")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.blue.opacity(0.1))
+                            )
                         }
-                        .padding(.top, 4)
+                    }
+                    if let logExportError {
+                        Text("Error: \(logExportError)")
+                            .font(.caption)
+                            .foregroundColor(.red)
                     }
                 }
                 .padding(.horizontal, 24)
@@ -860,7 +910,6 @@ struct SettingsView: View {
                         .fill(Color(.systemGray6))
                         .opacity(0.3)
                 )
-                
             }
             .background(
                 RoundedRectangle(cornerRadius: 12)
@@ -872,14 +921,12 @@ struct SettingsView: View {
                     )
                     .opacity(0.3)
             )
-        }
-    }
-    
-    private var databaseMaintenanceSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+
+            // About
             Text("About")
                 .font(.headline)
                 .foregroundColor(.primary)
+                .padding(.horizontal, 24)
 
             Button(action: {
                 showingAcknowledgements = true
@@ -908,7 +955,9 @@ struct SettingsView: View {
                 )
             }
             .buttonStyle(PlainButtonStyle())
+            .padding(.horizontal, 24)
 
+            // Advanced Troubleshooting
             Button(action: {
                 showingTroubleshootingWarning = true
             }) {
@@ -925,22 +974,20 @@ struct SettingsView: View {
                         .fill(Color.orange)
                 )
             }
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
-        .background(
-            Rectangle()
-                .fill(Color(.systemGray6))
-                .opacity(0.3)
-        )
-        .alert("Warning", isPresented: $showingTroubleshootingWarning) {
-            Button("Cancel", role: .cancel) { }
-            Button("OK") {
-                showingDataMigration = true
+            .padding(.horizontal, 24)
+            .alert("Warning", isPresented: $showingTroubleshootingWarning) {
+                Button("Cancel", role: .cancel) { }
+                Button("OK") {
+                    showingDataMigration = true
+                }
+            } message: {
+                Text("These tools can delete data. Use with caution.")
             }
-        } message: {
-            Text("These tools can delete data. Use with caution.")
         }
+    }
+
+    private var databaseMaintenanceSection: some View {
+        EmptyView()
     }
     
     // MARK: - Location Status Helpers
@@ -1020,7 +1067,7 @@ struct SettingsView: View {
         do {
             try await iCloudManager.syncAllSummaries()
         } catch {
-            print("❌ Sync error: \(error)")
+            AppLog.shared.log("Sync error: \(error)", level: .error, category: .general)
             await MainActor.run {
                 errorHandler.handle(AppError.from(error, context: "iCloud Sync"), context: "Sync", showToUser: true)
             }

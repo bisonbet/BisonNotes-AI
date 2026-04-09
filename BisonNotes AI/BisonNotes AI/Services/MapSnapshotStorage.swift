@@ -15,7 +15,7 @@ enum MapSnapshotStorage {
     /// - Returns: Directory URL if successful, nil if directory creation fails
     private static func directoryURL() -> URL? {
         guard let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            print("❌ MapSnapshotStorage: Unable to access application support directory")
+            AppLog.shared.fileManagement("MapSnapshotStorage: Unable to access application support directory", level: .error)
             return nil
         }
         
@@ -25,9 +25,9 @@ enum MapSnapshotStorage {
         if !FileManager.default.fileExists(atPath: directory.path) {
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                print("✅ MapSnapshotStorage: Created directory at \(directory.path)")
+                AppLog.shared.fileManagement("MapSnapshotStorage: Created directory")
             } catch {
-                print("❌ MapSnapshotStorage: Failed to create directory: \(error.localizedDescription)")
+                AppLog.shared.fileManagement("MapSnapshotStorage: Failed to create directory: \(error.localizedDescription)", level: .error)
                 return nil
             }
         }
@@ -65,7 +65,7 @@ enum MapSnapshotStorage {
         do {
             return try Data(contentsOf: url)
         } catch {
-            print("❌ MapSnapshotStorage: Failed to load data from \(url.path): \(error.localizedDescription)")
+            AppLog.shared.fileManagement("MapSnapshotStorage: Failed to load data: \(error.localizedDescription)", level: .error)
             return nil
         }
     }
@@ -92,16 +92,16 @@ enum MapSnapshotStorage {
     /// - Returns: true if save successful, false otherwise
     static func saveImageData(_ data: Data, summaryId: UUID, locationSignature: String) -> Bool {
         guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature) else {
-            print("❌ MapSnapshotStorage: Unable to create file URL for saving")
+            AppLog.shared.fileManagement("MapSnapshotStorage: Unable to create file URL for saving", level: .error)
             return false
         }
         
         do {
             try data.write(to: url)
-            print("✅ MapSnapshotStorage: Saved image data to \(url.path)")
+            AppLog.shared.fileManagement("MapSnapshotStorage: Saved image data")
             return true
         } catch {
-            print("❌ MapSnapshotStorage: Failed to save image data: \(error.localizedDescription)")
+            AppLog.shared.fileManagement("MapSnapshotStorage: Failed to save image data: \(error.localizedDescription)", level: .error)
             return false
         }
     }
@@ -122,10 +122,10 @@ enum MapSnapshotStorage {
         
         do {
             try FileManager.default.removeItem(at: url)
-            print("✅ MapSnapshotStorage: Deleted image at \(url.path)")
+            AppLog.shared.fileManagement("MapSnapshotStorage: Deleted image")
             return true
         } catch {
-            print("❌ MapSnapshotStorage: Failed to delete image: \(error.localizedDescription)")
+            AppLog.shared.fileManagement("MapSnapshotStorage: Failed to delete image: \(error.localizedDescription)", level: .error)
             return false
         }
     }
@@ -142,7 +142,7 @@ enum MapSnapshotStorage {
                 includingPropertiesForKeys: resourceKeys,
                 options: [.skipsHiddenFiles], 
                 errorHandler: { (url, error) -> Bool in
-                    print("❌ MapSnapshotStorage: Error enumerating \(url): \(error)")
+                    AppLog.shared.fileManagement("MapSnapshotStorage: Error enumerating: \(error)", level: .error)
                     return true
                 }
             )
@@ -159,7 +159,7 @@ enum MapSnapshotStorage {
             
             return totalSize
         } catch {
-            print("❌ MapSnapshotStorage: Failed to calculate directory size: \(error.localizedDescription)")
+            AppLog.shared.fileManagement("MapSnapshotStorage: Failed to calculate directory size: \(error.localizedDescription)", level: .error)
             return 0
         }
     }

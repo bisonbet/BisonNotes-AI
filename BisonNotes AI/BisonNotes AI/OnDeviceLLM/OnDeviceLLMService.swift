@@ -116,14 +116,14 @@ public class OnDeviceLLMService: ObservableObject {
 
         isLoaded = true
         llm?.isAppBackgrounded = _isAppBackgrounded
-        print("[OnDeviceLLMService] Model loaded: \(config.modelInfo.displayName) (backgrounded: \(_isAppBackgrounded))")
+        AppLog.shared.summarization("[OnDeviceLLMService] Model loaded: \(config.modelInfo.displayName) (backgrounded: \(_isAppBackgrounded))")
     }
 
     /// Unload the model from memory
     public func unloadModel() {
         llm = nil
         isLoaded = false
-        print("[OnDeviceLLMService] Model unloaded")
+        AppLog.shared.summarization("[OnDeviceLLMService] Model unloaded")
     }
 
     /// Set the app background state on the LLM to prevent Metal crashes
@@ -182,11 +182,9 @@ public class OnDeviceLLMService: ObservableObject {
 
         // Debug: Log raw model output before any cleanup
         if OnDeviceLLMFeatureFlags.debugRawOutput {
-            print("🔍 [OnDeviceLLMService] RAW MODEL OUTPUT START (generateSummary, \(result.count) chars) ===")
-            print(result)
-            print("=== RAW MODEL OUTPUT END ===")
+            AppLog.shared.summarization("[OnDeviceLLMService] generateSummary raw output: \(result.count) chars", level: .debug)
             if let metrics = lastMetrics {
-                print("📊 [OnDeviceLLMService] Metrics: \(metrics.inferenceTokenCount) output tokens, \(String(format: "%.1f", metrics.inferenceTokensPerSecond)) tok/s")
+                AppLog.shared.summarization("[OnDeviceLLMService] Metrics: \(metrics.inferenceTokenCount) output tokens, \(String(format: "%.1f", metrics.inferenceTokensPerSecond)) tok/s", level: .debug)
             }
         }
 
@@ -200,7 +198,7 @@ public class OnDeviceLLMService: ObservableObject {
             }
             
             if isOnlyStopTokens {
-                print("⚠️ [OnDeviceLLMService] LFM model generated only stop tokens, attempting retry with adjusted parameters...")
+                AppLog.shared.summarization("[OnDeviceLLMService] LFM model generated only stop tokens, attempting retry with adjusted parameters", level: .error)
                 // Try once more with slightly different prompt format
                 let retryPrompt = createLFMSummarizationPrompt(text: text, contentType: contentType)
                 result = await llm.generate(from: retryPrompt)
@@ -212,7 +210,7 @@ public class OnDeviceLLMService: ObservableObject {
         
         // Validate response - if it's essentially empty or just stop tokens, return error message
         if cleaned.isEmpty || cleaned.trimmingCharacters(in: .whitespacesAndNewlines).count < 10 {
-            print("⚠️ [OnDeviceLLMService] LFM model generated empty or minimal response after cleanup")
+            AppLog.shared.summarization("[OnDeviceLLMService] LFM model generated empty or minimal response after cleanup", level: .error)
             return "Summary generation encountered an issue. The model produced an empty response. Please try again or use a different model."
         }
         
@@ -316,11 +314,9 @@ public class OnDeviceLLMService: ObservableObject {
 
         // Debug: Log raw model output before any cleanup
         if OnDeviceLLMFeatureFlags.debugRawOutput {
-            print("🔍 [OnDeviceLLMService] RAW MODEL OUTPUT START (\(result.count) chars) ===")
-            print(result)
-            print("=== RAW MODEL OUTPUT END ===")
+            AppLog.shared.summarization("[OnDeviceLLMService] processComplete raw output: \(result.count) chars", level: .debug)
             if let metrics = lastMetrics {
-                print("📊 [OnDeviceLLMService] Metrics: \(metrics.inferenceTokenCount) output tokens, \(String(format: "%.1f", metrics.inferenceTokensPerSecond)) tok/s")
+                AppLog.shared.summarization("[OnDeviceLLMService] Metrics: \(metrics.inferenceTokenCount) output tokens, \(String(format: "%.1f", metrics.inferenceTokensPerSecond)) tok/s", level: .debug)
             }
         }
 
@@ -363,7 +359,7 @@ public class OnDeviceLLMService: ObservableObject {
         
         // Debug: Log raw response before cleanup
         if OnDeviceLLMFeatureFlags.verboseLogging {
-            print("📝 [OnDeviceLLMService] Raw summary response (first 500 chars): \(String(summaryResult.prefix(500)))")
+            AppLog.shared.summarization("[OnDeviceLLMService] Raw summary response: \(summaryResult.count) chars", level: .debug)
         }
         
         // Clean and parse summary
@@ -371,7 +367,7 @@ public class OnDeviceLLMService: ObservableObject {
         
         // Debug: Log cleaned response
         if OnDeviceLLMFeatureFlags.verboseLogging {
-            print("📝 [OnDeviceLLMService] Cleaned summary (first 500 chars): \(String(cleanedSummary.prefix(500)))")
+            AppLog.shared.summarization("[OnDeviceLLMService] Cleaned summary: \(cleanedSummary.count) chars", level: .debug)
         }
         
         // Truncate if summary is too long (LFM tends to run on)
@@ -383,12 +379,12 @@ public class OnDeviceLLMService: ObservableObject {
             } else {
                 cleanedSummary = String(cleanedSummary.prefix(2000))
             }
-            print("⚠️ [OnDeviceLLMService] Summary too long, truncated for \(config.modelInfo.displayName)")
+            AppLog.shared.summarization("[OnDeviceLLMService] Summary too long, truncated for \(config.modelInfo.displayName)", level: .error)
         }
 
         // Validate the response isn't empty or minimal
         if cleanedSummary.isEmpty || cleanedSummary.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).count < 20 {
-                print("⚠️ [OnDeviceLLMService] Small experimental model (\(config.modelInfo.displayName)) generated empty or minimal summary")
+                AppLog.shared.summarization("[OnDeviceLLMService] Small experimental model (\(config.modelInfo.displayName)) generated empty or minimal summary", level: .error)
                 return (
                     summary: "⚠️ This experimental model (\(config.modelInfo.displayName)) failed to generate a valid summary. Small models (1-2B parameters) are unreliable for summarization tasks. Please try a larger model like Gemma, Qwen 4B, or Ministral in Settings.",
                     tasks: [],
@@ -408,7 +404,7 @@ public class OnDeviceLLMService: ObservableObject {
         } && cleanedSummary.count < 50
         
         if isPlaceholder {
-            print("⚠️ [OnDeviceLLMService] Detected placeholder content in summary, using full cleaned response")
+            AppLog.shared.summarization("[OnDeviceLLMService] Detected placeholder content in summary, using full cleaned response", level: .error)
             // Don't try to extract, just use what we have
         } else {
             // Try to extract summary section
@@ -433,13 +429,13 @@ public class OnDeviceLLMService: ObservableObject {
            finalSummary.lowercased().contains("[your") || 
            finalSummary.lowercased().contains("descriptive title") ||
            finalSummary.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
-            print("⚠️ [OnDeviceLLMService] Extracted summary is invalid (length: \(finalSummary.count)), using full cleaned response")
+            AppLog.shared.summarization("[OnDeviceLLMService] Extracted summary is invalid (length: \(finalSummary.count)), using full cleaned response", level: .error)
             // Use the full cleaned response instead of the extracted portion
             if cleanedSummary.count > 10 && !cleanedSummary.lowercased().contains("[your") {
                 finalSummary = cleanedSummary
             } else {
                 // If even the cleaned response is bad, we have a problem
-                print("⚠️ [OnDeviceLLMService] Even cleaned response appears invalid, summary may be empty")
+                AppLog.shared.summarization("[OnDeviceLLMService] Even cleaned response appears invalid, summary may be empty", level: .error)
                 
                 // For small experimental models, provide a helpful error message
                 let isSmallModel = config.modelInfo.id == "lfm-2.5-1.2b" || config.modelInfo.id == "qwen3-1.7b"
@@ -498,7 +494,7 @@ public class OnDeviceLLMService: ObservableObject {
         
         // Debug: Log raw title response
         if OnDeviceLLMFeatureFlags.verboseLogging {
-            print("📝 [OnDeviceLLMService] Raw title response (first 500 chars): \(String(titleResult.prefix(500)))")
+            AppLog.shared.summarization("[OnDeviceLLMService] Raw title response: \(titleResult.count) chars", level: .debug)
         }
         
         // Parse title from response
@@ -507,14 +503,14 @@ public class OnDeviceLLMService: ObservableObject {
         // Check if response was likely truncated (hit max tokens)
         let wasTruncated = lastMetrics?.inferenceTokenCount ?? 0 >= 1400  // Close to 1500 limit
         if wasTruncated {
-            print("⚠️ [OnDeviceLLMService] Title generation may have been truncated (output tokens: \(lastMetrics?.inferenceTokenCount ?? 0))")
+            AppLog.shared.summarization("[OnDeviceLLMService] Title generation may have been truncated (output tokens: \(lastMetrics?.inferenceTokenCount ?? 0))", level: .error)
         }
         
         // Debug: Log cleaned title response
         if OnDeviceLLMFeatureFlags.verboseLogging {
-            print("📝 [OnDeviceLLMService] Cleaned title response (first 500 chars): \(String(cleanedTitleResult.prefix(500)))")
+            AppLog.shared.summarization("[OnDeviceLLMService] Cleaned title response: \(cleanedTitleResult.count) chars", level: .debug)
             if wasTruncated {
-                print("⚠️ [OnDeviceLLMService] Response was truncated, attempting to extract title from partial response")
+                AppLog.shared.summarization("[OnDeviceLLMService] Response was truncated, attempting to extract title from partial response", level: .debug)
             }
         }
         
@@ -534,7 +530,7 @@ public class OnDeviceLLMService: ObservableObject {
             } else {
                 cleanedTitleResult = String(cleanedTitleResult.prefix(500))
             }
-            print("⚠️ [OnDeviceLLMService] Title generation was too long (\(cleanedTitleResult.count) chars), truncated for \(config.modelInfo.displayName)")
+            AppLog.shared.summarization("[OnDeviceLLMService] Title generation was too long (\(cleanedTitleResult.count) chars), truncated for \(config.modelInfo.displayName)", level: .error)
         }
         
         var finalTitles = parseTitlesFromResponse(cleanedTitleResult)
@@ -548,7 +544,7 @@ public class OnDeviceLLMService: ObservableObject {
                                text == "..." ||
                                text.count < 5
             if isPlaceholder {
-                print("⚠️ [OnDeviceLLMService] Filtered out placeholder title: '\(titleItem.text)'")
+                AppLog.shared.summarization("[OnDeviceLLMService] Filtered out placeholder title", level: .debug)
             }
             return !isPlaceholder
         }
@@ -587,7 +583,7 @@ public class OnDeviceLLMService: ObservableObject {
                                 let cleaned = RecordingNameGenerator.cleanStandardizedTitleResponse(matchedText.sanitizedForTitle())
                                 if !cleaned.isEmpty && !cleaned.lowercased().contains("[your") && !cleaned.lowercased().contains("descriptive title") {
                                     finalTitles = [TitleItem(text: cleaned, confidence: 0.8)]
-                                    print("✅ [OnDeviceLLMService] Extracted title using pattern: '\(cleaned)'")
+                                    AppLog.shared.summarization("[OnDeviceLLMService] Extracted title using pattern")
                                     break
                                 }
                             }
@@ -616,7 +612,7 @@ public class OnDeviceLLMService: ObservableObject {
                             let title = RecordingNameGenerator.cleanStandardizedTitleResponse(cleaned.sanitizedForTitle())
                             if !title.isEmpty && !title.lowercased().contains("[your") && !title.lowercased().contains("descriptive title") {
                                 finalTitles = [TitleItem(text: title, confidence: 0.7)]
-                                print("✅ [OnDeviceLLMService] Extracted title from truncated response: '\(title)'")
+                                AppLog.shared.summarization("[OnDeviceLLMService] Extracted title from truncated response")
                                 break
                             }
                         }
@@ -1278,8 +1274,8 @@ public class OnDeviceLLMService: ObservableObject {
             contentAfterThinking = String(sanitizedResponse[thinkEndRange.upperBound...])
 
             if OnDeviceLLMFeatureFlags.verboseLogging {
-                print("🧠 [OnDeviceLLMService] Thinking content detected (\(thinkingContent.count) chars)")
-                print("📝 [OnDeviceLLMService] Content after thinking (\(contentAfterThinking.count) chars)")
+                AppLog.shared.summarization("[OnDeviceLLMService] Thinking content detected (\(thinkingContent.count) chars)", level: .debug)
+                AppLog.shared.summarization("[OnDeviceLLMService] Content after thinking (\(contentAfterThinking.count) chars)", level: .debug)
             }
         }
 
@@ -1296,10 +1292,10 @@ public class OnDeviceLLMService: ObservableObject {
         // Only consider it "only stop tokens" if there's less than 10 characters of actual content
         if cleanedTest.isEmpty || cleanedTest.count < 10 {
             if hasThinkingContent {
-                print("⚠️ [OnDeviceLLMService] Model generated thinking content (\(thinkingContent.count) chars) but no actual response after </think> (length: \(cleanedTest.count))")
-                print("⚠️ [OnDeviceLLMService] This may indicate the model hit the output token limit during thinking. Consider increasing max output tokens.")
+                AppLog.shared.summarization("[OnDeviceLLMService] Model generated thinking content (\(thinkingContent.count) chars) but no actual response after thinking block (length: \(cleanedTest.count))", level: .error)
+                AppLog.shared.summarization("[OnDeviceLLMService] This may indicate the model hit the output token limit during thinking", level: .error)
             } else {
-                print("⚠️ [OnDeviceLLMService] Response contains only stop tokens or minimal content (length: \(cleanedTest.count)), returning empty result")
+                AppLog.shared.summarization("[OnDeviceLLMService] Response contains only stop tokens or minimal content (length: \(cleanedTest.count)), returning empty result", level: .error)
             }
             return (summary: "", tasks: [], reminders: [], titles: [])
         }
@@ -1572,7 +1568,7 @@ extension OnDeviceLLMService {
             return !result.isEmpty
 
         } catch {
-            print("[OnDeviceLLMService] Connection test failed: \(error)")
+            AppLog.shared.summarization("[OnDeviceLLMService] Connection test failed: \(error)", level: .error)
             return false
         }
     }

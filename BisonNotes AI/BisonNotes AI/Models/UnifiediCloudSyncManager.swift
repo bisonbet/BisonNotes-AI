@@ -64,7 +64,7 @@ class UnifiediCloudSyncManager: ObservableObject {
         }
         
         isInitialized = true
-        print("✅ Unified CloudKit initialized")
+        AppLog.shared.iCloudSync("Unified CloudKit initialized")
     }
     
     // MARK: - Sync Operations
@@ -83,7 +83,7 @@ class UnifiediCloudSyncManager: ObservableObject {
             }
             
             await updateSyncStatus(.completed)
-            print("✅ Unified iCloud sync enabled")
+            AppLog.shared.iCloudSync("Unified iCloud sync enabled")
             
         } catch {
             await updateSyncStatus(.failed(error.localizedDescription))
@@ -93,7 +93,7 @@ class UnifiediCloudSyncManager: ObservableObject {
     
     func disableSync() async {
         await updateSyncStatus(.idle)
-        print("✅ Unified iCloud sync disabled")
+        AppLog.shared.iCloudSync("Unified iCloud sync disabled")
     }
     
     func syncAllData() async throws {
@@ -115,7 +115,7 @@ class UnifiediCloudSyncManager: ObservableObject {
                 UserDefaults.standard.set(self.lastSyncDate, forKey: "lastUnifiedSyncDate")
             }
             
-            print("✅ All data synced successfully")
+            AppLog.shared.iCloudSync("All data synced successfully")
             
         } catch {
             await updateSyncStatus(.failed(error.localizedDescription))
@@ -131,7 +131,7 @@ class UnifiediCloudSyncManager: ObservableObject {
             _ = try await database.save(record)
         }
         
-        print("✅ Synced \(registryManager.recordings.count) recordings")
+        AppLog.shared.iCloudSync("Synced \(registryManager.recordings.count) recordings")
     }
     
     private func syncTranscripts() async throws {
@@ -142,7 +142,7 @@ class UnifiediCloudSyncManager: ObservableObject {
             _ = try await database.save(record)
         }
         
-        print("✅ Synced \(registryManager.transcripts.count) transcripts")
+        AppLog.shared.iCloudSync("Synced \(registryManager.transcripts.count) transcripts")
     }
     
     private func syncSummaries() async throws {
@@ -153,7 +153,7 @@ class UnifiediCloudSyncManager: ObservableObject {
             _ = try await database.save(record)
         }
         
-        print("✅ Synced \(registryManager.enhancedSummaries.count) summaries")
+        AppLog.shared.iCloudSync("Synced \(registryManager.enhancedSummaries.count) summaries")
     }
     
     // MARK: - CloudKit Record Creation
@@ -264,7 +264,7 @@ class UnifiediCloudSyncManager: ObservableObject {
             await updateLocalRegistry(recordings: recordings, transcripts: transcripts, summaries: summaries)
             
             await updateSyncStatus(.completed)
-            print("✅ Fetched all data from cloud")
+            AppLog.shared.iCloudSync("Fetched all data from cloud")
             
         } catch {
             await updateSyncStatus(.failed(error.localizedDescription))
@@ -287,7 +287,7 @@ class UnifiediCloudSyncManager: ObservableObject {
                     recordings.append(recording)
                 }
             case .failure(let error):
-                print("❌ Failed to process recording record: \(error)")
+                AppLog.shared.iCloudSync("Failed to process recording record: \(error)", level: .error)
             }
         }
         
@@ -309,7 +309,7 @@ class UnifiediCloudSyncManager: ObservableObject {
                     transcripts.append(transcript)
                 }
             case .failure(let error):
-                print("❌ Failed to process transcript record: \(error)")
+                AppLog.shared.iCloudSync("Failed to process transcript record: \(error)", level: .error)
             }
         }
         
@@ -331,7 +331,7 @@ class UnifiediCloudSyncManager: ObservableObject {
                     summaries.append(summary)
                 }
             case .failure(let error):
-                print("❌ Failed to process summary record: \(error)")
+                AppLog.shared.iCloudSync("Failed to process summary record: \(error)", level: .error)
             }
         }
         
@@ -505,7 +505,7 @@ class UnifiediCloudSyncManager: ObservableObject {
             }
         }
         
-        print("✅ Local registry updated with cloud data")
+        AppLog.shared.iCloudSync("Local registry updated with cloud data")
     }
     
     private func updateSyncStatus(_ status: SyncStatus) async {

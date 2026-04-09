@@ -12,7 +12,7 @@ struct BackgroundProcessingView: View {
     @State private var selectedJob: ProcessingJob?
 
     var body: some View {
-        let _ = print("📊 BackgroundProcessingView body: activeJobs.count = \(processingManager.activeJobs.count), jobs: \(processingManager.activeJobs.map { "\($0.recordingName) (\($0.status.displayName))" })")
+        let _ = AppLog.shared.backgroundProcessing("BackgroundProcessingView body: activeJobs.count = \(processingManager.activeJobs.count)", level: .debug)
         NavigationView {
             VStack(spacing: 0) {
                 // Header with overall status

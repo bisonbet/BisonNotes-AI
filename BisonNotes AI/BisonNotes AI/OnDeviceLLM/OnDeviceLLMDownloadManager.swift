@@ -64,17 +64,23 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
             selectedModel = model
             isModelReady = model.isDownloaded
         } else {
-            // Use Granite Micro as default (recommended for 6GB+ devices)
-            // Don't use defaultSummarizationModel as it might access availableModels
-            let deviceRAM = DeviceCapabilities.totalRAMInGB
-            if deviceRAM >= 8.0 {
-                selectedModel = OnDeviceLLMModelInfo.granite4H
-            } else if deviceRAM >= 6.0 {
-                selectedModel = OnDeviceLLMModelInfo.granite4Micro
+            // Saved model ID is missing or no longer in allModels (renamed between releases).
+            // Check if any model is already downloaded on disk before picking a default.
+            if let existingModel = OnDeviceLLMModelInfo.allModels.first(where: { $0.isDownloaded }) {
+                selectedModel = existingModel
+                isModelReady = true
+                UserDefaults.standard.set(existingModel.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+                AppLog.shared.summarization("Recovered downloaded model on disk: \(existingModel.id)")
             } else {
-                selectedModel = OnDeviceLLMModelInfo.granite4Micro // Fallback
+                // No models on disk — pick a sensible default
+                let deviceRAM = DeviceCapabilities.totalRAMInGB
+                if deviceRAM >= 8.0 {
+                    selectedModel = OnDeviceLLMModelInfo.granite4H
+                } else {
+                    selectedModel = OnDeviceLLMModelInfo.granite4Micro
+                }
+                isModelReady = false
             }
-            isModelReady = selectedModel.isDownloaded
         }
         
         // Don't call refreshModelStatus() here - it's safe to call explicitly when needed
@@ -117,8 +123,8 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
             return
         }
 
-        print("[OnDeviceLLM] Starting download for \(modelToDownload.displayName)")
-        print("[OnDeviceLLM] URL: \(url)")
+        AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Starting download for \(modelToDownload.displayName)")
+        AppLog.shared.summarization("[OnDeviceLLMDownloadManager] URL: \(url)", level: .debug)
 
         // Cancel any existing download
         downloadTask?.cancel()
@@ -146,7 +152,7 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
         downloadTask = downloadSession.downloadTask(with: request)
         downloadTask?.resume()
 
-        print("[OnDeviceLLM] Download task started")
+        AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Download task started")
     }
 
     /// Cancel the current download
@@ -163,7 +169,7 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
         // Clean up stored model ID
         UserDefaults.standard.removeObject(forKey: "currentlyDownloadingModelId")
 
-        print("[OnDeviceLLM] Download cancelled")
+        AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Download cancelled")
     }
 
     /// Delete a downloaded model
@@ -173,7 +179,7 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
         do {
             if FileManager.default.fileExists(atPath: modelToDelete.fileURL.path) {
                 try FileManager.default.removeItem(at: modelToDelete.fileURL)
-                print("[OnDeviceLLM] Deleted model: \(modelToDelete.displayName)")
+                AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Deleted model: \(modelToDelete.displayName)")
             }
 
             // Update state
@@ -235,7 +241,7 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
                 return availableCapacity > requiredWithBuffer
             }
         } catch {
-            print("[OnDeviceLLM] Error checking disk space: \(error)")
+            AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Error checking disk space: \(error)", level: .error)
         }
         return false
     }
@@ -277,8 +283,8 @@ extension OnDeviceLLMDownloadManager: URLSessionDownloadDelegate {
         let model = OnDeviceLLMModelInfo.allModels.first(where: { $0.id == modelId }) ?? OnDeviceLLMModelInfo.defaultSummarizationModel
         let destination = model.fileURL
 
-        print("[OnDeviceLLM] Download finished! Temp location: \(location)")
-        print("[OnDeviceLLM] Moving to: \(destination)")
+        AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Download finished, moving to destination")
+        AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Destination: \(destination)", level: .debug)
 
         var moveError: Error?
 
@@ -291,13 +297,13 @@ extension OnDeviceLLMDownloadManager: URLSessionDownloadDelegate {
                     withIntermediateDirectories: true,
                     attributes: nil
                 )
-                print("[OnDeviceLLM] Created models directory: \(modelsDir.path)")
+                AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Created models directory", level: .debug)
             }
 
             // Remove existing file if present
             if fileManager.fileExists(atPath: destination.path) {
                 try fileManager.removeItem(at: destination)
-                print("[OnDeviceLLM] Removed existing file")
+                AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Removed existing file", level: .debug)
             }
 
             // Move downloaded file to destination (MUST be synchronous)
@@ -305,10 +311,10 @@ extension OnDeviceLLMDownloadManager: URLSessionDownloadDelegate {
 
             // Verify file was saved
             let fileSize = try fileManager.attributesOfItem(atPath: destination.path)[.size] as? Int64 ?? 0
-            print("[OnDeviceLLM] File saved successfully. Size: \(formatSize(fileSize))")
+            AppLog.shared.summarization("[OnDeviceLLMDownloadManager] File saved successfully. Size: \(formatSize(fileSize))")
 
         } catch {
-            print("[OnDeviceLLM] Failed to save file: \(error)")
+            AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Failed to save file: \(error)", level: .error)
             moveError = error
         }
 
@@ -334,10 +340,10 @@ extension OnDeviceLLMDownloadManager: URLSessionDownloadDelegate {
 
     public nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         Task { @MainActor in
-            print("[OnDeviceLLM] Task completed. Error: \(error?.localizedDescription ?? "none")")
+            AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Task completed. Error: \(error?.localizedDescription ?? "none")")
 
             if let httpResponse = task.response as? HTTPURLResponse {
-                print("[OnDeviceLLM] HTTP Status: \(httpResponse.statusCode)")
+                AppLog.shared.summarization("[OnDeviceLLMDownloadManager] HTTP Status: \(httpResponse.statusCode)", level: .debug)
                 if httpResponse.statusCode != 200 {
                     downloadError = "Server returned status \(httpResponse.statusCode)"
                     isDownloading = false
@@ -393,7 +399,7 @@ extension OnDeviceLLMDownloadManager: URLSessionDownloadDelegate {
     }
 
     public nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        print("[OnDeviceLLM] Redirect to: \(request.url?.absoluteString ?? "unknown")")
+        AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Redirect to: \(request.url?.absoluteString ?? "unknown")", level: .debug)
         completionHandler(request)
     }
 

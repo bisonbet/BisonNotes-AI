@@ -73,27 +73,27 @@ final class AISettingsViewModel: ObservableObject {
         switch engineType {
         case .openAICompatible:
             UserDefaults.standard.set(true, forKey: "enableOpenAICompatible")
-            print("🔧 Auto-enabled OpenAI Compatible engine")
+            AppLog.shared.general("Auto-enabled OpenAI Compatible engine")
         case .localLLM:
             UserDefaults.standard.set(true, forKey: "enableOllama")
-            print("🔧 Auto-enabled Ollama engine")
+            AppLog.shared.general("Auto-enabled Ollama engine")
         case .googleAIStudio:
             UserDefaults.standard.set(true, forKey: "enableGoogleAIStudio")
-            print("🔧 Auto-enabled Google AI Studio engine")
+            AppLog.shared.general("Auto-enabled Google AI Studio engine")
         case .awsBedrock:
             UserDefaults.standard.set(true, forKey: "enableAWSBedrock")
-            print("🔧 Auto-enabled AWS Bedrock engine")
+            AppLog.shared.general("Auto-enabled AWS Bedrock engine")
         case .mistralAI:
             UserDefaults.standard.set(true, forKey: "enableMistralAI")
-            print("🔧 Auto-enabled Mistral AI engine")
+            AppLog.shared.general("Auto-enabled Mistral AI engine")
         case .openAI:
             UserDefaults.standard.set(true, forKey: "enableOpenAI")
-            print("🔧 Auto-enabled OpenAI engine")
+            AppLog.shared.general("Auto-enabled OpenAI engine")
         case .onDeviceLLM:
             UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
-            print("🔧 Auto-enabled On-Device AI engine")
+            AppLog.shared.general("Auto-enabled On-Device AI engine")
         case .appleNative:
-            print("🔧 Selected Apple Native engine")
+            AppLog.shared.general("Selected Apple Native engine")
         }
 
         // Update the regeneration manager

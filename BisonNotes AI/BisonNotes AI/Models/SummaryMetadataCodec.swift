@@ -24,7 +24,7 @@ enum SummaryMetadataCodec {
         let payload = SummaryMetadataPayload(engine: aiEngine, model: aiModel)
         guard let data = try? JSONEncoder().encode(payload),
               let encoded = String(data: data, encoding: .utf8) else {
-            print("⚠️ SummaryMetadataCodec: Failed to encode metadata, falling back to plain model string")
+            AppLog.shared.summarization("SummaryMetadataCodec: Failed to encode metadata, falling back to plain model string", level: .error)
             return aiModel
         }
         return encoded

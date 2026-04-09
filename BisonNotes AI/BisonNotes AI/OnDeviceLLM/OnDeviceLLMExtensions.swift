@@ -69,7 +69,7 @@ extension LLMModel {
         let tokens = (0..<Int(tokenCount)).map { cTokens[$0] }
 
         if OnDeviceLLMFeatureFlags.verboseLogging {
-            print("Encoded tokens: \(tokens)")
+            AppLog.shared.summarization("[OnDeviceLLM] Encoded \(tokens.count) tokens", level: .debug)
         }
 
         return tokens
@@ -254,7 +254,7 @@ extension URL {
             resourceValues.isExcludedFromBackup = true
             try mutableURL.setResourceValues(resourceValues)
         } catch {
-            print("Error excluding from backup: \(error)")
+            AppLog.shared.summarization("[OnDeviceLLM] Error excluding from backup: \(error)", level: .error)
         }
 
         return url

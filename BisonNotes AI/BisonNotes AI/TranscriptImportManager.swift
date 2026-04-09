@@ -139,7 +139,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             )
         } catch {
             // Clean up orphaned data if transcript creation fails
-            print("❌ Transcript creation failed, cleaning up orphaned data...")
+            AppLog.shared.transcription("Transcript creation failed, cleaning up orphaned data", level: .error)
 
             // Delete the recording entry from Core Data
             if let recording = getRecording(id: recordingId) {
@@ -155,9 +155,9 @@ class TranscriptImportManager: NSObject, ObservableObject {
         }
 
         if transcriptName != baseName {
-            print("✅ Successfully imported transcript with unique name: \(transcriptName) (original: \(baseName))")
+            AppLog.shared.transcription("Successfully imported transcript with unique name: \(transcriptName) (original: \(baseName))")
         } else {
-            print("✅ Successfully imported transcript: \(transcriptName)")
+            AppLog.shared.transcription("Successfully imported transcript: \(transcriptName)")
         }
 
         return recordingId
@@ -192,7 +192,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             let count = try context.count(for: fetchRequest)
             return count > 0
         } catch {
-            print("❌ Error checking for existing recording: \(error)")
+            AppLog.shared.transcription("Error checking for existing recording: \(error)", level: .error)
             throw TranscriptImportError.databaseError("Failed to check existing recordings: \(error.localizedDescription)")
         }
     }
@@ -299,11 +299,11 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // We'll use Apple's built-in Archive API (available from Foundation)
         let fileManager = FileManager.default
 
-        print("📄 Starting DOCX extraction for: \(url.lastPathComponent)")
+        AppLog.shared.transcription("Starting DOCX extraction for: \(url.lastPathComponent)")
 
         // Read the DOCX file as data
         let docxData = try Data(contentsOf: url)
-        print("📄 DOCX file size: \(docxData.count) bytes")
+        AppLog.shared.transcription("DOCX file size: \(docxData.count) bytes", level: .debug)
 
         // Create a temporary directory for extraction
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -332,31 +332,31 @@ class TranscriptImportManager: NSObject, ObservableObject {
             // Read the document.xml file
             let documentXMLPath = tempDir.appendingPathComponent("word/document.xml")
             guard fileManager.fileExists(atPath: documentXMLPath.path) else {
-                print("❌ DOCX extraction failed: document.xml not found at \(documentXMLPath.path)")
+                AppLog.shared.transcription("DOCX extraction failed: document.xml not found", level: .error)
                 throw TranscriptImportError.readFailed("Invalid DOCX structure: document.xml not found")
             }
 
             let xmlData = try Data(contentsOf: documentXMLPath)
-            print("📄 Extracted document.xml: \(xmlData.count) bytes")
+            AppLog.shared.transcription("Extracted document.xml: \(xmlData.count) bytes", level: .debug)
             let xmlString = String(data: xmlData, encoding: .utf8) ?? ""
 
             // Extract text from XML
             let text = extractTextFromWordXML(xmlString)
-            print("📄 Extracted text length: \(text.count) characters")
+            AppLog.shared.transcription("Extracted text length: \(text.count) characters", level: .debug)
 
             if text.isEmpty {
-                print("❌ DOCX extraction failed: no readable text found")
+                AppLog.shared.transcription("DOCX extraction failed: no readable text found", level: .error)
                 throw TranscriptImportError.readFailed("DOCX contains no readable text")
             }
 
-            print("✅ Successfully extracted text from DOCX")
+            AppLog.shared.transcription("Successfully extracted text from DOCX")
             return text
 
         } catch let error as TranscriptImportError {
-            print("❌ DOCX extraction error: \(error)")
+            AppLog.shared.transcription("DOCX extraction error: \(error)", level: .error)
             throw error
         } catch {
-            print("❌ Unexpected DOCX extraction error: \(error.localizedDescription)")
+            AppLog.shared.transcription("Unexpected DOCX extraction error: \(error.localizedDescription)", level: .error)
             throw TranscriptImportError.readFailed("Failed to extract text from DOCX: \(error.localizedDescription)")
         }
     }
@@ -365,11 +365,11 @@ class TranscriptImportManager: NSObject, ObservableObject {
     /// Note: This is a basic implementation. For production use with complex DOCX files,
     /// consider adding ZIPFoundation or similar library to handle all compression methods.
     private func extractDOCXManually(from zipURL: URL, to destURL: URL) async throws {
-        print("🔍 Parsing ZIP structure for DOCX extraction...")
+        AppLog.shared.transcription("Parsing ZIP structure for DOCX extraction", level: .debug)
 
         // Read the ZIP file
         let zipData = try Data(contentsOf: zipURL)
-        print("🔍 ZIP data size: \(zipData.count) bytes")
+        AppLog.shared.transcription("ZIP data size: \(zipData.count) bytes", level: .debug)
 
         // Parse ZIP structure to find document.xml
         // ZIP file format: local file headers followed by central directory
@@ -404,17 +404,17 @@ class TranscriptImportManager: NSObject, ObservableObject {
                     let fileNameData = Data(bytes[fileNameStart..<fileNameEnd])
                     if let fileName = String(data: fileNameData, encoding: .utf8) {
                         filesFound += 1
-                        print("🔍 Found ZIP entry: \(fileName) (compression: \(compressionMethod), size: \(compressedSize))")
+                        AppLog.shared.transcription("Found ZIP entry: \(fileName) (compression: \(compressionMethod), size: \(compressedSize))", level: .debug)
 
                         // Check if this is the document.xml file
                         if fileName == "word/document.xml" {
-                            print("🔍 Found target file: word/document.xml")
+                            AppLog.shared.transcription("Found target file: word/document.xml", level: .debug)
                             // Extract the file content
                             let dataStart = fileNameEnd + extraFieldLength
 
                             // Validate dataStart to prevent crash from corrupted headers
                             guard dataStart <= bytes.count else {
-                                print("❌ Corrupted DOCX: invalid header field length (dataStart: \(dataStart), bytes.count: \(bytes.count))")
+                                AppLog.shared.transcription("Corrupted DOCX: invalid header field length (dataStart: \(dataStart), bytes.count: \(bytes.count))", level: .error)
                                 throw TranscriptImportError.readFailed("Corrupted DOCX file: invalid header field length. Try converting to PDF or TXT first.")
                             }
 
@@ -423,25 +423,25 @@ class TranscriptImportManager: NSObject, ObservableObject {
                             // Validate the range is valid (dataStart < dataEnd)
                             if dataEnd <= bytes.count && dataStart < dataEnd {
                                 var fileData = Data(bytes[dataStart..<dataEnd])
-                                print("🔍 Extracting data range: \(dataStart)..<\(dataEnd)")
+                                AppLog.shared.transcription("Extracting data range: \(dataStart)..<\(dataEnd)", level: .debug)
 
                                 // Handle compression
                                 if compressionMethod == 8 {
-                                    print("🔍 Decompressing DEFLATE data (\(fileData.count) bytes)...")
+                                    AppLog.shared.transcription("Decompressing DEFLATE data (\(fileData.count) bytes)", level: .debug)
                                     // DEFLATE compression - use Compression framework
                                     if let decompressed = decompressZlibData(fileData) {
-                                        print("✅ Decompressed to \(decompressed.count) bytes")
+                                        AppLog.shared.transcription("Decompressed to \(decompressed.count) bytes", level: .debug)
                                         fileData = decompressed
                                     } else {
-                                        print("❌ DEFLATE decompression failed")
+                                        AppLog.shared.transcription("DEFLATE decompression failed", level: .error)
                                         throw TranscriptImportError.readFailed("Failed to decompress DOCX content. Try converting to PDF or TXT first.")
                                     }
                                 } else if compressionMethod != 0 {
                                     // Unsupported compression method
-                                    print("❌ Unsupported compression method: \(compressionMethod)")
+                                    AppLog.shared.transcription("Unsupported compression method: \(compressionMethod)", level: .error)
                                     throw TranscriptImportError.readFailed("Unsupported DOCX compression. Try converting to PDF or TXT first.")
                                 } else {
-                                    print("🔍 No compression (stored)")
+                                    AppLog.shared.transcription("No compression (stored)", level: .debug)
                                 }
 
                                 // Create directory structure
@@ -451,12 +451,12 @@ class TranscriptImportManager: NSObject, ObservableObject {
                                 // Write the extracted file
                                 let outputURL = destURL.appendingPathComponent(fileName)
                                 try fileData.write(to: outputURL)
-                                print("✅ Successfully extracted document.xml (\(fileData.count) bytes)")
+                                AppLog.shared.transcription("Successfully extracted document.xml (\(fileData.count) bytes)")
 
                                 // Successfully extracted document.xml
                                 return
                             } else {
-                                print("❌ Invalid data range: dataStart=\(dataStart), dataEnd=\(dataEnd), bytes.count=\(bytes.count)")
+                                AppLog.shared.transcription("Invalid data range: dataStart=\(dataStart), dataEnd=\(dataEnd), bytes.count=\(bytes.count)", level: .error)
                             }
                         }
                     }
@@ -469,7 +469,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             }
         }
 
-        print("❌ document.xml not found after scanning \(filesFound) ZIP entries")
+        AppLog.shared.transcription("document.xml not found after scanning \(filesFound) ZIP entries", level: .error)
         throw TranscriptImportError.readFailed("Could not find document.xml in DOCX file. Try converting to PDF or TXT first.")
     }
 
@@ -506,7 +506,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             var status = inflateInit2_(&stream, -MAX_WBITS, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
 
             guard status == Z_OK else {
-                print("⚠️ inflateInit2 failed with status: \(status)")
+                AppLog.shared.transcription("inflateInit2 failed with status: \(status)", level: .error)
                 return
             }
 
@@ -532,7 +532,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             } while status == Z_OK
 
             if status != Z_STREAM_END {
-                print("⚠️ Decompression ended with status: \(status) (expected Z_STREAM_END=1)")
+                AppLog.shared.transcription("Decompression ended with status: \(status) (expected Z_STREAM_END=1)", level: .error)
                 decompressed.removeAll()
             }
         }
@@ -587,7 +587,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // Verify file size is reasonable
         let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
         let fileSize = attributes[.size] as? Int64 ?? 0
-        print("📝 Created dummy audio file: \(filename) (\(fileSize) bytes)")
+        AppLog.shared.transcription("Created dummy audio file: \(filename) (\(fileSize) bytes)", level: .debug)
 
         return fileURL
     }
@@ -822,7 +822,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             recordingEntry.duration = duration
 
         } catch {
-            print("❌ Error getting file metadata: \(error)")
+            AppLog.shared.transcription("Error getting file metadata: \(error)", level: .error)
             recordingEntry.recordingDate = Date()
             recordingEntry.createdAt = Date()
             recordingEntry.lastModified = Date()
@@ -838,9 +838,9 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // Save the context
         do {
             try context.save()
-            print("✅ Created Core Data entry for imported transcript: \(name)")
+            AppLog.shared.transcription("Created Core Data entry for imported transcript: \(name)")
         } catch {
-            print("❌ Failed to save Core Data entry: \(error)")
+            AppLog.shared.transcription("Failed to save Core Data entry: \(error)", level: .error)
             throw TranscriptImportError.databaseError("Failed to save to database: \(error.localizedDescription)")
         }
 
@@ -886,9 +886,9 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // Save the context
         do {
             try context.save()
-            print("✅ Created transcript entry for imported transcript: \(recording.recordingName ?? "unknown")")
+            AppLog.shared.transcription("Created transcript entry for imported transcript: \(recording.recordingName ?? "unknown")")
         } catch {
-            print("❌ Failed to save transcript entry: \(error)")
+            AppLog.shared.transcription("Failed to save transcript entry: \(error)", level: .error)
             throw TranscriptImportError.databaseError("Failed to save transcript: \(error.localizedDescription)")
         }
     }
@@ -902,7 +902,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
         do {
             return try context.fetch(fetchRequest).first
         } catch {
-            print("❌ Error fetching recording: \(error)")
+            AppLog.shared.transcription("Error fetching recording: \(error)", level: .error)
             return nil
         }
     }
@@ -913,7 +913,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             let duration = try await asset.load(.duration)
             return CMTimeGetSeconds(duration)
         } catch {
-            print("ℹ️ Using default duration for dummy audio file (error: \(error.localizedDescription))")
+            AppLog.shared.transcription("Using default duration for dummy audio file (error: \(error.localizedDescription))", level: .debug)
             return 0.1 // Default to 0.1 seconds for dummy file
         }
     }

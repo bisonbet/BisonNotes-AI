@@ -527,7 +527,7 @@ extension OnDeviceLLMModelInfo {
                 // Only log migration once per model to prevent spam
                 let migrationKey = "migrated_unavailable_\(modelId)"
                 if !UserDefaults.standard.bool(forKey: migrationKey) {
-                    print("⚠️ [OnDeviceLLMModelInfo] Selected model '\(modelId)' is not available, migrating to default")
+                    AppLog.shared.summarization("[OnDeviceLLMModelInfo] Selected model '\(modelId)' is not available, migrating to default")
                     UserDefaults.standard.set(true, forKey: migrationKey)
                 }
                 let betterModel = defaultSummarizationModel

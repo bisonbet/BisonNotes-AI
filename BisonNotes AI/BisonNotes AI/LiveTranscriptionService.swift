@@ -91,7 +91,7 @@ class LiveTranscriptionService: ObservableObject {
         try engine.start()
         isActive = true
 
-        print("🎙️ LiveTranscriptionService: started")
+        AppLog.shared.transcription("LiveTranscriptionService: started")
     }
 
     // MARK: - Stop
@@ -126,10 +126,10 @@ class LiveTranscriptionService: ObservableObject {
             let finalM4AURL = try await exportToM4A(from: cafURL, to: finalURL)
             // Clean up temp .caf
             try? FileManager.default.removeItem(at: cafURL)
-            print("🎙️ LiveTranscriptionService: stopped, saved to \(finalM4AURL.lastPathComponent)")
+            AppLog.shared.transcription("LiveTranscriptionService: stopped, saved to \(finalM4AURL.lastPathComponent)")
             return (finalM4AURL, finalTranscript)
         } catch {
-            print("❌ LiveTranscriptionService: export failed: \(error)")
+            AppLog.shared.transcription("LiveTranscriptionService: export failed: \(error)", level: .error)
             try? FileManager.default.removeItem(at: cafURL)
             return (nil, finalTranscript)
         }

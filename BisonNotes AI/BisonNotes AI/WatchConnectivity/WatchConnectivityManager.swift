@@ -114,17 +114,17 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     private func setupWatchConnectivity() {
         guard WCSession.isSupported() else {
-            print("📱 WatchConnectivity not supported on this device")
+            AppLog.shared.watchConnectivity("WatchConnectivity not supported on this device", level: .error)
             connectionState = .error
             return
         }
-        
+
         // Initialize session safely
         let wcSession = WCSession.default
         self.session = wcSession
         wcSession.activate()
-        
-        print("📱 iPhone WatchConnectivity session setup initiated - activating...")
+
+        AppLog.shared.watchConnectivity("iPhone WatchConnectivity session setup initiated - activating...")
     }
     
     // MARK: - New Sync Protocol Methods
@@ -166,7 +166,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     /// Handle sync request from watch
     private func handleSyncRequest(_ syncRequest: WatchSyncRequest) -> Bool {
-        print("📱 Received sync request for: \(syncRequest.filename)")
+        AppLog.shared.watchConnectivity("Received sync request for recording")
         
         // Check if we can accept the sync
         let appState = UIApplication.shared.applicationState
@@ -180,16 +180,16 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             let timeoutDuration = calculateSyncTimeout(for: syncRequest)
             let timeout = Timer.scheduledTimer(withTimeInterval: timeoutDuration, repeats: false) { [weak self] _ in
                 Task { @MainActor in
-                    print("📱 Sync timeout after \(timeoutDuration)s for: \(syncRequest.filename)")
+                    AppLog.shared.watchConnectivity("Sync timeout after \(timeoutDuration)s", level: .error)
                     self?.handleSyncTimeout(syncRequest.recordingId)
                 }
             }
             syncTimeouts[syncRequest.recordingId] = timeout
             
-            print("📱 Sync request accepted for: \(syncRequest.filename)")
+            AppLog.shared.watchConnectivity("Sync request accepted")
             return true
         } else {
-            print("📱 Sync request rejected - app not ready")
+            AppLog.shared.watchConnectivity("Sync request rejected - app not ready", level: .error)
             return false
         }
     }
@@ -198,7 +198,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private func handleWatchRecordingReceived(fileURL: URL, metadata: [String: Any]) {
         // Request background task to ensure processing completes even if app is backgrounded
         let backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WatchFileProcessing") {
-            print("⚠️ Background task expired during watch file processing")
+            AppLog.shared.watchConnectivity("Background task expired during watch file processing", level: .error)
         }
         
         defer {
@@ -209,7 +209,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         guard let recordingIdString = metadata["recordingId"] as? String,
               let recordingId = UUID(uuidString: recordingIdString) else {
-            print("❌ Received file but no recording ID in metadata")
+            AppLog.shared.watchConnectivity("Received file but no recording ID in metadata", level: .error)
             return
         }
         
@@ -218,14 +218,14 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         if let pendingRequest = pendingSyncOperations[recordingId] {
             syncRequest = pendingRequest
         } else {
-            print("⚠️ No pending sync request found, reconstructing from metadata")
+            AppLog.shared.watchConnectivity("No pending sync request found, reconstructing from metadata", level: .debug)
             
             // Reconstruct sync request from metadata
             guard let filename = metadata["filename"] as? String,
                   let duration = metadata["duration"] as? TimeInterval,
                   let fileSize = metadata["fileSize"] as? Int64,
                   let createdAtTimestamp = metadata["createdAt"] as? TimeInterval else {
-                print("❌ Insufficient metadata to reconstruct sync request")
+                AppLog.shared.watchConnectivity("Insufficient metadata to reconstruct sync request", level: .error)
                 return
             }
             
@@ -241,7 +241,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         let fileSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         let fileSizeMB = Double(fileSize) / (1024 * 1024)
-        print("📱 Received recording file: \(fileURL.lastPathComponent) (\(String(format: "%.1f", fileSizeMB)) MB)")
+        AppLog.shared.watchConnectivity("Received recording file (\(String(format: "%.1f", fileSizeMB)) MB)")
         
         do {
             // Read the audio data
@@ -251,7 +251,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             if !syncRequest.checksumMD5.isEmpty {
                 let actualChecksum = audioData.md5
                 if actualChecksum != syncRequest.checksumMD5 {
-                    print("⚠️ Checksum mismatch for \(syncRequest.filename)")
+                    AppLog.shared.watchConnectivity("Checksum mismatch for recording", level: .error)
                     handleSyncFailure(recordingId, reason: "checksum_mismatch")
                     return
                 }
@@ -261,23 +261,23 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             if let transferType = metadata["transferType"] as? String,
                transferType == "reliable_recording",
                let retryCount = metadata["retryCount"] as? Int {
-                print("🔄 Processing reliable transfer (retry #\(retryCount)): \(syncRequest.filename)")
+                AppLog.shared.watchConnectivity("Processing reliable transfer (retry #\(retryCount))", level: .debug)
             }
             
             // Create Core Data entry via callback
-            print("📱 About to call onWatchSyncRecordingReceived callback for: \(syncRequest.recordingId)")
+            AppLog.shared.watchConnectivity("About to call onWatchSyncRecordingReceived callback for: \(syncRequest.recordingId)", level: .debug)
             if onWatchSyncRecordingReceived != nil {
-                print("📱 Callback exists, calling it now")
+                AppLog.shared.watchConnectivity("Callback exists, calling it now", level: .debug)
                 onWatchSyncRecordingReceived?(audioData, syncRequest)
             } else {
-                print("❌ onWatchSyncRecordingReceived callback is nil! File will not be processed.")
+                AppLog.shared.watchConnectivity("onWatchSyncRecordingReceived callback is nil - file will not be processed", level: .error)
                 handleSyncFailure(recordingId, reason: "callback_not_set")
             }
             
             // Cleanup and confirmation will happen in confirmSyncComplete
             
         } catch {
-            print("❌ Failed to read received file: \(error)")
+            AppLog.shared.watchConnectivity("Failed to read received file: \(error.localizedDescription)", level: .error)
             handleSyncFailure(recordingId, reason: "file_read_error")
         }
     }
@@ -285,7 +285,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     /// Confirm sync completion to watch with enhanced reliability
     func confirmSyncComplete(recordingId: UUID, success: Bool, coreDataId: String? = nil) {
         if success {
-            print("✅ Sync completed successfully for: \(recordingId)")
+            AppLog.shared.watchConnectivity("Sync completed successfully for: \(recordingId)")
             
             // Send enhanced confirmation to watch
             var confirmationInfo: [String: Any] = [
@@ -296,7 +296,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             
             if let coreDataId = coreDataId {
                 confirmationInfo["coreDataId"] = coreDataId
-                print("📊 Reliable transfer confirmed in Core Data: \(coreDataId)")
+                AppLog.shared.watchConnectivity("Reliable transfer confirmed in Core Data", level: .debug)
             }
             
             // Send confirmation with retry logic for connection issues
@@ -314,7 +314,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private func sendConfirmationWithRetry(confirmationInfo: [String: Any], recordingId: UUID, attempt: Int = 1) {
         let maxAttempts = 3
         
-        print("📱 Sending confirmation attempt \(attempt)/\(maxAttempts) for: \(recordingId)")
+        AppLog.shared.watchConnectivity("Sending confirmation attempt \(attempt)/\(maxAttempts) for: \(recordingId)", level: .debug)
         
         // Try to send the confirmation
         sendRecordingCommand(.syncComplete, additionalInfo: confirmationInfo)
@@ -324,25 +324,25 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 // Only retry if connection is still unstable
                 if let session = self.session, session.isReachable {
-                    print("📱 Connection restored, skipping retry for: \(recordingId)")
+                    AppLog.shared.watchConnectivity("Connection restored, skipping retry for: \(recordingId)", level: .debug)
                     return
                 }
-                
-                print("📱 Connection still unstable, retrying confirmation for: \(recordingId)")
+
+                AppLog.shared.watchConnectivity("Connection still unstable, retrying confirmation for: \(recordingId)", level: .debug)
                 self.sendConfirmationWithRetry(confirmationInfo: confirmationInfo, recordingId: recordingId, attempt: attempt + 1)
             }
         } else {
-            print("⚠️ Max confirmation attempts reached for: \(recordingId)")
+            AppLog.shared.watchConnectivity("Max confirmation attempts reached for: \(recordingId)", level: .error)
         }
     }
     
     private func handleSyncTimeout(_ recordingId: UUID) {
-        print("⏰ Sync timeout for: \(recordingId)")
+        AppLog.shared.watchConnectivity("Sync timeout for: \(recordingId)", level: .error)
         handleSyncFailure(recordingId, reason: "timeout")
     }
     
     private func handleSyncFailure(_ recordingId: UUID, reason: String) {
-        print("❌ Sync failed for: \(recordingId), reason: \(reason)")
+        AppLog.shared.watchConnectivity("Sync failed for: \(recordingId), reason: \(reason)", level: .error)
         
         // Send failure message to watch
         sendRecordingCommand(.syncFailed, additionalInfo: [
@@ -374,12 +374,12 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         if isBackgrounded {
             // Much longer timeout when backgrounded - iOS gives limited time
             let backgroundTimeout = max(180.0, min(600.0, sizeBasedTimeout * 2.0)) // 3-10 minutes
-            print("📱 App backgrounded, using extended sync timeout: \(backgroundTimeout)s")
+            AppLog.shared.watchConnectivity("App backgrounded, using extended sync timeout: \(backgroundTimeout)s", level: .debug)
             return backgroundTimeout
         } else {
             // Normal timeout when active
             let activeTimeout = max(120.0, min(300.0, sizeBasedTimeout)) // 2-5 minutes
-            print("📱 App active, using normal sync timeout: \(activeTimeout)s")
+            AppLog.shared.watchConnectivity("App active, using normal sync timeout: \(activeTimeout)s", level: .debug)
             return activeTimeout
         }
     }
@@ -408,13 +408,13 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     /// Send recording command to watch
     func sendRecordingCommand(_ message: WatchRecordingMessage, additionalInfo: [String: Any]? = nil) {
         guard let session = session, session.activationState == .activated, session.isReachable else {
-            print("⌚ Cannot send recording command - watch not reachable or session not activated")
+            AppLog.shared.watchConnectivity("Cannot send recording command - watch not reachable or session not activated", level: .error)
             connectionState = .disconnected
             return
         }
         
         session.sendRecordingMessage(message, userInfo: additionalInfo)
-        print("⌚ Sent recording command to watch: \(message.rawValue)")
+        AppLog.shared.watchConnectivity("Sent recording command to watch: \(message.rawValue)", level: .debug)
     }
     
     /// Send current recording status to watch
@@ -426,11 +426,11 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         )
         
         guard let session = session, session.activationState == .activated else {
-            print("⌚ Cannot send status update - session not available")
+            AppLog.shared.watchConnectivity("Cannot send status update - session not available", level: .error)
             return
         }
         session.sendStatusUpdate(statusUpdate)
-        print("⌚ Sent status update to watch: \(state.rawValue)")
+        AppLog.shared.watchConnectivity("Sent status update to watch: \(state.rawValue)", level: .debug)
     }
     
     /// Request sync with watch app
@@ -445,7 +445,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         // Legacy recording coordination removed - watch operates independently
         
-        print("⌚ Phone app activated for watch recording")
+        AppLog.shared.watchConnectivity("Phone app activated for watch recording")
     }
     
     // MARK: - State Synchronization
@@ -459,7 +459,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         lastPhoneStateChange = Date()
         lastStateSyncTime = Date()
         
-        print("📱 Phone state changed: \(previousState.rawValue) → \(newState.rawValue)")
+        AppLog.shared.watchConnectivity("Phone state changed: \(previousState.rawValue) -> \(newState.rawValue)", level: .debug)
         
         // Send state update to watch immediately
         sendPhoneStateToWatch(newState)
@@ -473,7 +473,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     /// Send current phone recording state to watch
     private func sendPhoneStateToWatch(_ state: WatchRecordingState) {
         guard let session = session, session.activationState == .activated else {
-            print("📱 Cannot send state - session not available")
+            AppLog.shared.watchConnectivity("Cannot send state - session not available", level: .error)
             return
         }
         
@@ -495,7 +495,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             }
         } else {
             // Store state for later sync when connection is restored
-            print("📱 Watch not reachable, will sync state when connected")
+            AppLog.shared.watchConnectivity("Watch not reachable, will sync state when connected", level: .debug)
         }
     }
     
@@ -509,7 +509,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             
             if watchRecordingState != watchState {
                 watchRecordingState = watchState
-                print("📱 Received watch state update: \(watchState.rawValue)")
+                AppLog.shared.watchConnectivity("Received watch state update: \(watchState.rawValue)", level: .debug)
                 
                 // Check for conflicts
                 if phoneRecordingState != watchState {
@@ -521,7 +521,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     /// Handle error when sending state update
     private func handleStateUpdateError(_ error: Error) {
-        print("❌ Failed to send state update: \(error.localizedDescription)")
+        AppLog.shared.watchConnectivity("Failed to send state update: \(error.localizedDescription)", level: .error)
         // Will retry on next sync cycle
     }
     
@@ -532,7 +532,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                 self?.performPeriodicStateSync()
             }
         }
-        print("📱 Started state synchronization (interval: \(syncInterval)s)")
+        AppLog.shared.watchConnectivity("Started state synchronization (interval: \(syncInterval)s)")
     }
     
     /// Perform periodic state synchronization
@@ -545,7 +545,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         // Check if we haven't heard from watch in a while
         let watchStateAge = Date().timeIntervalSince(lastWatchStateChange)
         if watchStateAge > (syncInterval * 3) {
-            print("⚠️ Watch state seems stale, requesting sync")
+            AppLog.shared.watchConnectivity("Watch state seems stale, requesting sync", level: .debug)
             requestWatchStateUpdate()
         }
     }
@@ -567,7 +567,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                 self?.handleStateUpdateReply(reply)
             }
         }) { error in
-            print("❌ Failed to request watch state: \(error.localizedDescription)")
+            AppLog.shared.watchConnectivity("Failed to request watch state: \(error.localizedDescription)", level: .error)
         }
     }
     
@@ -578,7 +578,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             return
         }
         
-        print("⚠️ State conflict detected - Phone: \(phoneRecordingState.rawValue), Watch: \(watchRecordingState.rawValue)")
+        AppLog.shared.watchConnectivity("State conflict detected - Phone: \(phoneRecordingState.rawValue), Watch: \(watchRecordingState.rawValue)", level: .error)
         stateConflictDetected = true
         
         onStateConflictDetected?(phoneRecordingState, watchRecordingState)
@@ -593,19 +593,19 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         switch resolution {
         case .phoneWins:
-            print("🔄 Resolving conflict: Phone wins, sending phone state to watch")
+            AppLog.shared.watchConnectivity("Resolving conflict: Phone wins, sending phone state to watch", level: .debug)
             sendPhoneStateToWatch(phoneRecordingState)
-            
+
         case .watchWins:
-            print("🔄 Resolving conflict: Watch wins, updating phone state to \(watchRecordingState.rawValue)")
+            AppLog.shared.watchConnectivity("Resolving conflict: Watch wins, updating phone state to \(watchRecordingState.rawValue)", level: .debug)
             phoneRecordingState = watchRecordingState
             
         case .mostRecentWins:
             if lastPhoneStateChange > lastWatchStateChange {
-                print("🔄 Resolving conflict: Phone state is more recent")
+                AppLog.shared.watchConnectivity("Resolving conflict: Phone state is more recent", level: .debug)
                 sendPhoneStateToWatch(phoneRecordingState)
             } else {
-                print("🔄 Resolving conflict: Watch state is more recent")
+                AppLog.shared.watchConnectivity("Resolving conflict: Watch state is more recent", level: .debug)
                 phoneRecordingState = watchRecordingState
             }
             
@@ -636,20 +636,20 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         // 3. Processing states should not be interrupted
         
         if phoneRecordingState == .recording && watchRecordingState != .recording {
-            print("🧠 Smart resolution: Phone is actively recording, phone wins")
+            AppLog.shared.watchConnectivity("Smart resolution: Phone is actively recording, phone wins", level: .debug)
             sendPhoneStateToWatch(phoneRecordingState)
         } else if watchRecordingState == .recording && phoneRecordingState != .recording {
-            print("🧠 Smart resolution: Watch is actively recording, watch wins")
+            AppLog.shared.watchConnectivity("Smart resolution: Watch is actively recording, watch wins", level: .debug)
             phoneRecordingState = watchRecordingState
         } else if phoneRecordingState == .error || watchRecordingState == .error {
-            print("🧠 Smart resolution: Error state detected, syncing to error")
+            AppLog.shared.watchConnectivity("Smart resolution: Error state detected, syncing to error", level: .debug)
             let errorState: WatchRecordingState = .error
             if phoneRecordingState != errorState {
                 phoneRecordingState = errorState
             }
             sendPhoneStateToWatch(errorState)
         } else if phoneRecordingState == .processing || watchRecordingState == .processing {
-            print("🧠 Smart resolution: Processing state detected, maintaining processing")
+            AppLog.shared.watchConnectivity("Smart resolution: Processing state detected, maintaining processing", level: .debug)
             let processingState: WatchRecordingState = .processing
             if phoneRecordingState != processingState {
                 phoneRecordingState = processingState
@@ -714,13 +714,13 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     /// Handle connection restoration - trigger state recovery
     private func handleConnectionRestored() {
-        print("📱 Connection restored")
+        AppLog.shared.watchConnectivity("Connection restored")
         
         onConnectionRestored?()
         
         // Only sync state if phone is actually recording
         if phoneRecordingState != .idle {
-            print("📱 Phone is recording, syncing state with watch")
+            AppLog.shared.watchConnectivity("Phone is recording, syncing state with watch", level: .debug)
             requestWatchStateUpdate()
             sendPhoneStateToWatch(phoneRecordingState)
         }
@@ -731,7 +731,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private func handleAudioChunkReceived(_ chunk: WatchAudioChunk) {
         // Validate chunk data
         guard validateAudioChunk(chunk) else {
-            print("❌ Invalid audio chunk received: \(chunk.sequenceNumber)")
+            AppLog.shared.watchConnectivity("Invalid audio chunk received: sequence \(chunk.sequenceNumber)", level: .error)
             sendChunkValidationError(chunk: chunk, error: "Invalid chunk data")
             return
         }
@@ -739,16 +739,16 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         // Start new recording session if this is the first chunk or new session
         if audioChunkManager.currentRecordingSession != chunk.recordingSessionId {
             if audioChunkManager.currentRecordingSession != nil {
-                print("⚠️ New recording session started, resetting chunk manager")
+                AppLog.shared.watchConnectivity("New recording session started, resetting chunk manager", level: .debug)
                 audioChunkManager.reset()
             }
             audioChunkManager.currentRecordingSession = chunk.recordingSessionId
-            print("📱 Started receiving chunks for recording session: \(chunk.recordingSessionId)")
+            AppLog.shared.watchConnectivity("Started receiving chunks for recording session: \(chunk.recordingSessionId)", level: .debug)
         }
         
         // Check for duplicate chunks
         if audioChunkManager.hasChunk(sequenceNumber: chunk.sequenceNumber) {
-            print("⚠️ Duplicate chunk received: \(chunk.sequenceNumber) - ignoring")
+            AppLog.shared.watchConnectivity("Duplicate chunk received: \(chunk.sequenceNumber) - ignoring", level: .debug)
             sendChunkAcknowledgment(chunk: chunk) // Still acknowledge to prevent retries
             return
         }
@@ -758,13 +758,13 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         let tolerance = expectedSize / 2 // Allow 50% variance
         
         if chunk.audioData.count < (expectedSize - tolerance) || chunk.audioData.count > (expectedSize + tolerance) {
-            print("⚠️ Chunk size unusual: expected ~\(expectedSize), got \(chunk.audioData.count) bytes")
+            AppLog.shared.watchConnectivity("Chunk size unusual: expected ~\(expectedSize), got \(chunk.audioData.count) bytes", level: .debug)
         }
         
         audioChunkManager.addReceivedChunk(chunk)
         isReceivingAudioChunks = true
         
-        print("⌚ Received audio chunk \(chunk.sequenceNumber) of session \(chunk.recordingSessionId) (\(chunk.audioData.count) bytes)")
+        AppLog.shared.watchConnectivity("Received audio chunk \(chunk.sequenceNumber) (\(chunk.audioData.count) bytes)", level: .debug)
         
         // Send acknowledgment to watch
         sendChunkAcknowledgment(chunk: chunk)
@@ -779,7 +779,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         // Check for missing chunks before processing
         let missingChunks = audioChunkManager.getMissingChunks()
         if !missingChunks.isEmpty {
-            print("⚠️ Missing \(missingChunks.count) chunks, requesting them...")
+            AppLog.shared.watchConnectivity("Missing \(missingChunks.count) chunks, requesting them...", level: .error)
             requestMissingChunks()
             
             // Wait a bit and try again (for now just log, could implement timeout logic)
@@ -788,7 +788,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                 if stillMissing.isEmpty {
                     self.processCompleteWatchAudio() // Retry
                 } else {
-                    print("❌ Still missing chunks after retry, proceeding with incomplete audio")
+                    AppLog.shared.watchConnectivity("Still missing chunks after retry, proceeding with incomplete audio", level: .error)
                     self.forceProcessIncompleteAudio()
                 }
             }
@@ -797,11 +797,11 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         guard let combinedAudio = audioChunkManager.combineAudioChunks(),
               let sessionId = audioChunkManager.currentRecordingSession else {
-            print("❌ Failed to combine watch audio chunks")
+            AppLog.shared.watchConnectivity("Failed to combine watch audio chunks", level: .error)
             return
         }
         
-        print("✅ Successfully combined \(audioChunkManager.chunksReceived) audio chunks (\(combinedAudio.count) bytes)")
+        AppLog.shared.watchConnectivity("Successfully combined \(audioChunkManager.chunksReceived) audio chunks (\(combinedAudio.count) bytes)")
         
         // Legacy audio streaming removed - now using file transfer on completion
         
@@ -818,7 +818,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     private func forceProcessIncompleteAudio() {
         guard let sessionId = audioChunkManager.currentRecordingSession else {
-            print("❌ No session ID for incomplete audio processing")
+            AppLog.shared.watchConnectivity("No session ID for incomplete audio processing", level: .error)
             return
         }
         
@@ -826,10 +826,10 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         // Try to combine what we have (now includes gap filling)
         if let audioWithGaps = audioChunkManager.combineAudioChunks() {
-            print("✅ Processing audio with \(missingCount) gaps filled: \(audioChunkManager.chunksReceived) chunks (\(audioWithGaps.count) bytes)")
+            AppLog.shared.watchConnectivity("Processing audio with \(missingCount) gaps filled: \(audioChunkManager.chunksReceived) chunks (\(audioWithGaps.count) bytes)")
             // Legacy audio streaming removed - now using file transfer on completion
         } else {
-            print("❌ Failed to process audio even with gap filling")
+            AppLog.shared.watchConnectivity("Failed to process audio even with gap filling", level: .error)
         }
         
         // Reset for next recording
@@ -849,27 +849,27 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private func validateAudioChunk(_ chunk: WatchAudioChunk) -> Bool {
         // Basic validation checks
         guard !chunk.audioData.isEmpty else {
-            print("❌ Chunk validation failed: empty audio data")
+            AppLog.shared.watchConnectivity("Chunk validation failed: empty audio data", level: .error)
             return false
         }
         
         guard chunk.duration > 0 && chunk.duration <= 10.0 else {
-            print("❌ Chunk validation failed: invalid duration \(chunk.duration)")
+            AppLog.shared.watchConnectivity("Chunk validation failed: invalid duration \(chunk.duration)", level: .error)
             return false
         }
         
         guard chunk.sampleRate == WatchAudioFormat.sampleRate else {
-            print("❌ Chunk validation failed: invalid sample rate \(chunk.sampleRate)")
+            AppLog.shared.watchConnectivity("Chunk validation failed: invalid sample rate \(chunk.sampleRate)", level: .error)
             return false
         }
         
         guard chunk.channels == WatchAudioFormat.channels else {
-            print("❌ Chunk validation failed: invalid channels \(chunk.channels)")
+            AppLog.shared.watchConnectivity("Chunk validation failed: invalid channels \(chunk.channels)", level: .error)
             return false
         }
         
         guard chunk.sequenceNumber >= 0 else {
-            print("❌ Chunk validation failed: invalid sequence number \(chunk.sequenceNumber)")
+            AppLog.shared.watchConnectivity("Chunk validation failed: invalid sequence number \(chunk.sequenceNumber)", level: .error)
             return false
         }
         
@@ -878,7 +878,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         let maxSize = 100 * 1024 // At most 100KB
         
         guard chunk.audioData.count >= minSize && chunk.audioData.count <= maxSize else {
-            print("❌ Chunk validation failed: unreasonable size \(chunk.audioData.count) bytes")
+            AppLog.shared.watchConnectivity("Chunk validation failed: unreasonable size \(chunk.audioData.count) bytes", level: .error)
             return false
         }
         
@@ -897,7 +897,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         ]
         
         session.sendMessage(ackMessage, replyHandler: nil) { error in
-            print("❌ Failed to send chunk acknowledgment: \(error.localizedDescription)")
+            AppLog.shared.watchConnectivity("Failed to send chunk acknowledgment: \(error.localizedDescription)", level: .error)
         }
     }
     
@@ -914,7 +914,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         ]
         
         session.sendMessage(errorMessage, replyHandler: nil) { sendError in
-            print("❌ Failed to send chunk validation error: \(sendError.localizedDescription)")
+            AppLog.shared.watchConnectivity("Failed to send chunk validation error: \(sendError.localizedDescription)", level: .error)
         }
     }
     
@@ -924,7 +924,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         let missingChunks = audioChunkManager.getMissingChunks()
         guard !missingChunks.isEmpty else { return }
         
-        print("⚠️ Requesting \(missingChunks.count) missing chunks: \(missingChunks)")
+        AppLog.shared.watchConnectivity("Requesting \(missingChunks.count) missing chunks", level: .debug)
         
         let requestMessage: [String: Any] = [
             "messageType": "requestMissingChunks",
@@ -934,14 +934,14 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         ]
         
         session?.sendMessage(requestMessage, replyHandler: nil) { error in
-            print("❌ Failed to send missing chunks request: \(error.localizedDescription)")
+            AppLog.shared.watchConnectivity("Failed to send missing chunks request: \(error.localizedDescription)", level: .error)
         }
     }
     
     // MARK: - Error Handling
     
     private func handleWatchError(_ error: WatchErrorMessage) {
-        print("⌚ Received error from watch: \(error.message)")
+        AppLog.shared.watchConnectivity("Received error from watch: \(error.message)", level: .error)
         
         // Update local state
         if error.errorType == .connectionLost {
@@ -955,7 +955,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     private func processWatchMessage(_ message: [String: Any]) {
         guard let messageTypeString = message["messageType"] as? String else {
-            print("⌚ No message type in received message")
+            AppLog.shared.watchConnectivity("No message type in received message", level: .error)
             return
         }
         
@@ -973,7 +973,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         // Handle standard WatchRecordingMessage types
         guard let messageType = WatchRecordingMessage(rawValue: messageTypeString) else {
-            print("⌚ Unknown message type received from watch: \(messageTypeString)")
+            AppLog.shared.watchConnectivity("Unknown message type received from watch: \(messageTypeString)", level: .error)
             return
         }
         
@@ -981,13 +981,13 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         switch messageType {
         case .startRecording, .stopRecording, .pauseRecording, .resumeRecording:
-            print("⚠️ Ignoring legacy recording control message: \(messageType.rawValue) - watch operates independently")
+            AppLog.shared.watchConnectivity("Ignoring legacy recording control message: \(messageType.rawValue) - watch operates independently", level: .debug)
             
         case .recordingStatusUpdate:
             if let statusUpdate = WatchRecordingStatusUpdate.fromDictionary(message) {
                 watchRecordingState = statusUpdate.state
                 watchBatteryLevel = statusUpdate.batteryLevel
-                print("⌚ Watch status update: \(statusUpdate.state.rawValue)")
+                AppLog.shared.watchConnectivity("Watch status update: \(statusUpdate.state.rawValue)", level: .debug)
             }
             
         case .errorOccurred:
@@ -1001,16 +1001,16 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             }
             
         case .watchAppActivated:
-            print("⌚ Watch app activated")
+            AppLog.shared.watchConnectivity("Watch app activated")
             connectionState = .connected
             
         case .requestSync:
-            print("⌚ Watch requested sync")
+            AppLog.shared.watchConnectivity("Watch requested sync")
             // Send current phone status to watch
             // This will be handled by AudioRecorderViewModel
             
         case .audioTransferComplete:
-            print("⌚ Watch confirmed audio transfer complete")
+            AppLog.shared.watchConnectivity("Watch confirmed audio transfer complete")
             isReceivingAudioChunks = false
             
         case .chunkAcknowledgment:
@@ -1026,12 +1026,12 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             
         case .requestPhoneAppActivation:
             // Watch is requesting phone app activation
-            print("📱 Watch requested iPhone app activation")
+            AppLog.shared.watchConnectivity("Watch requested iPhone app activation")
             handleWatchActivationRequest(message)
         
         // MARK: - New Sync Protocol Messages
         case .checkAppReadiness:
-            print("📱 Watch checking iPhone app readiness")
+            AppLog.shared.watchConnectivity("Watch checking iPhone app readiness")
             let readinessResponse = checkAppReadiness(request: message)
             session?.sendAppReadinessResponse(readinessResponse)
             
@@ -1049,7 +1049,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         case .syncComplete:
             if let recordingIdString = message["recordingId"] as? String,
                let recordingId = UUID(uuidString: recordingIdString) {
-                print("📱 Watch confirmed sync complete for: \(recordingId)")
+                AppLog.shared.watchConnectivity("Watch confirmed sync complete for: \(recordingId)")
                 cleanupSyncOperation(recordingId)
             }
             
@@ -1061,7 +1061,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     /// Handle watch activation request
     private func handleWatchActivationRequest(_ message: [String: Any]) {
-        print("📱 Processing watch activation request")
+        AppLog.shared.watchConnectivity("Processing watch activation request")
         
         // Ensure app is in foreground and ready
         DispatchQueue.main.async {
@@ -1074,7 +1074,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                 "appState": "active"
             ])
             
-            print("📱 Sent activation confirmation to watch")
+            AppLog.shared.watchConnectivity("Sent activation confirmation to watch")
         }
     }
     
@@ -1083,7 +1083,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         guard let watchStateString = message["recordingState"] as? String,
               let watchState = WatchRecordingState(rawValue: watchStateString),
               let timestamp = message["timestamp"] as? TimeInterval else {
-            print("📱 Invalid watch state update message")
+            AppLog.shared.watchConnectivity("Invalid watch state update message", level: .error)
             return
         }
         
@@ -1092,7 +1092,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         if watchRecordingState != watchState {
             let previousWatchState = watchRecordingState
             watchRecordingState = watchState
-            print("📱 Watch state updated: \(previousWatchState.rawValue) → \(watchState.rawValue)")
+            AppLog.shared.watchConnectivity("Watch state updated: \(previousWatchState.rawValue) -> \(watchState.rawValue)", level: .debug)
             
             // Check for conflicts
             if phoneRecordingState != watchState {
@@ -1103,7 +1103,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     /// Handle state sync request from watch
     private func handleStateSync(_ message: [String: Any]) {
-        print("📱 Watch requested state sync")
+        AppLog.shared.watchConnectivity("Watch requested state sync")
         
         // Send current phone state immediately
         sendPhoneStateToWatch(phoneRecordingState)
@@ -1130,18 +1130,18 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private func handleWatchAppTermination(_ message: [String: Any]) {
         guard let watchStateString = message["recordingState"] as? String,
               let watchState = WatchRecordingState(rawValue: watchStateString) else {
-            print("📱 Invalid watch termination message")
+            AppLog.shared.watchConnectivity("Invalid watch termination message", level: .error)
             return
         }
         
-        print("⚠️ Watch app terminated while in state: \(watchState.rawValue)")
+        AppLog.shared.watchConnectivity("Watch app terminated while in state: \(watchState.rawValue)", level: .error)
         
         // Update watch state
         watchRecordingState = watchState
         
         // If watch was recording, handle the emergency situation
         if watchState.isRecordingSession {
-            print("🚨 Watch was recording when it terminated - entering recovery mode")
+            AppLog.shared.watchConnectivity("Watch was recording when it terminated - entering recovery mode", level: .error)
             
             // Set phone to handle the recording continuation or cleanup
             handleWatchRecordingEmergency(lastKnownState: watchState)
@@ -1153,11 +1153,11 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     /// Handle emergency when watch app terminates during recording
     private func handleWatchRecordingEmergency(lastKnownState: WatchRecordingState) {
-        print("🚨 Handling watch recording emergency - last state: \(lastKnownState.rawValue)")
+        AppLog.shared.watchConnectivity("Handling watch recording emergency - last state: \(lastKnownState.rawValue)", level: .error)
         
         if phoneRecordingState == .idle {
             // Legacy coordination removed - watch and phone operate independently
-            print("📱 Watch recording detected but no coordinated recording needed")
+            AppLog.shared.watchConnectivity("Watch recording detected but no coordinated recording needed", level: .debug)
         }
         
         // Notify that we're in recovery mode
@@ -1170,7 +1170,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     /// Handle phone app going to background or terminating during recording
     func handlePhoneAppTermination() {
-        print("📱 Phone app terminating")
+        AppLog.shared.watchConnectivity("Phone app terminating")
         
         // If recording, try to save final state and notify watch
         if phoneRecordingState.isRecordingSession {
@@ -1182,22 +1182,22 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             ]
             
             session?.sendMessage(terminationMessage, replyHandler: nil) { error in
-                print("⚠️ Failed to send termination message: \(error.localizedDescription)")
+                AppLog.shared.watchConnectivity("Failed to send termination message: \(error.localizedDescription)", level: .error)
             }
             
             // Try to use application context for persistence
             do {
                 try session?.updateApplicationContext(terminationMessage)
-                print("📱 Saved termination state to application context")
+                AppLog.shared.watchConnectivity("Saved termination state to application context")
             } catch {
-                print("⚠️ Failed to update application context: \(error)")
+                AppLog.shared.watchConnectivity("Failed to update application context: \(error.localizedDescription)", level: .error)
             }
         }
     }
     
     /// Handle app entering background during recording
     func handleAppDidEnterBackground() {
-        print("📱 Phone app entered background")
+        AppLog.shared.watchConnectivity("Phone app entered background")
         
         if phoneRecordingState.isRecordingSession {
             // Notify watch that phone is backgrounded but continuing
@@ -1208,7 +1208,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             ]
             
             session?.sendMessage(backgroundMessage, replyHandler: nil) { error in
-                print("⚠️ Failed to send background message: \(error.localizedDescription)")
+                AppLog.shared.watchConnectivity("Failed to send background message: \(error.localizedDescription)", level: .error)
             }
         }
     }
@@ -1221,23 +1221,23 @@ extension WatchConnectivityManager: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         DispatchQueue.main.async {
             if let error = error {
-                print("⌚ WCSession activation failed: \(error.localizedDescription)")
+                AppLog.shared.watchConnectivity("WCSession activation failed: \(error.localizedDescription)", level: .error)
                 self.connectionState = .error
                 return
             }
             
             switch activationState {
             case .activated:
-                print("📱 iPhone WCSession activated successfully")
+                AppLog.shared.watchConnectivity("iPhone WCSession activated successfully")
                 self.updateConnectionState()
             case .inactive:
-                print("⌚ WCSession inactive")
+                AppLog.shared.watchConnectivity("WCSession inactive", level: .debug)
                 self.connectionState = .disconnected
             case .notActivated:
-                print("⌚ WCSession not activated")
+                AppLog.shared.watchConnectivity("WCSession not activated", level: .error)
                 self.connectionState = .error
             @unknown default:
-                print("⌚ WCSession unknown activation state")
+                AppLog.shared.watchConnectivity("WCSession unknown activation state", level: .error)
                 self.connectionState = .error
             }
         }
@@ -1245,14 +1245,14 @@ extension WatchConnectivityManager: WCSessionDelegate {
     
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {
         DispatchQueue.main.async {
-            print("⌚ WCSession became inactive")
+            AppLog.shared.watchConnectivity("WCSession became inactive", level: .debug)
             self.connectionState = .disconnected
         }
     }
     
     nonisolated func sessionDidDeactivate(_ session: WCSession) {
         DispatchQueue.main.async {
-            print("⌚ WCSession deactivated")
+            AppLog.shared.watchConnectivity("WCSession deactivated", level: .debug)
             self.connectionState = .disconnected
         }
         
@@ -1262,21 +1262,21 @@ extension WatchConnectivityManager: WCSessionDelegate {
     
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
         DispatchQueue.main.async {
-            print("⌚ Watch reachability changed: \(session.isReachable)")
+            AppLog.shared.watchConnectivity("Watch reachability changed: \(session.isReachable)", level: .debug)
             self.updateConnectionState()
         }
     }
     
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
         DispatchQueue.main.async {
-            print("📱 iPhone received message from watch: \(message)")
+            AppLog.shared.watchConnectivity("iPhone received message from watch", level: .debug)
             self.processWatchMessage(message)
         }
     }
     
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
         DispatchQueue.main.async {
-            print("📱 iPhone received message with reply handler from watch: \(message)")
+            AppLog.shared.watchConnectivity("iPhone received message with reply handler from watch", level: .debug)
             self.processWatchMessage(message)
             
             // Send reply with current phone status
@@ -1285,35 +1285,35 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 "phoneAppActive": true,
                 "timestamp": Date().timeIntervalSince1970
             ]
-            print("📱 iPhone sending reply: \(reply)")
+            AppLog.shared.watchConnectivity("iPhone sending reply", level: .debug)
             replyHandler(reply)
         }
     }
     
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         DispatchQueue.main.async {
-            print("⌚ Received application context from watch")
+            AppLog.shared.watchConnectivity("Received application context from watch", level: .debug)
             self.processWatchMessage(applicationContext)
         }
     }
     
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
         DispatchQueue.main.async {
-            print("⌚ Received user info from watch")
+            AppLog.shared.watchConnectivity("Received user info from watch", level: .debug)
             self.processWatchMessage(userInfo)
         }
     }
     
     nonisolated func session(_ session: WCSession, didFinish userInfoTransfer: WCSessionUserInfoTransfer, error: Error?) {
         if let error = error {
-            print("⌚ User info transfer failed: \(error.localizedDescription)")
+            AppLog.shared.watchConnectivity("User info transfer failed: \(error.localizedDescription)", level: .error)
         } else {
-            print("⌚ User info transfer completed successfully")
+            AppLog.shared.watchConnectivity("User info transfer completed successfully")
         }
     }
     
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
-        print("⌚ Received file from watch: \(file.fileURL.lastPathComponent)")
+        AppLog.shared.watchConnectivity("Received file from watch")
         
         DispatchQueue.main.async {
             // Check if this is a sync protocol file transfer
@@ -1322,11 +1322,11 @@ extension WatchConnectivityManager: WCSessionDelegate {
                     // Sync protocol file transfer (legacy or reliable)
                     self.handleWatchRecordingReceived(fileURL: file.fileURL, metadata: file.metadata ?? [:])
                 } else {
-                    print("⚠️ Unknown transfer type: \(transferType)")
+                    AppLog.shared.watchConnectivity("Unknown transfer type: \(transferType)", level: .error)
                 }
             } else {
                 // Legacy file transfer no longer supported - only sync protocol
-                print("⚠️ Received file transfer without transfer type - ignoring")
+                AppLog.shared.watchConnectivity("Received file transfer without transfer type - ignoring", level: .error)
             }
         }
     }

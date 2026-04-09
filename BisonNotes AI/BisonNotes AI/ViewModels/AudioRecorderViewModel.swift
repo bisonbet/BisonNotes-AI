@@ -216,7 +216,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 		// Don't configure audio session immediately - wait until user starts recording
 		// This prevents interference with other audio apps on app launch
-		print("✅ AudioRecorderViewModel initialized without configuring audio session")
+		AppLog.shared.recording("AudioRecorderViewModel initialized without configuring audio session")
 	}
 
 	deinit {
@@ -293,7 +293,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				self.stopBackgroundTimeMonitoring()
 
 				if self.isRecording, let recorder = self.audioRecorder, recorder.isRecording {
-					print("✅ Recorder still active after backgrounding — no session restoration needed")
+					AppLog.shared.recording("Recorder still active after backgrounding - no session restoration needed")
 					self.recorderStoppedUnexpectedlyTime = nil
 					self.endBackgroundTask()
 					return
@@ -304,16 +304,16 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				// The interruption .ended notification will fire when the call ends and handle resume.
 				if self.isInInterruption {
 					if case .interrupted(.phoneCall, _) = self.recordingState {
-						print("📞 Phone call still active — skipping session restoration, will resume when call ends")
+						AppLog.shared.recording("Phone call still active - skipping session restoration, will resume when call ends")
 					} else {
-						print("⏳ In interruption — skipping session restoration, will resume when interruption ends")
+						AppLog.shared.recording("In interruption - skipping session restoration, will resume when interruption ends")
 					}
 					return
 				}
 
 				// Recorder is NOT active — but if another handler is already resuming, let it finish
 				if self.isResuming {
-					print("⏳ Resume already in progress from another handler, skipping foreground restore")
+					AppLog.shared.recording("Resume already in progress from another handler, skipping foreground restore", level: .debug)
 					self.endBackgroundTask()
 					return
 				}
@@ -324,16 +324,16 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 				if self.isRecording, let recorder = self.audioRecorder {
 					if !recorder.isRecording {
-						print("🔄 Recorder stopped during background, resuming after session restore")
+						AppLog.shared.recording("Recorder stopped during background, resuming after session restore")
 						recorder.record()
 
 						// Verify it actually started
 						try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
 						if let r = self.audioRecorder, r.isRecording {
-							print("✅ Recorder successfully resumed after foreground restore")
+							AppLog.shared.recording("Recorder successfully resumed after foreground restore")
 							self.recordingState = .recording
 						} else {
-							print("⚠️ Recorder.record() didn't start, attempting full resume")
+							AppLog.shared.recording("Recorder.record() didn't start, attempting full resume")
 							await self.attemptResumeAfterUnexpectedStop()
 						}
 						self.recorderStoppedUnexpectedlyTime = nil
@@ -393,7 +393,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	func setupCallObserver() {
 		callObserver = CXCallObserver()
 		callObserver?.setDelegate(self, queue: DispatchQueue.main)
-		print("✅ CallKit observer setup complete for intelligent interruption handling")
+		AppLog.shared.recording("CallKit observer setup complete")
 	}
 	#endif
 
@@ -408,10 +408,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 						do {
 							// Phase 4: Use background recording for perfect backgrounding support
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording()
-							print("✅ Background recording session configured")
+							AppLog.shared.recording("Background recording session configured")
 							await self.applySelectedInputToSession()
 						} catch {
-							print("Failed to configure background recording session: \(error)")
+							AppLog.shared.recording("Failed to configure background recording session: \(error)", level: .error)
 							return
 						}
 
@@ -436,7 +436,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording()
 							await self.applySelectedInputToSession()
 						} catch {
-							print("Failed to configure background recording session: \(error)")
+							AppLog.shared.recording("Failed to configure background recording session: \(error)", level: .error)
 							return
 						}
 
@@ -460,7 +460,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		mainRecordingURL = audioFilename
 		recordingSegments = [audioFilename] // Start with the first segment
 		currentSegmentIndex = 0
-		print("📝 Starting new recording with segment tracking: \(audioFilename.lastPathComponent)")
+		AppLog.shared.recording("Starting new recording with segment tracking")
 
 		// Capture current location before starting recording
 		captureCurrentLocation()
@@ -485,8 +485,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			audioRecorder?.isMeteringEnabled = true
 
 			#if targetEnvironment(simulator)
-			print("🤖 Running on iOS Simulator - audio recording may have limitations")
-			print("💡 For best results, test on a physical device or ensure simulator microphone is enabled")
+			AppLog.shared.recording("Running on iOS Simulator - audio recording may have limitations", level: .debug)
 			#endif
 
 			// No background task needed here - audio background mode keeps recording alive
@@ -513,7 +512,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		} catch {
 			#if targetEnvironment(simulator)
 			errorMessage = "Recording failed on simulator. Enable Device → Microphone → Internal Microphone in simulator menu, or test on a physical device."
-			print("🤖 Simulator audio error: \(error.localizedDescription)")
+			AppLog.shared.recording("Simulator audio error: \(error.localizedDescription)", level: .error)
 			#else
 			errorMessage = "Failed to start recording: \(error.localizedDescription)"
 			#endif
@@ -562,12 +561,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 		// Merge segments if there were interruptions
 		if recordingSegments.count > 1 {
-			print("🔄 Recording has \(recordingSegments.count) segments, merging...")
+			AppLog.shared.recording("Recording has \(recordingSegments.count) segments, merging")
 			Task {
 				await mergeRecordingSegments()
 			}
 		} else {
-			print("✅ Recording has single segment, no merge needed")
+			AppLog.shared.recording("Recording has single segment, no merge needed", level: .debug)
 		}
 
 		// Deactivate audio session to restore high-quality music playback
@@ -589,7 +588,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		saveLocationData(for: url)
 
 		guard let workflowManager = workflowManager else {
-			print("❌ WorkflowManager not set - live transcription recording not saved!")
+			AppLog.shared.recording("WorkflowManager not set - live transcription recording not saved", level: .error)
 			return
 		}
 
@@ -608,7 +607,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			locationData: recordingLocationSnapshot()
 		)
 
-		print("✅ Live transcription recording saved, ID: \(recordingId)")
+		AppLog.shared.recording("Live transcription recording saved, ID: \(recordingId)")
 
 		// Save the live transcript if we have content
 		if !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -627,7 +626,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				processingTime: duration,
 				confidence: 0.9
 			)
-			print("✅ Live transcript saved for recording \(recordingId)")
+			AppLog.shared.recording("Live transcript saved for recording \(recordingId)")
 		}
 
 		resetRecordingLocation()
@@ -649,7 +648,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				self.lastCheckpointTime = Date()
 				self.startRecordingTimer()
 				self.notifyWatchOfRecordingStateChange()
-				print("✅ Live transcription recording started")
+				AppLog.shared.recording("Live transcription recording started")
 			} catch {
 				self.isUsingLiveTranscription = false
 				self.liveTranscriptionService = nil
@@ -695,9 +694,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 						// Not in interruption - track when we first detected the recorder stopped
 						if self.recorderStoppedUnexpectedlyTime == nil {
 							self.recorderStoppedUnexpectedlyTime = Date()
-							print("⚠️ Detected recorder stopped - waiting for interruption notification (grace period: 5 seconds)")
+							AppLog.shared.recording("Detected recorder stopped - waiting for interruption notification (grace period: 5s)", level: .debug)
 						} else if let stoppedTime = self.recorderStoppedUnexpectedlyTime, Date().timeIntervalSince(stoppedTime) >= 5.0 {
-							print("🔄 No interruption notification received after 5 seconds - attempting to resume recording (likely hardware issue)")
+							AppLog.shared.recording("No interruption notification received after 5s - attempting to resume recording")
 							self.recorderStoppedUnexpectedlyTime = nil
 							Task { @MainActor in
 								await self.attemptResumeAfterUnexpectedStop()

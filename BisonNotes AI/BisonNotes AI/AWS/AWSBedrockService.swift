@@ -51,7 +51,7 @@ class AWSBedrockService: ObservableObject {
             self.bedrockClient = client
             return client
         } catch {
-            print("⚠️ Failed to initialize BedrockRuntimeClient: \(error)")
+            AppLog.shared.networking("Failed to initialize BedrockRuntimeClient: \(error)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "Failed to initialize AWS Bedrock client: \(error.localizedDescription)")
         }
     }
@@ -64,7 +64,7 @@ class AWSBedrockService: ObservableObject {
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
 
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
-            print("🔀 AWS Bedrock Summary: Large text detected (\(tokenCount) tokens), using chunked processing")
+            AppLog.shared.networking("AWS Bedrock Summary: Large text detected (\(tokenCount) tokens), using chunked processing")
             let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
             var summaries: [String] = []
 
@@ -229,13 +229,13 @@ class AWSBedrockService: ObservableObject {
         let tokenCount = TokenManager.getTokenCount(text)
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8) // Leave 20% buffer for response
         
-        print("📊 AWS Bedrock: Text token count: \(tokenCount), max allowed: \(maxTokens)")
+        AppLog.shared.networking("AWS Bedrock: Text token count: \(tokenCount), max allowed: \(maxTokens)", level: .debug)
         
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
-            print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+            AppLog.shared.networking("AWS Bedrock: Large transcript detected (\(tokenCount) tokens), using chunked processing")
             return try await processCompleteChunked(text: text, contentType: contentType, maxTokens: maxTokens)
         } else {
-            print("📝 Processing single chunk (\(tokenCount) tokens)")
+            AppLog.shared.networking("AWS Bedrock: Processing single chunk (\(tokenCount) tokens)")
             if config.model.supportsStructuredOutput {
                 // Use structured output for supported models
                 return try await processCompleteStructured(text: text, contentType: contentType)
@@ -256,10 +256,10 @@ class AWSBedrockService: ObservableObject {
                 temperature: 0.1
             )
             let success = response.contains("Test successful") || response.contains("test successful")
-            print("✅ AWS Bedrock connection test \(success ? "successful" : "failed")")
+            AppLog.shared.networking("AWS Bedrock connection test \(success ? "successful" : "failed")")
             return success
         } catch {
-            print("❌ AWS Bedrock connection test failed: \(error)")
+            AppLog.shared.networking("AWS Bedrock connection test failed: \(error)", level: .error)
             return false
         }
     }
@@ -280,11 +280,11 @@ class AWSBedrockService: ObservableObject {
     ) async throws -> String {
         // Validate configuration
         guard config.isValid else {
-            print("❌ AWS Bedrock configuration is invalid")
+            AppLog.shared.networking("AWS Bedrock configuration is invalid", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock configuration is invalid")
         }
         
-        print("🔧 AWS Bedrock API Configuration - Model: \(config.model.rawValue), Region: \(config.region)")
+        AppLog.shared.networking("AWS Bedrock API Configuration - Model: \(config.model.rawValue), Region: \(config.region)", level: .debug)
         
         // Create the model request payload
         let modelRequest = AWSBedrockModelFactory.createRequest(
@@ -305,7 +305,7 @@ class AWSBedrockService: ObservableObject {
         }
         
         do {
-            print("🌐 Making AWS Bedrock API request using official SDK...")
+            AppLog.shared.networking("Making AWS Bedrock API request using official SDK...", level: .debug)
             
             // Get the Bedrock client (initialize if needed)
             let client = try await getBedrockClient()
@@ -342,22 +342,18 @@ class AWSBedrockService: ObservableObject {
             
             // Log the raw response only when verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                let responseString = String(data: responseData, encoding: .utf8) ?? "Unable to decode response"
-                print("🌐 AWS Bedrock API Response received")
-                print("📝 Raw response: \(responseString)")
-                print("📊 Response data length: \(responseData.count) bytes")
+                AppLog.shared.networking("AWS Bedrock API Response received, size: \(responseData.count) bytes", level: .debug)
             }
             
             // Parse the model-specific response
             let modelResponse = try AWSBedrockModelFactory.parseResponse(for: config.model, data: responseData)
             
-            print("✅ AWS Bedrock API Success - Model: \(config.model.rawValue)")
-            print("📝 Response content length: \(modelResponse.content.count) characters")
+            AppLog.shared.networking("AWS Bedrock API Success - Model: \(config.model.rawValue), response: \(modelResponse.content.count) chars")
             
             return modelResponse.content
             
         } catch {
-            print("❌ AWS Bedrock API request failed: \(error)")
+            AppLog.shared.networking("AWS Bedrock API request failed: \(error)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock API request failed: \(error.localizedDescription)")
         }
     }
@@ -403,7 +399,7 @@ class AWSBedrockService: ObservableObject {
     private func processCompleteChunked(text: String, contentType: ContentType, maxTokens: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         // Split text into chunks
         let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
-        print("📦 AWS Bedrock: Split text into \(chunks.count) chunks")
+        AppLog.shared.networking("AWS Bedrock: Split text into \(chunks.count) chunks", level: .debug)
         
         // Process each chunk
         var allSummaries: [String] = []
@@ -412,7 +408,7 @@ class AWSBedrockService: ObservableObject {
         var allTitles: [TitleItem] = []
         
         for (index, chunk) in chunks.enumerated() {
-            print("🔄 AWS Bedrock: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+            AppLog.shared.networking("AWS Bedrock: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)", level: .debug)
             
             do {
                 if config.model.supportsStructuredOutput {
@@ -434,7 +430,7 @@ class AWSBedrockService: ObservableObject {
                     try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second between chunks
                 }
             } catch {
-                print("❌ AWS Bedrock: Failed to process chunk \(index + 1): \(error)")
+                AppLog.shared.networking("AWS Bedrock: Failed to process chunk \(index + 1): \(error)", level: .error)
                 throw error
             }
         }
@@ -447,8 +443,7 @@ class AWSBedrockService: ObservableObject {
         let deduplicatedReminders = deduplicateReminders(allReminders)
         let deduplicatedTitles = deduplicateTitles(allTitles)
         
-        print("📊 AWS Bedrock: Final summary: \(combinedSummary.count) characters")
-        print("📊 AWS Bedrock: Tasks: \(deduplicatedTasks.count), Reminders: \(deduplicatedReminders.count), Titles: \(deduplicatedTitles.count)")
+        AppLog.shared.networking("AWS Bedrock: Final summary: \(combinedSummary.count) chars, tasks: \(deduplicatedTasks.count), reminders: \(deduplicatedReminders.count), titles: \(deduplicatedTitles.count)", level: .debug)
         
         return (combinedSummary, deduplicatedTasks, deduplicatedReminders, deduplicatedTitles, contentType)
     }
@@ -576,7 +571,7 @@ class AWSBedrockService: ObservableObject {
         do {
             return try OpenAIResponseParser.parseTasksFromJSON(response)
         } catch {
-            print("❌ Failed to parse tasks JSON, falling back to text parsing")
+            AppLog.shared.networking("Failed to parse tasks JSON, falling back to text parsing", level: .error)
             return parseTasksFromPlainText(response)
         }
     }
@@ -585,7 +580,7 @@ class AWSBedrockService: ObservableObject {
         do {
             return try OpenAIResponseParser.parseRemindersFromJSON(response)
         } catch {
-            print("❌ Failed to parse reminders JSON, falling back to text parsing")
+            AppLog.shared.networking("Failed to parse reminders JSON, falling back to text parsing", level: .error)
             return parseRemindersFromPlainText(response)
         }
     }
@@ -594,7 +589,7 @@ class AWSBedrockService: ObservableObject {
         do {
             return try OpenAIResponseParser.parseTitlesFromJSON(response)
         } catch {
-            print("❌ Failed to parse titles JSON, falling back to text parsing")
+            AppLog.shared.networking("Failed to parse titles JSON, falling back to text parsing", level: .error)
             return parseTitlesFromPlainText(response)
         }
     }

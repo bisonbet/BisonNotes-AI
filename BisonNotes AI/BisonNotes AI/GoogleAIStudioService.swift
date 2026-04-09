@@ -12,7 +12,7 @@ import SwiftUI
 // MARK: - Google AI Studio Service
 
 class GoogleAIStudioService: ObservableObject {
-    private let logger = Logger(subsystem: "com.audiojournal.app", category: "GoogleAIStudio")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "GoogleAIStudio")
     
     @AppStorage("googleAIStudioAPIKey") private var apiKey: String = ""
     @AppStorage("googleAIStudioModel") private var selectedModel: String = "gemini-3-flash-preview"
@@ -489,7 +489,7 @@ class GoogleAIStudioService: ObservableObject {
     // MARK: - Title Extraction
     
     func extractTitles(from text: String) async throws -> [TitleItem] {
-        print("🤖 GoogleAIStudioService: Starting title extraction")
+        AppLog.shared.networking("GoogleAIStudioService: Starting title extraction")
         
         let prompt = """
         Analyze the following transcript and extract 4 high-quality titles or headlines. Focus on:
@@ -524,7 +524,7 @@ class GoogleAIStudioService: ObservableObject {
             let response = try await generateContent(prompt: prompt, useStructuredOutput: false)
             return try parseTitlesFromJSON(response)
         } catch {
-            print("❌ GoogleAIStudioService: Title extraction failed: \(error)")
+            AppLog.shared.networking("GoogleAIStudioService: Title extraction failed: \(error)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "Google AI Studio title extraction failed: \(error.localizedDescription)")
         }
     }

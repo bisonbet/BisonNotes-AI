@@ -549,7 +549,7 @@ struct RecordingsListView: View {
             guard let recordingName = recording.recordingName,
                   let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
                   FileManager.default.fileExists(atPath: recordingURL.path) else {
-                print("⚠️ Skipping recording with missing data: \(recording.recordingName ?? "unknown")")
+                AppLog.shared.recording("Skipping recording with missing data", level: .debug)
                 return nil
             }
             
@@ -658,7 +658,7 @@ struct RecordingsListView: View {
                         try FileManager.default.removeItem(at: recording.url)
                         loadRecordings() // Reload the list
                     } catch {
-                        print("Failed to delete recording: \(error)")
+                        AppLog.shared.recording("Failed to delete recording: \(error)", level: .error)
                     }
                 }
             }
@@ -672,7 +672,7 @@ struct RecordingsListView: View {
                 loadRecordings() // Reload the list
             }
         } catch {
-            print("Failed to delete recording with relationships: \(error)")
+            AppLog.shared.recording("Failed to delete recording with relationships: \(error)", level: .error)
         }
     }
     
@@ -681,7 +681,7 @@ struct RecordingsListView: View {
             let player = try AVAudioPlayer(contentsOf: url)
             return player.duration
         } catch {
-            print("Error getting duration for \(url.lastPathComponent): \(error)")
+            AppLog.shared.recording("Error getting duration: \(error)", level: .error)
             return 0.0
         }
     }

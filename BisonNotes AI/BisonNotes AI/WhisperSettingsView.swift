@@ -350,7 +350,7 @@ struct WhisperSettingsView: View {
     }
     
     private func updateWhisperService() {
-        print("🔧 WhisperSettingsView - Updating service with protocol: \(selectedProtocol.rawValue)")
+        AppLog.shared.general("WhisperSettingsView: Updating service with protocol: \(selectedProtocol.rawValue)")
         let config = WhisperConfig(
             serverURL: serverURL,
             port: port,

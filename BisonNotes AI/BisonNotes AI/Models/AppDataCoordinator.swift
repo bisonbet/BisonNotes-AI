@@ -155,7 +155,7 @@ class AppDataCoordinator: ObservableObject {
         do {
             try await SummaryManager.shared.getiCloudManager().deleteSummaryFromiCloud(id)
         } catch {
-            print("⚠️ Failed to delete summary from iCloud: \(error)")
+            AppLog.shared.coreData("Failed to delete summary from iCloud: \(error)", level: .error)
             // Re-throw the error so caller can handle the partial failure
             throw error
         }
@@ -238,13 +238,13 @@ class AppDataCoordinator: ObservableObject {
                 locationData: locationData
             )
             
-            print("✅ Watch recording synced successfully: \(syncRequest.filename)")
+            AppLog.shared.coreData("Watch recording synced successfully: \(syncRequest.filename)")
             
             // Notify completion
             WatchConnectivityManager.shared.onWatchRecordingSyncCompleted?(recordingId, true)
             
         } catch {
-            print("❌ Failed to sync watch recording: \(error)")
+            AppLog.shared.coreData("Failed to sync watch recording: \(error)", level: .error)
             WatchConnectivityManager.shared.onWatchRecordingSyncCompleted?(syncRequest.recordingId, false)
         }
     }

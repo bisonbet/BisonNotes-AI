@@ -37,7 +37,7 @@ extension AudioRecorderViewModel {
 				guard self.isLocationTrackingEnabled else { return }
 
 				guard let location = location else {
-					print("⚠️ Failed to capture fresh location for recording start")
+					AppLog.shared.recording("Failed to capture fresh location for recording start", level: .debug)
 					return
 				}
 
@@ -45,14 +45,14 @@ extension AudioRecorderViewModel {
 				if self.recordingStartLocationData == nil {
 					self.recordingStartLocationData = self.currentLocationData
 				}
-				print("📍 Location captured for recording: \(location.coordinate.latitude), \(location.coordinate.longitude)")
+				AppLog.shared.recording("Location captured for recording", level: .debug)
 			}
 		}
 	}
 
 	func saveLocationData(for recordingURL: URL) {
 		guard isLocationTrackingEnabled else {
-			print("📍 Location tracking disabled or no location data available")
+			AppLog.shared.recording("Location tracking disabled or no location data available", level: .debug)
 			return
 		}
 
@@ -62,7 +62,7 @@ extension AudioRecorderViewModel {
 		}
 
 		guard let locationData = recordingLocationSnapshot() else {
-			print("📍 No location data available to save for \(recordingURL.lastPathComponent)")
+			AppLog.shared.recording("No location data available to save", level: .debug)
 			return
 		}
 
@@ -70,9 +70,9 @@ extension AudioRecorderViewModel {
 		do {
 			let data = try JSONEncoder().encode(locationData)
 			try data.write(to: locationURL)
-			print("📍 Location data saved for recording: \(recordingURL.lastPathComponent)")
+			AppLog.shared.recording("Location data saved for recording")
 		} catch {
-			print("❌ Failed to save location data: \(error)")
+			AppLog.shared.recording("Failed to save location data: \(error)", level: .error)
 		}
 	}
 
@@ -93,7 +93,7 @@ extension AudioRecorderViewModel {
 
 	func updateCurrentLocationData(with location: CLLocation) {
 		guard location.horizontalAccuracy >= 0 else {
-			print("⚠️ Ignoring location with invalid accuracy: \(location.horizontalAccuracy)")
+			AppLog.shared.recording("Ignoring location with invalid accuracy: \(location.horizontalAccuracy)", level: .debug)
 			return
 		}
 
@@ -138,6 +138,6 @@ extension AudioRecorderViewModel {
 			resetRecordingLocation()
 		}
 
-		print("📍 Location tracking \(enabled ? "enabled" : "disabled")")
+		AppLog.shared.recording("Location tracking \(enabled ? "enabled" : "disabled")")
 	}
 }

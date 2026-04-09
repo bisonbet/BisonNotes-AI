@@ -13,7 +13,7 @@ struct DeviceCompatibility {
         }
 
         #if targetEnvironment(simulator)
-        print("✅ DeviceCompatibility: Simulator detected - enabling native speech transcription support")
+        AppLog.shared.performance("DeviceCompatibility: Simulator detected - enabling native speech transcription support")
         return true
         #else
         // Check RAM (3GB minimum)
@@ -22,10 +22,10 @@ struct DeviceCompatibility {
         let hasEnoughRAM = totalMemoryGB >= 3.0
 
         if hasEnoughRAM {
-            print("✅ DeviceCompatibility: Native speech transcription supported (RAM: \(String(format: "%.1f", totalMemoryGB))GB)")
+            AppLog.shared.performance("DeviceCompatibility: Native speech transcription supported (RAM: \(String(format: "%.1f", totalMemoryGB))GB)")
             return true
         } else {
-            print("❌ DeviceCompatibility: Native speech transcription requires 3GB+ RAM (Device has \(String(format: "%.1f", totalMemoryGB))GB)")
+            AppLog.shared.performance("DeviceCompatibility: Native speech transcription requires 3GB+ RAM (Device has \(String(format: "%.1f", totalMemoryGB))GB)")
             return false
         }
         #endif
@@ -34,11 +34,11 @@ struct DeviceCompatibility {
     private static var isCorrectOSVersionForTranscription: Bool {
         // Native speech transcription requires iOS 18.1+ for full functionality
         if #available(iOS 18.1, *) {
-            print("✅ DeviceCompatibility: iOS 18.1+ detected - transcription support")
+            AppLog.shared.performance("DeviceCompatibility: iOS 18.1+ detected - transcription support")
             return true
         }
 
-        print("❌ DeviceCompatibility: iOS 18.1+ required for native speech transcription")
+        AppLog.shared.performance("DeviceCompatibility: iOS 18.1+ required for native speech transcription")
         return false
     }
 
@@ -64,7 +64,7 @@ struct DeviceCompatibility {
 
         guard #available(iOS 17.0, *) else {
             if !_hasLoggedFluidAudioSupport {
-                print("❌ DeviceCompatibility: iOS 17+ required for FluidAudio")
+                AppLog.shared.performance("DeviceCompatibility: iOS 17+ required for FluidAudio")
                 _hasLoggedFluidAudioSupport = true
             }
             _cachedFluidAudioSupport = false
@@ -78,9 +78,9 @@ struct DeviceCompatibility {
 
         if !_hasLoggedFluidAudioSupport {
             if hasEnoughRAM {
-                print("✅ DeviceCompatibility: FluidAudio supported (RAM: \(String(format: "%.1f", totalMemoryGB))GB)")
+                AppLog.shared.performance("DeviceCompatibility: FluidAudio supported (RAM: \(String(format: "%.1f", totalMemoryGB))GB)")
             } else {
-                print("❌ DeviceCompatibility: FluidAudio requires 4GB+ RAM (Device has \(String(format: "%.1f", totalMemoryGB))GB)")
+                AppLog.shared.performance("DeviceCompatibility: FluidAudio requires 4GB+ RAM (Device has \(String(format: "%.1f", totalMemoryGB))GB)")
             }
             _hasLoggedFluidAudioSupport = true
         }

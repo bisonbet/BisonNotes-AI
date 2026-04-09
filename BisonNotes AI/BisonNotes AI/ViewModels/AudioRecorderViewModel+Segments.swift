@@ -26,11 +26,11 @@ extension AudioRecorderViewModel {
 	@MainActor
 	func mergeRecordingSegments() async {
 		guard recordingSegments.count > 1, let mainURL = mainRecordingURL else {
-			print("⚠️ No segments to merge")
+			AppLog.shared.recording("No segments to merge", level: .debug)
 			return
 		}
 
-		print("🔄 Merging \(recordingSegments.count) segments into: \(mainURL.lastPathComponent)")
+		AppLog.shared.recording("Merging \(recordingSegments.count) segments")
 
 		// Start background task to protect file merging and Core Data save operations
 		beginBackgroundTask()
@@ -44,7 +44,7 @@ extension AudioRecorderViewModel {
 				withMediaType: .audio,
 				preferredTrackID: kCMPersistentTrackID_Invalid
 			) else {
-				print("❌ Failed to create composition audio track")
+				AppLog.shared.recording("Failed to create composition audio track", level: .error)
 				return
 			}
 
@@ -56,7 +56,7 @@ extension AudioRecorderViewModel {
 
 				// Get the audio track from the segment
 				guard let assetTrack = try? await asset.loadTracks(withMediaType: .audio).first else {
-					print("⚠️ Segment \(index + 1) has no audio track, skipping")
+					AppLog.shared.recording("Segment \(index + 1) has no audio track, skipping")
 					continue
 				}
 
@@ -67,7 +67,7 @@ extension AudioRecorderViewModel {
 				let timeRange = CMTimeRange(start: .zero, duration: duration)
 				try compositionAudioTrack.insertTimeRange(timeRange, of: assetTrack, at: currentTime)
 
-				print("✅ Added segment \(index + 1) at \(currentTime.seconds)s, duration: \(duration.seconds)s")
+				AppLog.shared.recording("Added segment \(index + 1) at \(currentTime.seconds)s, duration: \(duration.seconds)s", level: .debug)
 
 				// Move forward for the next segment
 				currentTime = CMTimeAdd(currentTime, duration)
@@ -78,7 +78,7 @@ extension AudioRecorderViewModel {
 				asset: composition,
 				presetName: AVAssetExportPresetAppleM4A
 			) else {
-				print("❌ Failed to create export session")
+				AppLog.shared.recording("Failed to create export session", level: .error)
 				return
 			}
 
@@ -88,7 +88,7 @@ extension AudioRecorderViewModel {
 			// Use the modern export API (iOS 18+)
 			try await exportSession.export(to: tempURL, as: .m4a)
 
-			print("✅ Successfully merged all segments to temporary file")
+			AppLog.shared.recording("Successfully merged all segments to temporary file", level: .debug)
 
 			// Clean up individual segment files
 			await cleanupSegmentFiles()
@@ -104,7 +104,7 @@ extension AudioRecorderViewModel {
 			// Move temp file to final location
 			try fileManager.moveItem(at: tempURL, to: mainURL)
 
-			print("✅ Successfully merged all segments into: \(mainURL.lastPathComponent)")
+			AppLog.shared.recording("Successfully merged all segments")
 
 			// Update the recordingURL to point to the merged file
 			recordingURL = mainURL
@@ -112,7 +112,7 @@ extension AudioRecorderViewModel {
 			// Save the merged recording to the database
 			saveLocationData(for: mainURL)
 
-			print("✅ Merged recording saved in Whisper-optimized format")
+			AppLog.shared.recording("Merged recording saved in Whisper-optimized format")
 
 			// Add recording using workflow manager
 			if let workflowManager = workflowManager {
@@ -134,18 +134,18 @@ extension AudioRecorderViewModel {
 					locationData: recordingLocationSnapshot()
 				)
 
-				print("✅ Merged recording created with workflow manager, ID: \(recordingId)")
+				AppLog.shared.recording("Merged recording created with workflow manager, ID: \(recordingId)")
 
 				self.resetRecordingLocation()
 			} else {
-				print("❌ WorkflowManager not set - merged recording not saved to database!")
+				AppLog.shared.recording("WorkflowManager not set - merged recording not saved to database", level: .error)
 			}
 
 			// End background task after successful merge and save
 			endBackgroundTask()
 
 		} catch {
-			print("❌ Error merging segments: \(error.localizedDescription)")
+			AppLog.shared.recording("Error merging segments: \(error.localizedDescription)", level: .error)
 			// End background task even on error
 			endBackgroundTask()
 		}
@@ -163,10 +163,10 @@ extension AudioRecorderViewModel {
 			do {
 				if fileManager.fileExists(atPath: segmentURL.path) {
 					try fileManager.removeItem(at: segmentURL)
-					print("🗑️ Deleted segment: \(segmentURL.lastPathComponent)")
+					AppLog.shared.recording("Deleted segment", level: .debug)
 				}
 			} catch {
-				print("⚠️ Failed to delete segment \(segmentURL.lastPathComponent): \(error.localizedDescription)")
+				AppLog.shared.recording("Failed to delete segment: \(error.localizedDescription)", level: .error)
 			}
 		}
 
@@ -183,14 +183,14 @@ extension AudioRecorderViewModel {
 	/// Useful before potentially risky operations or to ensure data durability
 	func forceCheckpoint() {
 		guard isRecording, let recorder = audioRecorder, recorder.isRecording else {
-			print("⚠️ Cannot checkpoint: not currently recording")
+			AppLog.shared.recording("Cannot checkpoint: not currently recording", level: .debug)
 			return
 		}
 
 		recorder.pause()
 		recorder.record()
 		lastCheckpointTime = Date()
-		print("💾 Manual checkpoint: Flushed recording buffer to disk")
+		AppLog.shared.recording("Manual checkpoint: Flushed recording buffer to disk", level: .debug)
 	}
 
 	/// Check if the current audio level indicates silence
@@ -234,12 +234,12 @@ extension AudioRecorderViewModel {
 			recorder.pause()
 			recorder.record()
 			lastCheckpointTime = now
-			print("💾 Checkpoint: Forced buffer flush at \(Int(recordingTime))s (no silence detected for \(Int(timeSinceLastCheckpoint))s)")
+			AppLog.shared.recording("Checkpoint: Forced buffer flush at \(Int(recordingTime))s (no silence for \(Int(timeSinceLastCheckpoint))s)", level: .debug)
 		} else if isCurrentlySilent() {
 			recorder.pause()
 			recorder.record()
 			lastCheckpointTime = now
-			print("💾 Checkpoint: Flushed during silence at \(Int(recordingTime))s")
+			AppLog.shared.recording("Checkpoint: Flushed during silence at \(Int(recordingTime))s", level: .debug)
 		} else {
 			// Not silent and not forcing - skip this checkpoint attempt
 			// We'll try again next second

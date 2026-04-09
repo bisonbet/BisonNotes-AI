@@ -20,7 +20,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
 
     private var service: MistralAISummarizationService?
     private var currentConfig: MistralAIConfig?
-    private let logger = Logger(subsystem: "com.audiojournal.app", category: "MistralAIEngine")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "MistralAIEngine")
 
     // MARK: - Configuration Constants
 

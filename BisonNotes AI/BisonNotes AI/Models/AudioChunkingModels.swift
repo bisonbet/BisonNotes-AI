@@ -162,26 +162,26 @@ struct AudioFileInfo {
     let channels: Int
     
     static func create(from url: URL) async throws -> AudioFileInfo {
-        print("🔍 AudioFileInfo.create - Analyzing file: \(url.lastPathComponent)")
-        print("🔍 AudioFileInfo.create - Full path: \(url.path)")
-        print("🔍 AudioFileInfo.create - File exists: \(FileManager.default.fileExists(atPath: url.path))")
+        AppLog.shared.chunking("AudioFileInfo.create - Analyzing file: \(url.lastPathComponent)", level: .debug)
+        AppLog.shared.chunking("AudioFileInfo.create - Full path: \(url.path)", level: .debug)
+        AppLog.shared.chunking("AudioFileInfo.create - File exists: \(FileManager.default.fileExists(atPath: url.path))", level: .debug)
         
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
-        print("🔍 AudioFileInfo.create - Loaded duration: \(duration)s (\(duration/60) minutes)")
+        AppLog.shared.chunking("AudioFileInfo.create - Loaded duration: \(duration)s (\(duration/60) minutes)", level: .debug)
         
         let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let fileSize = fileAttributes[.size] as? Int64 ?? 0
-        print("🔍 AudioFileInfo.create - File size: \(fileSize) bytes (\(fileSize/1024/1024) MB)")
+        AppLog.shared.chunking("AudioFileInfo.create - File size: \(fileSize) bytes (\(fileSize/1024/1024) MB)", level: .debug)
         
         // Validation checks
         if duration <= 0 {
-            print("❌ AudioFileInfo.create - Invalid duration: \(duration)")
+            AppLog.shared.chunking("AudioFileInfo.create - Invalid duration: \(duration)", level: .error)
             throw AudioChunkingError.invalidAudioFile
         }
         
         if fileSize <= 0 {
-            print("❌ AudioFileInfo.create - Invalid file size: \(fileSize)")
+            AppLog.shared.chunking("AudioFileInfo.create - Invalid file size: \(fileSize)", level: .error)
             throw AudioChunkingError.invalidAudioFile
         }
         
@@ -224,12 +224,7 @@ struct AudioFileInfo {
             channels: channels
         )
         
-        print("✅ AudioFileInfo.create - Successfully created AudioFileInfo:")
-        print("   - Duration: \(audioFileInfo.duration)s (\(audioFileInfo.duration/60) minutes)")
-        print("   - File size: \(audioFileInfo.fileSize) bytes (\(audioFileInfo.fileSize/1024/1024) MB)")
-        print("   - Format: \(audioFileInfo.format)")
-        print("   - Sample rate: \(audioFileInfo.sampleRate)")
-        print("   - Channels: \(audioFileInfo.channels)")
+        AppLog.shared.chunking("AudioFileInfo.create - Successfully created: duration=\(audioFileInfo.duration)s, size=\(audioFileInfo.fileSize) bytes, format=\(audioFileInfo.format), sampleRate=\(audioFileInfo.sampleRate), channels=\(audioFileInfo.channels)", level: .debug)
         
         return audioFileInfo
     }

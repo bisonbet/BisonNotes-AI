@@ -28,7 +28,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
         guard isEnabled else {
             if OnDeviceLLMFeatureFlags.verboseLogging {
-                print("[OnDeviceLLMEngine] Not enabled in settings")
+                AppLog.shared.summarization("[OnDeviceLLMEngine] Not enabled in settings", level: .debug)
             }
             return false
         }
@@ -37,7 +37,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         let selectedModel = OnDeviceLLMModelInfo.selectedModel
         guard selectedModel.isDownloaded else {
             if OnDeviceLLMFeatureFlags.verboseLogging {
-                print("[OnDeviceLLMEngine] Model not downloaded: \(selectedModel.displayName)")
+                AppLog.shared.summarization("[OnDeviceLLMEngine] Model not downloaded: \(selectedModel.displayName)", level: .debug)
             }
             return false
         }
@@ -53,7 +53,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
     private var service: OnDeviceLLMService?
     private var currentConfig: OnDeviceLLMConfig?
-    private let logger = Logger(subsystem: "com.bisonnotes.app", category: "OnDeviceLLMEngine")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "OnDeviceLLMEngine")
     private var backgroundObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
 
@@ -80,7 +80,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            print("[OnDeviceLLMEngine] App entered background — pausing GPU inference")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] App entered background - pausing GPU inference")
             self?.service?.setAppBackgrounded(true)
         }
 
@@ -89,7 +89,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            print("[OnDeviceLLMEngine] App entering foreground — resuming GPU inference")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] App entering foreground - resuming GPU inference")
             self?.service?.setAppBackgrounded(false)
         }
     }
@@ -116,7 +116,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     // MARK: - SummarizationEngine Methods
 
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        print("[OnDeviceLLMEngine] Starting summary generation")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Starting summary generation")
 
         updateConfiguration()
 
@@ -126,16 +126,16 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
         do {
             let summary = try await service.generateSummary(from: text, contentType: contentType)
-            print("[OnDeviceLLMEngine] Summary generated successfully")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Summary generated successfully")
             return summary
         } catch {
-            print("[OnDeviceLLMEngine] Summary generation failed: \(error)")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Summary generation failed: \(error)", level: .error)
             throw handleError(error)
         }
     }
 
     func extractTasks(from text: String) async throws -> [TaskItem] {
-        print("[OnDeviceLLMEngine] Starting task extraction")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Starting task extraction")
 
         updateConfiguration()
 
@@ -145,16 +145,16 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
         do {
             let tasks = try await service.extractTasks(from: text)
-            print("[OnDeviceLLMEngine] Extracted \(tasks.count) tasks")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Extracted \(tasks.count) tasks")
             return tasks
         } catch {
-            print("[OnDeviceLLMEngine] Task extraction failed: \(error)")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Task extraction failed: \(error)", level: .error)
             throw handleError(error)
         }
     }
 
     func extractReminders(from text: String) async throws -> [ReminderItem] {
-        print("[OnDeviceLLMEngine] Starting reminder extraction")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Starting reminder extraction")
 
         updateConfiguration()
 
@@ -164,16 +164,16 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
         do {
             let reminders = try await service.extractReminders(from: text)
-            print("[OnDeviceLLMEngine] Extracted \(reminders.count) reminders")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Extracted \(reminders.count) reminders")
             return reminders
         } catch {
-            print("[OnDeviceLLMEngine] Reminder extraction failed: \(error)")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Reminder extraction failed: \(error)", level: .error)
             throw handleError(error)
         }
     }
 
     func extractTitles(from text: String) async throws -> [TitleItem] {
-        print("[OnDeviceLLMEngine] Starting title extraction")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Starting title extraction")
 
         updateConfiguration()
 
@@ -183,10 +183,10 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
         do {
             let titles = try await service.extractTitles(from: text)
-            print("[OnDeviceLLMEngine] Extracted \(titles.count) titles")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Extracted \(titles.count) titles")
             return titles
         } catch {
-            print("[OnDeviceLLMEngine] Title extraction failed: \(error)")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Title extraction failed: \(error)", level: .error)
             throw handleError(error)
         }
     }
@@ -203,7 +203,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         titles: [TitleItem],
         contentType: ContentType
     ) {
-        print("[OnDeviceLLMEngine] Starting complete processing")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Starting complete processing")
 
         updateConfiguration()
 
@@ -229,37 +229,37 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         do {
             try service.ensureModelLoaded()
             tokenCount = try service.getAccurateTokenCount(text)
-            print("[OnDeviceLLMEngine] Using accurate tokenization: \(tokenCount) tokens")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Using accurate tokenization: \(tokenCount) tokens", level: .debug)
         } catch {
             // Fall back to estimation if model not loaded yet
             tokenCount = TokenManager.getTokenCount(text)
-            print("[OnDeviceLLMEngine] Using token estimation: \(tokenCount) tokens")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Using token estimation: \(tokenCount) tokens", level: .debug)
         }
         
-        print("[OnDeviceLLMEngine] Text token count: \(tokenCount), max context: \(maxContextTokens), output reserve: \(outputReserve), effective input limit: \(effectiveInputLimit)")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Text token count: \(tokenCount), max context: \(maxContextTokens), output reserve: \(outputReserve), effective input limit: \(effectiveInputLimit)", level: .debug)
 
         do {
             if tokenCount > effectiveInputLimit {
-                print("[OnDeviceLLMEngine] Large text detected, using chunked processing with overlap")
+                AppLog.shared.summarization("[OnDeviceLLMEngine] Large text detected, using chunked processing with overlap")
                 return try await processChunkedText(text, service: service, maxTokens: effectiveInputLimit)
             } else {
-                print("[OnDeviceLLMEngine] Processing single chunk")
+                AppLog.shared.summarization("[OnDeviceLLMEngine] Processing single chunk", level: .debug)
                 let result = try await service.processComplete(text: text)
 
                 // Check if inference was interrupted by app entering background
                 if service.wasInterruptedByBackground {
-                    print("[OnDeviceLLMEngine] Inference interrupted by app backgrounding (GPU not available)")
+                    AppLog.shared.summarization("[OnDeviceLLMEngine] Inference interrupted by app backgrounding (GPU not available)", level: .error)
                     throw OnDeviceLLMError.inferenceFailed("On-device AI needs the app to stay open. Please return to the app and try again.")
                 }
 
                 if let metrics = service.lastMetrics {
-                    print("[OnDeviceLLMEngine] Inference completed at \(String(format: "%.1f", metrics.inferenceTokensPerSecond)) tokens/sec")
+                    AppLog.shared.summarization("[OnDeviceLLMEngine] Inference completed at \(String(format: "%.1f", metrics.inferenceTokensPerSecond)) tokens/sec")
                 }
 
                 return result
             }
         } catch {
-            print("[OnDeviceLLMEngine] Complete processing failed: \(error)")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Complete processing failed: \(error)", level: .error)
             throw handleError(error)
         }
     }
@@ -290,7 +290,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 return try service.getAccurateTokenCount(text)
             } catch {
                 // Fall back to estimation if tokenizer unavailable
-                print("[OnDeviceLLMEngine] Warning: Could not use accurate tokenizer, falling back to estimation: \(error)")
+                AppLog.shared.summarization("[OnDeviceLLMEngine] Could not use accurate tokenizer, falling back to estimation: \(error)", level: .error)
                 return TokenManager.getTokenCount(text)
             }
         }
@@ -301,22 +301,22 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             overlapTokens: overlapTokens,
             tokenizer: tokenizer
         )
-        print("[OnDeviceLLMEngine] Split into \(chunks.count) chunks with \(overlapTokens) token overlap")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Split into \(chunks.count) chunks with \(overlapTokens) token overlap")
         
         // Validate chunk sizes using accurate tokenization
         for (index, chunk) in chunks.enumerated() {
             do {
                 let chunkTokenCount = try service.getAccurateTokenCount(chunk)
                 if chunkTokenCount > maxTokens {
-                    print("⚠️ [OnDeviceLLMEngine] Warning: Chunk \(index + 1) token count (\(chunkTokenCount)) exceeds limit (\(maxTokens)). May be truncated by OnDeviceLLM.")
+                    AppLog.shared.summarization("[OnDeviceLLMEngine] Chunk \(index + 1) token count (\(chunkTokenCount)) exceeds limit (\(maxTokens)). May be truncated by OnDeviceLLM.", level: .error)
                 } else {
-                    print("[OnDeviceLLMEngine] Chunk \(index + 1): \(chunkTokenCount) tokens (within limit)")
+                    AppLog.shared.summarization("[OnDeviceLLMEngine] Chunk \(index + 1): \(chunkTokenCount) tokens (within limit)", level: .debug)
                 }
             } catch {
                 // Fall back to estimation if tokenizer unavailable
                 let chunkTokenEstimate = TokenManager.getTokenCount(chunk)
                 if chunkTokenEstimate > maxTokens {
-                    print("⚠️ [OnDeviceLLMEngine] Warning: Chunk \(index + 1) estimated token count (\(chunkTokenEstimate)) exceeds limit (\(maxTokens)). May be truncated by OnDeviceLLM.")
+                    AppLog.shared.summarization("[OnDeviceLLMEngine] Chunk \(index + 1) estimated token count (\(chunkTokenEstimate)) exceeds limit (\(maxTokens)). May be truncated by OnDeviceLLM.", level: .error)
                 }
             }
         }
@@ -328,7 +328,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         var contentType: ContentType = .general
 
         for (index, chunk) in chunks.enumerated() {
-            print("[OnDeviceLLMEngine] Processing chunk \(index + 1)/\(chunks.count)")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Processing chunk \(index + 1)/\(chunks.count)", level: .debug)
 
             // Check if we are running in background and task is about to expire
             // Must access UIApplication.shared on MainActor
@@ -342,7 +342,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 }
                 
                 if remaining < 10 { // Less than 10 seconds remaining
-                    print("[OnDeviceLLMEngine] Background time critical (\(remaining)s), aborting to prevent crash")
+                    AppLog.shared.summarization("[OnDeviceLLMEngine] Background time critical (\(remaining)s), aborting to prevent crash", level: .error)
                     throw OnDeviceLLMError.inferenceFailed("On-device AI needs the app to stay open. Please return to the app and try again.")
                 }
             }
@@ -352,7 +352,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
                 // Check if chunk processing was interrupted by backgrounding
                 if service.wasInterruptedByBackground {
-                    print("[OnDeviceLLMEngine] Chunk \(index + 1) interrupted by app backgrounding")
+                    AppLog.shared.summarization("[OnDeviceLLMEngine] Chunk \(index + 1) interrupted by app backgrounding", level: .error)
                     throw OnDeviceLLMError.inferenceFailed("On-device AI needs the app to stay open. Please return to the app and try again.")
                 }
 
@@ -370,7 +370,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                     try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
                 }
             } catch {
-                print("[OnDeviceLLMEngine] Chunk \(index + 1) failed: \(error)")
+                AppLog.shared.summarization("[OnDeviceLLMEngine] Chunk \(index + 1) failed: \(error)", level: .error)
                 throw error
             }
         }
@@ -378,7 +378,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         // Combine summaries into a final consolidated summary
         let combinedSummary: String
         if allSummaries.count > 1 {
-            print("[OnDeviceLLMEngine] Combining \(allSummaries.count) chunk summaries into final summary")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Combining \(allSummaries.count) chunk summaries into final summary")
             // Calculate word count from original transcript (same method as chunk summaries)
             let originalWordCount = text.split(separator: " ").count
             combinedSummary = try await combineChunkSummaries(
@@ -397,7 +397,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         let uniqueTitles = deduplicateItems(allTitles, limit: 5) { $0.text }
 
         let processingTime = Date().timeIntervalSince(startTime)
-        print("[OnDeviceLLMEngine] Chunked processing completed in \(String(format: "%.1f", processingTime))s")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Chunked processing completed in \(String(format: "%.1f", processingTime))s")
 
         return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
     }
@@ -420,17 +420,17 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     // MARK: - Connection Testing
 
     func testConnection() async -> Bool {
-        print("[OnDeviceLLMEngine] Testing connection...")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Testing connection...")
 
         updateConfiguration()
 
         guard let service = service else {
-            print("[OnDeviceLLMEngine] Service not configured")
+            AppLog.shared.summarization("[OnDeviceLLMEngine] Service not configured", level: .error)
             return false
         }
 
         let result = await service.testConnection()
-        print("[OnDeviceLLMEngine] Connection test result: \(result)")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Connection test result: \(result)")
         return result
     }
 
@@ -504,7 +504,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         let outputReserve = min(2048, max(256, deviceContextSize / 10))
         let maxInputForMeta = deviceContextSize - outputReserve
         
-        print("[OnDeviceLLMEngine] Meta-summary: \(metaPromptTokenCount) tokens, max: \(maxInputForMeta), target: \(targetWords) words")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Meta-summary: \(metaPromptTokenCount) tokens, max: \(maxInputForMeta), target: \(targetWords) words", level: .debug)
         
         // If prompt fits, use it directly
         if metaPromptTokenCount <= maxInputForMeta {
@@ -512,7 +512,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         }
         
         // Otherwise, recursively combine in smaller groups
-        print("[OnDeviceLLMEngine] Meta-summary too large, using hierarchical combination")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Meta-summary too large, using hierarchical combination")
         return try await combineSummariesRecursive(
             summaries,
             service: service,
@@ -559,7 +559,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         let avgSummaryTokens = getTokenCount(combinedText) / summaries.count
         let summariesPerGroup = max(1, availableTokens / max(avgSummaryTokens, 1))
         
-        print("[OnDeviceLLMEngine] Splitting \(summaries.count) summaries into groups of ~\(summariesPerGroup)")
+        AppLog.shared.summarization("[OnDeviceLLMEngine] Splitting \(summaries.count) summaries into groups of ~\(summariesPerGroup)", level: .debug)
         
         // Process in groups
         var intermediateSummaries: [String] = []

@@ -157,13 +157,13 @@ class TokenManager {
         var results: [T] = []
         
         for (index, chunk) in chunks.enumerated() {
-            print("🔄 Processing chunk \(index + 1) of \(chunks.count) (\(getTokenCount(chunk)) tokens)")
+            AppLog.shared.summarization("Processing chunk \(index + 1) of \(chunks.count) (\(getTokenCount(chunk)) tokens)", level: .debug)
             
             do {
                 let result = try await processor(chunk)
                 results.append(result)
             } catch {
-                print("❌ Failed to process chunk \(index + 1): \(error)")
+                AppLog.shared.summarization("Failed to process chunk \(index + 1): \(error)", level: .error)
                 throw error
             }
         }
@@ -203,7 +203,7 @@ class TokenManager {
         var intermediateSummaries: [String] = []
 
         for (index, chunk) in chunks.enumerated() {
-            print("🔄 TokenManager: Processing meta-summary chunk \(index + 1) of \(chunks.count)")
+            AppLog.shared.summarization("TokenManager: Processing meta-summary chunk \(index + 1) of \(chunks.count)", level: .debug)
             let summary = try await service.generateSummary(from: chunk)
             intermediateSummaries.append(summary)
             

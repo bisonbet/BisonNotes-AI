@@ -11,7 +11,7 @@ import os.log
 
 class RecordingCombiner {
     static let shared = RecordingCombiner()
-    private let logger = Logger(subsystem: "com.audiojournal.app", category: "RecordingCombiner")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "RecordingCombiner")
     
     private init() {}
     

@@ -431,39 +431,39 @@ struct CombineRecordingsView: View {
             // Try getLocationData first (from Core Data fields), then loadLocationData (from file)
             let firstLocation: LocationData? = {
                 guard let entry = firstEntry else {
-                    print("📍 Combine: First recording entry not found")
+                    AppLog.shared.recording("Combine: First recording entry not found", level: .debug)
                     return nil
                 }
                 // First try Core Data fields
                 if let location = appCoordinator.coreDataManager.getLocationData(for: entry) {
-                    print("📍 Combine: Found first location from Core Data: \(location.coordinateString)")
+                    AppLog.shared.recording("Combine: Found first location from Core Data", level: .debug)
                     return location
                 }
                 // Fallback to file-based location
                 if let location = appCoordinator.loadLocationData(for: entry) {
-                    print("📍 Combine: Found first location from file: \(location.coordinateString)")
+                    AppLog.shared.recording("Combine: Found first location from file", level: .debug)
                     return location
                 }
-                print("📍 Combine: No location found for first recording")
+                AppLog.shared.recording("Combine: No location found for first recording", level: .debug)
                 return nil
             }()
             
             let secondLocation: LocationData? = {
                 guard let entry = secondEntry else {
-                    print("📍 Combine: Second recording entry not found")
+                    AppLog.shared.recording("Combine: Second recording entry not found", level: .debug)
                     return nil
                 }
                 // First try Core Data fields
                 if let location = appCoordinator.coreDataManager.getLocationData(for: entry) {
-                    print("📍 Combine: Found second location from Core Data: \(location.coordinateString)")
+                    AppLog.shared.recording("Combine: Found second location from Core Data", level: .debug)
                     return location
                 }
                 // Fallback to file-based location
                 if let location = appCoordinator.loadLocationData(for: entry) {
-                    print("📍 Combine: Found second location from file: \(location.coordinateString)")
+                    AppLog.shared.recording("Combine: Found second location from file", level: .debug)
                     return location
                 }
-                print("📍 Combine: No location found for second recording")
+                AppLog.shared.recording("Combine: No location found for second recording", level: .debug)
                 return nil
             }()
             
@@ -475,19 +475,19 @@ struct CombineRecordingsView: View {
             if let firstLoc = firstLocation, secondLocation != nil {
                 // Both have location - use first recording's location
                 combinedLocation = firstLoc
-                print("📍 Combine: Both recordings have location, using first: \(firstLoc.coordinateString)")
+                AppLog.shared.recording("Combine: Both recordings have location, using first", level: .debug)
             } else if let firstLoc = firstLocation {
                 // Only first has location
                 combinedLocation = firstLoc
-                print("📍 Combine: Only first has location, using it: \(firstLoc.coordinateString)")
+                AppLog.shared.recording("Combine: Only first has location, using it", level: .debug)
             } else if let secondLoc = secondLocation {
                 // Only second has location
                 combinedLocation = secondLoc
-                print("📍 Combine: Only second has location, using it: \(secondLoc.coordinateString)")
+                AppLog.shared.recording("Combine: Only second has location, using it", level: .debug)
             } else {
                 // Neither has location
                 combinedLocation = nil
-                print("📍 Combine: Neither recording has location")
+                AppLog.shared.recording("Combine: Neither recording has location", level: .debug)
             }
             
             // Store values for confirmation dialog
@@ -501,11 +501,7 @@ struct CombineRecordingsView: View {
                 secondRecordingId = secondEntry?.id
                 
                 // Log location data before adding
-                if let location = combinedLocation {
-                    print("📍 Combine: Passing location to addRecording: \(location.coordinateString), address: \(location.address ?? "none")")
-                } else {
-                    print("📍 Combine: No location to pass to addRecording")
-                }
+                AppLog.shared.recording("Combine: hasLocation=\(combinedLocation != nil) for addRecording", level: .debug)
                 
                 // Add to Core Data first
                 let recordingId = appCoordinator.addRecording(
@@ -521,13 +517,10 @@ struct CombineRecordingsView: View {
                 // Verify location was saved
                 if let savedRecording = appCoordinator.getRecording(id: recordingId) {
                     let savedLocation = appCoordinator.coreDataManager.getLocationData(for: savedRecording)
-                    if let savedLoc = savedLocation {
-                        print("✅ Combine: Location verified in saved recording: \(savedLoc.coordinateString)")
+                    if savedLocation != nil {
+                        AppLog.shared.recording("Combine: Location verified in saved recording", level: .debug)
                     } else {
-                        print("❌ Combine: Location NOT found in saved recording!")
-                        print("   Recording ID: \(recordingId)")
-                        print("   Latitude: \(savedRecording.locationLatitude)")
-                        print("   Longitude: \(savedRecording.locationLongitude)")
+                        AppLog.shared.recording("Combine: Location NOT found in saved recording", level: .error)
                     }
                 }
                 

@@ -1,344 +1,399 @@
 //
 //  EnhancedLoggingSystem.swift
-//  Audio Journal
+//  BisonNotes AI
 //
-//  Comprehensive logging and debugging support for audio processing enhancements
+//  Always-on logging via Apple's Unified Logging System (OSLog).
+//  Zero overhead in production — the OS handles persistence, compression, and pruning.
 //
 
 import Foundation
-import SwiftUI
+import UIKit
 import os.log
 import AVFoundation
-import CloudKit
 
-// MARK: - Enhanced Logging Categories
+// MARK: - Log Categories
 
-enum EnhancedLogCategory: String, CaseIterable {
+enum LogCategory: String, CaseIterable {
     case audioSession = "AudioSession"
+    case recording = "Recording"
+    case transcription = "Transcription"
+    case summarization = "Summarization"
     case chunking = "Chunking"
     case backgroundProcessing = "BackgroundProcessing"
     case iCloudSync = "iCloudSync"
     case fileManagement = "FileManagement"
+    case dataMigration = "DataMigration"
+    case networking = "Networking"
+    case watchConnectivity = "WatchConnectivity"
+    case coreData = "CoreData"
     case performance = "Performance"
     case errorRecovery = "ErrorRecovery"
-    case debug = "Debug"
-    
-    var emoji: String {
-        switch self {
-        case .audioSession: return "🎤"
-        case .chunking: return "✂️"
-        case .backgroundProcessing: return "⚙️"
-        case .iCloudSync: return "☁️"
-        case .fileManagement: return "📁"
-        case .performance: return "📊"
-        case .errorRecovery: return "🔄"
-        case .debug: return "🔍"
-        }
-    }
+    case general = "General"
 }
 
-// MARK: - Enhanced Logger
+// MARK: - App Logger
 
-class EnhancedLogger: ObservableObject {
-    static let shared = EnhancedLogger()
-    
-    private let logger: os.Logger = os.Logger(subsystem: "com.audiojournal.app", category: "EnhancedLogger")
-    private var currentLevel: LogLevel = .info
-    private var enabledCategories: Set<EnhancedLogCategory> = Set(EnhancedLogCategory.allCases)
-    private var debugMode = false
-    private var performanceTracking = false
-    
-    // Public getters for UI access
-    var currentLevelValue: LogLevel { currentLevel }
-    var enabledCategoriesValue: Set<EnhancedLogCategory> { enabledCategories }
-    var debugModeValue: Bool { debugMode }
-    var performanceTrackingValue: Bool { performanceTracking }
-    
-    // Debug configuration
-    private var debugConfig = DebugConfiguration()
-    
-    // Performance tracking
-    private var performanceMetrics: [String: PerformanceMetric] = [:]
-    private let performanceQueue = DispatchQueue(label: "com.audiojournal.performance", qos: .utility)
-    
+class AppLog {
+    static let shared = AppLog()
+
+    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.bisonnotes.app"
+
+    private let loggers: [LogCategory: os.Logger]
+
     private init() {
-        // Set default level based on build configuration
-        #if DEBUG
-        currentLevel = .debug
-        debugMode = true
-        #else
-        currentLevel = .info
-        debugMode = false
-        #endif
-        
-        // Load saved debug configuration
-        loadDebugConfiguration()
-    }
-    
-    // MARK: - Configuration Methods
-    
-    func setLogLevel(_ level: LogLevel) {
-        currentLevel = level
-        os.Logger(subsystem: "com.audiojournal.app", category: "EnhancedLogger").info("🔧 Log level set to: \(level.rawValue)")
-    }
-    
-    func enableCategory(_ category: EnhancedLogCategory) {
-        enabledCategories.insert(category)
-        logger.debug("🔧 Enabled logging category: \(category.rawValue)")
-    }
-    
-    func disableCategory(_ category: EnhancedLogCategory) {
-        enabledCategories.remove(category)
-        logger.debug("🔧 Disabled logging category: \(category.rawValue)")
-    }
-    
-    func setDebugMode(_ enabled: Bool) {
-        debugMode = enabled
-        if enabled {
-            setLogLevel(.debug)
-            enableAllCategories()
-        } else {
-            setLogLevel(.info)
-            disableDebugCategories()
+        var map = [LogCategory: os.Logger]()
+        for cat in LogCategory.allCases {
+            map[cat] = os.Logger(subsystem: AppLog.subsystem, category: cat.rawValue)
         }
-        logger.info("🔧 Debug mode \(enabled ? "enabled" : "disabled")")
+        loggers = map
     }
-    
-    func enablePerformanceTracking(_ enabled: Bool) {
-        performanceTracking = enabled
-        // Performance tracking silently enabled/disabled
+
+    // MARK: - Persistent Log Buffer
+
+    /// Rolling file that persists .error and .fault messages across crashes.
+    /// Kept small (last 500 lines) so it doesn't bloat device storage.
+    private let persistentLogURL: URL = {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("persistent_error_log.txt")
+    }()
+
+    private let bufferQueue = DispatchQueue(label: "com.bisonnotes.logbuffer", qos: .utility)
+    private static let maxBufferLines = 500
+    private static let cleanShutdownKey = "AppLog_CleanShutdown"
+
+    /// Captured at launch before the flag is reset so the value survives the whole session.
+    private(set) var previousSessionCrashed: Bool = false
+
+    /// Call on app launch. Reads the previous session's shutdown state, then resets the flag.
+    /// Must be called before anything checks `previousSessionCrashed`.
+    func markLaunch() {
+        // On very first install the key doesn't exist — UserDefaults returns false,
+        // which would look like a crash. Treat missing key as clean.
+        let hasKey = UserDefaults.standard.object(forKey: Self.cleanShutdownKey) != nil
+        previousSessionCrashed = hasKey && !UserDefaults.standard.bool(forKey: Self.cleanShutdownKey)
+        // Reset for this session — if we crash, it stays false
+        UserDefaults.standard.set(false, forKey: Self.cleanShutdownKey)
     }
-    
-    // MARK: - Logging Methods
-    
-    func log(_ message: String, level: LogLevel = .info, category: EnhancedLogCategory = .debug) {
-        guard level.rawValue <= currentLevel.rawValue && enabledCategories.contains(category) else { return }
-        
-        let formattedMessage = "\(category.emoji) [\(category.rawValue)]: \(message)"
-        
+
+    /// Call when app enters background or resigns active — marks this session as clean.
+    func markCleanShutdown() {
+        UserDefaults.standard.set(true, forKey: Self.cleanShutdownKey)
+    }
+
+    /// Returns the contents of the persistent error log (survives crashes).
+    func persistedErrorLog() -> String {
+        (try? String(contentsOf: persistentLogURL, encoding: .utf8)) ?? ""
+    }
+
+    private func persistToBuffer(_ line: String) {
+        bufferQueue.async { [url = persistentLogURL] in
+            let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            var lines = existing.components(separatedBy: "\n").filter { !$0.isEmpty }
+            lines.append(line)
+            // Keep only the last N lines
+            if lines.count > Self.maxBufferLines {
+                lines = Array(lines.suffix(Self.maxBufferLines))
+            }
+            try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    // MARK: - Core Logging
+
+    func log(_ message: String, level: OSLogType = .info, category: LogCategory = .general) {
+        guard let logger = loggers[category] else { return }
         switch level {
-        case .error:
-            logger.error("\(formattedMessage)")
-        case .warning:
-            logger.warning("\(formattedMessage)")
-        case .info:
-            logger.info("\(formattedMessage)")
-        case .debug, .verbose:
-            logger.debug("\(formattedMessage)")
+        case .error:   logger.error("\(message, privacy: .public)")
+        case .fault:   logger.fault("\(message, privacy: .public)")
+        case .debug:   logger.debug("\(message, privacy: .public)")
+        case .info:    logger.info("\(message, privacy: .public)")
+        default:       logger.notice("\(message, privacy: .public)")
         }
-        
-        // Additional debug logging if in debug mode
-        if debugMode && level == .debug {
-            logDebugInfo(message: message, category: category)
+
+        // Persist .error and .fault to rolling buffer file (survives crashes)
+        if level == .error || level == .fault {
+            let timestamp = ISO8601DateFormatter().string(from: Date())
+            let levelStr = level == .fault ? "FAULT" : "ERROR"
+            persistToBuffer("[\(timestamp)] [\(levelStr)] [\(category.rawValue)] \(message)")
         }
     }
-    
-    // MARK: - Category-Specific Logging
-    
-    func logAudioSession(_ message: String, level: LogLevel = .info) {
+
+    // MARK: - Convenience: Level Methods
+
+    func error(_ message: String, category: LogCategory = .general) {
+        log(message, level: .error, category: category)
+    }
+
+    func warning(_ message: String, category: LogCategory = .general) {
+        log(message, level: .error, category: category)
+    }
+
+    func info(_ message: String, category: LogCategory = .general) {
+        log(message, level: .info, category: category)
+    }
+
+    func debug(_ message: String, category: LogCategory = .general) {
+        log(message, level: .debug, category: category)
+    }
+
+    // MARK: - Convenience: Category Methods
+
+    func general(_ message: String, level: OSLogType = .info) {
+        log(message, level: level, category: .general)
+    }
+
+    func audioSession(_ message: String, level: OSLogType = .info) {
         log(message, level: level, category: .audioSession)
     }
-    
-    func logChunking(_ message: String, level: LogLevel = .info) {
+
+    func recording(_ message: String, level: OSLogType = .info) {
+        log(message, level: level, category: .recording)
+    }
+
+    func transcription(_ message: String, level: OSLogType = .info) {
+        log(message, level: level, category: .transcription)
+    }
+
+    func summarization(_ message: String, level: OSLogType = .info) {
+        log(message, level: level, category: .summarization)
+    }
+
+    func chunking(_ message: String, level: OSLogType = .info) {
         log(message, level: level, category: .chunking)
     }
-    
-    func logBackgroundProcessing(_ message: String, level: LogLevel = .info) {
+
+    func backgroundProcessing(_ message: String, level: OSLogType = .info) {
         log(message, level: level, category: .backgroundProcessing)
     }
-    
-    func logiCloudSync(_ message: String, level: LogLevel = .info) {
+
+    func iCloudSync(_ message: String, level: OSLogType = .info) {
         log(message, level: level, category: .iCloudSync)
     }
-    
-    func logFileManagement(_ message: String, level: LogLevel = .info) {
+
+    func fileManagement(_ message: String, level: OSLogType = .info) {
         log(message, level: level, category: .fileManagement)
     }
-    
-    func logPerformance(_ message: String, level: LogLevel = .info) {
+
+    func dataMigration(_ message: String, level: OSLogType = .info) {
+        log(message, level: level, category: .dataMigration)
+    }
+
+    func networking(_ message: String, level: OSLogType = .info) {
+        log(message, level: level, category: .networking)
+    }
+
+    func watchConnectivity(_ message: String, level: OSLogType = .info) {
+        log(message, level: level, category: .watchConnectivity)
+    }
+
+    func coreData(_ message: String, level: OSLogType = .info) {
+        log(message, level: level, category: .coreData)
+    }
+
+    func performance(_ message: String, level: OSLogType = .info) {
         log(message, level: level, category: .performance)
     }
-    
-    func logErrorRecovery(_ message: String, level: LogLevel = .info) {
+
+    func errorRecovery(_ message: String, level: OSLogType = .info) {
         log(message, level: level, category: .errorRecovery)
     }
-    
-    func logDebug(_ message: String, level: LogLevel = .debug) {
-        log(message, level: level, category: .debug)
-    }
-    
+
     // MARK: - Performance Tracking
-    
+
+    private var performanceMetrics: [String: PerformanceMetric] = [:]
+    private let performanceQueue = DispatchQueue(label: "com.bisonnotes.performance", qos: .utility)
+
     func startPerformanceTracking(_ operation: String, context: String = "") {
-        guard performanceTracking else { return }
-        
         let metric = PerformanceMetric(
             operation: operation,
             context: context,
             startTime: Date(),
-            memoryUsage: getCurrentMemoryUsage()
+            memoryUsage: Self.currentMemoryUsage
         )
-        
         performanceQueue.async {
             self.performanceMetrics[operation] = metric
         }
-        
-        logPerformance("Started tracking: \(operation)", level: .debug)
+        performance("Started tracking: \(operation)", level: .debug)
     }
-    
+
     func endPerformanceTracking(_ operation: String) -> PerformanceResult? {
-        guard performanceTracking else { return nil }
-        
         return performanceQueue.sync {
-            guard let metric = performanceMetrics.removeValue(forKey: operation) else {
-                return nil
-            }
-            
+            guard let metric = performanceMetrics.removeValue(forKey: operation) else { return nil }
             let duration = Date().timeIntervalSince(metric.startTime)
-            let endMemoryUsage = getCurrentMemoryUsage()
-            let memoryDelta = endMemoryUsage - metric.memoryUsage
-            
+            let endMemory = Self.currentMemoryUsage
             let result = PerformanceResult(
                 operation: operation,
                 context: metric.context,
                 duration: duration,
-                memoryUsage: endMemoryUsage,
-                memoryDelta: memoryDelta,
+                memoryUsage: endMemory,
+                memoryDelta: endMemory - metric.memoryUsage,
                 timestamp: Date()
             )
-            
-            logPerformance("Completed: \(operation) in \(String(format: "%.2f", duration))s", level: .info)
-            
-            if debugMode {
-                logDebug("Performance result: \(result.description)")
-            }
-            
+            performance("Completed: \(operation) in \(String(format: "%.2f", duration))s")
             return result
         }
     }
-    
-    // MARK: - Debug Information
-    
-    func logDebugInfo(message: String, category: EnhancedLogCategory) {
-        let debugInfo = getDebugInfo()
-        logDebug("Debug info for \(category.rawValue): \(debugInfo)", level: .verbose)
+
+    // MARK: - Diagnostic Info
+
+    static var currentMemoryUsage: Double {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
+        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        return kerr == KERN_SUCCESS ? Double(info.resident_size) / 1024.0 / 1024.0 : 0.0
     }
-    
-    func getDebugInfo() -> String {
-        let device = UIDevice.current
-        let memoryUsage = getCurrentMemoryUsage()
-        let storageInfo = getStorageInfo()
-        
-        return """
-        Device: \(device.model)
-        iOS: \(device.systemVersion)
-        Memory: \(String(format: "%.1f", memoryUsage)) MB
-        Storage: \(storageInfo)
-        Debug Mode: \(debugMode)
-        Performance Tracking: \(performanceTracking)
-        """
+
+    static var freeStorageGB: String {
+        do {
+            let attrs = try FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory())
+            if let free = attrs[.systemFreeSize] as? NSNumber {
+                return String(format: "%.1f GB free", Double(truncating: free) / 1024.0 / 1024.0 / 1024.0)
+            }
+        } catch {}
+        return "Unknown"
     }
-    
-    // MARK: - Diagnostic Information
-    
+
     func generateDiagnosticReport() -> DiagnosticReport {
         let device = UIDevice.current
-        let memoryUsage = getCurrentMemoryUsage()
-        let storageInfo = getStorageInfo()
-        let performanceResults = Array(performanceMetrics.values)
-        
         return DiagnosticReport(
             timestamp: Date(),
             deviceInfo: DeviceDiagnosticInfo(
                 model: device.model,
                 systemVersion: device.systemVersion,
                 appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown",
-                memoryUsage: memoryUsage,
-                storageInfo: storageInfo
-            ),
-            debugConfiguration: debugConfig,
-            performanceResults: performanceResults,
-            enabledCategories: Array(enabledCategories),
-            logLevel: currentLevel
+                memoryUsage: Self.currentMemoryUsage,
+                storageInfo: Self.freeStorageGB
+            )
         )
     }
-    
-    // MARK: - Private Helper Methods
-    
-    private func enableAllCategories() {
-        enabledCategories = Set(EnhancedLogCategory.allCases)
+}
+
+// MARK: - Backward Compatibility
+
+// Alias so existing callers of EnhancedLogger.shared continue to compile during migration.
+// These will be removed once all callers are migrated.
+typealias EnhancedLogger = AppLog
+typealias AppLogger = AppLog
+typealias EnhancedLogCategory = LogCategory
+
+extension AppLog {
+    // Bridge old EnhancedLogger category-specific methods that used LogLevel
+    func logAudioSession(_ message: String, level: OSLogType = .info) {
+        audioSession(message, level: level)
     }
-    
-    private func disableDebugCategories() {
-        enabledCategories.remove(.debug)
-        enabledCategories.remove(.performance)
+    func logChunking(_ message: String, level: OSLogType = .info) {
+        chunking(message, level: level)
     }
-    
-    private func loadDebugConfiguration() {
-        debugConfig = DebugConfiguration.load()
+    func logBackgroundProcessing(_ message: String, level: OSLogType = .info) {
+        backgroundProcessing(message, level: level)
     }
-    
-    private func getCurrentMemoryUsage() -> Double {
-        var info = mach_task_basic_info()
-        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size)/4
-        
-        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
-                task_info(mach_task_self_,
-                         task_flavor_t(MACH_TASK_BASIC_INFO),
-                         $0,
-                         &count)
-            }
-        }
-        
-        if kerr == KERN_SUCCESS {
-            return Double(info.resident_size) / 1024.0 / 1024.0
-        }
-        
-        return 0.0
+    func logiCloudSync(_ message: String, level: OSLogType = .info) {
+        iCloudSync(message, level: level)
     }
-    
-    private func getStorageInfo() -> String {
-        do {
-            let attributes = try FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory())
-            if let freeSize = attributes[.systemFreeSize] as? NSNumber {
-                let freeSizeGB = Double(truncating: freeSize) / 1024.0 / 1024.0 / 1024.0
-                return String(format: "%.1f GB free", freeSizeGB)
-            }
-        } catch {
-            return "Unknown"
-        }
-        return "Unknown"
+    func logFileManagement(_ message: String, level: OSLogType = .info) {
+        fileManagement(message, level: level)
+    }
+    func logPerformance(_ message: String, level: OSLogType = .info) {
+        performance(message, level: level)
+    }
+    func logErrorRecovery(_ message: String, level: OSLogType = .info) {
+        errorRecovery(message, level: level)
+    }
+    func logDebug(_ message: String, level: OSLogType = .debug) {
+        log(message, level: level, category: .general)
+    }
+
+    // Bridge old EnhancedLogger structured methods
+    func logAudioSessionConfiguration(_ category: AVAudioSession.Category, mode: AVAudioSession.Mode, options: AVAudioSession.CategoryOptions) {
+        audioSession("Configuring audio session - Category: \(category), Mode: \(mode), Options: \(options)")
+    }
+    func logAudioSessionInterruption(_ type: AVAudioSession.InterruptionType) {
+        audioSession("Audio interruption: \(type == .began ? "began" : "ended")", level: .error)
+    }
+    func logAudioSessionRouteChange(_ reason: AVAudioSession.RouteChangeReason) {
+        audioSession("Audio route change: \(reason)")
+    }
+    func logChunkingStart(_ fileURL: URL, strategy: ChunkingStrategy) {
+        chunking("Starting chunking for \(fileURL.lastPathComponent) with strategy: \(strategy)")
+    }
+    func logChunkingProgress(_ currentChunk: Int, totalChunks: Int, fileURL: URL) {
+        chunking("Chunking progress: \(currentChunk)/\(totalChunks) for \(fileURL.lastPathComponent)", level: .debug)
+    }
+    func logChunkingComplete(_ fileURL: URL, chunkCount: Int) {
+        chunking("Chunking complete for \(fileURL.lastPathComponent): \(chunkCount) chunks created")
+    }
+    func logChunkingError(_ error: Error, fileURL: URL) {
+        chunking("Chunking error for \(fileURL.lastPathComponent): \(error.localizedDescription)", level: .error)
+    }
+    func logBackgroundJobStart(_ job: ProcessingJob) {
+        backgroundProcessing("Starting background job: \(job.type.displayName) for \(job.recordingName)")
+    }
+    func logBackgroundJobProgress(_ job: ProcessingJob, progress: Double) {
+        backgroundProcessing("Job progress: \(Int(progress * 100))% for \(job.recordingName)", level: .debug)
+    }
+    func logBackgroundJobComplete(_ job: ProcessingJob) {
+        backgroundProcessing("Background job completed: \(job.type.displayName) for \(job.recordingName)")
+    }
+    func logBackgroundJobError(_ job: ProcessingJob, error: Error) {
+        backgroundProcessing("Background job failed: \(job.type.displayName) for \(job.recordingName) - \(error.localizedDescription)", level: .error)
+    }
+    func logiCloudSyncStart(_ operation: String) {
+        iCloudSync("Starting iCloud sync operation: \(operation)", level: .debug)
+    }
+    func logiCloudSyncProgress(_ operation: String, progress: Double) {
+        iCloudSync("iCloud sync progress: \(Int(progress * 100))% for \(operation)", level: .debug)
+    }
+    func logiCloudSyncComplete(_ operation: String, itemCount: Int) {
+        iCloudSync("iCloud sync completed: \(operation) - \(itemCount) items processed")
+    }
+    func logiCloudSyncError(_ operation: String, error: Error) {
+        iCloudSync("iCloud sync error: \(operation) - \(error.localizedDescription)", level: .error)
+    }
+    func logFileOperation(_ operation: String, fileURL: URL) {
+        fileManagement("File operation: \(operation) on \(fileURL.lastPathComponent)")
+    }
+    func logFileRelationshipUpdate(_ recordingURL: URL, transcriptExists: Bool, summaryExists: Bool) {
+        fileManagement("File relationship updated for \(recordingURL.lastPathComponent) - Transcript: \(transcriptExists), Summary: \(summaryExists)", level: .debug)
+    }
+    func logFileDeletion(_ fileURL: URL, preserveSummary: Bool) {
+        fileManagement("File deletion: \(fileURL.lastPathComponent) (preserve summary: \(preserveSummary))")
+    }
+    func logErrorRecoveryAttempt(_ error: Error, recoveryAction: String) {
+        errorRecovery("Attempting recovery for \(error.localizedDescription): \(recoveryAction)")
+    }
+    func logErrorRecoverySuccess(_ error: Error, recoveryAction: String) {
+        errorRecovery("Recovery successful for \(error.localizedDescription): \(recoveryAction)")
+    }
+    func logErrorRecoveryFailure(_ error: Error, recoveryAction: String, failureReason: String) {
+        errorRecovery("Recovery failed for \(error.localizedDescription): \(recoveryAction) - \(failureReason)", level: .error)
+    }
+
+    // Bridge old enablePerformanceTracking — now a no-op (always on)
+    func enablePerformanceTracking(_ enabled: Bool) {}
+
+    // Bridge old AppLogger string-based category API.
+    // These accept a String category (ignored — routes to .general) for source compatibility
+    // while callers are migrated to use LogCategory enum.
+    func verbose(_ message: String, category: String = "General") {
+        log(message, level: .debug, category: .general)
+    }
+    func info(_ message: String, category: String) {
+        log(message, level: .info, category: .general)
+    }
+    func warning(_ message: String, category: String) {
+        log(message, level: .error, category: .general)
+    }
+    func error(_ message: String, category: String) {
+        log(message, level: .error, category: .general)
     }
 }
 
-// MARK: - Debug Configuration
-
-struct DebugConfiguration: Codable, Equatable {
-    var enableVerboseLogging: Bool = false
-    var enablePerformanceTracking: Bool = true
-    var enableMemoryTracking: Bool = true
-    var enableStorageTracking: Bool = true
-    var enableNetworkTracking: Bool = true
-    var maxLogHistory: Int = 1000
-    var logRetentionDays: Int = 7
-    
-    static func load() -> DebugConfiguration {
-        if let data = UserDefaults.standard.data(forKey: "DebugConfiguration"),
-           let config = try? JSONDecoder().decode(DebugConfiguration.self, from: data) {
-            return config
-        }
-        return DebugConfiguration()
-    }
-    
-    func save() {
-        if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: "DebugConfiguration")
-        }
-    }
-}
-
-// MARK: - Performance Tracking
+// MARK: - Supporting Types
 
 struct PerformanceMetric {
     let operation: String
@@ -354,46 +409,27 @@ struct PerformanceResult {
     let memoryUsage: Double
     let memoryDelta: Double
     let timestamp: Date
-    
+
     var description: String {
-        return "\(operation) (\(context)): \(String(format: "%.2f", duration))s, Memory: \(String(format: "%.1f", memoryUsage))MB (\(String(format: "%+.1f", memoryDelta))MB)"
+        "\(operation) (\(context)): \(String(format: "%.2f", duration))s, Memory: \(String(format: "%.1f", memoryUsage))MB (\(String(format: "%+.1f", memoryDelta))MB)"
     }
 }
-
-// MARK: - Diagnostic Report
 
 struct DiagnosticReport {
     let timestamp: Date
     let deviceInfo: DeviceDiagnosticInfo
-    let debugConfiguration: DebugConfiguration
-    let performanceResults: [PerformanceMetric]
-    let enabledCategories: [EnhancedLogCategory]
-    let logLevel: LogLevel
-    
+
     var formattedReport: String {
-        return """
+        """
         === Diagnostic Report ===
         Timestamp: \(timestamp)
-        
+
         Device Information:
         - Model: \(deviceInfo.model)
         - iOS Version: \(deviceInfo.systemVersion)
         - App Version: \(deviceInfo.appVersion)
         - Memory Usage: \(String(format: "%.1f", deviceInfo.memoryUsage)) MB
         - Storage: \(deviceInfo.storageInfo)
-        
-        Debug Configuration:
-        - Verbose Logging: \(debugConfiguration.enableVerboseLogging)
-        - Performance Tracking: \(debugConfiguration.enablePerformanceTracking)
-        - Memory Tracking: \(debugConfiguration.enableMemoryTracking)
-        - Storage Tracking: \(debugConfiguration.enableStorageTracking)
-        - Network Tracking: \(debugConfiguration.enableNetworkTracking)
-        
-        Logging:
-        - Level: \(logLevel)
-        - Enabled Categories: \(enabledCategories.map { $0.rawValue }.joined(separator: ", "))
-        
-        Performance Results: \(performanceResults.count) tracked operations
         """
     }
 }
@@ -405,106 +441,3 @@ struct DeviceDiagnosticInfo {
     let memoryUsage: Double
     let storageInfo: String
 }
-
-// MARK: - Enhanced Logging Extensions
-
-extension EnhancedLogger {
-    
-    // MARK: - Audio Session Logging
-    
-    func logAudioSessionConfiguration(_ category: AVAudioSession.Category, mode: AVAudioSession.Mode, options: AVAudioSession.CategoryOptions) {
-        logAudioSession("Configuring audio session - Category: \(category), Mode: \(mode), Options: \(options)", level: .info)
-    }
-    
-    func logAudioSessionInterruption(_ type: AVAudioSession.InterruptionType) {
-        logAudioSession("Audio interruption: \(type == .began ? "began" : "ended")", level: .warning)
-    }
-    
-    func logAudioSessionRouteChange(_ reason: AVAudioSession.RouteChangeReason) {
-        logAudioSession("Audio route change: \(reason)", level: .info)
-    }
-    
-    // MARK: - Chunking Logging
-    
-    func logChunkingStart(_ fileURL: URL, strategy: ChunkingStrategy) {
-        logChunking("Starting chunking for \(fileURL.lastPathComponent) with strategy: \(strategy)", level: .info)
-    }
-    
-    func logChunkingProgress(_ currentChunk: Int, totalChunks: Int, fileURL: URL) {
-        logChunking("Chunking progress: \(currentChunk)/\(totalChunks) for \(fileURL.lastPathComponent)", level: .debug)
-    }
-    
-    func logChunkingComplete(_ fileURL: URL, chunkCount: Int) {
-        logChunking("Chunking complete for \(fileURL.lastPathComponent): \(chunkCount) chunks created", level: .info)
-    }
-    
-    func logChunkingError(_ error: Error, fileURL: URL) {
-        logChunking("Chunking error for \(fileURL.lastPathComponent): \(error.localizedDescription)", level: .error)
-    }
-    
-    // MARK: - Background Processing Logging
-    
-    func logBackgroundJobStart(_ job: ProcessingJob) {
-        logBackgroundProcessing("Starting background job: \(job.type.displayName) for \(job.recordingName)", level: .info)
-    }
-    
-    func logBackgroundJobProgress(_ job: ProcessingJob, progress: Double) {
-        logBackgroundProcessing("Job progress: \(Int(progress * 100))% for \(job.recordingName)", level: .debug)
-    }
-    
-    func logBackgroundJobComplete(_ job: ProcessingJob) {
-        logBackgroundProcessing("Background job completed: \(job.type.displayName) for \(job.recordingName)", level: .info)
-    }
-    
-    func logBackgroundJobError(_ job: ProcessingJob, error: Error) {
-        logBackgroundProcessing("Background job failed: \(job.type.displayName) for \(job.recordingName) - \(error.localizedDescription)", level: .error)
-    }
-    
-    // MARK: - iCloud Sync Logging
-    
-    func logiCloudSyncStart(_ operation: String) {
-        logiCloudSync("Starting iCloud sync operation: \(operation)", level: .verbose)
-    }
-    
-    func logiCloudSyncProgress(_ operation: String, progress: Double) {
-        logiCloudSync("iCloud sync progress: \(Int(progress * 100))% for \(operation)", level: .debug)
-    }
-    
-    func logiCloudSyncComplete(_ operation: String, itemCount: Int) {
-        logiCloudSync("iCloud sync completed: \(operation) - \(itemCount) items processed", level: .info)
-    }
-    
-    func logiCloudSyncError(_ operation: String, error: Error) {
-        logiCloudSync("iCloud sync error: \(operation) - \(error.localizedDescription)", level: .error)
-    }
-    
-    // MARK: - File Management Logging
-    
-    func logFileOperation(_ operation: String, fileURL: URL) {
-        logFileManagement("File operation: \(operation) on \(fileURL.lastPathComponent)", level: .info)
-    }
-    
-    func logFileRelationshipUpdate(_ recordingURL: URL, transcriptExists: Bool, summaryExists: Bool) {
-        logFileManagement("File relationship updated for \(recordingURL.lastPathComponent) - Transcript: \(transcriptExists), Summary: \(summaryExists)", level: .debug)
-    }
-    
-    func logFileDeletion(_ fileURL: URL, preserveSummary: Bool) {
-        logFileManagement("File deletion: \(fileURL.lastPathComponent) (preserve summary: \(preserveSummary))", level: .info)
-    }
-    
-    // MARK: - Error Recovery Logging
-    
-    func logErrorRecoveryAttempt(_ error: Error, recoveryAction: String) {
-        logErrorRecovery("Attempting recovery for \(error.localizedDescription): \(recoveryAction)", level: .info)
-    }
-    
-    func logErrorRecoverySuccess(_ error: Error, recoveryAction: String) {
-        logErrorRecovery("Recovery successful for \(error.localizedDescription): \(recoveryAction)", level: .info)
-    }
-    
-    func logErrorRecoveryFailure(_ error: Error, recoveryAction: String, failureReason: String) {
-        logErrorRecovery("Recovery failed for \(error.localizedDescription): \(recoveryAction) - \(failureReason)", level: .error)
-    }
-}
-
- 

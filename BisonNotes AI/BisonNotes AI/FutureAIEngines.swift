@@ -78,118 +78,118 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
     }
     
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        print("🤖 AWSBedrockEngine: Starting summary generation")
-        
+        AppLog.shared.networking("AWSBedrockEngine: Starting summary generation")
+
         updateConfiguration()
-        
+
         guard let service = service else {
-            print("❌ AWSBedrockEngine: Service is nil")
+            AppLog.shared.networking("AWSBedrockEngine: Service is nil", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
         }
-        
-        print("✅ AWSBedrockEngine: Calling AWS Bedrock service for summary")
-        
+
+        AppLog.shared.networking("AWSBedrockEngine: Calling AWS Bedrock service for summary")
+
         do {
             return try await service.generateSummary(from: text, contentType: contentType)
         } catch {
-            print("❌ AWSBedrockEngine: Summary generation failed: \(error)")
+            AppLog.shared.networking("AWSBedrockEngine: Summary generation failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
     
     func extractTasks(from text: String) async throws -> [TaskItem] {
-        print("🤖 AWSBedrockEngine: Starting task extraction")
-        
+        AppLog.shared.networking("AWSBedrockEngine: Starting task extraction")
+
         updateConfiguration()
-        
+
         guard let service = service else {
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
         }
-        
+
         do {
             return try await service.extractTasks(from: text)
         } catch {
-            print("❌ AWSBedrockEngine: Task extraction failed: \(error)")
+            AppLog.shared.networking("AWSBedrockEngine: Task extraction failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
     
     func extractReminders(from text: String) async throws -> [ReminderItem] {
-        print("🤖 AWSBedrockEngine: Starting reminder extraction")
-        
+        AppLog.shared.networking("AWSBedrockEngine: Starting reminder extraction")
+
         updateConfiguration()
-        
+
         guard let service = service else {
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
         }
-        
+
         do {
             return try await service.extractReminders(from: text)
         } catch {
-            print("❌ AWSBedrockEngine: Reminder extraction failed: \(error)")
+            AppLog.shared.networking("AWSBedrockEngine: Reminder extraction failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
     
     func extractTitles(from text: String) async throws -> [TitleItem] {
-        print("🤖 AWSBedrockEngine: Starting title extraction")
-        
+        AppLog.shared.networking("AWSBedrockEngine: Starting title extraction")
+
         updateConfiguration()
-        
+
         guard let service = service else {
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
         }
-        
+
         do {
             return try await service.extractTitles(from: text)
         } catch {
-            print("❌ AWSBedrockEngine: Title extraction failed: \(error)")
+            AppLog.shared.networking("AWSBedrockEngine: Title extraction failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
     
     func classifyContent(_ text: String) async throws -> ContentType {
-        print("🤖 AWSBedrockEngine: Starting content classification")
-        
+        AppLog.shared.networking("AWSBedrockEngine: Starting content classification")
+
         updateConfiguration()
-        
+
         guard let service = service else {
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
         }
-        
+
         do {
             return try await service.classifyContent(text)
         } catch {
-            print("❌ AWSBedrockEngine: Content classification failed: \(error)")
+            AppLog.shared.networking("AWSBedrockEngine: Content classification failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
     
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        print("🤖 AWSBedrockEngine: Starting complete processing")
-        
+        AppLog.shared.networking("AWSBedrockEngine: Starting complete processing")
+
         updateConfiguration()
-        
+
         guard let service = service else {
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
         }
-        
+
         // Check if text needs chunking based on token count
         let tokenCount = TokenManager.getTokenCount(text)
-        print("📊 Text token count: \(tokenCount)")
-        
+        AppLog.shared.networking("AWSBedrockEngine: Text token count: \(tokenCount)", level: .debug)
+
         do {
             // Use the model's context window for chunking decision
             let contextWindow = currentConfig?.model.contextWindow ?? TokenManager.maxTokensPerChunk
             if TokenManager.needsChunking(text, maxTokens: contextWindow) {
-                print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+                AppLog.shared.networking("AWSBedrockEngine: Large transcript detected (\(tokenCount) tokens), using chunked processing", level: .debug)
                 return try await processChunkedText(text, service: service)
             } else {
-                print("📝 Processing single chunk (\(tokenCount) tokens)")
+                AppLog.shared.networking("AWSBedrockEngine: Processing single chunk (\(tokenCount) tokens)", level: .debug)
                 return try await service.processComplete(text: text)
             }
         } catch {
-            print("❌ AWSBedrockEngine: Complete processing failed: \(error)")
+            AppLog.shared.networking("AWSBedrockEngine: Complete processing failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
@@ -252,142 +252,139 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
         // Split text into chunks
         let contextWindow = currentConfig?.model.contextWindow ?? TokenManager.maxTokensPerChunk
         let chunks = TokenManager.chunkText(text, maxTokens: contextWindow)
-        print("📦 Split text into \(chunks.count) chunks")
-        
+        AppLog.shared.networking("AWSBedrockEngine: Split text into \(chunks.count) chunks", level: .debug)
+
         // Process each chunk
         var allSummaries: [String] = []
         var allTasks: [TaskItem] = []
         var allReminders: [ReminderItem] = []
         var allTitles: [TitleItem] = []
         var contentType: ContentType = .general
-        
+
         for (index, chunk) in chunks.enumerated() {
-            print("🔄 Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
-            
+            AppLog.shared.networking("AWSBedrockEngine: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)", level: .debug)
+
             do {
                 let chunkResult = try await service.processComplete(text: chunk)
                 allSummaries.append(chunkResult.summary)
                 allTasks.append(contentsOf: chunkResult.tasks)
                 allReminders.append(contentsOf: chunkResult.reminders)
                 allTitles.append(contentsOf: chunkResult.titles)
-                
+
                 // Use the first chunk's content type
                 if index == 0 {
                     contentType = chunkResult.contentType
                 }
-                
+
                 // Add delay between chunks to avoid rate limiting
                 if index < chunks.count - 1 {
                     try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second between chunks
                 }
-                
+
             } catch {
-                print("❌ Failed to process chunk \(index + 1): \(error)")
+                AppLog.shared.networking("AWSBedrockEngine: Failed to process chunk \(index + 1): \(error)", level: .error)
                 throw error
             }
         }
-        
+
         // Combine results using AI-generated meta-summary
         let combinedSummary = try await TokenManager.combineSummaries(
             allSummaries,
             contentType: contentType,
             service: ollamaService
         )
-        
+
         // Deduplicate tasks, reminders, and titles
         let uniqueTasks = deduplicateTasks(allTasks)
         let uniqueReminders = deduplicateReminders(allReminders)
         let uniqueTitles = deduplicateTitles(allTitles)
-        
+
         let processingTime = Date().timeIntervalSince(startTime)
-        print("✅ Chunked processing completed in \(String(format: "%.2f", processingTime))s")
-        print("📊 Final summary: \(combinedSummary.count) characters")
-        print("📋 Final tasks: \(uniqueTasks.count)")
-        print("🔔 Final reminders: \(uniqueReminders.count)")
-        print("📝 Final titles: \(uniqueTitles.count)")
-        
+        AppLog.shared.networking("AWSBedrockEngine: Chunked processing completed in \(String(format: "%.2f", processingTime))s")
+        AppLog.shared.networking("AWSBedrockEngine: Final results - summary: \(combinedSummary.count) chars, tasks: \(uniqueTasks.count), reminders: \(uniqueReminders.count), titles: \(uniqueTitles.count)", level: .debug)
+
         return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
     }
-    
+
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
         var uniqueTasks: [TaskItem] = []
-        
+
         for task in tasks {
             let isDuplicate = uniqueTasks.contains { existingTask in
                 let similarity = calculateTextSimilarity(task.text, existingTask.text)
                 return similarity > 0.8
             }
-            
+
             if !isDuplicate {
                 uniqueTasks.append(task)
             }
         }
-        
+
         return Array(uniqueTasks.prefix(15)) // Limit to 15 tasks
     }
-    
+
     private func deduplicateReminders(_ reminders: [ReminderItem]) -> [ReminderItem] {
         var uniqueReminders: [ReminderItem] = []
-        
+
         for reminder in reminders {
             let isDuplicate = uniqueReminders.contains { existingReminder in
                 let similarity = calculateTextSimilarity(reminder.text, existingReminder.text)
                 return similarity > 0.8
             }
-            
+
             if !isDuplicate {
                 uniqueReminders.append(reminder)
             }
         }
-        
+
         return Array(uniqueReminders.prefix(15)) // Limit to 15 reminders
     }
-    
+
     private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
         var uniqueTitles: [TitleItem] = []
-        
+
         for title in titles {
             let isDuplicate = uniqueTitles.contains { existingTitle in
                 let similarity = calculateTextSimilarity(title.text, existingTitle.text)
                 return similarity > 0.8
             }
-            
+
             if !isDuplicate {
                 uniqueTitles.append(title)
             }
         }
-        
+
         return Array(uniqueTitles.prefix(5)) // Limit to 5 titles
     }
-    
+
     private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
         let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
         let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
-        
+
         let intersection = words1.intersection(words2)
         let union = words1.union(words2)
-        
+
         return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
     }
-    
+
     // MARK: - Connection Testing
-    
+
     func testConnection() async -> Bool {
-        print("🔧 AWSBedrockEngine: Testing connection...")
-        
+        AppLog.shared.networking("AWSBedrockEngine: Testing connection")
+
         updateConfiguration()
-        
+
         guard let service = service else {
-            print("❌ AWSBedrockEngine: Service is nil - configuration issue")
+            AppLog.shared.networking("AWSBedrockEngine: Service is nil - configuration issue", level: .error)
             return false
         }
-        
+
         let connectionResult = await service.testConnection()
         if connectionResult {
-            print("✅ AWSBedrockEngine: Connection test successful")
+            AppLog.shared.networking("AWSBedrockEngine: Connection test successful")
             return true
         } else {
-            print("❌ AWSBedrockEngine: Connection test failed")
+            AppLog.shared.networking("AWSBedrockEngine: Connection test failed", level: .error)
             return false
         }
     }
@@ -546,54 +543,54 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     }
     
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        print("🤖 LocalLLMEngine: Starting summary generation")
-        
+        AppLog.shared.networking("LocalLLMEngine: Starting summary generation")
+
         // Update configuration with latest settings
         updateConfiguration()
-        
+
         // Validate model availability before proceeding
         try await validateAndUpdateModel()
-        
+
         guard let service = ollamaService else {
-            print("❌ LocalLLMEngine: Ollama service is nil")
+            AppLog.shared.networking("LocalLLMEngine: Ollama service is nil", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "Ollama service not properly configured")
         }
-        
+
         // Check if Ollama is enabled
         let isEnabled = UserDefaults.standard.bool(forKey: "enableOllama")
-        print("🔧 LocalLLMEngine: Ollama enabled: \(isEnabled)")
-        
+        AppLog.shared.networking("LocalLLMEngine: Ollama enabled: \(isEnabled)", level: .debug)
+
         guard isEnabled else {
-            print("❌ LocalLLMEngine: Ollama is not enabled in settings")
+            AppLog.shared.networking("LocalLLMEngine: Ollama is not enabled in settings", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "Ollama is not enabled in settings")
         }
-        
+
         // Test connection before attempting to generate summary
-        print("🔧 LocalLLMEngine: Testing connection to Ollama server...")
+        AppLog.shared.networking("LocalLLMEngine: Testing connection to Ollama server", level: .debug)
         let isConnected = await service.testConnection()
-        print("🔧 LocalLLMEngine: Connection test result: \(isConnected)")
-        
+        AppLog.shared.networking("LocalLLMEngine: Connection test result: \(isConnected)", level: .debug)
+
         guard isConnected else {
-            print("❌ LocalLLMEngine: Cannot connect to Ollama server")
+            AppLog.shared.networking("LocalLLMEngine: Cannot connect to Ollama server", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server. Please check your server URL and port settings.")
         }
-        
-        print("✅ LocalLLMEngine: Calling Ollama service for summary")
-        
+
+        AppLog.shared.networking("LocalLLMEngine: Calling Ollama service for summary")
+
         do {
             return try await service.generateSummary(from: text)
         } catch {
-            print("❌ LocalLLMEngine: Summary generation failed: \(error)")
+            AppLog.shared.networking("LocalLLMEngine: Summary generation failed: \(error)", level: .error)
             throw handleOllamaError(error)
         }
     }
     
     func extractTasks(from text: String) async throws -> [TaskItem] {
-        print("🤖 LocalLLMEngine: Starting task extraction")
-        
+        AppLog.shared.networking("LocalLLMEngine: Starting task extraction")
+
         // Update configuration with latest settings
         updateConfiguration()
-        
+
         guard let service = ollamaService else {
             throw SummarizationError.aiServiceUnavailable(service: "Ollama service not properly configured")
         }
@@ -614,14 +611,14 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             let result = try await service.extractTasksAndReminders(from: text)
             return result.tasks
         } catch {
-            print("❌ LocalLLMEngine: Task extraction failed: \(error)")
+            AppLog.shared.networking("LocalLLMEngine: Task extraction failed: \(error)", level: .error)
             throw handleOllamaError(error)
         }
     }
     
     func extractReminders(from text: String) async throws -> [ReminderItem] {
-        print("🤖 LocalLLMEngine: Starting reminder extraction")
-        
+        AppLog.shared.networking("LocalLLMEngine: Starting reminder extraction")
+
         // Update configuration with latest settings
         updateConfiguration()
         
@@ -645,14 +642,14 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             let result = try await service.extractTasksAndReminders(from: text)
             return result.reminders
         } catch {
-            print("❌ LocalLLMEngine: Reminder extraction failed: \(error)")
+            AppLog.shared.networking("LocalLLMEngine: Reminder extraction failed: \(error)", level: .error)
             throw handleOllamaError(error)
         }
     }
     
     func extractTitles(from text: String) async throws -> [TitleItem] {
-        print("🤖 LocalLLMEngine: Starting title extraction")
-        
+        AppLog.shared.networking("LocalLLMEngine: Starting title extraction")
+
         // Update configuration with latest settings
         updateConfiguration()
         
@@ -675,7 +672,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         do {
             return try await service.extractTitles(from: text)
         } catch {
-            print("❌ LocalLLMEngine: Title extraction failed: \(error)")
+            AppLog.shared.networking("LocalLLMEngine: Title extraction failed: \(error)", level: .error)
             throw handleOllamaError(error)
         }
     }
@@ -713,11 +710,11 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     }
     
     func classifyContent(_ text: String) async throws -> ContentType {
-        print("🔍 LocalLLMEngine: Starting content classification")
-        
+        AppLog.shared.networking("LocalLLMEngine: Starting content classification")
+
         // Use enhanced ContentAnalyzer for classification
         let contentType = ContentAnalyzer.classifyContent(text)
-        print("✅ LocalLLMEngine: Content classified as \(contentType.rawValue)")
+        AppLog.shared.networking("LocalLLMEngine: Content classified as \(contentType.rawValue)")
         
         return contentType
     }
@@ -744,27 +741,27 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         
         // Check if text needs chunking based on token count
         let tokenCount = TokenManager.getTokenCount(text)
-        print("📊 Text token count: \(tokenCount)")
-        
+        AppLog.shared.networking("LocalLLMEngine: Text token count: \(tokenCount)", level: .debug)
+
         let maxContext = config?.maxContextTokens ?? TokenManager.maxTokensPerChunk
         if TokenManager.needsChunking(text, maxTokens: maxContext) {
-            print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+            AppLog.shared.networking("LocalLLMEngine: Large transcript detected (\(tokenCount) tokens), using chunked processing", level: .debug)
             return try await processChunkedText(text, service: service, maxTokens: maxContext)
         } else {
-            print("📝 Processing single chunk (\(tokenCount) tokens)")
+            AppLog.shared.networking("LocalLLMEngine: Processing single chunk (\(tokenCount) tokens)", level: .debug)
             do {
                 return try await processSingleChunk(text, service: service)
             } catch {
                 // If the server reports a context window issue, retry with chunked processing
                 let errorMessage = error.localizedDescription.lowercased()
                 if errorMessage.contains("context") || errorMessage.contains("token") {
-                    print("🔁 Context window exceeded, retrying with chunked processing")
+                    AppLog.shared.networking("LocalLLMEngine: Context window exceeded, retrying with chunked processing", level: .debug)
                     do {
                         let result = try await processChunkedText(text, service: service, maxTokens: maxContext)
-                        print("✅ Chunked retry succeeded")
+                        AppLog.shared.networking("LocalLLMEngine: Chunked retry succeeded")
                         return result
                     } catch {
-                        print("❌ Chunked retry failed: \(error)")
+                        AppLog.shared.networking("LocalLLMEngine: Chunked retry failed: \(error)", level: .error)
                         throw error
                     }
                 }
@@ -774,18 +771,18 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     }
     
     private func processSingleChunk(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        print("🔄 LocalLLMEngine: Processing single chunk with Ollama using complete processing")
-        
+        AppLog.shared.networking("LocalLLMEngine: Processing single chunk with Ollama using complete processing", level: .debug)
+
         do {
             // Use the new single-call method for complete processing
             let result = try await service.processComplete(from: text)
-            print("✅ LocalLLMEngine: Complete processing successful")
-            print("📊 LocalLLMEngine: Summary: \(result.summary.count) chars, Tasks: \(result.tasks.count), Reminders: \(result.reminders.count), Titles: \(result.titles.count)")
-            
+            AppLog.shared.networking("LocalLLMEngine: Complete processing successful")
+            AppLog.shared.networking("LocalLLMEngine: Result - summary: \(result.summary.count) chars, tasks: \(result.tasks.count), reminders: \(result.reminders.count), titles: \(result.titles.count)", level: .debug)
+
             return result
-            
+
         } catch {
-            print("⚠️ LocalLLMEngine: Complete processing failed, falling back to individual calls: \(error)")
+            AppLog.shared.networking("LocalLLMEngine: Complete processing failed, falling back to individual calls: \(error)", level: .error)
             
             // Fallback to individual calls if the complete processing fails
             return try await processSingleChunkFallback(text, service: service)
@@ -793,11 +790,11 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     }
     
     private func processSingleChunkFallback(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        print("🔄 LocalLLMEngine: Using fallback individual processing")
-        
+        AppLog.shared.networking("LocalLLMEngine: Using fallback individual processing", level: .debug)
+
         // Process requests sequentially to avoid overwhelming the Ollama server
         let summary = try await service.generateSummary(from: text)
-        print("✅ LocalLLMEngine: Summary generated successfully")
+        AppLog.shared.networking("LocalLLMEngine: Summary generated successfully")
         
         // Small delay between requests to prevent overwhelming the server
         try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
@@ -810,9 +807,9 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             let extraction = try await service.extractTasksAndReminders(from: text)
             tasks = extraction.tasks
             reminders = extraction.reminders
-            print("✅ LocalLLMEngine: Tasks and reminders extracted successfully")
+            AppLog.shared.networking("LocalLLMEngine: Tasks and reminders extracted successfully")
         } catch {
-            print("⚠️ LocalLLMEngine: Failed to extract tasks/reminders, continuing with empty arrays: \(error)")
+            AppLog.shared.networking("LocalLLMEngine: Failed to extract tasks/reminders, continuing with empty arrays: \(error)", level: .error)
             // Continue with empty arrays instead of failing
         }
         
@@ -824,16 +821,16 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         
         do {
             titles = try await service.extractTitles(from: text)
-            print("✅ LocalLLMEngine: Titles extracted successfully")
+            AppLog.shared.networking("LocalLLMEngine: Titles extracted successfully")
         } catch {
-            print("⚠️ LocalLLMEngine: Failed to extract titles, continuing with empty array: \(error)")
+            AppLog.shared.networking("LocalLLMEngine: Failed to extract titles, continuing with empty array: \(error)", level: .error)
             // Continue with empty array instead of failing
         }
         
         let contentType = try await classifyContent(text)
         
-        print("✅ LocalLLMEngine: Fallback processing completed")
-        print("📊 LocalLLMEngine: Summary: \(summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)")
+        AppLog.shared.networking("LocalLLMEngine: Fallback processing completed")
+        AppLog.shared.networking("LocalLLMEngine: Result - summary: \(summary.count) chars, tasks: \(tasks.count), reminders: \(reminders.count), titles: \(titles.count)", level: .debug)
         
         return (summary, tasks, reminders, titles, contentType)
     }
@@ -843,17 +840,17 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
 
         // Split text into chunks
         let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
-        print("📦 Split text into \(chunks.count) chunks")
-        
+        AppLog.shared.networking("LocalLLMEngine: Split text into \(chunks.count) chunks", level: .debug)
+
         // Process each chunk
         var allSummaries: [String] = []
         var allTasks: [TaskItem] = []
         var allReminders: [ReminderItem] = []
         var allTitles: [TitleItem] = []
         var contentType: ContentType = .general
-        
+
         for (index, chunk) in chunks.enumerated() {
-            print("🔄 Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+            AppLog.shared.networking("LocalLLMEngine: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)", level: .debug)
             
             do {
                 let chunkResult = try await processSingleChunk(chunk, service: service)
@@ -873,29 +870,26 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
                 }
                 
             } catch {
-                print("❌ Failed to process chunk \(index + 1): \(error)")
+                AppLog.shared.networking("LocalLLMEngine: Failed to process chunk \(index + 1): \(error)", level: .error)
                 throw error
             }
         }
-        
+
         // Combine results using AI-generated meta-summary
         let combinedSummary = try await TokenManager.combineSummaries(
             allSummaries,
             contentType: contentType,
             service: service
         )
-        
+
         // Deduplicate tasks, reminders, and titles
         let uniqueTasks = deduplicateTasks(allTasks)
         let uniqueReminders = deduplicateReminders(allReminders)
         let uniqueTitles = deduplicateTitles(allTitles)
-        
+
         let processingTime = Date().timeIntervalSince(startTime)
-        print("✅ Chunked processing completed in \(String(format: "%.2f", processingTime))s")
-        print("📊 Final summary: \(combinedSummary.count) characters")
-        print("📋 Final tasks: \(uniqueTasks.count)")
-        print("🔔 Final reminders: \(uniqueReminders.count)")
-        print("📝 Final titles: \(uniqueTitles.count)")
+        AppLog.shared.networking("LocalLLMEngine: Chunked processing completed in \(String(format: "%.2f", processingTime))s")
+        AppLog.shared.networking("LocalLLMEngine: Final results - summary: \(combinedSummary.count) chars, tasks: \(uniqueTasks.count), reminders: \(uniqueReminders.count), titles: \(uniqueTitles.count)", level: .debug)
         
         return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
     }
@@ -971,7 +965,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
         let contextTokens = UserDefaults.standard.integer(forKey: "ollamaContextTokens")
         
-        print("🔧 LocalLLMEngine: Updating configuration - Server: \(serverURL), Port: \(port), Model: \(modelName)")
+        AppLog.shared.networking("LocalLLMEngine: Updating configuration - Server: \(serverURL), Port: \(port), Model: \(modelName)", level: .debug)
         
         let config = OllamaConfig(
             serverURL: serverURL,
@@ -985,9 +979,9 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
 
         self.config = config
         self.ollamaService = OllamaService(config: config)
-        print("✅ LocalLLMEngine: Configuration updated successfully")
+        AppLog.shared.networking("LocalLLMEngine: Configuration updated successfully")
     }
-    
+
     private func validateAndUpdateModel() async throws {
         guard let service = ollamaService else {
             throw SummarizationError.aiServiceUnavailable(service: "Ollama service not configured")
@@ -1003,11 +997,11 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         let isModelAvailable = await service.isModelAvailable(config?.modelName ?? "")
         
         if !isModelAvailable {
-            print("⚠️ LocalLLMEngine: Configured model '\(config?.modelName ?? "unknown")' is not available")
-            
+            AppLog.shared.networking("LocalLLMEngine: Configured model '\(config?.modelName ?? "unknown")' is not available", level: .error)
+
             // Try to get the first available model
             if let firstAvailableModel = await service.getFirstAvailableModel() {
-                print("🔄 LocalLLMEngine: Switching to available model '\(firstAvailableModel)'")
+                AppLog.shared.networking("LocalLLMEngine: Switching to available model '\(firstAvailableModel)'", level: .debug)
                 
                 // Update the configuration with the available model
                 let newConfig = OllamaConfig(
@@ -1025,33 +1019,33 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
                 
                 // Optionally update UserDefaults with the working model
                 UserDefaults.standard.set(firstAvailableModel, forKey: "ollamaModelName")
-                print("💾 LocalLLMEngine: Updated saved model preference to '\(firstAvailableModel)'")
+                AppLog.shared.networking("LocalLLMEngine: Updated saved model preference to '\(firstAvailableModel)'", level: .debug)
                 
             } else {
                 throw SummarizationError.aiServiceUnavailable(service: "No models available on Ollama server. Please install a model using 'ollama pull <model_name>'")
             }
         } else {
-            print("✅ LocalLLMEngine: Model '\(config?.modelName ?? "unknown")' is available")
+            AppLog.shared.networking("LocalLLMEngine: Model '\(config?.modelName ?? "unknown")' is available")
         }
     }
     
     // MARK: - Connection Testing
     
     func testConnection() async -> Bool {
-        print("🔧 LocalLLMEngine: Testing connection...")
-        
+        AppLog.shared.networking("LocalLLMEngine: Testing connection")
+
         updateConfiguration()
-        
+
         guard let service = ollamaService else {
-            print("❌ LocalLLMEngine: Service is nil - configuration issue")
+            AppLog.shared.networking("LocalLLMEngine: Service is nil - configuration issue", level: .error)
             return false
         }
-        
+
         let isConnected = await service.testConnection()
         if isConnected {
-            print("✅ LocalLLMEngine: Connection test successful")
+            AppLog.shared.networking("LocalLLMEngine: Connection test successful")
         } else {
-            print("❌ LocalLLMEngine: Connection test failed")
+            AppLog.shared.networking("LocalLLMEngine: Connection test failed", level: .error)
         }
         return isConnected
     }
@@ -1069,7 +1063,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     // MARK: - Debug Methods
     
     func testCompleteProcessing() async throws -> String {
-        print("🧪 LocalLLMEngine: Testing complete processing with simple prompt")
+        AppLog.shared.networking("LocalLLMEngine: Testing complete processing with simple prompt", level: .debug)
         
         updateConfiguration()
         
@@ -1089,17 +1083,17 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         do {
             let result = try await service.processComplete(from: testText)
             let summary = "Successfully processed: Summary (\(result.summary.count) chars), \(result.tasks.count) tasks, \(result.reminders.count) reminders, \(result.titles.count) titles, content type: \(result.contentType.rawValue)"
-            print("✅ LocalLLMEngine: Complete processing test successful - \(summary)")
+            AppLog.shared.networking("LocalLLMEngine: Complete processing test successful")
             return summary
         } catch {
             let errorMessage = "Complete processing test failed: \(error.localizedDescription)"
-            print("❌ LocalLLMEngine: \(errorMessage)")
+            AppLog.shared.networking("LocalLLMEngine: \(errorMessage)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: errorMessage)
         }
     }
     
     func testJSONParsing() async throws -> String {
-        print("🧪 LocalLLMEngine: Testing JSON parsing with simple prompt")
+        AppLog.shared.networking("LocalLLMEngine: Testing JSON parsing with simple prompt", level: .debug)
         
         updateConfiguration()
         
@@ -1119,11 +1113,11 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         do {
             let result = try await service.extractTasksAndReminders(from: testText)
             let summary = "Successfully parsed \(result.tasks.count) tasks and \(result.reminders.count) reminders"
-            print("✅ LocalLLMEngine: JSON parsing test successful - \(summary)")
+            AppLog.shared.networking("LocalLLMEngine: JSON parsing test successful")
             return summary
         } catch {
             let errorMessage = "JSON parsing test failed: \(error.localizedDescription)"
-            print("❌ LocalLLMEngine: \(errorMessage)")
+            AppLog.shared.networking("LocalLLMEngine: \(errorMessage)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: errorMessage)
         }
     }
@@ -1153,7 +1147,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
     }
     
     private let service = GoogleAIStudioService()
-    private let logger = Logger(subsystem: "com.audiojournal.app", category: "GoogleAIStudioEngine")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "GoogleAIStudioEngine")
     
     init() {
         // Check if Google AI Studio is enabled and configured
@@ -1218,22 +1212,22 @@ class GoogleAIStudioEngine: SummarizationEngine {
         
         // Check if text needs chunking based on token count
         let tokenCount = TokenManager.getTokenCount(text)
-        print("📊 GoogleAI: Text token count: \(tokenCount)")
-        
+        AppLog.shared.networking("GoogleAI: Text token count: \(tokenCount)", level: .debug)
+
         do {
             // Use Google AI Studio's context window for chunking decision
             if TokenManager.needsChunking(text, maxTokens: TokenManager.googleAIStudioContextWindow) {
-                print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+                AppLog.shared.networking("GoogleAI: Large transcript detected (\(tokenCount) tokens), using chunked processing", level: .debug)
                 return try await processChunkedText(text)
             } else {
-                print("📝 Processing single chunk (\(tokenCount) tokens)")
+                AppLog.shared.networking("GoogleAI: Processing single chunk (\(tokenCount) tokens)", level: .debug)
                 return try await processSingleChunk(text)
             }
         } catch {
             // If the server reports a context window issue, retry with chunked processing
             let errorMessage = error.localizedDescription.lowercased()
             if errorMessage.contains("context") || errorMessage.contains("token") {
-                print("⚠️ Context limit reached, falling back to chunked processing")
+                AppLog.shared.networking("GoogleAI: Context limit reached, falling back to chunked processing", level: .error)
                 return try await processChunkedText(text)
             }
             throw error
@@ -1264,11 +1258,11 @@ class GoogleAIStudioEngine: SummarizationEngine {
     private func processChunkedText(_ text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         let startTime = Date()
         
-        print("🔄 GoogleAI: Starting chunked processing...")
-        
+        AppLog.shared.networking("GoogleAI: Starting chunked processing")
+
         // Use Google AI Studio's context window for chunking
         let chunks = TokenManager.chunkText(text, maxTokens: TokenManager.googleAIStudioContextWindow)
-        print("📊 GoogleAI: Split into \(chunks.count) chunks")
+        AppLog.shared.networking("GoogleAI: Split into \(chunks.count) chunks", level: .debug)
         
         var allTasks: [TaskItem] = []
         var allReminders: [ReminderItem] = []
@@ -1277,7 +1271,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         
         // Process each chunk
         for (index, chunk) in chunks.enumerated() {
-            print("🔄 GoogleAI: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+            AppLog.shared.networking("GoogleAI: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)", level: .debug)
             
             do {
                 let chunkResult = try await processSingleChunk(chunk)
@@ -1292,7 +1286,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
                     try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
                 }
             } catch {
-                print("❌ GoogleAI: Error processing chunk \(index + 1): \(error)")
+                AppLog.shared.networking("GoogleAI: Error processing chunk \(index + 1): \(error)", level: .error)
                 // Continue with other chunks instead of failing completely
             }
         }
@@ -1331,8 +1325,8 @@ class GoogleAIStudioEngine: SummarizationEngine {
         let contentType: ContentType = .general
         
         let processingTime = Date().timeIntervalSince(startTime)
-        print("✅ GoogleAI: Chunked processing completed in \(processingTime)s")
-        print("📊 GoogleAI: Final results - Tasks: \(deduplicatedTasks.count), Reminders: \(deduplicatedReminders.count), Titles: \(deduplicatedTitles.count)")
+        AppLog.shared.networking("GoogleAI: Chunked processing completed in \(processingTime)s")
+        AppLog.shared.networking("GoogleAI: Final results - tasks: \(deduplicatedTasks.count), reminders: \(deduplicatedReminders.count), titles: \(deduplicatedTitles.count)", level: .debug)
         
         return (
             summary: finalSummary,

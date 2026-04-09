@@ -292,7 +292,7 @@ extension WyomingMessage {
             let jsonData = try JSONEncoder().encode(anyCodableData)
             return try JSONDecoder().decode(type, from: jsonData)
         } catch {
-            print("⚠️ Failed to parse Wyoming message data as \(type): \(error)")
+            AppLog.shared.transcription("Failed to parse Wyoming message data as \(type): \(error)", level: .error)
             return nil
         }
     }
