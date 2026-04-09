@@ -122,11 +122,18 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
     static let shared = LogEmailPresenter()
 
     private var onDismiss: (() -> Void)?
+    private var onPresented: (() -> Void)?
 
-    func presentLogEmail(logFileURL: URL, onDismiss: @escaping () -> Void) {
+    func presentLogEmail(
+        logFileURL: URL,
+        onPresented: @escaping () -> Void = {},
+        onDismiss: @escaping () -> Void
+    ) {
+        self.onPresented = onPresented
         self.onDismiss = onDismiss
 
         guard let rootVC = Self.topViewController() else {
+            onPresented()
             onDismiss()
             return
         }
@@ -147,14 +154,20 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
                 mail.addAttachmentData(data, mimeType: "text/plain", fileName: logFileURL.lastPathComponent)
             }
 
-            rootVC.present(mail, animated: true)
+            rootVC.present(mail, animated: true) { [weak self] in
+                self?.onPresented?()
+                self?.onPresented = nil
+            }
         } else {
             // Mail not configured — fall back to share sheet
             let activityVC = UIActivityViewController(activityItems: [logFileURL], applicationActivities: nil)
             activityVC.completionWithItemsHandler = { _, _, _, _ in
                 onDismiss()
             }
-            rootVC.present(activityVC, animated: true)
+            rootVC.present(activityVC, animated: true) { [weak self] in
+                self?.onPresented?()
+                self?.onPresented = nil
+            }
         }
     }
 
@@ -162,6 +175,7 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
         controller.dismiss(animated: true) {
             self.onDismiss?()
             self.onDismiss = nil
+            self.onPresented = nil
         }
     }
 
