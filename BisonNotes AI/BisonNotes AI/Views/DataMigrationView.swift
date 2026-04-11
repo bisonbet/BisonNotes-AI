@@ -131,9 +131,9 @@ struct DataMigrationView: View {
                     Task {
                         do {
                             try await legacyiCloudManager.performOneTimeFullSync()
-                            print("✅ Successfully uploaded all summaries to iCloud")
+                            AppLog.shared.dataMigration("Successfully uploaded all summaries to iCloud")
                         } catch {
-                            print("❌ Failed to upload summaries: \(error)")
+                            AppLog.shared.dataMigration("Failed to upload summaries: \(error)", level: .error)
                         }
                     }
                 }
@@ -146,9 +146,9 @@ struct DataMigrationView: View {
                     Task {
                         do {
                             let result = try await legacyiCloudManager.performFullCloudKitResetAndSync(appCoordinator: appCoordinator)
-                            print("✅ CloudKit reset complete: deleted \(result.deleted), uploaded \(result.uploaded)")
+                            AppLog.shared.dataMigration("CloudKit reset complete: deleted \(result.deleted), uploaded \(result.uploaded)")
                         } catch {
-                            print("❌ Failed to reset CloudKit: \(error)")
+                            AppLog.shared.dataMigration("Failed to reset CloudKit: \(error)", level: .error)
                         }
                     }
                 }
@@ -344,7 +344,7 @@ struct DataMigrationView: View {
                     Task {
                         await MainActor.run {
                             let repairedCount = appCoordinator.coreDataManager.repairOrphanedSummaries()
-                            print("🔧 Manual repair completed: \(repairedCount) summaries repaired")
+                            AppLog.shared.dataMigration("Manual repair completed: \(repairedCount) summaries repaired")
                         }
                     }
                 }) {
@@ -920,23 +920,23 @@ struct DataMigrationView: View {
         } catch {
             await MainActor.run {
                 self.isPerformingCleanup = false
-                print("❌ Cleanup error: \(error)")
+                AppLog.shared.dataMigration("Cleanup error: \(error)", level: .error)
             }
         }
     }
     
     private func cleanupOrphanedData() async throws -> CleanupResults {
-        print("🧹 Starting orphaned data cleanup...")
-        
+        AppLog.shared.dataMigration("Starting orphaned data cleanup...", level: .debug)
+
         // Get all recordings from Core Data
         let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
-        print("📁 Found \(allRecordings.count) recordings in Core Data")
+        AppLog.shared.dataMigration("Found \(allRecordings.count) recordings in Core Data", level: .debug)
         
         // Get all transcripts and summaries from Core Data
         let allTranscripts = appCoordinator.getAllTranscripts()
         let allSummaries = appCoordinator.getAllSummaries()
         
-        print("📊 Found \(allSummaries.count) stored summaries and \(allTranscripts.count) stored transcripts")
+        AppLog.shared.dataMigration("Found \(allSummaries.count) stored summaries and \(allTranscripts.count) stored transcripts", level: .debug)
         
         var orphanedSummaries = 0
         var orphanedTranscripts = 0
@@ -946,7 +946,7 @@ struct DataMigrationView: View {
         // Create a set of valid recording IDs for quick lookup
         let validRecordingIds = Set(allRecordings.compactMap { $0.id })
         
-        print("🔍 Valid recording IDs: \(validRecordingIds.count)")
+        AppLog.shared.dataMigration("Valid recording IDs: \(validRecordingIds.count)", level: .debug)
         
         // Check for orphaned summaries
         for summary in allSummaries {
@@ -956,8 +956,7 @@ struct DataMigrationView: View {
             let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
             
             if !hasValidID {
-                print("🗑️ Found orphaned summary for recording ID: \(recordingId?.uuidString ?? "nil")")
-                print("   ID exists: \(hasValidID)")
+                AppLog.shared.dataMigration("Found orphaned summary for recording ID: \(recordingId?.uuidString ?? "nil")", level: .debug)
                 
                 // Delete the orphaned summary
                 if let summaryId = summary.id {
@@ -965,10 +964,10 @@ struct DataMigrationView: View {
                         try await appCoordinator.deleteSummary(id: summaryId)
                         orphanedSummaries += 1
                     } catch {
-                        print("❌ Failed to delete orphaned summary: \(error)")
+                        AppLog.shared.dataMigration("Failed to delete orphaned summary: \(error)", level: .error)
                     }
                 } else {
-                    print("❌ Cannot delete summary with nil ID")
+                    AppLog.shared.dataMigration("Cannot delete summary with nil ID", level: .error)
                 }
                 
                 // Calculate freed space (rough estimate)
@@ -984,8 +983,7 @@ struct DataMigrationView: View {
             let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
             
             if !hasValidID {
-                print("🗑️ Found orphaned transcript for recording ID: \(recordingId?.uuidString ?? "nil")")
-                print("   ID exists: \(hasValidID)")
+                AppLog.shared.dataMigration("Found orphaned transcript for recording ID: \(recordingId?.uuidString ?? "nil")", level: .debug)
                 
                 // Delete the orphaned transcript
                 appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
@@ -996,7 +994,7 @@ struct DataMigrationView: View {
                 freedSpaceBytes += Int64(transcriptText.count * 2) // Approximate UTF-8 bytes
             } else {
                 // Log when we find a transcript that's actually valid
-                print("✅ Found valid transcript for recording ID: \(recordingId?.uuidString ?? "nil")")
+                AppLog.shared.dataMigration("Found valid transcript for recording ID: \(recordingId?.uuidString ?? "nil")", level: .debug)
             }
         }
         
@@ -1017,8 +1015,7 @@ struct DataMigrationView: View {
             
             // Only remove if the file doesn't exist AND it's not in Core Data
             if !fileExists && !hasValidID {
-                print("🗑️ Found transcript for non-existent recording file: \(recordingURL.lastPathComponent)")
-                print("   File exists: \(fileExists), ID in Core Data: \(hasValidID)")
+                AppLog.shared.dataMigration("Found transcript for non-existent recording file: \(recordingURL.lastPathComponent)", level: .debug)
                 
                 // Delete the orphaned transcript
                 appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
@@ -1029,17 +1026,16 @@ struct DataMigrationView: View {
                 freedSpaceBytes += Int64(transcriptText.count * 2) // Approximate UTF-8 bytes
             } else if !fileExists {
                 // Log when file doesn't exist but recording is in Core Data
-                print("⚠️  File not found on disk but recording exists in Core Data: \(recordingURL.lastPathComponent)")
-                print("   File exists: \(fileExists), ID in Core Data: \(hasValidID)")
+                AppLog.shared.dataMigration("File not found on disk but recording exists in Core Data: \(recordingURL.lastPathComponent)", level: .debug)
             }
         }
         
         // Check for orphaned recordings (recordings without files on disk and no data)
-        print("🔍 Checking for orphaned recordings (missing audio files)...")
+        AppLog.shared.dataMigration("Checking for orphaned recordings (missing audio files)...", level: .debug)
         for recording in allRecordings {
             guard let _ = recording.recordingURL,
                   let recordingURL = appCoordinator.coreDataManager.getAbsoluteURL(for: recording) else {
-                print("⚠️ Recording has invalid URL: \(recording.recordingName ?? "Unknown")")
+                AppLog.shared.dataMigration("Recording has invalid URL", level: .debug)
                 continue
             }
             
@@ -1053,29 +1049,24 @@ struct DataMigrationView: View {
                 
                 if !hasTranscript && !hasSummary {
                     // Safe to delete - no transcript, no summary, and no file
-                    print("🗑️ Found orphaned recording (no file, no transcript, no summary): \(recording.recordingName ?? "Unknown")")
-                    print("   File path: \(recordingURL.path)")
+                    AppLog.shared.dataMigration("Found orphaned recording (no file, no transcript, no summary)", level: .debug)
                     
                     // Delete the orphaned recording
                     if let recordingId = recording.id {
                         appCoordinator.coreDataManager.deleteRecording(id: recordingId)
                         orphanedRecordings += 1
-                        print("✅ Deleted orphaned recording: \(recording.recordingName ?? "Unknown")")
+                        AppLog.shared.dataMigration("Deleted orphaned recording")
                     }
                 } else {
                     // Keep the recording even if file is missing, because it has data
-                    print("⚠️ Keeping recording with missing file (has transcript: \(hasTranscript), has summary: \(hasSummary)): \(recording.recordingName ?? "Unknown")")
+                    AppLog.shared.dataMigration("Keeping recording with missing file (has transcript: \(hasTranscript), has summary: \(hasSummary))", level: .debug)
                 }
             }
         }
         
         let freedSpaceMB = Double(freedSpaceBytes) / (1024 * 1024)
         
-        print("✅ Cleanup complete:")
-        print("   • Removed \(orphanedSummaries) orphaned summaries")
-        print("   • Removed \(orphanedTranscripts) orphaned transcripts")
-        print("   • Removed \(orphanedRecordings) orphaned recordings")
-        print("   • Freed \(String(format: "%.1f", freedSpaceMB)) MB of space")
+        AppLog.shared.dataMigration("Cleanup complete: removed \(orphanedSummaries) summaries, \(orphanedTranscripts) transcripts, \(orphanedRecordings) recordings, freed \(String(format: "%.1f", freedSpaceMB)) MB")
         
         return CleanupResults(
             orphanedSummaries: orphanedSummaries,
@@ -1115,15 +1106,10 @@ struct DataMigrationView: View {
                 showingSyncVerification = true
             }
             
-            print("✅ Sync verification complete:")
-            print("   Local: \(result.localCount)")
-            print("   Cloud: \(result.cloudCount)")
-            print("   Synced: \(result.syncedCount)")
-            print("   Unsynced local: \(result.unsyncedLocalCount)")
-            print("   Cloud only: \(result.cloudOnlyCount)")
+            AppLog.shared.dataMigration("Sync verification complete: local=\(result.localCount), cloud=\(result.cloudCount), synced=\(result.syncedCount), unsynced=\(result.unsyncedLocalCount), cloudOnly=\(result.cloudOnlyCount)")
             
         } catch {
-            print("❌ Failed to verify iCloud sync: \(error)")
+            AppLog.shared.dataMigration("Failed to verify iCloud sync: \(error)", level: .error)
             await MainActor.run {
                 let alert = UIAlertController(
                     title: "Verification Failed",
@@ -1157,13 +1143,13 @@ struct DataMigrationView: View {
             // Sync all of them to iCloud
             try await legacyiCloudManager.syncAllSummaries(enhancedSummaries)
             
-            print("✅ Successfully synced \(enhancedSummaries.count) summaries to iCloud")
+            AppLog.shared.dataMigration("Successfully synced \(enhancedSummaries.count) summaries to iCloud")
             
             // Re-verify after syncing
             await verifyiCloudSync()
             
         } catch {
-            print("❌ Failed to sync missing summaries: \(error)")
+            AppLog.shared.dataMigration("Failed to sync missing summaries: \(error)", level: .error)
             await MainActor.run {
                 let alert = UIAlertController(
                     title: "Sync Failed",

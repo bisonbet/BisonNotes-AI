@@ -89,9 +89,9 @@ class AWSCredentialsManager: ObservableObject {
             setenv("AWS_ACCESS_KEY_ID", credentials.accessKeyId, 1)
             setenv("AWS_SECRET_ACCESS_KEY", credentials.secretAccessKey, 1)
             setenv("AWS_DEFAULT_REGION", credentials.region, 1)
-            print("✅ AWS credentials configured globally")
+            AppLog.shared.networking("AWS credentials configured globally")
         } else {
-            print("⚠️ AWS credentials incomplete - not setting environment variables")
+            AppLog.shared.networking("AWS credentials incomplete - not setting environment variables", level: .error)
         }
     }
     

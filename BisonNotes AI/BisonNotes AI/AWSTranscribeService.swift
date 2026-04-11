@@ -170,7 +170,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
             throw AWSTranscribeError.configurationMissing
         }
         
-        print("🚀 Starting async transcription job for: \(url.lastPathComponent)")
+        AppLog.shared.transcription("Starting async transcription job for: \(url.lastPathComponent)")
         
         // Step 1: Upload to S3
         currentStatus = "Uploading to AWS S3..."
@@ -181,7 +181,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
         let jobName = try await startTranscriptionJob(s3Key: s3Key)
         currentJobName = jobName
         
-        print("✅ Transcription job started: \(jobName)")
+        AppLog.shared.transcription("Transcription job started: \(jobName)")
         currentStatus = "Transcription job started - check back later for results"
         
         return jobName
@@ -346,7 +346,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
                 currentStatus = "Transcription cancelled"
                 isTranscribing = false
             } catch {
-                print("Error cancelling transcription: \(error)")
+                AppLog.shared.transcription("Error cancelling transcription: \(error)", level: .error)
             }
         }
     }
@@ -387,11 +387,11 @@ class AWSTranscribeService: NSObject, ObservableObject {
             )
             
             _ = try await client.putObject(input: putRequest)
-            print("✅ S3 upload successful")
+            AppLog.shared.transcription("S3 upload successful")
             return s3Key
-            
+
         } catch {
-            print("❌ S3 upload failed: \(error)")
+            AppLog.shared.transcription("S3 upload failed: \(error)", level: .error)
             throw AWSTranscribeError.uploadFailed(error)
         }
     }
@@ -490,7 +490,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
                     error: nil
                 )
             } catch {
-                print("⚠️ Failed to download transcript from S3, trying alternative method...")
+                AppLog.shared.transcription("Failed to download transcript from S3, trying alternative method...", level: .error)
                 // Fall through to alternative method
             }
         }
@@ -522,7 +522,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
     
     private func downloadTranscript(from uri: String) async throws -> Data {
         guard let url = URL(string: uri) else {
-            print("❌ Invalid transcript URI: \(uri)")
+            AppLog.shared.transcription("Invalid transcript URI", level: .error)
             throw AWSTranscribeError.invalidTranscriptURI
         }
         
@@ -531,13 +531,13 @@ class AWSTranscribeService: NSObject, ObservableObject {
         // URI format: https://s3.us-east-1.amazonaws.com/bucket-name/key
         let pathComponents = url.pathComponents
         guard pathComponents.count >= 3 else {
-            print("❌ Invalid S3 URI format: \(uri)")
+            AppLog.shared.transcription("Invalid S3 URI format", level: .error)
             throw AWSTranscribeError.invalidTranscriptURI
         }
         
         // Remove the first empty component and bucket name
         let s3Key = pathComponents.dropFirst(2).joined(separator: "/")
-        print("🔑 Extracted S3 key: \(s3Key)")
+        AppLog.shared.transcription("Extracted S3 key for transcript download", level: .debug)
         
         let client = try await getS3Client()
         
@@ -551,29 +551,26 @@ class AWSTranscribeService: NSObject, ObservableObject {
             let response = try await client.getObject(input: getRequest)
             
             guard let body = response.body else {
-                print("❌ S3 download returned no data")
+                AppLog.shared.transcription("S3 download returned no data", level: .error)
                 throw AWSTranscribeError.invalidTranscriptURI
             }
             
             if let data = try await body.readData() {
-                print("✅ S3 download successful: \(data.count) bytes")
+                AppLog.shared.transcription("S3 download successful: \(data.count) bytes")
                 return data
             } else {
-                print("❌ S3 download returned no data from stream")
+                AppLog.shared.transcription("S3 download returned no data from stream", level: .error)
                 throw AWSTranscribeError.invalidTranscriptURI
             }
             
         } catch {
-            print("❌ S3 download failed: \(error)")
+            AppLog.shared.transcription("S3 download failed: \(error)", level: .error)
             throw AWSTranscribeError.invalidTranscriptURI
         }
     }
     
     private func parseTranscript(data: Data) throws -> (fullText: String, segments: [TranscriptSegment], confidence: Double) {
-        // Debug: Print the first 500 characters of the response
-        let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
-        print("📄 Transcript response (first 500 chars): \(String(responseString.prefix(500)))")
-        print("📊 Response data size: \(data.count) bytes")
+        AppLog.shared.transcription("Transcript response data size: \(data.count) bytes", level: .debug)
         
         // Check if response is empty
         guard !data.isEmpty else {
@@ -584,14 +581,13 @@ class AWSTranscribeService: NSObject, ObservableObject {
         do {
             json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         } catch {
-            print("❌ JSON parsing failed: \(error)")
-            print("📄 Raw response: \(responseString)")
+            AppLog.shared.transcription("JSON parsing failed: \(error)", level: .error)
             throw AWSTranscribeError.invalidTranscriptFormat
         }
         
         // Check if this is an error response
         if let errorMessage = json["Message"] as? String {
-            print("❌ AWS returned error: \(errorMessage)")
+            AppLog.shared.transcription("AWS returned error: \(errorMessage)", level: .error)
             throw AWSTranscribeError.jobFailed(errorMessage)
         }
         
@@ -599,7 +595,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
               let transcripts = results["transcripts"] as? [[String: Any]],
               let firstTranscript = transcripts.first,
               let transcriptText = firstTranscript["transcript"] as? String else {
-            print("❌ Invalid transcript format. JSON structure: \(json)")
+            AppLog.shared.transcription("Invalid transcript format", level: .error)
             throw AWSTranscribeError.invalidTranscriptFormat
         }
         
@@ -685,7 +681,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
     private func cancelTranscriptionJob(jobName: String) async throws {
         // Note: Job cancellation removed for compatibility with current AWS SDK version
         // AWS Transcribe jobs will continue running until completion
-        print("Warning: Job cancellation not supported in current AWS SDK version")
+        AppLog.shared.transcription("Job cancellation not supported in current AWS SDK version", level: .error)
     }
 }
 

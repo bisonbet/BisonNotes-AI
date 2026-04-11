@@ -64,11 +64,11 @@ class OpenAIResponseParser {
             do {
                 let wrapped = try JSONDecoder().decode(WrappedResponse.self, from: jsonData)
                 response = wrapped.json
-                print("✅ Parsed wrapped JSON response (provider wraps in {\"json\": {...}})")
+                AppLog.shared.networking("Parsed wrapped JSON response", level: .debug)
             } catch {
                 // If that fails, try direct parsing (standard OpenAI format)
                 response = try JSONDecoder().decode(CompleteResponse.self, from: jsonData)
-                print("✅ Parsed standard JSON response")
+                AppLog.shared.networking("Parsed standard JSON response", level: .debug)
             }
             
             let tasks = response.tasks.map { taskResponse in
@@ -114,17 +114,16 @@ class OpenAIResponseParser {
             
             return (response.summary, tasks, reminders, titles)
         } catch {
-            print("❌ JSON parsing error for complete response: \(error)")
-            print("📝 Raw JSON: \(cleanedJSON)")
+            AppLog.shared.networking("JSON parsing error for complete response: \(error)", level: .error)
             
             // Check if the JSON is empty or malformed
             if cleanedJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                print("⚠️ Empty JSON response received from OpenAI")
+                AppLog.shared.networking("Empty JSON response received from OpenAI", level: .error)
                 throw SummarizationError.aiServiceUnavailable(service: "OpenAI returned empty response")
             }
             
             if cleanedJSON == "{}" {
-                print("⚠️ OpenAI returned empty JSON object - this may indicate an API configuration issue")
+                AppLog.shared.networking("OpenAI returned empty JSON object - check API key and model configuration", level: .error)
                 throw SummarizationError.aiServiceUnavailable(service: "OpenAI returned empty JSON - check API key and model configuration")
             }
             
@@ -440,7 +439,7 @@ class OpenAIResponseParser {
             }
         }
 
-        print("📦 Extracted JSON (first 200 chars): \(cleaned.prefix(200))\(cleaned.count > 200 ? "..." : "")")
+        AppLog.shared.networking("Extracted JSON: \(cleaned.count) chars", level: .debug)
 
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }

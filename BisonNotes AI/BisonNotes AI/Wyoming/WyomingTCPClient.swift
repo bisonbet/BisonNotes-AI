@@ -15,16 +15,16 @@ func wyomingTimeout<T>(seconds: TimeInterval, operation: @escaping () async thro
         group.addTask {
             try await operation()
         }
-        
+
         group.addTask {
             try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             throw WyomingError.timeout
         }
-        
+
         guard let result = try await group.next() else {
             throw WyomingError.timeout
         }
-        
+
         group.cancelAll()
         return result
     }
@@ -32,15 +32,15 @@ func wyomingTimeout<T>(seconds: TimeInterval, operation: @escaping () async thro
 
 actor ConnectionActor {
     var connection: NWConnection?
-    
+
     func setConnection(_ connection: NWConnection?) {
         self.connection = connection
     }
-    
+
     func getConnection() -> NWConnection? {
         return connection
     }
-    
+
     func cancelConnection() {
         connection?.cancel()
         connection = nil
@@ -49,197 +49,195 @@ actor ConnectionActor {
 
 @MainActor
 class WyomingTCPClient: ObservableObject {
-    
+
     // MARK: - Properties
-    
+
     @Published var isConnected = false
     @Published var connectionError: String?
-    
+
     private let connectionActor = ConnectionActor()
     private let serverHost: String
     private let serverPort: Int
     private var messageHandlers: [WyomingMessageType: (WyomingMessage) -> Void] = [:]
     private var connectionContinuation: CheckedContinuation<Void, Error>?
-    
+
     // MARK: - Initialization
-    
+
     init(host: String, port: Int) {
         self.serverHost = host
         self.serverPort = port
     }
-    
+
     deinit {
-        print("🗑️ WyomingTCPClient deinit")
-        
+        AppLog.shared.transcription("WyomingTCPClient deinit", level: .debug)
+
         // Clear any pending continuation
         if let continuation = connectionContinuation {
             connectionContinuation = nil
             continuation.resume(throwing: WyomingError.connectionFailed)
         }
-        
+
         // Clear handlers to break potential retain cycles
         messageHandlers.removeAll()
-        
+
         // Cancel connection synchronously without Task
         let actor = connectionActor
         Task.detached {
             await actor.cancelConnection()
         }
     }
-    
+
     // MARK: - Connection Management
-    
+
     func connect() async throws {
         guard !isConnected else { return }
-        
-        print("🔌 Connecting to Wyoming TCP server: \(serverHost):\(serverPort)")
-        
+
+        AppLog.shared.transcription("Connecting to Wyoming TCP server: \(serverHost):\(serverPort)", level: .debug)
+
         // Create TCP connection
         let host = NWEndpoint.Host(serverHost)
         let port = NWEndpoint.Port(integerLiteral: UInt16(serverPort))
         let endpoint = NWEndpoint.hostPort(host: host, port: port)
-        
+
         let connection = NWConnection(to: endpoint, using: .tcp)
         await connectionActor.setConnection(connection)
-        
+
         return try await withCheckedThrowingContinuation { [weak self] continuation in
             guard let self = self else {
                 continuation.resume(throwing: WyomingError.connectionFailed)
                 return
             }
-            
+
             self.connectionContinuation = continuation
-            
+
             connection.stateUpdateHandler = { [weak self] state in
                 Task { @MainActor in
                     await self?.handleConnectionStateUpdate(state)
                 }
             }
-            
+
             // Start the connection
             let queue = DispatchQueue(label: "wyoming-tcp")
             connection.start(queue: queue)
-            
+
             // Start receiving data
             self.startReceiving()
         }
     }
-    
+
     private func handleConnectionStateUpdate(_ state: NWConnection.State) async {
         switch state {
         case .ready:
-            print("✅ Wyoming TCP connection established")
+            AppLog.shared.transcription("Wyoming TCP connection established")
             isConnected = true
             connectionError = nil
-            
+
             // Resume connection continuation if waiting
             if let continuation = connectionContinuation {
                 connectionContinuation = nil
                 continuation.resume()
             }
-            
+
         case .failed(let error):
-            print("❌ Wyoming TCP connection failed: \(error)")
+            AppLog.shared.transcription("Wyoming TCP connection failed: \(error)", level: .error)
             isConnected = false
             connectionError = error.localizedDescription
-            
+
             if let continuation = connectionContinuation {
                 connectionContinuation = nil
                 continuation.resume(throwing: error)
             }
-            
+
         case .cancelled:
-            print("🔌 Wyoming TCP connection cancelled")
+            AppLog.shared.transcription("Wyoming TCP connection cancelled", level: .debug)
             isConnected = false
-            
+
         case .waiting(let error):
-            print("⏳ Wyoming TCP connection waiting: \(error)")
-            
+            AppLog.shared.transcription("Wyoming TCP connection waiting: \(error)", level: .debug)
+
         case .preparing:
-            print("🔄 Wyoming TCP connection preparing...")
-            
+            AppLog.shared.transcription("Wyoming TCP connection preparing", level: .debug)
+
         case .setup:
-            print("🔧 Wyoming TCP connection setup...")
-            
+            AppLog.shared.transcription("Wyoming TCP connection setup", level: .debug)
+
         @unknown default:
-            print("⚠️ Unknown Wyoming TCP connection state")
+            AppLog.shared.transcription("Unknown Wyoming TCP connection state", level: .error)
         }
     }
-    
+
     nonisolated func disconnect() {
-        print("🔌 Disconnecting from Wyoming TCP server")
-        
+        AppLog.shared.transcription("Disconnecting from Wyoming TCP server", level: .debug)
+
         Task {
             await connectionActor.cancelConnection()
-            
+
             await MainActor.run {
                 // Clear any pending continuation
                 if let continuation = self.connectionContinuation {
                     self.connectionContinuation = nil
                     continuation.resume(throwing: WyomingError.connectionFailed)
                 }
-                
+
                 self.isConnected = false
                 self.connectionError = nil
-                
+
                 // Clear handlers to break retain cycles
                 self.messageHandlers.removeAll()
             }
         }
     }
-    
+
     // MARK: - Message Sending
-    
+
     func sendMessage(_ message: WyomingMessage) async throws {
         guard let connection = await connectionActor.getConnection(), isConnected else {
             throw WyomingError.connectionFailed
         }
-        
+
         let jsonString = try message.toJSONString()
-        
+
         // Only log non-audio chunk messages
         if message.type != .audioChunk {
-            print("📤 \(message.type)")
+            AppLog.shared.transcription("Sending Wyoming TCP message: \(message.type)", level: .debug)
         }
-        
-        
+
+
         // Wyoming protocol uses JSONL (JSON Lines) - each message on a separate line
         let messageData = (jsonString + "\n").data(using: .utf8)!
-        
+
         // Send JSON first
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.send(content: messageData, completion: .contentProcessed { error in
                 if let error = error {
-                    print("❌ Failed to send Wyoming TCP message: \(error)")
+                    AppLog.shared.transcription("Failed to send Wyoming TCP message: \(error)", level: .error)
                     continuation.resume(throwing: error)
                 } else {
                     continuation.resume()
                 }
             })
         }
-        
+
         // If there's a payload (like for audio chunks), send it separately
         if let payload = message.payload {
-            // print("📤 Sending binary payload: \(payload.count) bytes")
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 connection.send(content: payload, completion: .contentProcessed { error in
                     if let error = error {
-                        print("❌ Failed to send Wyoming binary payload: \(error)")
+                        AppLog.shared.transcription("Failed to send Wyoming binary payload: \(error)", level: .error)
                         continuation.resume(throwing: error)
                     } else {
-                        // print("✅ Wyoming binary payload sent successfully")
                         continuation.resume()
                     }
                 })
             }
         }
     }
-    
+
     func sendAudioData(_ audioData: Data) async throws {
         guard let connection = await connectionActor.getConnection(), isConnected else {
             throw WyomingError.connectionFailed
         }
-        
+
         return try await withCheckedThrowingContinuation { continuation in
             connection.send(content: audioData, completion: .contentProcessed { error in
                 if let error = error {
@@ -250,25 +248,25 @@ class WyomingTCPClient: ObservableObject {
             })
         }
     }
-    
+
     // Optimized batch audio data sending with flow control and error recovery
     func sendAudioDataBatch(_ audioDataChunks: [Data], progressCallback: @escaping (Int, Int) -> Void) async throws {
         guard let connection = await connectionActor.getConnection(), isConnected else {
             throw WyomingError.connectionFailed
         }
-        
+
         let totalChunks = audioDataChunks.count
         var sentChunks = 0
         var consecutiveErrors = 0
         let maxConsecutiveErrors = 5
-        
-        print("🔄 Sending \(totalChunks) audio chunks...")
-        
+
+        AppLog.shared.transcription("Sending \(totalChunks) audio chunks", level: .debug)
+
         for (index, chunk) in audioDataChunks.enumerated() {
             var chunkSent = false
             var retryCount = 0
             let maxRetries = 3
-            
+
             while !chunkSent && retryCount < maxRetries {
                 do {
                     // Add timeout protection for individual chunk sends
@@ -283,60 +281,60 @@ class WyomingTCPClient: ObservableObject {
                             })
                         }
                     }
-                    
+
                     sentChunks += 1
                     chunkSent = true
                     consecutiveErrors = 0 // Reset error counter on success
-                    
+
                 } catch {
                     retryCount += 1
                     consecutiveErrors += 1
-                    
+
                     if consecutiveErrors >= maxConsecutiveErrors {
-                        print("❌ Too many consecutive errors (\(consecutiveErrors)), aborting")
+                        AppLog.shared.transcription("Too many consecutive errors (\(consecutiveErrors)), aborting batch send", level: .error)
                         throw WyomingError.serverError("Network streaming failed after \(consecutiveErrors) consecutive errors")
                     }
-                    
+
                     if retryCount < maxRetries {
                         // Exponential backoff: 100ms, 200ms, 400ms
                         let delayMs = 100 * (1 << (retryCount - 1))
                         try await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
                     } else {
-                        print("❌ Chunk \(index + 1) failed after \(maxRetries) retries")
+                        AppLog.shared.transcription("Chunk \(index + 1) failed after \(maxRetries) retries", level: .error)
                         throw error
                     }
                 }
             }
-            
+
             // Call progress callback every 50 chunks or at completion
             if (index + 1) % 50 == 0 || index == totalChunks - 1 {
                 progressCallback(sentChunks, totalChunks)
             }
         }
     }
-    
+
     // MARK: - Message Receiving
-    
+
     private func startReceiving() {
         receiveNextMessage()
     }
-    
+
     private func receiveNextMessage() {
         Task {
             guard let connection = await connectionActor.getConnection() else { return }
-            
+
             connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
                 if let error = error {
-                    print("❌ Wyoming TCP receive error: \(error)")
+                    AppLog.shared.transcription("Wyoming TCP receive error: \(error)", level: .error)
                     return
                 }
-                
+
                 if let data = data, !data.isEmpty {
                     Task { @MainActor in
                         await self?.handleReceivedData(data)
                     }
                 }
-                
+
                 if !isComplete {
                     Task { @MainActor in
                         self?.receiveNextMessage()
@@ -345,21 +343,21 @@ class WyomingTCPClient: ObservableObject {
             }
         }
     }
-    
+
     private func handleReceivedData(_ data: Data) async {
         guard let text = String(data: data, encoding: .utf8) else {
-            print("❌ Failed to decode received data as UTF-8")
+            AppLog.shared.transcription("Failed to decode received data as UTF-8", level: .error)
             return
         }
-        
+
         // Minimal TCP data logging
         if text.contains("\"type\"") {
-            print("📨 Wyoming message received")
+            AppLog.shared.transcription("Wyoming message received", level: .debug)
         }
-        
+
         // Wyoming protocol uses JSONL - split by newlines
         let lines = text.components(separatedBy: .newlines)
-        
+
         for line in lines {
             let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmedLine.isEmpty {
@@ -367,55 +365,55 @@ class WyomingTCPClient: ObservableObject {
             }
         }
     }
-    
+
     private func handleTextMessage(_ text: String) async {
         // First, try to parse as a Wyoming message with type
         do {
             let wyomingMessage = try WyomingMessage.fromJSONString(text)
-            
+
             // Call registered handler for this message type
             if let handler = messageHandlers[wyomingMessage.type] {
                 handler(wyomingMessage)
             } else {
-                print("⚠️ No handler for: \(wyomingMessage.type)")
+                AppLog.shared.transcription("No handler for message type: \(wyomingMessage.type)", level: .debug)
             }
-            
+
         } catch {
             // Try to parse as raw transcript JSON
             if let textData = text.data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: textData) as? [String: Any],
                let transcriptText = json["text"] as? String {
-                
+
                 // Create a synthetic WyomingMessage for the transcript handler
                 let transcriptData = WyomingTranscriptData(text: transcriptText, language: nil, confidence: nil)
                 let syntheticMessage = WyomingMessage(type: .transcript, data: transcriptData)
-                
+
                 // Call the transcript handler directly
                 if let handler = messageHandlers[.transcript] {
                     handler(syntheticMessage)
                 }
             } else {
-                print("⚠️ Failed to parse message")
+                AppLog.shared.transcription("Failed to parse Wyoming TCP message", level: .error)
             }
         }
     }
-    
+
     // MARK: - Message Handler Registration
-    
+
     func registerHandler(for messageType: WyomingMessageType, handler: @escaping (WyomingMessage) -> Void) {
         messageHandlers[messageType] = handler
     }
-    
+
     func removeHandler(for messageType: WyomingMessageType) {
         messageHandlers.removeValue(forKey: messageType)
     }
-    
+
     // MARK: - Convenience Methods
-    
+
     func sendDescribe() async throws {
         try await sendMessage(WyomingMessageFactory.createDescribeMessage())
     }
-    
+
     /// Send a transcription request.
     ///
     /// - Parameters:
@@ -425,34 +423,34 @@ class WyomingTCPClient: ObservableObject {
     func sendTranscribe(language: String? = nil, model: String? = nil) async throws {
         try await sendMessage(WyomingMessageFactory.createTranscribeMessage(language: language, model: model))
     }
-    
+
     func sendAudioStart() async throws {
         try await sendMessage(WyomingMessageFactory.createAudioStartMessage())
     }
-    
+
     func sendAudioStop() async throws {
         try await sendMessage(WyomingMessageFactory.createAudioStopMessage())
     }
-    
+
     func sendAudioChunk(_ audioData: Data, rate: Int = 16000, width: Int = 16, channels: Int = 1) async throws {
         let message = WyomingMessageFactory.createAudioChunkMessage(audioData: audioData, rate: rate, width: width, channels: channels)
         try await sendMessage(message)
     }
-    
+
     // MARK: - Connection Testing
-    
+
     func testConnection() async -> Bool {
         do {
             try await connect()
             return isConnected
         } catch {
-            print("❌ Wyoming TCP connection test failed: \(error)")
+            AppLog.shared.transcription("Wyoming TCP connection test failed: \(error)", level: .error)
             return false
         }
     }
-    
+
     // MARK: - Connection State
-    
+
     var connectionStatus: String {
         if isConnected {
             return "Connected to Wyoming TCP server"

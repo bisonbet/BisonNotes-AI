@@ -82,11 +82,11 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
             do {
                 _ = try await center.requestAuthorization(options: [.alert, .badge, .sound])
             } catch {
-                print("❌ Error requesting notification permission: \(error)")
+                AppLog.shared.summarization("[OnDeviceAIDownloadMonitor] Error requesting notification permission: \(error)", level: .error)
                 return
             }
         } else if settings.authorizationStatus != .authorized {
-            print("📱 Notification not sent - permission denied")
+            AppLog.shared.summarization("[OnDeviceAIDownloadMonitor] Notification not sent - permission denied")
             return
         }
         
@@ -103,9 +103,9 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
         
         do {
             try await center.add(request)
-            print("📱 Sent notification: \(title)")
+            AppLog.shared.summarization("[OnDeviceAIDownloadMonitor] Sent notification: \(title)")
         } catch {
-            print("❌ Failed to send notification: \(error)")
+            AppLog.shared.summarization("[OnDeviceAIDownloadMonitor] Failed to send notification: \(error)", level: .error)
         }
     }
 }

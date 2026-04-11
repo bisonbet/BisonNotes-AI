@@ -146,9 +146,9 @@ open class OnDeviceLLM: ObservableObject {
             
             // Print with appropriate prefix
             if levelRaw == warnRaw {
-                print("[llama.cpp WARN] \(message)")
+                AppLog.shared.summarization("[llama.cpp WARN] \(message)", level: .error)
             } else if levelRaw == errorRaw {
-                print("[llama.cpp ERROR] \(message)")
+                AppLog.shared.summarization("[llama.cpp ERROR] \(message)", level: .error)
             }
         }
         
@@ -185,11 +185,11 @@ open class OnDeviceLLM: ObservableObject {
         var modelParams = llama_model_default_params()
         #if targetEnvironment(simulator)
             modelParams.n_gpu_layers = 0
-            print("[OnDeviceLLM] Running on simulator - GPU layers disabled")
+            AppLog.shared.summarization("[OnDeviceLLM] Running on simulator - GPU layers disabled")
         #else
             // Offload all layers to GPU for maximum performance on Apple Silicon
             modelParams.n_gpu_layers = 999
-            print("[OnDeviceLLM] Requesting all layers on GPU (n_gpu_layers=999)")
+            AppLog.shared.summarization("[OnDeviceLLM] Requesting all layers on GPU (n_gpu_layers=999)", level: .debug)
         #endif
         guard let model = llama_model_load_from_file(self.path, modelParams) else {
             fatalError("[OnDeviceLLM] Failed to load model from: \(path)")
@@ -198,7 +198,7 @@ open class OnDeviceLLM: ObservableObject {
         // Log model info
         let modelSize = llama_model_size(model)
         let modelParams_n = llama_model_n_params(model)
-        print("[OnDeviceLLM] Model loaded - size: \(modelSize / 1_000_000)MB, params: \(modelParams_n / 1_000_000)M")
+        AppLog.shared.summarization("[OnDeviceLLM] Model loaded - size: \(modelSize / 1_000_000)MB, params: \(modelParams_n / 1_000_000)M")
         self.params = llama_context_default_params()
         self.params.type_k = GGML_TYPE_Q8_0
         self.params.type_v = GGML_TYPE_Q8_0
@@ -223,7 +223,7 @@ open class OnDeviceLLM: ObservableObject {
         self.params.n_batch = n_batch
         self.params.n_threads = processorCount
         self.params.n_threads_batch = processorCount
-        print("[OnDeviceLLM] Context: n_ctx=\(self.maxTokenCount), n_batch=\(n_batch), model_train_ctx=\(modelTrainCtx), threads=\(processorCount)")
+        AppLog.shared.summarization("[OnDeviceLLM] Context: n_ctx=\(self.maxTokenCount), n_batch=\(n_batch), model_train_ctx=\(modelTrainCtx), threads=\(processorCount)", level: .debug)
         self.topK = topK
         self.topP = topP
         self.minP = minP
@@ -374,11 +374,11 @@ open class OnDeviceLLM: ObservableObject {
         guard !Task.isCancelled else { return self.model.endToken }
         guard self.inferenceTask != nil else { return self.model.endToken }
         guard self.batch.n_tokens > 0 else {
-            print("Error: Batch is empty or invalid.")
+            AppLog.shared.summarization("[OnDeviceLLM] Batch is empty or invalid", level: .error)
             return model.endToken
         }
         guard self.batch.n_tokens < self.maxTokenCount else {
-            print("Error: Batch token limit exceeded.")
+            AppLog.shared.summarization("[OnDeviceLLM] Batch token limit exceeded", level: .error)
             return model.endToken
         }
         guard let sampler = self.sampler else {
@@ -387,7 +387,7 @@ open class OnDeviceLLM: ObservableObject {
 
         // Check if app is backgrounded before submitting GPU work
         if self.isAppBackgrounded {
-            print("[OnDeviceLLM] App is backgrounded, stopping token generation to avoid Metal crash")
+            AppLog.shared.summarization("[OnDeviceLLM] App is backgrounded, stopping token generation to avoid Metal crash", level: .error)
             self.wasInterruptedByBackground = true
             return self.model.endToken
         }
@@ -401,7 +401,7 @@ open class OnDeviceLLM: ObservableObject {
 
         // Handle decode failure gracefully by returning end token
         if !context.decode(self.batch) {
-            print("[OnDeviceLLM] Decode failed during token prediction, ending generation")
+            AppLog.shared.summarization("[OnDeviceLLM] Decode failed during token prediction, ending generation", level: .error)
             return self.model.endToken
         }
         return token
@@ -420,7 +420,7 @@ open class OnDeviceLLM: ObservableObject {
         let outputReserve = min(2048, max(256, maxTokenCount / 10))
         let maxInputTokens = maxTokenCount - outputReserve
         if tokens.count > maxInputTokens {
-            print("[OnDeviceLLM] Input too long (\(tokens.count) tokens), truncating to \(maxInputTokens) (reserving \(outputReserve) for output)")
+            AppLog.shared.summarization("[OnDeviceLLM] Input too long (\(tokens.count) tokens), truncating to \(maxInputTokens) (reserving \(outputReserve) for output)", level: .error)
             tokens = Array(tokens.prefix(maxInputTokens))
         }
 
@@ -437,7 +437,7 @@ open class OnDeviceLLM: ObservableObject {
         let totalTokens = tokens.count
         var tokenIndex = 0
 
-        print("[OnDeviceLLM] Processing \(totalTokens) input tokens in batches of \(batchSize)")
+        AppLog.shared.summarization("[OnDeviceLLM] Processing \(totalTokens) input tokens in batches of \(batchSize)", level: .debug)
 
         while tokenIndex < totalTokens {
             self.batch.clear()
@@ -459,31 +459,31 @@ open class OnDeviceLLM: ObservableObject {
             // Check if app is backgrounded before submitting GPU work
             // iOS kills Metal command buffers from background apps (fatal crash)
             if self.isAppBackgrounded {
-                print("[OnDeviceLLM] App is backgrounded, aborting prefill to avoid Metal crash")
+                AppLog.shared.summarization("[OnDeviceLLM] App is backgrounded, aborting prefill to avoid Metal crash", level: .error)
                 self.wasInterruptedByBackground = true
                 return false
             }
 
             // Handle decode failure gracefully
             if !self.context.decode(self.batch) {
-                print("[OnDeviceLLM] Batch decode failed at token \(tokenIndex)")
+                AppLog.shared.summarization("[OnDeviceLLM] Batch decode failed at token \(tokenIndex)", level: .error)
                 return false
             }
 
             // Check for cancellation after each batch decode
             if Task.isCancelled {
-                print("[OnDeviceLLM] Task cancelled during prefill, aborting")
+                AppLog.shared.summarization("[OnDeviceLLM] Task cancelled during prefill, aborting")
                 return false
             }
 
             tokenIndex += currentBatchSize
 
             if OnDeviceLLMFeatureFlags.verboseLogging {
-                print("[OnDeviceLLM] Processed batch: \(tokenIndex)/\(totalTokens) tokens")
+                AppLog.shared.summarization("[OnDeviceLLM] Processed batch: \(tokenIndex)/\(totalTokens) tokens", level: .debug)
             }
         }
 
-        print("[OnDeviceLLM] Prefill complete: \(totalTokens) tokens processed")
+        AppLog.shared.summarization("[OnDeviceLLM] Prefill complete: \(totalTokens) tokens processed", level: .debug)
         return true
     }
 
@@ -581,12 +581,12 @@ open class OnDeviceLLM: ObservableObject {
 
                     // Check for max output tokens (safety limit to prevent infinite generation)
                     if self.outputTokenCount >= self.maxOutputTokens {
-                        print("[OnDeviceLLM] Max output tokens (\(self.maxOutputTokens)) reached, stopping generation")
+                        AppLog.shared.summarization("[OnDeviceLLM] Max output tokens (\(self.maxOutputTokens)) reached, stopping generation")
                         break
                     }
 
                     if Task.isCancelled {
-                        print("[OnDeviceLLM] Task cancelled during generation, stopping")
+                        AppLog.shared.summarization("[OnDeviceLLM] Task cancelled during generation, stopping")
                         break
                     }
                     if self.nPast >= self.maxTokenCount {
@@ -614,7 +614,7 @@ open class OnDeviceLLM: ObservableObject {
         let kvCacheTokenCount: Int32 = llama_memory_seq_pos_max(memory, seq_id)
         self.nPast = kvCacheTokenCount + 1
         if OnDeviceLLMFeatureFlags.verboseLogging {
-            print("kv cache trimmed: llama_kv_cache(\(kvCacheTokenCount) nPast(\(self.nPast))")
+            AppLog.shared.summarization("[OnDeviceLLM] KV cache trimmed: kv_cache(\(kvCacheTokenCount)) nPast(\(self.nPast))", level: .debug)
         }
     }
 
@@ -659,7 +659,7 @@ open class OnDeviceLLM: ObservableObject {
         // This can occur when useLLMCaching is false and the defer block in generateResponseStream
         // has already cleared the context before this function is called
         guard let context = self.context else {
-            print("[OnDeviceLLM] Warning: Cannot rollback - context is nil (likely already cleared)")
+            AppLog.shared.summarization("[OnDeviceLLM] Cannot rollback - context is nil (likely already cleared)", level: .debug)
             return
         }
         
@@ -681,13 +681,13 @@ extension OnDeviceLLM {
     @InferenceActor
     public func saveState() -> Data? {
         guard let contextPointer = self.context?.pointer else {
-            print("Error: llama_context pointer is nil.")
+            AppLog.shared.summarization("[OnDeviceLLM] llama_context pointer is nil in saveState", level: .error)
             return nil
         }
 
         let stateSize = llama_state_get_size(contextPointer)
         guard stateSize > 0 else {
-            print("Error: Unable to retrieve state size.")
+            AppLog.shared.summarization("[OnDeviceLLM] Unable to retrieve state size", level: .error)
             return nil
         }
 
@@ -704,7 +704,7 @@ extension OnDeviceLLM {
     @InferenceActor
     public func restoreState(from stateData: Data) {
         guard let contextPointer = self.context?.pointer else {
-            print("Error: llama_context pointer is nil.")
+            AppLog.shared.summarization("[OnDeviceLLM] llama_context pointer is nil in restoreState", level: .error)
             return
         }
 

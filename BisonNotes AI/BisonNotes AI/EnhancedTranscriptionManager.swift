@@ -153,7 +153,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         
         
         guard !apiKey.isEmpty else {
-            print("⚠️ OpenAI API key is not configured")
+            AppLog.shared.transcription("OpenAI API key is not configured")
             return nil
         }
         
@@ -177,7 +177,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         let language = UserDefaults.standard.string(forKey: "mistralTranscribeLanguage") ?? ""
 
         guard !apiKey.isEmpty else {
-            print("⚠️ Mistral API key is not configured for transcription")
+            AppLog.shared.transcription("Mistral API key is not configured for transcription")
             return nil
         }
 
@@ -273,11 +273,10 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         speechRecognizer?.delegate = self
         
         if let recognizer = speechRecognizer {
-            print("✅ Speech recognizer created with locale: \(recognizer.locale.identifier)")
+            AppLog.shared.transcription("Speech recognizer created with locale: \(recognizer.locale.identifier)")
             // Note: Speech authorization will be requested when user actually tries to use native speech recognition transcription
         } else {
-            print("❌ Failed to create speech recognizer with any locale")
-            print("🔧 This may be due to simulator limitations or device restrictions")
+            AppLog.shared.transcription("Failed to create speech recognizer with any locale", level: .error)
         }
     }
     
@@ -300,7 +299,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
         if backgroundTaskID != .invalid {
             backgroundTaskStartTime = Date()
-            print("🔄 Started background task for Whisper: \(backgroundTaskID.rawValue)")
+            AppLog.shared.transcription("Started background task for Whisper: \(backgroundTaskID.rawValue)", level: .debug)
 
             // Start a timer to refresh the background task every 25 seconds
             // to avoid iOS warnings about tasks running >30 seconds
@@ -314,7 +313,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         backgroundTaskRefreshTimer = nil
 
         if backgroundTaskID != .invalid {
-            print("⏹️ Ending background task for Whisper: \(backgroundTaskID.rawValue)")
+            AppLog.shared.transcription("Ending background task for Whisper: \(backgroundTaskID.rawValue)", level: .debug)
             UIApplication.shared.endBackgroundTask(backgroundTaskID)
             backgroundTaskID = .invalid
             backgroundTaskStartTime = nil
@@ -344,14 +343,14 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     private func refreshBackgroundTask() async {
         guard backgroundTaskID != .invalid else { return }
 
-        print("♻️ Refreshing Whisper background task to avoid iOS 30-second warning")
+        AppLog.shared.transcription("Refreshing Whisper background task to avoid iOS 30-second warning", level: .debug)
 
         // End the current task
         let oldTaskID = backgroundTaskID
         UIApplication.shared.endBackgroundTask(backgroundTaskID)
         backgroundTaskID = .invalid
         backgroundTaskStartTime = nil
-        print("   Ended old task: \(oldTaskID.rawValue)")
+        AppLog.shared.transcription("Ended old task: \(oldTaskID.rawValue)", level: .debug)
 
         // Immediately start a new one
         backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WhisperTranscription") { [weak self] in
@@ -362,7 +361,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
         if backgroundTaskID != .invalid {
             backgroundTaskStartTime = Date()
-            print("   Started new task: \(backgroundTaskID.rawValue)")
+            AppLog.shared.transcription("Started new task: \(backgroundTaskID.rawValue)", level: .debug)
         }
     }
 
@@ -377,13 +376,13 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         // Get actual app memory usage (not total device memory)
         let memoryUsage = getAppMemoryUsage()
         let memoryUsageMB = memoryUsage / 1024 / 1024
-        print("💾 App memory usage: \(memoryUsageMB) MB")
+        AppLog.shared.transcription("App memory usage: \(memoryUsageMB) MB", level: .debug)
         
         // Only warn about high memory usage, don't cancel transcriptions
         // iOS will handle memory pressure automatically
         let warningThresholdMB: UInt64 = 500 // 500 MB warning threshold
         if memoryUsageMB > warningThresholdMB {
-            print("⚠️ High app memory usage detected (\(memoryUsageMB) MB), but continuing transcription")
+            AppLog.shared.transcription("High app memory usage detected (\(memoryUsageMB) MB), but continuing transcription")
             // Force cleanup without cancelling
             autoreleasepool {
                 // This will help release memory
@@ -423,7 +422,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         }
         
         guard FileManager.default.fileExists(atPath: url.path) else {
-            print("❌ File not found: \(url.path)")
+            AppLog.shared.transcription("File not found: \(url.path)", level: .error)
             throw TranscriptionError.fileNotFound
         }
         
@@ -437,10 +436,10 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             // Check if duration is reasonable
             let durationMinutes = testPlayer.duration / 60
 if durationMinutes > 120 { // 2 hours max
-                print("⚠️ Audio file is very long (\(durationMinutes) minutes), this may cause memory issues")
+                AppLog.shared.transcription("Audio file is very long (\(durationMinutes) minutes), this may cause memory issues")
             }
         } catch {
-            print("❌ Audio file validation failed: \(error)")
+            AppLog.shared.transcription("Audio file validation failed: \(error)", level: .error)
             throw TranscriptionError.audioExtractionFailed
         }
         
@@ -453,7 +452,7 @@ if durationMinutes > 120 { // 2 hours max
         // Manage background checking based on selected engine
         switch selectedEngine {
         case .notConfigured:
-            print("❌ Transcription engine not configured")
+            AppLog.shared.transcription("Transcription engine not configured", level: .error)
             throw TranscriptionError.engineNotConfigured
 
         case .fluidAudio:
@@ -465,14 +464,14 @@ if durationMinutes > 120 { // 2 hours max
             
             // Check if AWS Transcribe is configured
             guard let config = awsConfig else {
-                print("❌ AWS Transcribe selected but not configured")
+                AppLog.shared.transcription("AWS Transcribe selected but not configured", level: .error)
                 throw TranscriptionError.awsNotConfigured
             }
             
             // AWS Transcribe has a maximum limit of 4 hours
             let maxAWSDuration: TimeInterval = 4 * 60 * 60 // 4 hours in seconds
             if duration > maxAWSDuration {
-                print("❌ File too large for AWS Transcribe: \(duration/3600) hours (max: 4 hours)")
+                AppLog.shared.transcription("File too large for AWS Transcribe: \(duration/3600) hours (max: 4 hours)", level: .error)
                 throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxAWSDuration)
             }
             
@@ -483,7 +482,7 @@ return try await transcribeWithAWS(url: url, config: config)
             
             // Validate Whisper configuration and availability
             if !isWhisperProperlyConfigured() {
-                print("⚠️ Whisper not properly configured, falling back to native speech recognition")
+                AppLog.shared.transcription("Whisper not properly configured, falling back to native speech recognition")
                 switchToNativeSpeechTranscription()
                 return try await transcribeWithNativeSpeech(url: url, duration: duration)
             }
@@ -544,8 +543,7 @@ if let config = openAIConfig {
             currentStatus = "Initializing native speech recognition transcription..."
         }
         
-        print("🎤 Starting native speech recognition transcription for file: \(url.lastPathComponent)")
-        print("⏱️ Duration: \(duration) seconds")
+        AppLog.shared.transcription("Starting native speech recognition for file: \(url.lastPathComponent), duration: \(duration)s")
 
         // Request speech recognition authorization if needed
         let authStatus = await withCheckedContinuation { continuation in
@@ -554,7 +552,7 @@ if let config = openAIConfig {
             }
         }
 
-        print("🔐 Speech recognition authorization status: \(authStatus.rawValue)")
+        AppLog.shared.transcription("Speech recognition authorization status: \(authStatus.rawValue)", level: .debug)
 
         guard authStatus == .authorized else {
             await MainActor.run {
@@ -576,7 +574,7 @@ if let config = openAIConfig {
                 statusMessage = "Speech recognition authorization failed."
             }
 
-            print("❌ Speech recognition authorization failed: \(statusMessage)")
+            AppLog.shared.transcription("Speech recognition authorization failed: \(statusMessage)", level: .error)
             throw TranscriptionError.speechRecognitionNotAuthorized
         }
         
@@ -586,16 +584,16 @@ if let config = openAIConfig {
                 isTranscribing = false
                 currentStatus = "Speech recognition service unavailable"
             }
-            print("❌ Speech recognizer service check failed at transcription start")
+            AppLog.shared.transcription("Speech recognizer service check failed at transcription start", level: .error)
             throw TranscriptionError.speechRecognizerUnavailable
         }
         
         // Use the existing logic for native speech recognition transcription
         if !enableEnhancedTranscription || duration <= maxChunkDuration {
-            print("📝 Using single chunk transcription (duration: \(duration)s <= \(maxChunkDuration)s)")
+            AppLog.shared.transcription("Using single chunk transcription (duration: \(duration)s <= \(maxChunkDuration)s)")
             return try await transcribeSingleChunk(url: url)
         } else {
-            print("📝 Using large file transcription (duration: \(duration)s > \(maxChunkDuration)s)")
+            AppLog.shared.transcription("Using large file transcription (duration: \(duration)s > \(maxChunkDuration)s)")
             return try await transcribeLargeFile(url: url, duration: duration)
         }
     }
@@ -658,14 +656,14 @@ if status.isCompleted {
                     }
                     
                 } else if status.isFailed {
-                    print("❌ AWS job failed: \(jobName) - \(status.failureReason ?? "Unknown error")")
+                    AppLog.shared.transcription("AWS job failed: \(jobName) - \(status.failureReason ?? "Unknown error")", level: .error)
                     // Remove failed jobs from pending list
                     removePendingJob(jobName)
                 } else {
                     stillPendingJobs.append(jobName)
                 }
             } catch {
-                print("❌ Error checking AWS job \(jobName): \(error)")
+                AppLog.shared.transcription("Error checking AWS job \(jobName): \(error)", level: .error)
                 // Keep job in pending list if we can't check it
                 stillPendingJobs.append(jobName)
             }
@@ -692,12 +690,12 @@ private func transcribeSingleChunk(url: URL) async throws -> TranscriptionResult
         
         // Check if speech recognizer is available
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-            print("❌ Speech recognizer is not available")
+            AppLog.shared.transcription("Speech recognizer is not available", level: .error)
             isTranscribing = false
             currentStatus = "Speech recognition unavailable"
             throw TranscriptionError.speechRecognizerUnavailable
         }
-        
+
         // Add timeout to prevent infinite CPU usage
         return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
             // Main transcription task
@@ -760,9 +758,7 @@ if transcriptText.isEmpty {
                                     } else {
 // Check if transcript contains error text
                                         if transcriptText.lowercased().contains("error") {
-                                            print("⚠️ WARNING: Transcript contains 'error' text!")
-                                            print("📝 Transcript text: \(transcriptText)")
-                                            print("🔍 This might indicate a transcription error was saved as content")
+                                            AppLog.shared.transcription("Transcript contains 'error' text -- may indicate a transcription error was saved as content")
                                         }
                                         let segments = self.createSegments(from: result.bestTranscription)
                                         let transcriptionResult = TranscriptionResult(
@@ -819,7 +815,7 @@ private func transcribeLargeFile(url: URL, duration: TimeInterval) async throws 
         // Check if file is too large to process safely
         let maxSafeDuration: TimeInterval = 3600 // 1 hour max for chunked processing
         if duration > maxSafeDuration {
-            print("⚠️ File duration (\(duration/60) minutes) exceeds safe limit (\(maxSafeDuration/60) minutes)")
+            AppLog.shared.transcription("File duration (\(duration/60) minutes) exceeds safe limit (\(maxSafeDuration/60) minutes)", level: .error)
             throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxSafeDuration)
         }
         
@@ -831,11 +827,11 @@ do {
             
             let maxFileSizeMB: Int64 = 500 // 500 MB max
             if fileSizeMB > maxFileSizeMB {
-                print("⚠️ File size (\(fileSizeMB) MB) exceeds safe limit (\(maxFileSizeMB) MB)")
+                AppLog.shared.transcription("File size (\(fileSizeMB) MB) exceeds safe limit (\(maxFileSizeMB) MB)", level: .error)
                 throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxSafeDuration)
             }
         } catch {
-            print("⚠️ Could not check file size: \(error)")
+            AppLog.shared.transcription("Could not check file size: \(error)", level: .debug)
         }
         
         // Check available disk space
@@ -847,11 +843,11 @@ do {
             
             let minFreeSpaceMB: Int64 = 1000 // 1 GB min
             if freeSpaceMB < minFreeSpaceMB {
-                print("⚠️ Insufficient disk space (\(freeSpaceMB) MB), need at least \(minFreeSpaceMB) MB")
+                AppLog.shared.transcription("Insufficient disk space (\(freeSpaceMB) MB), need at least \(minFreeSpaceMB) MB", level: .error)
                 throw TranscriptionError.audioExtractionFailed
             }
         } catch {
-            print("⚠️ Could not check disk space: \(error)")
+            AppLog.shared.transcription("Could not check disk space: \(error)", level: .debug)
         }
         
 // Calculate chunks
@@ -860,7 +856,7 @@ do {
         // Limit the number of chunks to prevent memory issues
         let maxChunks = 20 // Maximum number of chunks to process
         if chunks.count > maxChunks {
-            print("⚠️ Too many chunks (\(chunks.count)), limiting to \(maxChunks)")
+            AppLog.shared.transcription("Too many chunks (\(chunks.count)), limiting to \(maxChunks)", level: .error)
             throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxSafeDuration)
         }
         
@@ -886,22 +882,20 @@ for (index, chunk) in chunks.enumerated() {
             do {
                 // Check if transcription was cancelled
                 guard isTranscribing else {
-                    print("🛑 Transcription cancelled during chunk \(index + 1) processing")
+                    AppLog.shared.transcription("Transcription cancelled during chunk \(index + 1) processing")
                     throw TranscriptionError.recognitionFailed(NSError(domain: "TranscriptionCancelled", code: -1, userInfo: [NSLocalizedDescriptionKey: "Transcription was cancelled by user or system"]))
                 }
                 
                 // Check if speech recognizer is still available
                 guard let recognizer = speechRecognizer else {
-                    print("❌ Speech recognizer is nil during chunk \(index + 1)")
+                    AppLog.shared.transcription("Speech recognizer is nil during chunk \(index + 1)", level: .error)
                     isTranscribing = false
                     currentStatus = "Speech recognition unavailable - recognizer is nil"
                     throw TranscriptionError.speechRecognizerUnavailable
                 }
                 
                 guard recognizer.isAvailable else {
-                    print("❌ Speech recognizer became unavailable during chunk \(index + 1)")
-                    print("🔧 Recognizer locale: \(recognizer.locale.identifier)")
-                    print("🔧 Authorization status: \(SFSpeechRecognizer.authorizationStatus().rawValue)")
+                    AppLog.shared.transcription("Speech recognizer became unavailable during chunk \(index + 1), locale: \(recognizer.locale.identifier), authStatus: \(SFSpeechRecognizer.authorizationStatus().rawValue)", level: .error)
                     isTranscribing = false
                     currentStatus = "Speech recognition unavailable"
                     throw TranscriptionError.speechRecognizerUnavailable
@@ -928,7 +922,7 @@ for (index, chunk) in chunks.enumerated() {
                 
                 // Check if this chunk had any content
                 if chunkResult.fullText.isEmpty {
-                    print("⚠️ Chunk \(index + 1) was silent/empty, skipping")
+                    AppLog.shared.transcription("Chunk \(index + 1) was silent/empty, skipping", level: .debug)
                 } else {
                     // Adjust segment timestamps
                     let adjustedSegments = chunkResult.segments.map { segment in
@@ -989,7 +983,7 @@ for (index, chunk) in chunks.enumerated() {
             
             // Check if transcription was cancelled during the delay
             guard isTranscribing else {
-                print("🛑 Transcription was cancelled during delay")
+                AppLog.shared.transcription("Transcription was cancelled during delay")
                 throw TranscriptionError.recognitionFailed(NSError(domain: "TranscriptionCancelled", code: -1, userInfo: nil))
             }
         }
@@ -1013,25 +1007,16 @@ for (index, chunk) in chunks.enumerated() {
         // Force final memory cleanup
         checkMemoryPressure()
         
-        print("🎉 Large file transcription completed in \(processingTime/60) minutes")
+        AppLog.shared.transcription("Large file transcription completed in \(processingTime/60) minutes")
 
         // Check if we got any content at all
         if fullText.isEmpty {
-            print("⚠️ WARNING: No speech was detected in any chunks!")
-            print("📊 All \(chunks.count) chunks were processed, but contained no detectable speech")
-            print("💡 This could mean the audio file contains only silence, background noise, or non-speech content")
+            AppLog.shared.transcription("No speech detected in any of \(chunks.count) chunks -- audio may contain only silence or non-speech content")
         }
 
         // Debug: Check if the transcript contains placeholder text
         if fullText.lowercased().contains("loading") {
-            print("⚠️ WARNING: Transcript contains 'loading' text!")
-            print("📝 Full transcript preview: \(fullText.prefix(200))")
-            print("🔍 Checking segments for placeholder text...")
-            for (index, segment) in allSegments.enumerated() {
-                if segment.text.lowercased().contains("loading") {
-                    print("⚠️ Segment \(index) contains 'loading': \(segment.text)")
-                }
-            }
+            AppLog.shared.transcription("Transcript contains 'loading' text -- may indicate placeholder text in output")
         }
 
         return TranscriptionResult(
@@ -1045,18 +1030,18 @@ for (index, chunk) in chunks.enumerated() {
     }
     
     private func transcribeChunk(url: URL, startTime: TimeInterval, endTime: TimeInterval) async throws -> TranscriptionResult {
-        print("🎵 Extracting chunk from \(startTime/60) to \(endTime/60) minutes...")
+        AppLog.shared.transcription("Extracting chunk from \(startTime/60) to \(endTime/60) minutes", level: .debug)
 
         // Create a temporary audio file for the chunk
         let chunkURL = try await extractAudioChunk(from: url, startTime: startTime, endTime: endTime)
-        print("✅ Chunk extracted to: \(chunkURL.lastPathComponent)")
+        AppLog.shared.transcription("Chunk extracted to: \(chunkURL.lastPathComponent)", level: .debug)
 
         defer {
             try? FileManager.default.removeItem(at: chunkURL)
-            print("🗑️ Cleaned up temporary chunk file")
+            AppLog.shared.transcription("Cleaned up temporary chunk file", level: .debug)
         }
 
-        print("🎤 Transcribing chunk...")
+        AppLog.shared.transcription("Transcribing chunk", level: .debug)
         // Use internal method that doesn't manage isTranscribing flag
         let chunkStartTime = Date()
         return try await transcribeChunkInternal(url: chunkURL, startTime: chunkStartTime)
@@ -1067,7 +1052,7 @@ for (index, chunk) in chunks.enumerated() {
     private func transcribeChunkInternal(url: URL, startTime: Date) async throws -> TranscriptionResult {
         // Check if speech recognizer is available
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-            print("❌ Speech recognizer is not available")
+            AppLog.shared.transcription("Speech recognizer is not available", level: .error)
             throw TranscriptionError.speechRecognizerUnavailable
         }
 
@@ -1105,7 +1090,7 @@ for (index, chunk) in chunks.enumerated() {
                                 // Check if this is "no speech detected" error (code 1110)
                                 let nsError = error as NSError
                                 if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1110 {
-                                    print("⚠️ No speech detected in chunk - returning empty result to continue processing")
+                                    AppLog.shared.transcription("No speech detected in chunk - returning empty result to continue processing", level: .debug)
                                     // Return an empty but successful result for silent chunks
                                     let emptyResult = TranscriptionResult(
                                         fullText: "",
@@ -1141,7 +1126,7 @@ for (index, chunk) in chunks.enumerated() {
 
                                     if transcriptText.isEmpty {
                                         // Return an empty but successful result for silent chunks
-                                        print("⚠️ Empty transcript for chunk - returning empty result to continue processing")
+                                        AppLog.shared.transcription("Empty transcript for chunk - returning empty result to continue processing", level: .debug)
                                         let emptyResult = TranscriptionResult(
                                             fullText: "",
                                             segments: [],
@@ -1197,7 +1182,7 @@ for (index, chunk) in chunks.enumerated() {
     }
     
     private func extractAudioChunk(from url: URL, startTime: TimeInterval, endTime: TimeInterval) async throws -> URL {
-        print("🔧 Creating audio composition...")
+        AppLog.shared.transcription("Creating audio composition", level: .debug)
         let asset = AVURLAsset(url: url)
         let composition = AVMutableComposition()
         
@@ -1217,17 +1202,17 @@ for (index, chunk) in chunks.enumerated() {
         let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A)
         let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("chunk_\(UUID().uuidString).m4a")
         
-        print("📤 Exporting chunk to: \(outputURL.lastPathComponent)")
+        AppLog.shared.transcription("Exporting chunk to: \(outputURL.lastPathComponent)", level: .debug)
         
         exportSession?.outputURL = outputURL
         exportSession?.outputFileType = .m4a
         
         guard let session = exportSession else {
-            print("❌ Failed to create export session")
+            AppLog.shared.transcription("Failed to create export session", level: .error)
             throw TranscriptionError.audioExtractionFailed
         }
         
-        print("⏳ Starting export...")
+        AppLog.shared.transcription("Starting export", level: .debug)
         
         // Use async/await with timeout and progress monitoring
         return try await withThrowingTaskGroup(of: URL.self) { group in
@@ -1253,7 +1238,7 @@ for (index, chunk) in chunks.enumerated() {
             // Timeout task
             group.addTask { [weak session] in
                 try await Task.sleep(nanoseconds: UInt64(120 * 1_000_000_000)) // 2 minute timeout
-                print("⏰ Chunk export timeout reached, cancelling...")
+                AppLog.shared.transcription("Chunk export timeout reached, cancelling", level: .error)
                 session?.cancelExport()
                 throw TranscriptionError.timeout
             }
@@ -1298,7 +1283,7 @@ for (index, chunk) in chunks.enumerated() {
             
             // Safety check: if we're not making progress, break to prevent infinite loop
             if currentStart >= currentEnd {
-                print("⚠️ Breaking chunk calculation to prevent infinite loop")
+                AppLog.shared.transcription("Breaking chunk calculation to prevent infinite loop")
                 break
             }
         }
@@ -1350,7 +1335,7 @@ private func transcribeWithAWS(url: URL, config: AWSTranscribeConfig) async thro
             return try await waitForAndRetrieveTranscription(jobName: jobName, awsService: awsService)
             
         } catch {
-            print("❌ AWS Transcribe failed: \(error)")
+            AppLog.shared.transcription("AWS Transcribe failed: \(error)", level: .error)
             throw TranscriptionError.awsTranscriptionFailed(error)
         }
     }
@@ -1397,7 +1382,7 @@ default:
                 }
                 
             } catch {
-                print("⚠️ Error checking job status: \(error), retrying in 30 seconds...")
+                AppLog.shared.transcription("Error checking job status: \(error), retrying in 30 seconds", level: .error)
                 try await Task.sleep(nanoseconds: 30_000_000_000)
             }
         }
@@ -1468,12 +1453,12 @@ if status.isCompleted {
                     stillPendingJobs.append(jobName)
                 }
             } catch {
-                print("❌ Error checking job \(jobName): \(error)")
+                AppLog.shared.transcription("Error checking job \(jobName): \(error)", level: .error)
                 // Keep job in pending list if we can't check it
                 stillPendingJobs.append(jobName)
             }
         }
-        
+
         // Update pending jobs list
         updatePendingJobNames(stillPendingJobs)
         
@@ -1587,7 +1572,7 @@ let openAIResult = try await openAIService.transcribeAudioFile(at: url)
 return transcriptionResult
             
         } catch {
-            print("❌ OpenAI transcription failed: \(error)")
+            AppLog.shared.transcription("OpenAI transcription failed: \(error)", level: .error)
             throw TranscriptionError.openAITranscriptionFailed(error)
         }
     }
@@ -1650,7 +1635,7 @@ for chunk in chunks {
 return transcriptionResult
             
         } catch {
-            print("❌ Chunked OpenAI transcription failed: \(error)")
+            AppLog.shared.transcription("Chunked OpenAI transcription failed: \(error)", level: .error)
             throw TranscriptionError.openAITranscriptionFailed(error)
         }
     }
@@ -1685,7 +1670,7 @@ return transcriptionResult
                 error: mistralResult.error
             )
         } catch {
-            print("❌ Mistral transcription failed: \(error)")
+            AppLog.shared.transcription("Mistral transcription failed: \(error)", level: .error)
             throw TranscriptionError.mistralTranscriptionFailed(error)
         }
     }
@@ -1737,7 +1722,7 @@ return transcriptionResult
                 error: nil
             )
         } catch {
-            print("❌ Chunked Mistral transcription failed: \(error)")
+            AppLog.shared.transcription("Chunked Mistral transcription failed: \(error)", level: .error)
             throw TranscriptionError.mistralTranscriptionFailed(error)
         }
     }
@@ -1963,7 +1948,7 @@ if status.isCompleted {
                     stillPendingJobs.append(jobName)
                 }
             } catch {
-                print("❌ Background check: Error checking job \(jobName): \(error)")
+                AppLog.shared.transcription("Background check: Error checking job \(jobName): \(error)", level: .error)
                 // Keep job in pending list if we can't check it
                 stillPendingJobs.append(jobName)
             }
@@ -2000,11 +1985,11 @@ if status.isCompleted {
     
     private func handleSpeechRecognitionError(_ error: Error) -> Bool {
         if isNonCriticalSpeechRecognitionError(error) {
-            print("⚠️ Non-critical speech recognition error (safe to ignore): \(error.localizedDescription)")
+            AppLog.shared.transcription("Non-critical speech recognition error (safe to ignore): \(error.localizedDescription)", level: .debug)
             return true // Error was handled
         }
         
-        print("❌ Critical speech recognition error: \(error)")
+        AppLog.shared.transcription("Critical speech recognition error: \(error)", level: .error)
         return false // Error was not handled, should be treated as critical
     }
 }

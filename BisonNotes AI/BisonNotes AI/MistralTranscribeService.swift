@@ -140,7 +140,7 @@ class MistralTranscribeService: NSObject, ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("BisonNotes AI iOS App", forHTTPHeaderField: "User-Agent")
 
-        print("🔌 Testing Mistral API connection")
+        AppLog.shared.transcription("Testing Mistral API connection")
 
         let (_, response) = try await session.data(for: request)
 
@@ -162,7 +162,7 @@ class MistralTranscribeService: NSObject, ObservableObject {
         currentStatus = "Preparing audio file..."
         progress = 0.0
 
-        print("🚀 Starting Mistral transcription for: \(url.lastPathComponent)")
+        AppLog.shared.transcription("Starting Mistral transcription for: \(url.lastPathComponent)")
 
         do {
             guard url.isFileURL && FileManager.default.fileExists(atPath: url.path) else {
@@ -308,7 +308,7 @@ class MistralTranscribeService: NSObject, ObservableObject {
 
         request.httpBody = body
 
-        print("🎙️ Mistral transcription: model=\(config.model.rawValue), diarize=\(config.diarize), size=\(body.count) bytes")
+        AppLog.shared.transcription("Mistral transcription: model=\(config.model.rawValue), diarize=\(config.diarize), size=\(body.count) bytes", level: .debug)
 
         currentStatus = "Processing with \(config.model.displayName)..."
         progress = 0.5
@@ -331,7 +331,7 @@ class MistralTranscribeService: NSObject, ObservableObject {
 
         guard httpResponse.statusCode == 200 else {
             let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("❌ Mistral API error: \(errorText)")
+            AppLog.shared.transcription("Mistral API error: HTTP \(httpResponse.statusCode)", level: .error)
 
             if let errorResponse = try? JSONDecoder().decode(MistralErrorResponse.self, from: data) {
                 let message = errorResponse.message ?? errorResponse.detail?.message ?? errorText
@@ -352,7 +352,7 @@ class MistralTranscribeService: NSObject, ObservableObject {
            let mistralSegments = verboseResponse.segments, !mistralSegments.isEmpty {
             transcriptText = verboseResponse.text
             let speakerCount = Set(mistralSegments.compactMap { $0.speakerId }).count
-            print("📝 Parsed \(mistralSegments.count) segments with \(speakerCount) unique speakers")
+            AppLog.shared.transcription("Parsed \(mistralSegments.count) segments with \(speakerCount) unique speakers", level: .debug)
             segments = mistralSegments.map { seg in
                 TranscriptSegment(
                     speaker: seg.speakerId ?? "Speaker",
@@ -376,7 +376,7 @@ class MistralTranscribeService: NSObject, ObservableObject {
 
         let processingTime = Date().timeIntervalSince(startTime)
 
-        print("📝 Mistral transcription complete: \(transcriptText.count) chars, \(segments.count) segments, \(String(format: "%.1f", processingTime))s")
+        AppLog.shared.transcription("Mistral transcription complete: \(transcriptText.count) chars, \(segments.count) segments, \(String(format: "%.1f", processingTime))s")
 
         return MistralTranscribeResult(
             transcriptText: transcriptText,

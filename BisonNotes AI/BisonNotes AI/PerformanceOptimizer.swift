@@ -9,94 +9,6 @@ import Foundation
 import SwiftUI
 import os.log
 
-// MARK: - Logging Level Management
-
-enum LogLevel: Int, CaseIterable {
-    case error = 0
-    case warning = 1
-    case info = 2
-    case debug = 3
-    case verbose = 4
-    
-    var emoji: String {
-        switch self {
-        case .error: return "❌"
-        case .warning: return "⚠️"
-        case .info: return "ℹ️"
-        case .debug: return "🔍"
-        case .verbose: return "🔧"
-        }
-    }
-    
-    var description: String {
-        switch self {
-        case .error: return "Error"
-        case .warning: return "Warning"
-        case .info: return "Info"
-        case .debug: return "Debug"
-        case .verbose: return "Verbose"
-        }
-    }
-}
-
-class AppLogger {
-    static let shared = AppLogger()
-    
-    private let logger = Logger(subsystem: "com.audiojournal.app", category: "AppLogger")
-    private var currentLevel: LogLevel = .info
-    
-    private init() {
-        // Set default level based on build configuration
-        #if DEBUG
-        currentLevel = .debug
-        #else
-        currentLevel = .info
-        #endif
-    }
-    
-    func setLogLevel(_ level: LogLevel) {
-        currentLevel = level
-    }
-    
-    func log(_ message: String, level: LogLevel = .info, category: String = "General") {
-        guard level.rawValue <= currentLevel.rawValue else { return }
-        
-        let formattedMessage = "\(level.emoji) [\(category)]: \(message)"
-        
-        switch level {
-        case .error:
-            logger.error("\(formattedMessage)")
-        case .warning:
-            logger.warning("\(formattedMessage)")
-        case .info:
-            logger.info("\(formattedMessage)")
-        case .debug, .verbose:
-            logger.debug("\(formattedMessage)")
-        }
-    }
-    
-    // Convenience methods for different log levels
-    func error(_ message: String, category: String = "General") {
-        log(message, level: .error, category: category)
-    }
-    
-    func warning(_ message: String, category: String = "General") {
-        log(message, level: .warning, category: category)
-    }
-    
-    func info(_ message: String, category: String = "General") {
-        log(message, level: .info, category: category)
-    }
-    
-    func debug(_ message: String, category: String = "General") {
-        log(message, level: .debug, category: category)
-    }
-    
-    func verbose(_ message: String, category: String = "General") {
-        log(message, level: .verbose, category: category)
-    }
-}
-
 // MARK: - Battery Monitor
 
 struct BatteryInfo {
@@ -174,7 +86,7 @@ class PerformanceOptimizer: ObservableObject, Sendable {
     @Published var performanceMetrics: PerformanceMetrics = PerformanceMetrics()
     @Published var optimizationLevel: OptimizationLevel = .balanced
     
-    private let logger = Logger(subsystem: "com.audiojournal.app", category: "Performance")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "Performance")
     private let processingQueue = DispatchQueue(label: "com.audiojournal.processing", qos: .userInitiated)
     private let cacheQueue = DispatchQueue(label: "com.audiojournal.cache", qos: .utility)
     private let streamingQueue = DispatchQueue(label: "com.audiojournal.streaming", qos: .utility)
@@ -887,19 +799,6 @@ class PerformanceOptimizer: ObservableObject, Sendable {
     }
     
     // MARK: - Logging Control Methods
-    
-    func optimizeStartupLogging() {
-        logger.info("Optimizing startup logging levels")
-        
-        // Reduce verbose logging during startup
-        #if DEBUG
-        // In debug builds, keep some debug info but reduce verbose messages
-        AppLogger.shared.setLogLevel(.debug)
-        #else
-        // In release builds, only show important messages
-        AppLogger.shared.setLogLevel(.info)
-        #endif
-    }
     
     nonisolated static func shouldLogEngineInitialization() -> Bool {
         #if DEBUG

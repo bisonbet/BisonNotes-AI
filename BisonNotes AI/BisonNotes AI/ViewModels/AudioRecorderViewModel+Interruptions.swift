@@ -28,7 +28,7 @@ extension AudioRecorderViewModel {
 		switch type {
 		case .began:
 			if isRecording && !isInInterruption {
-				print("🎙️ Audio interruption began (e.g., incoming call) - pausing timer, waiting for CallKit to determine action")
+				AppLog.shared.audioSession("Audio interruption began - pausing timer, waiting for CallKit")
 				isInInterruption = true
 				interruptionRecordingURL = recordingURL
 
@@ -48,7 +48,7 @@ extension AudioRecorderViewModel {
 			// This handles cases where recording was stopped during the interruption or took a long time
 			guard isInInterruption, interruptionRecordingURL != nil else {
 				// Not in an interruption state, or no recording URL to resume
-				print("⚠️ Interruption ended but we weren't in an interruption state or have no recording URL")
+				AppLog.shared.audioSession("Interruption ended but not in interruption state or no recording URL")
 				return
 			}
 
@@ -58,7 +58,7 @@ extension AudioRecorderViewModel {
 			// If so, prompt the user instead of auto-resuming.
 			#if !targetEnvironment(macCatalyst)
 			if let callDuration = deferredCallDuration, callDuration >= SHORT_CALL_THRESHOLD {
-				print("📞 Deferred long call detected (\(callDuration)s ≥ \(SHORT_CALL_THRESHOLD)s threshold) — asking user whether to resume")
+				AppLog.shared.audioSession("Deferred long call detected (\(callDuration)s >= \(SHORT_CALL_THRESHOLD)s threshold) - asking user whether to resume")
 				deferredCallDuration = nil
 				recordingState = .waitingForUserDecision(callDuration: callDuration)
 				Task { @MainActor in
@@ -74,7 +74,7 @@ extension AudioRecorderViewModel {
 
 				if interruptionOptions.contains(.shouldResume) {
 					// User declined/ignored the call - definitely resume recording
-					print("🔄 Interruption ended with shouldResume - user declined/ignored call, resuming recording")
+					AppLog.shared.audioSession("Interruption ended with shouldResume - user declined/ignored call, resuming recording")
 					let urlToResume = interruptionRecordingURL // Capture before clearing
 					interruptionRecordingURL = nil
 					Task { @MainActor in
@@ -87,7 +87,7 @@ extension AudioRecorderViewModel {
 					// 3. Call was answered then hung up (should resume)
 
 					// Try to resume anyway - if it fails, we'll handle it
-					print("🔄 Interruption ended without shouldResume - attempting to resume (may have been declined or hung up)")
+					AppLog.shared.audioSession("Interruption ended without shouldResume - attempting to resume")
 					let urlToResume = interruptionRecordingURL // Capture before clearing
 					interruptionRecordingURL = nil
 					Task { @MainActor in
@@ -98,7 +98,7 @@ extension AudioRecorderViewModel {
 			} else {
 				// No options provided - try to resume anyway (might be a declined call)
 				// iOS sometimes doesn't set .shouldResume for declined calls, but we should try
-				print("🔄 Interruption ended without options - attempting to resume (may have been declined call)")
+				AppLog.shared.audioSession("Interruption ended without options - attempting to resume")
 				let urlToResume = interruptionRecordingURL // Capture before clearing
 				interruptionRecordingURL = nil
 				Task { @MainActor in
@@ -114,17 +114,17 @@ extension AudioRecorderViewModel {
 	@MainActor
 	func attemptResumeAfterUnexpectedStop() async {
 		guard !isResuming else {
-			print("⏳ Resume already in progress, skipping duplicate attemptResumeAfterUnexpectedStop")
+			AppLog.shared.audioSession("Resume already in progress, skipping duplicate attemptResumeAfterUnexpectedStop", level: .debug)
 			return
 		}
 		isResuming = true
 		defer { isResuming = false }
 
-		print("🔄 Attempting to resume recording after unexpected stop (likely declined call)")
+		AppLog.shared.audioSession("Attempting to resume recording after unexpected stop")
 
 		// Use current recording URL
 		guard let url = recordingURL else {
-			print("❌ No recording URL available to resume")
+			AppLog.shared.audioSession("No recording URL available to resume", level: .error)
 			errorMessage = "Could not resume recording: no recording file found"
 			isRecording = false
 			return
@@ -132,7 +132,7 @@ extension AudioRecorderViewModel {
 
 		// Check if the file still exists
 		guard FileManager.default.fileExists(atPath: url.path) else {
-			print("❌ Recording file no longer exists")
+			AppLog.shared.audioSession("Recording file no longer exists", level: .error)
 			errorMessage = "Could not resume recording: file was removed"
 			isRecording = false
 			return
@@ -144,12 +144,12 @@ extension AudioRecorderViewModel {
 		audioRecorder = nil
 
 		let fileSizeAfterStop = getFileSize(url: url)
-		print("📊 Current segment file size after finalization: \(fileSizeAfterStop) bytes")
+		AppLog.shared.audioSession("Current segment file size after finalization: \(fileSizeAfterStop) bytes", level: .debug)
 
 		// Add this segment to our list if it's not already there
 		if !recordingSegments.contains(url) {
 			recordingSegments.append(url)
-			print("✅ Saved segment \(recordingSegments.count): \(url.lastPathComponent)")
+			AppLog.shared.audioSession("Saved segment \(recordingSegments.count)")
 		}
 
 		// Add a small delay to give iOS time to fully release the audio session after the call
@@ -162,7 +162,7 @@ extension AudioRecorderViewModel {
 		// Step 2: Create a new segment file for continuation
 		currentSegmentIndex += 1
 		let newSegmentURL = createSegmentURL(baseURL: mainRecordingURL ?? url, segmentIndex: currentSegmentIndex)
-		print("📝 Creating new segment \(currentSegmentIndex + 1): \(newSegmentURL.lastPathComponent)")
+		AppLog.shared.audioSession("Creating new segment \(currentSegmentIndex + 1)", level: .debug)
 
 		// Try to restore audio session and start recording to new segment
 		do {
@@ -184,7 +184,7 @@ extension AudioRecorderViewModel {
 
 			// Verify it's actually recording
 			if let recorder = audioRecorder, recorder.isRecording {
-				print("✅ Recording resumed with new segment - previous audio preserved!")
+				AppLog.shared.audioSession("Recording resumed with new segment - previous audio preserved")
 				recordingSegments.append(newSegmentURL)
 				recordingURL = newSegmentURL // Update to the new segment
 				isRecording = true
@@ -194,11 +194,11 @@ extension AudioRecorderViewModel {
 				errorMessage = nil
 				recorderStoppedUnexpectedlyTime = nil
 			} else {
-				print("❌ Failed to resume recording - recorder not active, treating as real interruption")
+				AppLog.shared.audioSession("Failed to resume recording - recorder not active, treating as real interruption", level: .error)
 				handleInterruptedRecording(reason: "Microphone became unavailable or recording was interrupted")
 			}
 		} catch {
-			print("❌ Failed to resume recording: \(error.localizedDescription), treating as real interruption")
+			AppLog.shared.audioSession("Failed to resume recording: \(error.localizedDescription), treating as real interruption", level: .error)
 			handleInterruptedRecording(reason: "Microphone became unavailable: \(error.localizedDescription)")
 		}
 	}
@@ -207,7 +207,7 @@ extension AudioRecorderViewModel {
 	func resumeRecordingAfterInterruption(url: URL?) async {
 		// Check if the recorder is still valid and recording (best case — iOS just paused the session)
 		if let recorder = audioRecorder, recorder.isRecording {
-			print("✅ Recorder is still active, resuming timer")
+			AppLog.shared.audioSession("Recorder still active, resuming timer")
 			startRecordingTimer()
 			errorMessage = nil
 			isInInterruption = false
@@ -217,17 +217,17 @@ extension AudioRecorderViewModel {
 
 		// From here we need to create a new segment — guard against concurrent attempts
 		guard !isResuming else {
-			print("⏳ Resume already in progress, skipping duplicate resumeRecordingAfterInterruption")
+			AppLog.shared.audioSession("Resume already in progress, skipping duplicate resumeRecordingAfterInterruption", level: .debug)
 			return
 		}
 		isResuming = true
 		defer { isResuming = false }
 
-		print("🔄 Attempting to resume recording after interruption")
+		AppLog.shared.audioSession("Attempting to resume recording after interruption")
 
 		// Recorder was stopped by iOS, need to restart it
 		guard let url = url else {
-			print("❌ No recording URL available to resume")
+			AppLog.shared.audioSession("No recording URL available to resume", level: .error)
 			errorMessage = "Could not resume recording: no recording file found"
 			isRecording = false
 			isInInterruption = false
@@ -236,7 +236,7 @@ extension AudioRecorderViewModel {
 
 		// Check if the file still exists
 		guard FileManager.default.fileExists(atPath: url.path) else {
-			print("❌ Recording file no longer exists")
+			AppLog.shared.audioSession("Recording file no longer exists", level: .error)
 			errorMessage = "Could not resume recording: file was removed"
 			isRecording = false
 			isInInterruption = false
@@ -249,12 +249,12 @@ extension AudioRecorderViewModel {
 		audioRecorder = nil
 
 		let fileSizeAfterStop = getFileSize(url: url)
-		print("📊 Current segment file size after finalization: \(fileSizeAfterStop) bytes")
+		AppLog.shared.audioSession("Current segment file size after finalization: \(fileSizeAfterStop) bytes", level: .debug)
 
 		// Add this segment to our list if it's not already there
 		if !recordingSegments.contains(url) {
 			recordingSegments.append(url)
-			print("✅ Saved segment \(recordingSegments.count): \(url.lastPathComponent)")
+			AppLog.shared.audioSession("Saved segment \(recordingSegments.count)")
 		}
 
 		// Add a small delay to give iOS time to fully release the audio session after the interruption
@@ -267,7 +267,7 @@ extension AudioRecorderViewModel {
 		// Step 2: Create a new segment file for continuation
 		currentSegmentIndex += 1
 		let newSegmentURL = createSegmentURL(baseURL: mainRecordingURL ?? url, segmentIndex: currentSegmentIndex)
-		print("📝 Creating new segment \(currentSegmentIndex + 1): \(newSegmentURL.lastPathComponent)")
+		AppLog.shared.audioSession("Creating new segment \(currentSegmentIndex + 1)", level: .debug)
 
 		// Try to restore audio session and start recording to new segment
 		do {
@@ -289,7 +289,7 @@ extension AudioRecorderViewModel {
 
 			// Verify it's actually recording
 			if let recorder = audioRecorder, recorder.isRecording {
-				print("✅ Recording resumed with new segment - previous audio preserved!")
+				AppLog.shared.audioSession("Recording resumed with new segment - previous audio preserved")
 				recordingSegments.append(newSegmentURL)
 				recordingURL = newSegmentURL // Update to the new segment
 				isRecording = true
@@ -299,14 +299,14 @@ extension AudioRecorderViewModel {
 				errorMessage = nil
 				isInInterruption = false
 			} else {
-				print("❌ Failed to resume recording - recorder not active")
+				AppLog.shared.audioSession("Failed to resume recording - recorder not active", level: .error)
 				errorMessage = "Could not resume recording: recorder failed to start"
 				isRecording = false
 				audioRecorder = nil
 				isInInterruption = false
 			}
 		} catch {
-			print("❌ Failed to resume recording: \(error.localizedDescription)")
+			AppLog.shared.audioSession("Failed to resume recording: \(error.localizedDescription)", level: .error)
 			errorMessage = "Could not resume recording: \(error.localizedDescription)"
 			isRecording = false
 			audioRecorder = nil
@@ -331,7 +331,7 @@ extension AudioRecorderViewModel {
 				let wasUsingMicrophone = previousRoute?.inputs.first != nil
 
 				if wasUsingMicrophone {
-					print("🎙️ Microphone disconnected during recording (Phase 2)")
+					AppLog.shared.audioSession("Microphone disconnected during recording")
 					Task { @MainActor in
 						await handleMicrophoneDisconnected()
 					}
@@ -345,7 +345,7 @@ extension AudioRecorderViewModel {
 
 		case .newDeviceAvailable:
 			// New audio device connected (Phase 2)
-			print("🎙️ New audio device available")
+			AppLog.shared.audioSession("New audio device available")
 			Task { @MainActor in
 				await handleNewAudioDeviceAvailable(notification: notification)
 			}
@@ -353,7 +353,7 @@ extension AudioRecorderViewModel {
 		case .categoryChange:
 			// Category changed, check if we need to recover
 			if isRecording {
-				print("🎙️ Audio route changed - category change detected during recording")
+				AppLog.shared.audioSession("Audio route changed - category change detected during recording")
 				Task { @MainActor in
 					await handleMicrophoneDisconnected()
 				}
@@ -377,7 +377,7 @@ extension AudioRecorderViewModel {
 		}
 
 		if !preferredInputStillAvailable {
-			print("⚠️ Preferred microphone is no longer available, switching to iOS default")
+			AppLog.shared.audioSession("Preferred microphone no longer available, switching to iOS default")
 
 			// Switch to default microphone
 			do {
@@ -388,15 +388,15 @@ extension AudioRecorderViewModel {
 				// Check if recording is still active
 				if let recorder = audioRecorder, recorder.isRecording {
 					// Recording is still active, it should automatically use the default mic
-					print("✅ Recording continues with default microphone")
+					AppLog.shared.audioSession("Recording continues with default microphone")
 					errorMessage = "Microphone switched to default (previous device disconnected)"
 				} else {
 					// Recording stopped, need to restart
-					print("⚠️ Recording stopped, restarting with default microphone")
+					AppLog.shared.audioSession("Recording stopped, restarting with default microphone")
 					await restartRecordingWithDefaultMicrophone(currentURL: currentURL)
 				}
 			} catch {
-				print("❌ Failed to switch to default microphone: \(error.localizedDescription)")
+				AppLog.shared.audioSession("Failed to switch to default microphone: \(error.localizedDescription)", level: .error)
 				// Try to continue anyway - iOS might have already switched
 				if let recorder = audioRecorder, !recorder.isRecording {
 					await restartRecordingWithDefaultMicrophone(currentURL: currentURL)
@@ -415,7 +415,7 @@ extension AudioRecorderViewModel {
 		if FileManager.default.fileExists(atPath: currentURL.path) {
 			let fileSize = getFileSize(url: currentURL)
 			if fileSize > 1024 { // At least 1KB
-				print("💾 Saving current recording segment before switching microphones")
+				AppLog.shared.audioSession("Saving current recording segment before switching microphones")
 				saveLocationData(for: currentURL)
 
 				// Process the current segment
@@ -464,13 +464,13 @@ extension AudioRecorderViewModel {
 			try await enhancedAudioSessionManager.configureMixedAudioSession()
 
 			// Start new recording with default microphone
-			print("🎙️ Restarting recording with default microphone")
+			AppLog.shared.audioSession("Restarting recording with default microphone")
 			setupRecording()
 
 			// Update error message to inform user
 			errorMessage = "Recording continued with default microphone (previous device disconnected)"
 		} catch {
-			print("❌ Failed to restart recording: \(error.localizedDescription)")
+			AppLog.shared.audioSession("Failed to restart recording: \(error.localizedDescription)", level: .error)
 			errorMessage = "Recording stopped: Failed to switch to default microphone"
 			isRecording = false
 			audioRecorder = nil
@@ -481,11 +481,11 @@ extension AudioRecorderViewModel {
 
 	@MainActor
 	func handleInterruptedRecording(reason: String) {
-		print("🚨 Handling interrupted recording: \(reason)")
+		AppLog.shared.audioSession("Handling interrupted recording: \(reason)")
 
 		// Prevent duplicate processing
 		guard !recordingBeingProcessed else {
-			print("⚠️ Recording already being processed, skipping duplicate interruption handling")
+			AppLog.shared.audioSession("Recording already being processed, skipping duplicate interruption handling", level: .debug)
 			return
 		}
 		recordingBeingProcessed = true
@@ -523,7 +523,7 @@ extension AudioRecorderViewModel {
 	}
 
 	func recoverInterruptedRecording(url: URL, reason: String) async {
-		print("💾 Attempting to recover interrupted recording at: \(url.path)")
+		AppLog.shared.audioSession("Attempting to recover interrupted recording")
 
 		// Start background task to protect file recovery and Core Data save operations
 		await MainActor.run {
@@ -532,7 +532,7 @@ extension AudioRecorderViewModel {
 
 		// Check if the file exists and has meaningful content
 		guard FileManager.default.fileExists(atPath: url.path) else {
-			print("❌ No recording file found for recovery")
+			AppLog.shared.audioSession("No recording file found for recovery", level: .error)
 			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
 			await MainActor.run {
 				endBackgroundTask()
@@ -542,7 +542,7 @@ extension AudioRecorderViewModel {
 
 		let fileSize = getFileSize(url: url)
 		guard fileSize > 1024 else { // Must be at least 1KB to be meaningful
-			print("❌ Recording file too small to recover (\(fileSize) bytes)")
+			AppLog.shared.audioSession("Recording file too small to recover (\(fileSize) bytes)", level: .error)
 			// Clean up the tiny file
 			try? FileManager.default.removeItem(at: url)
 			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
@@ -554,7 +554,7 @@ extension AudioRecorderViewModel {
 
 		let duration = getRecordingDuration(url: url)
 		guard duration > 1.0 else { // Must be at least 1 second
-			print("❌ Recording duration too short to recover (\(duration) seconds)")
+			AppLog.shared.audioSession("Recording duration too short to recover (\(duration)s)", level: .error)
 			// Clean up the short recording
 			try? FileManager.default.removeItem(at: url)
 			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
@@ -564,7 +564,7 @@ extension AudioRecorderViewModel {
 			return
 		}
 
-		print("✅ Recording has meaningful content: \(fileSize) bytes, \(duration) seconds")
+		AppLog.shared.audioSession("Recording has meaningful content: \(fileSize) bytes, \(duration)s")
 
 		// Save location data if available
 		saveLocationData(for: url)
@@ -590,7 +590,7 @@ extension AudioRecorderViewModel {
 						locationData: recordingLocationSnapshot()
 					)
 
-					print("✅ Interrupted recording recovered with workflow manager, ID: \(recordingId)")
+					AppLog.shared.audioSession("Interrupted recording recovered with workflow manager, ID: \(recordingId)")
 
 					// Post notification to refresh UI
 					NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
@@ -606,7 +606,7 @@ extension AudioRecorderViewModel {
 			// Don't send additional notification - already sent immediate notification
 
 		} else {
-			print("❌ WorkflowManager not set - interrupted recording not saved to database!")
+			AppLog.shared.audioSession("WorkflowManager not set - interrupted recording not saved to database", level: .error)
 			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
 
 			// Reset processing flag even on failure
@@ -619,18 +619,18 @@ extension AudioRecorderViewModel {
 	}
 
 	func checkForUnprocessedRecording() async {
-		print("🔍 checkForUnprocessedRecording called - recordingBeingProcessed: \(recordingBeingProcessed), isRecording: \(isRecording)")
+		AppLog.shared.audioSession("checkForUnprocessedRecording called - recordingBeingProcessed: \(recordingBeingProcessed), isRecording: \(isRecording)", level: .debug)
 
 		// CRITICAL: Never recover a recording that is still active
 		if isRecording {
-			print("🔍 Recording is still active, skipping recovery check")
+			AppLog.shared.audioSession("Recording is still active, skipping recovery check", level: .debug)
 			return
 		}
 
 		// Prevent duplicate recovery attempts (both flag and time-based)
 		let now = Date()
 		if recordingBeingProcessed || now.timeIntervalSince(lastRecoveryAttempt) < 2.0 {
-			print("🔍 Recovery already in progress or attempted recently, skipping duplicate attempt")
+			AppLog.shared.audioSession("Recovery already in progress or attempted recently, skipping", level: .debug)
 			return
 		}
 
@@ -638,21 +638,21 @@ extension AudioRecorderViewModel {
 
 		// Check if there's a recording file that exists but wasn't processed
 		guard let recordingURL = recordingURL else {
-			print("🔍 No recording URL to check")
+			AppLog.shared.audioSession("No recording URL to check", level: .debug)
 			return
 		}
 
-		print("🔍 Checking recording URL: \(recordingURL.path)")
+		AppLog.shared.audioSession("Checking for unprocessed recording", level: .debug)
 
 		// Check if file exists on filesystem
 		guard FileManager.default.fileExists(atPath: recordingURL.path) else {
-			print("🔍 No unprocessed recording file found")
+			AppLog.shared.audioSession("No unprocessed recording file found", level: .debug)
 			return
 		}
 
 		let fileSize = getFileSize(url: recordingURL)
 		guard fileSize > 1024 else { // Must be at least 1KB
-			print("🔍 Found recording file but it's too small to process (\(fileSize) bytes)")
+			AppLog.shared.audioSession("Found recording file but too small to process (\(fileSize) bytes)", level: .debug)
 			return
 		}
 
@@ -667,8 +667,8 @@ extension AudioRecorderViewModel {
 
 		// Exit if recording already exists
 		if let existingRecordingName = existingRecordingName {
-			print("🔍 Recording already exists in database: \(existingRecordingName)")
-			print("🔍 Recording already processed, clearing recording URL")
+			AppLog.shared.audioSession("Recording already exists in database: \(existingRecordingName)", level: .debug)
+			AppLog.shared.audioSession("Recording already processed, clearing recording URL", level: .debug)
 			await MainActor.run {
 				self.recordingURL = nil // Clear so we don't keep checking
 			}
@@ -678,19 +678,19 @@ extension AudioRecorderViewModel {
 		// Set flag to prevent duplicate processing
 		recordingBeingProcessed = true
 
-		print("🔄 Found unprocessed recording from backgrounding, recovering it now")
+		AppLog.shared.audioSession("Found unprocessed recording from backgrounding, recovering it now")
 
 		// Process the unprocessed recording
 		await recoverUnprocessedRecording(url: recordingURL)
 	}
 
 	func recoverUnprocessedRecording(url: URL) async {
-		print("💾 Recovering unprocessed recording at: \(url.path)")
+		AppLog.shared.audioSession("Recovering unprocessed recording")
 
 		let fileSize = getFileSize(url: url)
 		let duration = getRecordingDuration(url: url)
 
-		print("✅ Unprocessed recording has content: \(fileSize) bytes, \(duration) seconds")
+		AppLog.shared.audioSession("Unprocessed recording has content: \(fileSize) bytes, \(duration)s")
 
 		// Save location data if available
 		saveLocationData(for: url)
@@ -715,7 +715,7 @@ extension AudioRecorderViewModel {
 					locationData: recordingLocationSnapshot()
 				)
 
-					print("✅ Unprocessed recording recovered with workflow manager, ID: \(recordingId)")
+					AppLog.shared.audioSession("Unprocessed recording recovered with workflow manager, ID: \(recordingId)")
 
 					// Post notification to refresh UI
 					NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
@@ -729,7 +729,7 @@ extension AudioRecorderViewModel {
 			// Send notification to user about recovery (with slight delay to improve visibility)
 			await sendRecoveryNotification(filename: displayName)
 		} else {
-			print("❌ WorkflowManager not set - cannot recover unprocessed recording!")
+			AppLog.shared.audioSession("WorkflowManager not set - cannot recover unprocessed recording", level: .error)
 		}
 	}
 
@@ -752,13 +752,13 @@ extension AudioRecorderViewModel {
 			do {
 				hasPermission = try await center.requestAuthorization(options: [.alert, .badge, .sound])
 			} catch {
-				print("❌ Error requesting notification permission: \(error)")
+				AppLog.shared.audioSession("Error requesting notification permission: \(error)", level: .error)
 				return
 			}
 		}
 
 		guard hasPermission else {
-			print("📱 Notification permission denied - cannot send interruption notification")
+			AppLog.shared.audioSession("Notification permission denied - cannot send interruption notification", level: .debug)
 			return
 		}
 
@@ -783,9 +783,9 @@ extension AudioRecorderViewModel {
 
 		do {
 			try await center.add(request)
-			print("📱 Sent interruption notification: \(title) - \(body)")
+			AppLog.shared.audioSession("Sent interruption notification: \(title)")
 		} catch {
-			print("❌ Failed to send interruption notification: \(error)")
+			AppLog.shared.audioSession("Failed to send interruption notification: \(error)", level: .error)
 		}
 	}
 
@@ -795,7 +795,7 @@ extension AudioRecorderViewModel {
 
 		// Check app state for notification timing
 		let appState = await MainActor.run { UIApplication.shared.applicationState }
-		print("📱 App state when sending notification: \(appState.rawValue) (0=active, 1=inactive, 2=background)")
+		AppLog.shared.audioSession("App state when sending recovery notification: \(appState.rawValue)", level: .debug)
 
 		// Use the proven BackgroundProcessingManager notification system
 		_ = await MainActor.run {
@@ -814,13 +814,13 @@ extension AudioRecorderViewModel {
 					]
 				)
 
-				print("📱 Sent recovery notification via BackgroundProcessingManager: \(title)")
+				AppLog.shared.audioSession("Sent recovery notification via BackgroundProcessingManager")
 			}
 		}
 	}
 
 	func sendInterruptionNotificationImmediately(reason: String, recordingURL: URL) async {
-		print("📱 Sending immediate interruption notification for mic takeover")
+		AppLog.shared.audioSession("Sending immediate interruption notification for mic takeover")
 
 		let title = "Recording Interrupted"
 		let body = "Your recording was stopped by another app but has been saved: \(recordingURL.lastPathComponent)"
@@ -839,13 +839,13 @@ extension AudioRecorderViewModel {
 					]
 				)
 
-				print("📱 Sent immediate interruption notification: \(title)")
+				AppLog.shared.audioSession("Sent immediate interruption notification")
 			}
 		}
 	}
 
 	func scheduleRecordingInterruptedNotification(recordingURL: URL) async {
-		print("📱 Scheduling notification for interrupted recording while app is backgrounded")
+		AppLog.shared.audioSession("Scheduling notification for interrupted recording while app is backgrounded")
 
 		// Send notification while we're still in background
 		let title = "Recording Interrupted"
@@ -867,7 +867,7 @@ extension AudioRecorderViewModel {
 					]
 				)
 
-				print("📱 Sent background interruption notification: \(title)")
+				AppLog.shared.audioSession("Sent background interruption notification")
 			}
 		}
 	}

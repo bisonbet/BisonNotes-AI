@@ -17,7 +17,7 @@ class ErrorHandler: ObservableObject {
     @Published var showingErrorAlert = false
     @Published var errorHistory: [ErrorLogEntry] = []
     
-    private let logger = Logger(subsystem: "com.audiojournal.app", category: "ErrorHandler")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "ErrorHandler")
     private let maxHistoryCount = 100
     
     // MARK: - Error Handling Methods
@@ -60,36 +60,35 @@ class ErrorHandler: ObservableObject {
         var issues: [ValidationIssue] = []
         var warnings: [ValidationWarning] = []
         
-        print("🔍 [ErrorHandlingSystem] Validating transcript for summarization...")
-        print("📝 Text length: \(text.count) characters")
+        AppLog.shared.errorRecovery("Validating transcript for summarization, length: \(text.count) characters", level: .debug)
         
         // Check if text is empty
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            print("❌ [ErrorHandlingSystem] Transcript is empty")
+            AppLog.shared.errorRecovery("Transcript is empty", level: .error)
             issues.append(.emptyTranscript)
             return ValidationResult(isValid: false, issues: issues, warnings: warnings)
         }
         
         // Check minimum length
         let wordCount = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
-        print("📊 [ErrorHandlingSystem] Word count: \(wordCount)")
+        AppLog.shared.errorRecovery("Word count: \(wordCount)", level: .debug)
         
         // If transcript has 50 words or less, it's valid (will be shown as-is)
         if wordCount <= 50 {
-            print("✅ [ErrorHandlingSystem] Transcript has 50 words or less (\(wordCount) words) - will be shown as-is")
+            AppLog.shared.errorRecovery("Transcript has \(wordCount) words - will be shown as-is", level: .debug)
             return ValidationResult(isValid: true, issues: issues, warnings: warnings)
         }
         
         // For longer transcripts, check minimum length
         if wordCount < 10 {
-            print("❌ [ErrorHandlingSystem] Transcript too short: \(wordCount) words")
+            AppLog.shared.errorRecovery("Transcript too short: \(wordCount) words", level: .error)
             issues.append(.transcriptTooShort(wordCount: wordCount))
             return ValidationResult(isValid: false, issues: issues, warnings: warnings)
         }
         
         // Check maximum length - increased to allow chunking system to handle large transcripts
         if wordCount > 50000 {
-            print("❌ [ErrorHandlingSystem] Transcript too long: \(wordCount) words")
+            AppLog.shared.errorRecovery("Transcript too long: \(wordCount) words", level: .error)
             issues.append(.transcriptTooLong(wordCount: wordCount, maxWords: 50000))
             return ValidationResult(isValid: false, issues: issues, warnings: warnings)
         }
@@ -97,30 +96,30 @@ class ErrorHandler: ObservableObject {
         // Add warnings for potential issues (only for transcripts longer than 50 words)
         if wordCount > 10000 {
             warnings.append(.longTranscript(wordCount: wordCount))
-            print("⚠️ [ErrorHandlingSystem] Long transcript warning: \(wordCount) words")
+            AppLog.shared.errorRecovery("Long transcript warning: \(wordCount) words", level: .debug)
         }
         
         if wordCount > 10000 {
             warnings.append(.longTranscript(wordCount: wordCount))
-            print("⚠️ [ErrorHandlingSystem] Long transcript warning: \(wordCount) words")
+            AppLog.shared.errorRecovery("Long transcript warning: \(wordCount) words", level: .debug)
         }
         
         // Check for repetitive content
         let isRepetitive = isContentRepetitive(text)
         if isRepetitive {
             warnings.append(.repetitiveContent)
-            print("⚠️ [ErrorHandlingSystem] Content appears repetitive")
+            AppLog.shared.errorRecovery("Content appears repetitive", level: .debug)
         }
         
         // Check for low-quality transcription indicators
         let hasLowQuality = hasLowQualityIndicators(text)
         if hasLowQuality {
             warnings.append(.lowQualityTranscription)
-            print("⚠️ [ErrorHandlingSystem] Low quality transcription indicators detected")
+            AppLog.shared.errorRecovery("Low quality transcription indicators detected", level: .debug)
         }
         
         let result = ValidationResult(isValid: true, issues: issues, warnings: warnings)
-        print("✅ [ErrorHandlingSystem] Validation passed with \(warnings.count) warnings")
+        AppLog.shared.errorRecovery("Validation passed with \(warnings.count) warnings")
         return result
     }
     

@@ -338,23 +338,20 @@ class OllamaService: ObservableObject {
     func testConnection() async -> Bool {
         do {
             let url = URL(string: "\(config.baseURL)/api/tags")!
-            print("🔧 OllamaService: Testing connection to \(url)")
+            AppLog.shared.networking("OllamaService: Testing connection to \(url)", level: .debug)
             
             let (data, response) = try await session.data(from: url)
             
             if let httpResponse = response as? HTTPURLResponse {
-                print("🔧 OllamaService: Connection test response: \(httpResponse.statusCode)")
+                AppLog.shared.networking("OllamaService: Connection test response: \(httpResponse.statusCode)", level: .debug)
                 let success = httpResponse.statusCode == 200
                 
                 if success {
-                    print("✅ OllamaService: Connection successful")
+                    AppLog.shared.networking("OllamaService: Connection successful")
                 } else {
-                    print("❌ OllamaService: Connection failed with status \(httpResponse.statusCode)")
+                    AppLog.shared.networking("OllamaService: Connection failed with status \(httpResponse.statusCode)", level: .error)
                     
-                    // Log response data for debugging
-                    if let responseString = String(data: data, encoding: .utf8) {
-                        print("❌ OllamaService: Error response: \(responseString)")
-                    }
+                    AppLog.shared.networking("OllamaService: Error response received (\(data.count) bytes)", level: .error)
                 }
                 
                 await MainActor.run {
@@ -364,7 +361,7 @@ class OllamaService: ObservableObject {
                 return success
             }
             
-            print("❌ OllamaService: Invalid response type from server")
+            AppLog.shared.networking("OllamaService: Invalid response type from server", level: .error)
             await MainActor.run {
                 self.isConnected = false
                 self.connectionError = "Invalid response from server"
@@ -372,7 +369,7 @@ class OllamaService: ObservableObject {
             return false
             
         } catch {
-            print("❌ OllamaService: Connection test failed: \(error.localizedDescription)")
+            AppLog.shared.networking("OllamaService: Connection test failed: \(error.localizedDescription)", level: .error)
             await MainActor.run {
                 self.isConnected = false
                 self.connectionError = error.localizedDescription
@@ -407,7 +404,7 @@ class OllamaService: ObservableObject {
             let models = try await loadAvailableModels()
             return models.contains { $0.name == modelName }
         } catch {
-            print("❌ OllamaService: Failed to check model availability: \(error)")
+            AppLog.shared.networking("OllamaService: Failed to check model availability: \(error.localizedDescription)", level: .error)
             return false
         }
     }
@@ -417,7 +414,7 @@ class OllamaService: ObservableObject {
             let models = try await loadAvailableModels()
             return models.first?.name
         } catch {
-            print("❌ OllamaService: Failed to get available models: \(error)")
+            AppLog.shared.networking("OllamaService: Failed to get available models: \(error.localizedDescription)", level: .error)
             return nil
         }
     }
@@ -467,22 +464,22 @@ class OllamaService: ObservableObject {
     }
     
     private func extractJSONFromResponse(_ response: String) -> String {
-        print("🔍 OllamaService: Attempting to extract JSON from response")
-        
+        AppLog.shared.networking("OllamaService: Attempting to extract JSON from response", level: .debug)
+
         // First, try to find a complete JSON object
         let jsonPattern = #"\{[\s\S]*\}"#
         if let match = response.range(of: jsonPattern, options: .regularExpression) {
             let jsonString = String(response[match])
-            print("🔍 OllamaService: Found potential JSON: '\(jsonString)'")
-            
+            AppLog.shared.networking("OllamaService: Found potential JSON in response", level: .debug)
+
             if isValidJSON(jsonString) {
-                print("✅ OllamaService: Extracted valid JSON")
+                AppLog.shared.networking("OllamaService: Extracted valid JSON")
                 return jsonString
             } else {
-                print("❌ OllamaService: Extracted JSON is not valid")
+                AppLog.shared.networking("OllamaService: Extracted JSON is not valid", level: .error)
             }
         }
-        
+
         // Try to find JSON between code blocks or markdown
         let codeBlockPattern = #"```(?:json)?\s*(\{[\s\S]*?\})\s*```"#
         if let match = response.range(of: codeBlockPattern, options: .regularExpression) {
@@ -490,10 +487,10 @@ class OllamaService: ObservableObject {
             // Extract just the JSON part
             if let jsonMatch = fullMatch.range(of: #"\{[\s\S]*\}"#, options: .regularExpression) {
                 let jsonString = String(fullMatch[jsonMatch])
-                print("🔍 OllamaService: Found JSON in code block: '\(jsonString)'")
-                
+                AppLog.shared.networking("OllamaService: Found JSON in code block", level: .debug)
+
                 if isValidJSON(jsonString) {
-                    print("✅ OllamaService: Extracted valid JSON from code block")
+                    AppLog.shared.networking("OllamaService: Extracted valid JSON from code block")
                     return jsonString
                 }
             }
@@ -512,28 +509,28 @@ class OllamaService: ObservableObject {
         // Try again with cleaned response
         if let match = cleanedResponse.range(of: jsonPattern, options: .regularExpression) {
             let jsonString = String(cleanedResponse[match])
-            print("🔍 OllamaService: Found JSON in cleaned response: '\(jsonString)'")
-            
+            AppLog.shared.networking("OllamaService: Found JSON in cleaned response", level: .debug)
+
             if isValidJSON(jsonString) {
-                print("✅ OllamaService: Extracted valid JSON from cleaned response")
+                AppLog.shared.networking("OllamaService: Extracted valid JSON from cleaned response")
                 return jsonString
             }
         }
         
         // Try to convert wrong schema to correct schema if possible
         if let convertedJSON = convertWrongSchemaToCorrect(response) {
-            print("⚙️ OllamaService: Successfully converted wrong schema to correct format")
+            AppLog.shared.networking("OllamaService: Successfully converted wrong schema to correct format", level: .debug)
             return convertedJSON
         }
         
         // If no valid JSON found, return empty JSON structure
-        print("⚠️ OllamaService: Could not extract valid JSON from response, returning empty structure")
-        print("📝 OllamaService: Original response was: '\(response)'")
+        AppLog.shared.networking("OllamaService: Could not extract valid JSON from response, returning empty structure")
+        AppLog.shared.networking("OllamaService: Original response could not be parsed", level: .debug)
         
         // Determine which type of JSON structure to return based on the context
         if response.contains("\"summary\"") || response.contains("\"contentType\"") || response.contains("\"transcript\"") || response.contains("\"key_points\"") {
             // Complete processing structure - model may have used wrong schema
-            print("⚠️ OllamaService: Detected complete processing context but invalid schema, returning empty structure")
+            AppLog.shared.networking("OllamaService: Detected complete processing context but invalid schema, returning empty structure")
             return "{\"summary\":\"\",\"tasks\":[],\"reminders\":[],\"titles\":[],\"contentType\":\"General\"}"
         } else if response.contains("\"titles\"") || response.contains("title") {
             return "{\"titles\":[]}"
@@ -552,7 +549,7 @@ class OllamaService: ObservableObject {
                 return nil
             }
             
-            print("🔍 OllamaService: Detected JSON fields: \(Array(jsonObject.keys))")
+            AppLog.shared.networking("OllamaService: Detected JSON fields: \(Array(jsonObject.keys))", level: .debug)
             
             // Check if this looks like a wrong schema response
             let hasWrongFields = jsonObject.keys.contains { key in
@@ -595,7 +592,7 @@ class OllamaService: ObservableObject {
             return String(data: correctedData, encoding: .utf8)
             
         } catch {
-            print("❌ OllamaService: Failed to convert wrong schema: \(error)")
+            AppLog.shared.networking("OllamaService: Failed to convert wrong schema: \(error.localizedDescription)", level: .error)
             return nil
         }
     }
@@ -659,16 +656,16 @@ class OllamaService: ObservableObject {
     // MARK: - AI Processing
     
     func processComplete(from text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        print("🚀 OllamaService: Starting processComplete with model: \(config.modelName)")
+        AppLog.shared.networking("OllamaService: Starting processComplete with model: \(config.modelName)")
 
         // Try tool calling first for models that support it
         if let result = try await processCompleteWithTools(from: text) {
-            print("✅ OllamaService: Used tool calling successfully")
+            AppLog.shared.networking("OllamaService: Used tool calling successfully")
             return result
         }
 
         // Try structured outputs with JSON schema for better reliability
-        print("🔄 OllamaService: Attempting structured outputs with JSON schema")
+        AppLog.shared.networking("OllamaService: Attempting structured outputs with JSON schema", level: .debug)
         do {
             let structuredPrompt = createStructuredCompleteProcessingPrompt(from: text)
             let response = try await generateStructuredResponse(
@@ -677,13 +674,13 @@ class OllamaService: ObservableObject {
                 schema: OllamaJSONSchemas.completeAnalysisSchema
             )
 
-            print("✅ OllamaService: Got structured output response, parsing...")
+            AppLog.shared.networking("OllamaService: Got structured output response, parsing...")
             let result = try parseStructuredCompleteResponse(response)
-            print("✅ OllamaService: Structured outputs succeeded!")
+            AppLog.shared.networking("OllamaService: Structured outputs succeeded!")
             return result
 
         } catch {
-            print("⚠️ OllamaService: Structured outputs failed, falling back to traditional prompting: \(error)")
+            AppLog.shared.networking("OllamaService: Structured outputs failed, falling back to traditional prompting: \(error.localizedDescription)")
         }
         
         // Fallback to traditional prompting
@@ -693,28 +690,26 @@ class OllamaService: ObservableObject {
         
         // Debug logging (verbose only)
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            print("🔍 OllamaService: Raw response for complete processing:")
-            print("📝 Response: '\(response)'")
-            print("📏 Response length: \(response.count) characters")
+            AppLog.shared.networking("OllamaService: Raw response for complete processing, length: \(response.count) characters", level: .debug)
         }
         
         // Check if response is empty
         guard !response.isEmpty else {
-            print("❌ OllamaService: Received empty response")
+            AppLog.shared.networking("OllamaService: Received empty response", level: .error)
             throw OllamaError.parsingError("Received empty response from Ollama server")
         }
-        
+
         // Parse JSON response
         guard let data = response.data(using: .utf8) else {
-            print("❌ OllamaService: Failed to convert response to UTF-8 data")
+            AppLog.shared.networking("OllamaService: Failed to convert response to UTF-8 data", level: .error)
             throw OllamaError.parsingError("Failed to convert response to data")
         }
-        
-        print("📊 OllamaService: Data size: \(data.count) bytes")
-        
+
+        AppLog.shared.networking("OllamaService: Data size: \(data.count) bytes", level: .debug)
+
         do {
             let rawResult = try JSONDecoder().decode(RawCompleteResult.self, from: data)
-            
+
             // Convert raw results to proper objects
             let tasks = rawResult.tasks.map { rawTask in
                 TaskItem(
@@ -753,28 +748,27 @@ class OllamaService: ObservableObject {
             
             let contentType = ContentType(rawValue: rawResult.contentType) ?? .general
             
-            print("✅ OllamaService: Successfully parsed complete result")
-            print("📊 Summary: \(rawResult.summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)")
+            AppLog.shared.networking("OllamaService: Successfully parsed complete result")
+            AppLog.shared.networking("OllamaService: Summary: \(rawResult.summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)", level: .debug)
             
             return (rawResult.summary, tasks, reminders, titles, contentType)
             
         } catch {
-            print("❌ OllamaService: JSON parsing failed for complete processing: \(error)")
-            print("❌ OllamaService: Response data length: \(data.count) bytes")
-            print("❌ OllamaService: Raw response that failed to parse: '\(response)'")
+            AppLog.shared.networking("OllamaService: JSON parsing failed for complete processing: \(error.localizedDescription)", level: .error)
+            AppLog.shared.networking("OllamaService: Response data length: \(data.count) bytes", level: .error)
             
             // Try to extract JSON from the response if it's embedded in other text
             let cleanedResponse = extractJSONFromResponse(response)
             if cleanedResponse != response {
-                print("🔄 OllamaService: Attempting to parse cleaned JSON: '\(cleanedResponse)'")
-                
+                AppLog.shared.networking("OllamaService: Attempting to parse cleaned JSON for complete processing", level: .debug)
+
                 guard let cleanedData = cleanedResponse.data(using: .utf8) else {
                     throw OllamaError.parsingError("Failed to convert cleaned response to data")
                 }
-                
+
                 do {
                     let rawResult = try JSONDecoder().decode(RawCompleteResult.self, from: cleanedData)
-                    
+
                     let tasks = rawResult.tasks.map { rawTask in
                         TaskItem(
                             text: RecordingNameGenerator.cleanAIOutput(rawTask.text),
@@ -784,7 +778,7 @@ class OllamaService: ObservableObject {
                             confidence: 0.8
                         )
                     }
-                    
+
                     let reminders = rawResult.reminders.map { rawReminder in
                         // Use smart fallback: if AI didn't provide time reference, extract from reminder text
                         let timeRef: ReminderItem.TimeReference
@@ -801,7 +795,7 @@ class OllamaService: ObservableObject {
                             confidence: 0.8
                         )
                     }
-                    
+
                     let titles = rawResult.titles.map { rawTitle in
                         TitleItem(
                             text: RecordingNameGenerator.cleanStandardizedTitleResponse(rawTitle.text),
@@ -809,14 +803,14 @@ class OllamaService: ObservableObject {
                             category: TitleItem.TitleCategory(rawValue: rawTitle.category) ?? .general
                         )
                     }
-                    
+
                     let contentType = ContentType(rawValue: rawResult.contentType) ?? .general
-                    
-                    print("✅ OllamaService: Successfully parsed cleaned JSON for complete processing")
+
+                    AppLog.shared.networking("OllamaService: Successfully parsed cleaned JSON for complete processing")
                     return (rawResult.summary, tasks, reminders, titles, contentType)
                     
                 } catch {
-                    print("❌ OllamaService: Cleaned JSON parsing also failed: \(error)")
+                    AppLog.shared.networking("OllamaService: Cleaned JSON parsing also failed: \(error.localizedDescription)", level: .error)
                     throw OllamaError.parsingError("Failed to parse JSON response after cleaning: \(error.localizedDescription)")
                 }
             }
@@ -837,10 +831,10 @@ class OllamaService: ObservableObject {
         do {
             return try await generateResponse(prompt: prompt, model: config.modelName, cleanForJSON: false)
         } catch OllamaError.parsingError(let message) {
-            print("❌ OllamaService: Summary generation failed with parsing error: \(message)")
+            AppLog.shared.networking("OllamaService: Summary generation failed with parsing error: \(message)", level: .error)
             throw OllamaError.serverError("Failed to generate summary: \(message)")
         } catch {
-            print("❌ OllamaService: Summary generation failed: \(error)")
+            AppLog.shared.networking("OllamaService: Summary generation failed: \(error.localizedDescription)", level: .error)
             throw error
         }
     }
@@ -870,17 +864,17 @@ class OllamaService: ObservableObject {
                     if let data = toolCall.function.arguments.data(using: .utf8),
                        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let summary = json["summary"] as? String {
-                        print("✅ OllamaService: Successfully generated summary using standard tool calling")
+                        AppLog.shared.networking("OllamaService: Successfully generated summary using standard tool calling")
                         return summary
                     }
                 }
             }
             
-            print("⚠️ OllamaService: No tool calls in response, falling back to traditional prompting")
+            AppLog.shared.networking("OllamaService: No tool calls in response, falling back to traditional prompting")
             return nil
             
         } catch {
-            print("⚠️ OllamaService: Standard tool calling failed, falling back to traditional prompting: \(error)")
+            AppLog.shared.networking("OllamaService: Standard tool calling failed, falling back to traditional prompting: \(error.localizedDescription)")
             return nil
         }
     }
@@ -1064,6 +1058,8 @@ class OllamaService: ObservableObject {
         let finalTargetWords = min(targetWordCount, maxWordsFromTokens)
         let targetParagraphs = max(3, finalTargetWords / 100) // Rough estimate of paragraphs
 
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+
         return """
         <INSTRUCTIONS>
         You are a professional AI assistant specialized in analyzing and summarizing conversations, meetings, and transcripts. Your goal is to create comprehensive, well-structured summaries that capture the essential information.
@@ -1105,6 +1101,7 @@ class OllamaService: ObservableObject {
         - Avoid unnecessary repetition
         - Use active voice when possible
         - Be specific rather than vague
+        \(comedyModifier)
         </INSTRUCTIONS>
 
         <TRANSCRIPT>
@@ -1117,6 +1114,7 @@ class OllamaService: ObservableObject {
     }
     
     private func createRobustCompleteProcessingPrompt(from text: String) -> String {
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
         return """
         You MUST return ONLY valid JSON in the EXACT format specified below. Do not include any other text, explanations, or additional fields.
 
@@ -1166,12 +1164,13 @@ class OllamaService: ObservableObject {
         - Aim for 15-20% of original length
 
         CONTENT TYPE: Choose one: "Meeting", "Personal", "Technical", or "General"
+        \(comedyModifier)
 
         Now analyze this transcript and return the JSON:
         \(text)
         """
     }
-    
+
     func generateTitle(from text: String) async throws -> String {
         let prompt = RecordingNameGenerator.generateStandardizedTitlePrompt(from: text)
         
@@ -1207,7 +1206,7 @@ class OllamaService: ObservableObject {
             return try parseStructuredTasksReminders(response)
             
         } catch {
-            print("⚠️ OllamaService: Structured outputs failed for tasks/reminders, falling back: \(error)")
+            AppLog.shared.networking("OllamaService: Structured outputs failed for tasks/reminders, falling back: \(error.localizedDescription)")
         }
         
         // Fallback to traditional prompting
@@ -1239,25 +1238,23 @@ class OllamaService: ObservableObject {
         let response = try await generateResponse(prompt: prompt, model: config.modelName)
         
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            print("🔍 OllamaService: Raw response for tasks/reminders:")
-            print("📝 Response: '\(response)'")
-            print("📏 Response length: \(response.count) characters")
+            AppLog.shared.networking("OllamaService: Raw response for tasks/reminders, length: \(response.count) characters", level: .debug)
         }
         
         // Check if response is empty
         guard !response.isEmpty else {
-            print("❌ OllamaService: Received empty response")
+            AppLog.shared.networking("OllamaService: Received empty response for tasks/reminders", level: .error)
             throw OllamaError.parsingError("Received empty response from Ollama server")
         }
-        
+
         // Parse JSON response
         guard let data = response.data(using: .utf8) else {
-            print("❌ OllamaService: Failed to convert response to UTF-8 data")
+            AppLog.shared.networking("OllamaService: Failed to convert tasks/reminders response to UTF-8 data", level: .error)
             throw OllamaError.parsingError("Failed to convert response to data")
         }
-        
-        print("📊 OllamaService: Data size: \(data.count) bytes")
-        
+
+        AppLog.shared.networking("OllamaService: Tasks/reminders data size: \(data.count) bytes", level: .debug)
+
         do {
             let rawResult = try JSONDecoder().decode(RawTaskReminderResult.self, from: data)
             
@@ -1281,22 +1278,21 @@ class OllamaService: ObservableObject {
                 )
             }
             
-            print("✅ OllamaService: Successfully parsed \(tasks.count) tasks and \(reminders.count) reminders")
+            AppLog.shared.networking("OllamaService: Successfully parsed \(tasks.count) tasks and \(reminders.count) reminders")
             return (tasks, reminders)
         } catch {
-            print("❌ OllamaService: JSON parsing failed for tasks/reminders: \(error)")
-            print("❌ OllamaService: Response data length: \(data.count) bytes")
-            print("❌ OllamaService: Raw response that failed to parse: '\(response)'")
+            AppLog.shared.networking("OllamaService: JSON parsing failed for tasks/reminders: \(error.localizedDescription)", level: .error)
+            AppLog.shared.networking("OllamaService: Response data length: \(data.count) bytes", level: .error)
             
             // Try to extract JSON from the response if it's embedded in other text
             let cleanedResponse = extractJSONFromResponse(response)
             if cleanedResponse != response {
-                print("🔄 OllamaService: Attempting to parse cleaned JSON: '\(cleanedResponse)'")
-                
+                AppLog.shared.networking("OllamaService: Attempting to parse cleaned JSON for tasks/reminders", level: .debug)
+
                 guard let cleanedData = cleanedResponse.data(using: .utf8) else {
                     throw OllamaError.parsingError("Failed to convert cleaned response to data")
                 }
-                
+
                 do {
                     let rawResult = try JSONDecoder().decode(RawTaskReminderResult.self, from: cleanedData)
                     
@@ -1327,15 +1323,15 @@ class OllamaService: ObservableObject {
                         )
                     }
                     
-                    print("✅ OllamaService: Successfully parsed cleaned JSON with \(tasks.count) tasks and \(reminders.count) reminders")
+                    AppLog.shared.networking("OllamaService: Successfully parsed cleaned JSON with \(tasks.count) tasks and \(reminders.count) reminders")
                     return (tasks, reminders)
                 } catch {
-                    print("❌ OllamaService: Cleaned JSON parsing also failed: \(error)")
+                    AppLog.shared.networking("OllamaService: Cleaned JSON parsing also failed for tasks/reminders: \(error.localizedDescription)", level: .error)
                 }
             }
-            
+
             // If all parsing attempts fail, return empty results instead of throwing
-            print("⚠️ OllamaService: Returning empty results due to parsing failure")
+            AppLog.shared.networking("OllamaService: Returning empty results due to parsing failure")
             return (tasks: [], reminders: [])
         }
     }
@@ -1361,24 +1357,22 @@ class OllamaService: ObservableObject {
         let response = try await generateResponse(prompt: prompt, model: config.modelName)
         
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            print("🔍 OllamaService: Raw response for titles:")
-            print("📝 Response: '\(response)'")
-            print("📏 Response length: \(response.count) characters")
+            AppLog.shared.networking("OllamaService: Raw response for titles, length: \(response.count) characters", level: .debug)
         }
         
         // Check if response is empty
         guard !response.isEmpty else {
-            print("❌ OllamaService: Received empty response for titles")
+            AppLog.shared.networking("OllamaService: Received empty response for titles", level: .error)
             return []
         }
         
         // Parse JSON response
         guard let data = response.data(using: .utf8) else {
-            print("❌ OllamaService: Failed to convert titles response to UTF-8 data")
+            AppLog.shared.networking("OllamaService: Failed to convert titles response to UTF-8 data", level: .error)
             return []
         }
         
-        print("📊 OllamaService: Titles data size: \(data.count) bytes")
+        AppLog.shared.networking("OllamaService: Titles data size: \(data.count) bytes", level: .debug)
         
         do {
             let rawResult = try JSONDecoder().decode(RawTitleResult.self, from: data)
@@ -1392,20 +1386,19 @@ class OllamaService: ObservableObject {
                 )
             }
             
-            print("✅ OllamaService: Successfully parsed \(titles.count) titles")
+            AppLog.shared.networking("OllamaService: Successfully parsed \(titles.count) titles")
             return titles
         } catch {
-            print("❌ OllamaService: JSON parsing failed for titles: \(error)")
-            print("❌ OllamaService: Response data length: \(data.count) bytes")
-            print("❌ OllamaService: Raw response that failed to parse: '\(response)'")
+            AppLog.shared.networking("OllamaService: JSON parsing failed for titles: \(error.localizedDescription)", level: .error)
+            AppLog.shared.networking("OllamaService: Response data length: \(data.count) bytes", level: .error)
             
             // Try to extract JSON from the response if it's embedded in other text
             let cleanedResponse = extractJSONFromResponse(response)
             if cleanedResponse != response {
-                print("🔄 OllamaService: Attempting to parse cleaned JSON for titles: '\(cleanedResponse)'")
+                AppLog.shared.networking("OllamaService: Attempting to parse cleaned JSON for titles", level: .debug)
                 
                 guard let cleanedData = cleanedResponse.data(using: .utf8) else {
-                    print("❌ OllamaService: Failed to convert cleaned titles response to data")
+                    AppLog.shared.networking("OllamaService: Failed to convert cleaned titles response to data", level: .error)
                     return []
                 }
                 
@@ -1420,15 +1413,15 @@ class OllamaService: ObservableObject {
                         )
                     }
                     
-                    print("✅ OllamaService: Successfully parsed cleaned JSON with \(titles.count) titles")
+                    AppLog.shared.networking("OllamaService: Successfully parsed cleaned JSON with \(titles.count) titles")
                     return titles
                 } catch {
-                    print("❌ OllamaService: Cleaned JSON parsing also failed for titles: \(error)")
+                    AppLog.shared.networking("OllamaService: Cleaned JSON parsing also failed for titles: \(error.localizedDescription)", level: .error)
                 }
             }
             
             // If all parsing attempts fail, return empty results instead of throwing
-            print("⚠️ OllamaService: Returning empty titles due to parsing failure")
+            AppLog.shared.networking("OllamaService: Returning empty titles due to parsing failure")
             return []
         }
     }
@@ -1461,11 +1454,11 @@ class OllamaService: ObservableObject {
                 }
             }
             
-            print("⚠️ OllamaService: No tool calls in complete processing response, falling back")
+            AppLog.shared.networking("OllamaService: No tool calls in complete processing response, falling back")
             return nil
             
         } catch {
-            print("⚠️ OllamaService: Standard tool calling failed for complete processing: \(error)")
+            AppLog.shared.networking("OllamaService: Standard tool calling failed for complete processing: \(error.localizedDescription)")
             return nil
         }
     }
@@ -1512,11 +1505,11 @@ class OllamaService: ObservableObject {
             
             let contentType = ContentType(rawValue: rawResult.contentType) ?? .general
             
-            print("✅ OllamaService: Successfully parsed complete analysis from tool calling")
+            AppLog.shared.networking("OllamaService: Successfully parsed complete analysis from tool calling")
             return (rawResult.summary, tasks, reminders, titles, contentType)
             
         } catch {
-            print("❌ OllamaService: Failed to parse tool calling result: \(error)")
+            AppLog.shared.networking("OllamaService: Failed to parse tool calling result: \(error.localizedDescription)", level: .error)
             throw OllamaError.parsingError("Failed to parse tool calling response: \(error.localizedDescription)")
         }
     }
@@ -1561,16 +1554,16 @@ class OllamaService: ObservableObject {
                 if toolCallResult.name == "create_summary",
                    let arguments = toolCallResult.arguments,
                    let summary = arguments["summary"] as? String {
-                    print("✅ OllamaService: Successfully generated summary using Qwen tool calling")
+                    AppLog.shared.networking("OllamaService: Successfully generated summary using Qwen tool calling")
                     return summary
                 }
             }
             
-            print("⚠️ OllamaService: No valid Qwen tool calls in response, falling back")
+            AppLog.shared.networking("OllamaService: No valid Qwen tool calls in response, falling back")
             return nil
             
         } catch {
-            print("⚠️ OllamaService: Qwen tool calling failed, falling back: \(error)")
+            AppLog.shared.networking("OllamaService: Qwen tool calling failed, falling back: \(error.localizedDescription)")
             return nil
         }
     }
@@ -1593,11 +1586,11 @@ class OllamaService: ObservableObject {
                    let arguments = toolCallResult.arguments,
                    let summary = arguments["summary"] as? String {
                     
-                    print("🔍 OllamaService: Found create_summary with \(summary.count) characters")
-                    
+                    AppLog.shared.networking("OllamaService: Found create_summary with \(summary.count) characters", level: .debug)
+
                     // If we have substantial content (lower threshold to catch more good content)
                     if summary.count > 2000 {
-                        print("✅ OllamaService: Using high-quality Qwen summary for complete processing")
+                        AppLog.shared.networking("OllamaService: Using high-quality Qwen summary for complete processing")
                         
                         // Use the excellent summary and extract basic tasks/reminders from it
                         do {
@@ -1605,25 +1598,25 @@ class OllamaService: ObservableObject {
                             let titles = try await generateTitlesFromSummary(summary)
                             let contentType = ContentAnalyzer.classifyContent(text)
                             
-                            print("✅ OllamaService: Successfully created complete result from high-quality summary")
-                            print("📊 Final result: Summary: \(summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)")
+                            AppLog.shared.networking("OllamaService: Successfully created complete result from high-quality summary")
+                            AppLog.shared.networking("OllamaService: Final result: Summary: \(summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)", level: .debug)
                             return (summary, tasks, reminders, titles, contentType)
                         } catch {
-                            print("⚠️ OllamaService: Failed to extract tasks/reminders from excellent summary: \(error)")
+                            AppLog.shared.networking("OllamaService: Failed to extract tasks/reminders from excellent summary: \(error.localizedDescription)")
                             // Still return just the excellent summary with minimal metadata
                             return (summary, [], [], [], .general)
                         }
                     } else {
-                        print("⚠️ OllamaService: Summary too short (\(summary.count) chars), falling back")
+                        AppLog.shared.networking("OllamaService: Summary too short (\(summary.count) chars), falling back")
                     }
                 }
             }
             
-            print("⚠️ OllamaService: No valid Qwen tool calls in complete processing response, falling back")
+            AppLog.shared.networking("OllamaService: No valid Qwen tool calls in complete processing response, falling back")
             return nil
             
         } catch {
-            print("⚠️ OllamaService: Qwen tool calling failed for complete processing: \(error)")
+            AppLog.shared.networking("OllamaService: Qwen tool calling failed for complete processing: \(error.localizedDescription)")
             return nil
         }
     }
@@ -1769,7 +1762,7 @@ class OllamaService: ObservableObject {
                 .replacingOccurrences(of: "</tool_call>", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             
-            print("🔍 OllamaService: Found Qwen tool call: '\(toolCallContent.prefix(200))...'")
+            AppLog.shared.networking("OllamaService: Found Qwen tool call in response", level: .debug)
             
             // Parse JSON inside tool_call
             if let data = toolCallContent.data(using: .utf8) {
@@ -1777,18 +1770,18 @@ class OllamaService: ObservableObject {
                     if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let name = json["name"] as? String {
                         let arguments = json["arguments"] as? [String: Any]
-                        print("✅ OllamaService: Successfully parsed Qwen tool call: \(name)")
+                        AppLog.shared.networking("OllamaService: Successfully parsed Qwen tool call: \(name)")
                         return (name, arguments)
                     }
                 } catch {
-                    print("❌ OllamaService: Failed to parse Qwen tool call JSON: \(error)")
+                    AppLog.shared.networking("OllamaService: Failed to parse Qwen tool call JSON: \(error.localizedDescription)", level: .error)
                 }
             }
         }
         
         // Fallback: Look for structured markdown content that we can use as a summary
         if response.contains("###") || response.contains("##") {
-            print("🔍 OllamaService: Found structured Qwen content, using as fallback summary")
+            AppLog.shared.networking("OllamaService: Found structured Qwen content, using as fallback summary", level: .debug)
             
             // Extract content after <think> blocks
             let cleanedResponse = response.replacingOccurrences(
@@ -1799,14 +1792,13 @@ class OllamaService: ObservableObject {
             
             // If we have good structured content, treat it as a summary
             if !cleanedResponse.isEmpty && cleanedResponse.count > 100 {
-                print("✅ OllamaService: Using Qwen structured response as summary fallback")
-                print("📊 OllamaService: Summary content length: \(cleanedResponse.count) characters")
-                print("🔍 OllamaService: Summary preview: '\(cleanedResponse.prefix(200))...'")
+                AppLog.shared.networking("OllamaService: Using Qwen structured response as summary fallback")
+                AppLog.shared.networking("OllamaService: Summary content length: \(cleanedResponse.count) characters", level: .debug)
                 return ("create_summary", ["summary": cleanedResponse])
             }
         }
         
-        print("⚠️ OllamaService: No Qwen tool call found in response")
+        AppLog.shared.networking("OllamaService: No Qwen tool call found in response")
         return nil
     }
     
@@ -1870,7 +1862,7 @@ class OllamaService: ObservableObject {
         let contentTypeString = arguments["contentType"] as? String ?? "General"
         let contentType = ContentType(rawValue: contentTypeString) ?? .general
         
-        print("✅ OllamaService: Successfully parsed Qwen complete analysis")
+        AppLog.shared.networking("OllamaService: Successfully parsed Qwen complete analysis")
         return (summary, tasks, reminders, titles, contentType)
     }
     
@@ -1947,16 +1939,16 @@ class OllamaService: ObservableObject {
                 if toolCallResult.function == "create_summary",
                    let arguments = toolCallResult.arguments,
                    let summary = arguments["summary"] as? String {
-                    print("✅ OllamaService: Successfully generated summary using GPT-OSS tool calling")
+                    AppLog.shared.networking("OllamaService: Successfully generated summary using GPT-OSS tool calling")
                     return summary
                 }
             }
             
-            print("⚠️ OllamaService: No valid GPT-OSS tool calls in response, falling back")
+            AppLog.shared.networking("OllamaService: No valid GPT-OSS tool calls in response, falling back")
             return nil
             
         } catch {
-            print("⚠️ OllamaService: GPT-OSS tool calling failed, falling back: \(error)")
+            AppLog.shared.networking("OllamaService: GPT-OSS tool calling failed, falling back: \(error.localizedDescription)")
             return nil
         }
     }
@@ -1975,11 +1967,11 @@ class OllamaService: ObservableObject {
                 }
             }
             
-            print("⚠️ OllamaService: No valid GPT-OSS tool calls in complete processing response, falling back")
+            AppLog.shared.networking("OllamaService: No valid GPT-OSS tool calls in complete processing response, falling back")
             return nil
             
         } catch {
-            print("⚠️ OllamaService: GPT-OSS tool calling failed for complete processing: \(error)")
+            AppLog.shared.networking("OllamaService: GPT-OSS tool calling failed for complete processing: \(error.localizedDescription)")
             return nil
         }
     }
@@ -2029,7 +2021,7 @@ class OllamaService: ObservableObject {
     
     private func parseGPTOSSToolCall(_ response: String) -> (function: String, arguments: [String: Any]?)? {
 #if DEBUG
-        print("🔍 OllamaService: Parsing GPT-OSS response: '\(response)'")
+        AppLog.shared.networking("OllamaService: Parsing GPT-OSS response, length: \(response.count) characters", level: .debug)
 #endif
 
         // Look for commentary channel function calls - GPT-OSS uses JSON format in commentary channel
@@ -2038,18 +2030,18 @@ class OllamaService: ObservableObject {
         
         if let match = response.range(of: jsonPattern, options: .regularExpression) {
             let jsonContent = String(response[match])
-            print("🔍 OllamaService: Found GPT-OSS function call: '\(jsonContent)'")
+            AppLog.shared.networking("OllamaService: Found GPT-OSS function call in response", level: .debug)
             
             if let data = jsonContent.data(using: .utf8) {
                 do {
                     if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let functionName = json["function"] as? String {
                         let arguments = json["arguments"] as? [String: Any] ?? json // Sometimes args are at root level
-                        print("✅ OllamaService: Successfully parsed GPT-OSS function call: \(functionName)")
+                        AppLog.shared.networking("OllamaService: Successfully parsed GPT-OSS function call: \(functionName)")
                         return (functionName, arguments)
                     }
                 } catch {
-                    print("❌ OllamaService: Failed to parse GPT-OSS function call JSON: \(error)")
+                    AppLog.shared.networking("OllamaService: Failed to parse GPT-OSS function call JSON: \(error.localizedDescription)", level: .error)
                 }
             }
         }
@@ -2057,20 +2049,20 @@ class OllamaService: ObservableObject {
         // Fallback: if the regex fails, try to extract any JSON from the response
         let extractedJson = extractJSONFromResponse(response)
         if let data = extractedJson.data(using: .utf8) {
-            print("🔍 OllamaService: Attempting to parse extracted JSON from GPT-OSS response")
+            AppLog.shared.networking("OllamaService: Attempting to parse extracted JSON from GPT-OSS response", level: .debug)
             do {
                 if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let functionName = json["function"] as? String {
                     let arguments = json["arguments"] as? [String: Any] ?? json
-                    print("✅ OllamaService: Successfully parsed extracted GPT-OSS JSON: \(functionName)")
+                    AppLog.shared.networking("OllamaService: Successfully parsed extracted GPT-OSS JSON: \(functionName)")
                     return (functionName, arguments)
                 }
             } catch {
-                print("❌ OllamaService: Failed to parse extracted GPT-OSS JSON: \(error)")
+                AppLog.shared.networking("OllamaService: Failed to parse extracted GPT-OSS JSON: \(error.localizedDescription)", level: .error)
             }
         }
 
-        print("⚠️ OllamaService: No GPT-OSS function call found in response")
+        AppLog.shared.networking("OllamaService: No GPT-OSS function call found in response")
         return nil
     }
     
@@ -2133,7 +2125,7 @@ class OllamaService: ObservableObject {
         let contentTypeString = arguments["contentType"] as? String ?? "General"
         let contentType = ContentType(rawValue: contentTypeString) ?? .general
         
-        print("✅ OllamaService: Successfully parsed GPT-OSS complete analysis")
+        AppLog.shared.networking("OllamaService: Successfully parsed GPT-OSS complete analysis")
         return (summary, tasks, reminders, titles, contentType)
     }
     
@@ -2150,16 +2142,16 @@ class OllamaService: ObservableObject {
                 if toolCallResult.function == "create_summary",
                    let arguments = toolCallResult.arguments,
                    let summary = arguments["summary"] as? String {
-                    print("✅ OllamaService: Successfully generated summary using Magistral tool calling")
+                    AppLog.shared.networking("OllamaService: Successfully generated summary using Magistral tool calling")
                     return summary
                 }
             }
             
-            print("⚠️ OllamaService: No valid Magistral tool calls in response, falling back")
+            AppLog.shared.networking("OllamaService: No valid Magistral tool calls in response, falling back")
             return nil
             
         } catch {
-            print("⚠️ OllamaService: Magistral tool calling failed, falling back: \(error)")
+            AppLog.shared.networking("OllamaService: Magistral tool calling failed, falling back: \(error.localizedDescription)")
             return nil
         }
     }
@@ -2178,11 +2170,11 @@ class OllamaService: ObservableObject {
                 }
             }
             
-            print("⚠️ OllamaService: No valid Magistral tool calls in complete processing response, falling back")
+            AppLog.shared.networking("OllamaService: No valid Magistral tool calls in complete processing response, falling back")
             return nil
             
         } catch {
-            print("⚠️ OllamaService: Magistral tool calling failed for complete processing: \(error)")
+            AppLog.shared.networking("OllamaService: Magistral tool calling failed for complete processing: \(error.localizedDescription)")
             return nil
         }
     }
@@ -2304,7 +2296,7 @@ class OllamaService: ObservableObject {
         
         if let match = response.range(of: toolCallPattern, options: .regularExpression) {
             let matchStr = String(response[match])
-            print("🔍 OllamaService: Found Magistral tool call pattern: '\(matchStr)'")
+            AppLog.shared.networking("OllamaService: Found Magistral tool call pattern in response", level: .debug)
             
             // Extract components using regex groups
             let regex = try? NSRegularExpression(pattern: toolCallPattern)
@@ -2318,17 +2310,17 @@ class OllamaService: ObservableObject {
                     let functionName = String(matchStr[functionRange])
                     let argsString = String(matchStr[argsRange])
                     
-                    print("🔍 OllamaService: Parsed Magistral function: \(functionName), args: \(argsString)")
+                    AppLog.shared.networking("OllamaService: Parsed Magistral function: \(functionName)", level: .debug)
                     
                     // Parse arguments as JSON
                     if let data = argsString.data(using: .utf8) {
                         do {
                             if let arguments = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                                print("✅ OllamaService: Successfully parsed Magistral tool call: \(functionName)")
+                                AppLog.shared.networking("OllamaService: Successfully parsed Magistral tool call: \(functionName)")
                                 return (functionName, arguments)
                             }
                         } catch {
-                            print("❌ OllamaService: Failed to parse Magistral arguments JSON: \(error)")
+                            AppLog.shared.networking("OllamaService: Failed to parse Magistral arguments JSON: \(error.localizedDescription)", level: .error)
                         }
                     }
                 }
@@ -2343,13 +2335,13 @@ class OllamaService: ObservableObject {
                 let jsonStr = String(response[jsonMatch])
                 if let data = jsonStr.data(using: .utf8),
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    print("🔍 OllamaService: Found alternative Magistral JSON response")
+                    AppLog.shared.networking("OllamaService: Found alternative Magistral JSON response", level: .debug)
                     return ("create_summary", json)
                 }
             }
         }
         
-        print("⚠️ OllamaService: No Magistral tool call found in response")
+        AppLog.shared.networking("OllamaService: No Magistral tool call found in response")
         return nil
     }
     
@@ -2412,7 +2404,7 @@ class OllamaService: ObservableObject {
         let contentTypeString = arguments["contentType"] as? String ?? "General"
         let contentType = ContentType(rawValue: contentTypeString) ?? .general
         
-        print("✅ OllamaService: Successfully parsed Magistral complete analysis")
+        AppLog.shared.networking("OllamaService: Successfully parsed Magistral complete analysis")
         return (summary, tasks, reminders, titles, contentType)
     }
     
@@ -2446,57 +2438,49 @@ class OllamaService: ObservableObject {
         request.httpBody = try generateRequest.toJSONData()
         
         Self.requestCounter += 1
-        print("🔧 OllamaService: Sending tool calling request with \(tools.count) tools")
+        AppLog.shared.networking("OllamaService: Sending tool calling request with \(tools.count) tools", level: .debug)
         
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            print("❌ OllamaService: Tool calling network request failed: \(error.localizedDescription)")
+            AppLog.shared.networking("OllamaService: Tool calling network request failed: \(error.localizedDescription)", level: .error)
             throw OllamaError.serverError("Network request failed: \(error.localizedDescription)")
         }
         
         guard let httpResponse = response as? HTTPURLResponse else {
-            print("❌ OllamaService: Invalid HTTP response type")
+            AppLog.shared.networking("OllamaService: Invalid HTTP response type for tool calling", level: .error)
             throw OllamaError.serverError("Invalid HTTP response")
         }
-        
+
         guard httpResponse.statusCode == 200 else {
-            print("❌ OllamaService: HTTP error - Status: \(httpResponse.statusCode)")
-            if let errorData = String(data: data, encoding: .utf8) {
-                print("❌ OllamaService: Error response body: \(errorData)")
-            }
+            AppLog.shared.networking("OllamaService: HTTP error for tool calling - Status: \(httpResponse.statusCode)", level: .error)
             throw OllamaError.serverError("Server returned status code \(httpResponse.statusCode)")
         }
-        
+
         // Check if we have valid data first
         guard !data.isEmpty else {
-            print("❌ OllamaService: Received empty response data")
+            AppLog.shared.networking("OllamaService: Received empty tool calling response data", level: .error)
             throw OllamaError.parsingError("Received empty response from server")
         }
-        
-        print("📊 OllamaService: Received tool calling response data of \(data.count) bytes")
-        
+
+        AppLog.shared.networking("OllamaService: Received tool calling response data of \(data.count) bytes", level: .debug)
+
         do {
             let generateResponse = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
-            
-            print("✅ OllamaService: Successfully decoded tool calling response")
+
+            AppLog.shared.networking("OllamaService: Successfully decoded tool calling response")
             if let toolCalls = generateResponse.tool_calls {
-                print("🔧 OllamaService: Received \(toolCalls.count) tool calls")
+                AppLog.shared.networking("OllamaService: Received \(toolCalls.count) tool calls", level: .debug)
             } else {
-                print("⚠️ OllamaService: No tool calls in response")
+                AppLog.shared.networking("OllamaService: No tool calls in response")
             }
-            
+
             return generateResponse
         } catch {
-            print("❌ OllamaService: Tool calling JSON parsing failed: \(error)")
-            print("❌ OllamaService: Response data length: \(data.count) bytes")
-            
-            // Try to decode raw response for better error diagnostics
-            if let rawResponse = String(data: data, encoding: .utf8) {
-                print("❌ OllamaService: Raw response that failed to parse: \(rawResponse)")
-            }
-            
+            AppLog.shared.networking("OllamaService: Tool calling JSON parsing failed: \(error.localizedDescription)", level: .error)
+            AppLog.shared.networking("OllamaService: Response data length: \(data.count) bytes", level: .error)
+
             throw OllamaError.parsingError("Failed to parse tool calling JSON response: \(error.localizedDescription)")
         }
     }
@@ -2536,61 +2520,56 @@ class OllamaService: ObservableObject {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            print("❌ OllamaService: Network request failed: \(error.localizedDescription)")
+            AppLog.shared.networking("OllamaService: Network request failed: \(error.localizedDescription)", level: .error)
             throw OllamaError.serverError("Network request failed: \(error.localizedDescription)")
         }
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
-            print("❌ OllamaService: Invalid HTTP response type")
+            AppLog.shared.networking("OllamaService: Invalid HTTP response type", level: .error)
             throw OllamaError.serverError("Invalid HTTP response")
         }
-        
+
         guard httpResponse.statusCode == 200 else {
-            print("❌ OllamaService: HTTP error - Status: \(httpResponse.statusCode)")
-            if let errorData = String(data: data, encoding: .utf8) {
-                print("❌ OllamaService: Error response body: \(errorData)")
-            }
+            AppLog.shared.networking("OllamaService: HTTP error - Status: \(httpResponse.statusCode)", level: .error)
             throw OllamaError.serverError("Server returned status code \(httpResponse.statusCode)")
         }
-        
-        
+
+
         // Check if we have valid data first
         guard !data.isEmpty else {
-            print("❌ OllamaService: Received empty response data")
+            AppLog.shared.networking("OllamaService: Received empty response data", level: .error)
             throw OllamaError.parsingError("Received empty response from server")
         }
-        
-        print("📊 OllamaService: Received response data of \(data.count) bytes")
-        
+
+        AppLog.shared.networking("OllamaService: Received response data of \(data.count) bytes", level: .debug)
+
         do {
             let generateResponse = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
-            
-            print("✅ OllamaService: Successfully decoded Ollama response")
+
+            AppLog.shared.networking("OllamaService: Successfully decoded Ollama response")
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                print("📝 OllamaService: Raw response content: '\(generateResponse.response)'")
+                AppLog.shared.networking("OllamaService: Raw response content length: \(generateResponse.response.count) characters", level: .debug)
             }
-            print("🏁 OllamaService: Response done: \(generateResponse.done)")
-            
+            AppLog.shared.networking("OllamaService: Response done: \(generateResponse.done)", level: .debug)
+
             // Clean up the response based on the expected format
             let cleanedResponse = cleanForJSON ? cleanOllamaResponse(generateResponse.response) : cleanSummaryResponse(generateResponse.response)
-            
-            print("🧹 OllamaService: Cleaned response: '\(cleanedResponse)'")
-            
+
+            AppLog.shared.networking("OllamaService: Cleaned response length: \(cleanedResponse.count) characters", level: .debug)
+
             return cleanedResponse
         } catch {
-            print("❌ OllamaService: JSON parsing failed: \(error)")
-            print("❌ OllamaService: Response data length: \(data.count) bytes")
-            
+            AppLog.shared.networking("OllamaService: JSON parsing failed: \(error.localizedDescription)", level: .error)
+            AppLog.shared.networking("OllamaService: Response data length: \(data.count) bytes", level: .error)
+
             // Try to decode raw response for better error diagnostics
             if let rawResponse = String(data: data, encoding: .utf8) {
-                print("❌ OllamaService: Raw response that failed to parse: \(rawResponse)")
-                
                 // Check if this looks like a streaming response that wasn't properly handled
                 if rawResponse.contains("\"done\":false") {
-                    print("⚠️ OllamaService: Detected streaming response - this might be the issue")
+                    AppLog.shared.networking("OllamaService: Detected streaming response - this might be the issue")
                 }
             }
-            
+
             throw OllamaError.parsingError("Failed to parse JSON response: \(error.localizedDescription). Raw response: \(String(data: data, encoding: .utf8) ?? "Unable to decode raw response")")
         }
     }
@@ -2630,48 +2609,41 @@ class OllamaService: ObservableObject {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            print("❌ OllamaService: Structured output network request failed: \(error.localizedDescription)")
+            AppLog.shared.networking("OllamaService: Structured output network request failed: \(error.localizedDescription)", level: .error)
             throw OllamaError.serverError("Network request failed: \(error.localizedDescription)")
         }
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
-            print("❌ OllamaService: Invalid HTTP response type")
+            AppLog.shared.networking("OllamaService: Invalid HTTP response type for structured output", level: .error)
             throw OllamaError.serverError("Invalid HTTP response")
         }
-        
+
         guard httpResponse.statusCode == 200 else {
-            print("❌ OllamaService: HTTP error - Status: \(httpResponse.statusCode)")
-            if let errorData = String(data: data, encoding: .utf8) {
-                print("❌ OllamaService: Error response body: \(errorData)")
-            }
+            AppLog.shared.networking("OllamaService: HTTP error for structured output - Status: \(httpResponse.statusCode)", level: .error)
             throw OllamaError.serverError("Server returned status code \(httpResponse.statusCode)")
         }
-        
+
         guard !data.isEmpty else {
-            print("❌ OllamaService: Received empty response data")
+            AppLog.shared.networking("OllamaService: Received empty structured response data", level: .error)
             throw OllamaError.parsingError("Received empty response from server")
         }
-        
-        print("📊 OllamaService: Received structured response data of \(data.count) bytes")
-        
+
+        AppLog.shared.networking("OllamaService: Received structured response data of \(data.count) bytes", level: .debug)
+
         do {
             let generateResponse = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
-            
-            print("✅ OllamaService: Successfully decoded structured Ollama response")
-            print("📝 OllamaService: Structured response content: '\(generateResponse.response.prefix(200))...'")
-            print("🏁 OllamaService: Response done: \(generateResponse.done)")
-            
+
+            AppLog.shared.networking("OllamaService: Successfully decoded structured Ollama response")
+            AppLog.shared.networking("OllamaService: Structured response received, length: \(generateResponse.response.count) characters", level: .debug)
+            AppLog.shared.networking("OllamaService: Response done: \(generateResponse.done)", level: .debug)
+
             // For structured outputs, we expect valid JSON without need for cleaning
             return generateResponse.response
-            
+
         } catch {
-            print("❌ OllamaService: Structured output JSON parsing failed: \(error)")
-            print("❌ OllamaService: Response data length: \(data.count) bytes")
-            
-            if let rawResponse = String(data: data, encoding: .utf8) {
-                print("❌ OllamaService: Raw structured response that failed to parse: \(rawResponse)")
-            }
-            
+            AppLog.shared.networking("OllamaService: Structured output JSON parsing failed: \(error.localizedDescription)", level: .error)
+            AppLog.shared.networking("OllamaService: Response data length: \(data.count) bytes", level: .error)
+
             throw OllamaError.parsingError("Failed to parse structured JSON response: \(error.localizedDescription)")
         }
     }
@@ -2679,6 +2651,7 @@ class OllamaService: ObservableObject {
     // MARK: - Structured Output Helper Methods
     
     private func createStructuredCompleteProcessingPrompt(from text: String) -> String {
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
         return """
         You are analyzing a transcript. Extract and summarize the ACTUAL CONTENT discussed, not a description of what type of document it is.
 
@@ -2729,12 +2702,14 @@ class OllamaService: ObservableObject {
         - Technical: Lectures, tutorials, technical content
         - General: News, media, general information
 
+        \(comedyModifier)
+
         Now analyze this transcript and extract the CONTENT (not meta-commentary about what it is):
 
         \(text)
         """
     }
-    
+
     private func parseStructuredCompleteResponse(_ response: String) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         guard let data = response.data(using: .utf8) else {
             throw OllamaError.parsingError("Failed to convert structured response to data")
@@ -2747,18 +2722,15 @@ class OllamaService: ObservableObject {
             let summaryLength = rawResult.summary.count
             let hasTitles = !rawResult.titles.isEmpty
 
-            print("🔍 OllamaService: Validating structured response quality")
-            print("   Summary length: \(summaryLength) chars")
-            print("   Titles count: \(rawResult.titles.count)")
-            print("   Tasks count: \(rawResult.tasks.count)")
+            AppLog.shared.networking("OllamaService: Validating structured response - Summary: \(summaryLength) chars, Titles: \(rawResult.titles.count), Tasks: \(rawResult.tasks.count)", level: .debug)
 
             // Check for quality issues
             if summaryLength < 200 {
-                print("⚠️ OllamaService: Summary is very short (\(summaryLength) chars), may need enhancement")
+                AppLog.shared.networking("OllamaService: Summary is very short (\(summaryLength) chars), may need enhancement")
             }
 
             if !hasTitles {
-                print("⚠️ OllamaService: No titles generated, adding fallback title")
+                AppLog.shared.networking("OllamaService: No titles generated, adding fallback title")
             }
 
             // Filter out invalid tasks (questions, statements, meta-tasks) and deduplicate
@@ -2768,7 +2740,7 @@ class OllamaService: ObservableObject {
 
                 // Filter out questions
                 if text.hasSuffix("?") {
-                    print("⚠️ OllamaService: Skipping invalid task (question): '\(text)'")
+                    AppLog.shared.networking("OllamaService: Skipping invalid task (question format detected)", level: .debug)
                     return false
                 }
 
@@ -2776,14 +2748,14 @@ class OllamaService: ObservableObject {
                 let lowerText = text.lowercased()
                 let metaPhrases = ["summarize", "analyze", "main topic", "what is", "identify"]
                 if metaPhrases.contains(where: { lowerText.contains($0) }) {
-                    print("⚠️ OllamaService: Skipping invalid task (meta-task): '\(text)'")
+                    AppLog.shared.networking("OllamaService: Skipping invalid task (meta-task detected)", level: .debug)
                     return false
                 }
 
                 // Check for duplicates
                 let isUnique = uniqueTaskTexts.insert(lowerText).inserted
                 if !isUnique {
-                    print("⚠️ OllamaService: Skipping duplicate task: '\(text)'")
+                    AppLog.shared.networking("OllamaService: Skipping duplicate task", level: .debug)
                     return false
                 }
 
@@ -2809,7 +2781,7 @@ class OllamaService: ObservableObject {
                 // Filter out statements that aren't reminders
                 let invalidPhrases = ["the main topic", "the segment", "this is", "this appears", "the content"]
                 if invalidPhrases.contains(where: { lowerText.contains($0) }) {
-                    print("⚠️ OllamaService: Skipping invalid reminder (statement): '\(text)'")
+                    AppLog.shared.networking("OllamaService: Skipping invalid reminder (statement format detected)", level: .debug)
                     return false
                 }
 
@@ -2843,7 +2815,7 @@ class OllamaService: ObservableObject {
 
             // If no titles were generated, create a default one from the summary
             if titles.isEmpty {
-                print("🔧 OllamaService: Generating fallback title from summary")
+                AppLog.shared.networking("OllamaService: Generating fallback title from summary", level: .debug)
                 let summaryFirstLine = rawResult.summary.components(separatedBy: .newlines).first ?? rawResult.summary
                 let fallbackTitle = String(summaryFirstLine.prefix(60)).trimmingCharacters(in: .whitespacesAndNewlines)
                 if !fallbackTitle.isEmpty {
@@ -2853,13 +2825,13 @@ class OllamaService: ObservableObject {
 
             let contentType = ContentType(rawValue: rawResult.contentType) ?? .general
 
-            print("✅ OllamaService: Successfully parsed structured complete result")
-            print("📊 Final: Summary: \(rawResult.summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)")
+            AppLog.shared.networking("OllamaService: Successfully parsed structured complete result")
+            AppLog.shared.networking("OllamaService: Final: Summary: \(rawResult.summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)", level: .debug)
 
             return (rawResult.summary, tasks, reminders, titles, contentType)
 
         } catch {
-            print("❌ OllamaService: Structured JSON parsing failed: \(error)")
+            AppLog.shared.networking("OllamaService: Structured JSON parsing failed: \(error.localizedDescription)", level: .error)
             throw OllamaError.parsingError("Failed to parse structured JSON response: \(error.localizedDescription)")
         }
     }
@@ -2899,11 +2871,11 @@ class OllamaService: ObservableObject {
                 )
             }
             
-            print("✅ OllamaService: Successfully parsed structured tasks/reminders")
+            AppLog.shared.networking("OllamaService: Successfully parsed structured tasks/reminders")
             return (tasks, reminders)
             
         } catch {
-            print("❌ OllamaService: Structured tasks/reminders parsing failed: \(error)")
+            AppLog.shared.networking("OllamaService: Structured tasks/reminders parsing failed: \(error.localizedDescription)", level: .error)
             throw OllamaError.parsingError("Failed to parse structured tasks/reminders: \(error.localizedDescription)")
         }
     }

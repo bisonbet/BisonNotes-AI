@@ -2,7 +2,7 @@
 //  SimpleSettingsView.swift
 //  Audio Journal
 //
-//  Simplified OpenAI-only settings view for easy configuration
+//  Simplified settings view for easy first-time configuration
 //
 
 import SwiftUI
@@ -13,6 +13,7 @@ import SafariServices
 
 enum ProcessingOption: String, CaseIterable {
     case openai = "OpenAI"
+    case mistralAI = "Mistral AI"
     case onDeviceLLM = "On-Device AI"
     case chooseLater = "Choose Later"
 
@@ -20,6 +21,8 @@ enum ProcessingOption: String, CaseIterable {
         switch self {
         case .openai:
             return "OpenAI (Cloud)"
+        case .mistralAI:
+            return "Mistral AI (Free)"
         case .onDeviceLLM:
             return "On-Device AI"
         case .chooseLater:
@@ -31,6 +34,8 @@ enum ProcessingOption: String, CaseIterable {
         switch self {
         case .openai:
             return "Cloud-based transcription and AI summaries"
+        case .mistralAI:
+            return "Free cloud AI -- no credit card required"
         case .onDeviceLLM:
             return "Private, on-device AI processing"
         case .chooseLater:
@@ -44,7 +49,6 @@ struct SimpleSettingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var selectedOption: ProcessingOption = .chooseLater
-    @State private var apiKey: String = ""
     @State private var showingAdvancedSettings = false
     @State private var isSaving = false
     @State private var saveMessage = ""
@@ -55,6 +59,7 @@ struct SimpleSettingsView: View {
     @State private var showingOnDeviceLLMSettings = false
     @State private var showingHelpDocumentation = false
     @State private var showingOnDeviceAIDownload = false
+    @State private var showingMistralOnboarding = false
     
     var body: some View {
         AdaptiveNavigationWrapper {
@@ -62,8 +67,8 @@ struct SimpleSettingsView: View {
                 VStack(alignment: .leading, spacing: 32) {
                     headerSection
                     processingOptionSection
-                    if selectedOption == .openai {
-                        apiKeySection
+                    if selectedOption == .mistralAI {
+                        mistralAIInfoSection
                     } else if selectedOption == .onDeviceLLM {
                         onDeviceAIInfoSection
                     } else if selectedOption == .chooseLater {
@@ -160,6 +165,18 @@ struct SimpleSettingsView: View {
                 }
             )
         }
+        .fullScreenCover(isPresented: $showingMistralOnboarding) {
+            MistralOnboardingView(onSetupComplete: {
+                // Mistral onboarding completed — mark first setup done and navigate
+                UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
+                if isFirstLaunch {
+                    NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        NotificationCenter.default.post(name: NSNotification.Name("RequestLocationPermission"), object: nil)
+                    }
+                }
+            })
+        }
     }
     
     private var headerSection: some View {
@@ -200,8 +217,9 @@ struct SimpleSettingsView: View {
             
             VStack(spacing: 12) {
                 ForEach(ProcessingOption.allCases.filter { option in
-                    // Only show On-Device LLM if device is supported, always show OpenAI and Choose Later
-                    option == .openai || option == .chooseLater || (option == .onDeviceLLM && deviceSupported)
+                    // Show Mistral AI (free cloud), On-Device (if supported), and Advanced
+                    // OpenAI is available under Advanced & Other Options
+                    option == .mistralAI || option == .chooseLater || (option == .onDeviceLLM && deviceSupported)
                 }, id: \.self) { option in
                     Button(action: {
                         selectedOption = option
@@ -330,6 +348,78 @@ struct SimpleSettingsView: View {
         )
     }
 
+    private var mistralAIInfoSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Mistral AI Setup")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    Spacer()
+                    Text("Free")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.orange)
+                        .clipShape(Capsule())
+                }
+
+                Text("Free cloud AI with transcription and summaries. No credit card required -- just create an account.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("What you'll get:")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.orange)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    FeatureBullet(text: "Audio transcription with Voxtral Mini")
+                    FeatureBullet(text: "AI summaries with Mistral Medium")
+                    FeatureBullet(text: "Speaker diarization support")
+                    FeatureBullet(text: "All models included on free tier")
+                }
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.orange.opacity(0.05))
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Setup Process:")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    FeatureBullet(text: "Step 1: Create free Mistral account (~1 min)")
+                    FeatureBullet(text: "Step 2: Generate an API key (~30 sec)")
+                    FeatureBullet(text: "Step 3: Paste key into app")
+                }
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.05))
+            )
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemBackground))
+                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.orange, lineWidth: 1)
+                )
+        )
+    }
+
     private var chooseLaterSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {
@@ -337,7 +427,7 @@ struct SimpleSettingsView: View {
                     .font(.headline)
                     .foregroundColor(.primary)
 
-                Text("Skip initial setup and configure additional processing providers later from the app settings.")
+                Text("Configure processing providers manually from the app settings. If you already have an AI provider set up, your existing configuration is preserved.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -349,10 +439,11 @@ struct SimpleSettingsView: View {
                     .foregroundColor(.primary)
 
                 VStack(alignment: .leading, spacing: 8) {
+                    FeatureBullet(text: "OpenAI - GPT-4.1 Mini transcription and summaries")
                     FeatureBullet(text: "OpenAI Compatible - Use LiteLLM, vLLM, or similar proxies")
                     FeatureBullet(text: "Google AI Studio - Advanced Gemini AI processing")
                     FeatureBullet(text: "AWS Bedrock - Enterprise-grade Claude AI")
-                    FeatureBullet(text: "Mistral AI - Advanced AI processing with Mistral models")
+                    FeatureBullet(text: "Mistral AI - Free and paid cloud AI processing")
                 }
             }
             .padding()
@@ -394,64 +485,8 @@ struct SimpleSettingsView: View {
         )
     }
 
-    private var apiKeySection: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("OpenAI Key")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                
-                Text("Enter your OpenAI API key to enable transcription and AI summaries.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                SecureField("sk-...", text: $apiKey)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .font(.system(size: 16, design: .monospaced))
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
-                
-                if !apiKey.isEmpty {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                        Text("API key entered (\(apiKey.count) characters)")
-                            .font(.caption)
-                            .foregroundColor(.green)
-                    }
-                }
-            }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(apiKey.isEmpty ? Color(.systemGray4) : Color.blue, lineWidth: apiKey.isEmpty ? 0.5 : 2)
-                    )
-            )
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("What you'll get:")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-                
-                VStack(alignment: .leading, spacing: 6) {
-                    FeatureBullet(text: "Fast, accurate transcription with GPT-4o Mini")
-                    FeatureBullet(text: "AI-generated summaries with GPT-4.1 Mini")
-                    FeatureBullet(text: "Automatic task and reminder extraction")
-                    FeatureBullet(text: "12-hour time format by default")
-                }
-            }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.blue.opacity(0.05))
-            )
-        }
-    }
+    // OpenAI setup has been moved to Advanced & Other Options.
+    // Existing OpenAI users keep their configuration; they see "Advanced" selected on this page.
     
     private var saveSection: some View {
         VStack(spacing: 16) {
@@ -471,11 +506,17 @@ struct SimpleSettingsView: View {
                 .padding()
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill((selectedOption == .openai && apiKey.isEmpty) ? Color.gray : Color.blue)
+                        .fill(isSaving ? Color.gray : Color.blue)
                 )
                 .foregroundColor(.white)
             }
-            .disabled((selectedOption == .openai && apiKey.isEmpty) || isSaving)
+            .disabled(isSaving)
+
+            // For Mistral, the save button launches the onboarding wizard instead
+            .onChange(of: selectedOption) { _, newValue in
+                // Reset save result when switching options
+                showingSaveResult = false
+            }
             
             if showingSaveResult {
                 HStack {
@@ -493,25 +534,6 @@ struct SimpleSettingsView: View {
                 )
             }
             
-            // Only show API key help when OpenAI is selected
-            if selectedOption == .openai {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("💡 Need an API key?")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.secondary)
-                    
-                    Text("Visit platform.openai.com, go to API Keys, and create a new secret key. Make sure your account has credits for usage.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.systemGray6))
-                )
-            }
         }
     }
     
@@ -565,15 +587,13 @@ struct SimpleSettingsView: View {
     }
     
     private func loadCurrentSettings() {
-        apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
-        
         // Determine which option should be selected based on current configuration
         let transcriptionEngine = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? "Not Configured"
         let aiEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Not Configured"
         
-        // Check if OpenAI is selected for both AI and Transcription
-        if transcriptionEngine == "OpenAI" && aiEngine == "OpenAI" {
-            selectedOption = .openai
+        // Check if Mistral AI is selected
+        if aiEngine == "Mistral AI" {
+            selectedOption = .mistralAI
         }
         // Check if On-Device AI is selected for AI and on-device transcription (FluidAudio/Parakeet)
         else if transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue && aiEngine == "On-Device AI" {
@@ -590,8 +610,15 @@ struct SimpleSettingsView: View {
     }
     
     private func saveConfiguration() {
-        // Only require API key for OpenAI option
-        guard selectedOption != .openai || !apiKey.isEmpty else { return }
+        // For Mistral, launch the onboarding wizard only if no API key exists yet
+        if selectedOption == .mistralAI {
+            let existingKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+            if existingKey.isEmpty {
+                showingMistralOnboarding = true
+                return
+            }
+            // Key already exists — activate Mistral and continue normally
+        }
 
         isSaving = true
         showingSaveResult = false
@@ -633,38 +660,13 @@ struct SimpleSettingsView: View {
                     await MainActor.run {
                         showingAdvancedSettings = true
                     }
-                } else if selectedOption == .openai {
-                    guard !apiKey.isEmpty else {
-                        await MainActor.run {
-                            saveMessage = "Please enter your OpenAI API key"
-                            saveSuccessful = false
-                            showingSaveResult = true
-                            isSaving = false
-                        }
-                        return
-                    }
-                    
-                    // Set unified OpenAI API key for both transcription and summarization
-                    UserDefaults.standard.set(apiKey, forKey: "openAIAPIKey")
-                    
-                    // Set transcription engine to OpenAI with GPT-4o Mini Transcribe
-                    UserDefaults.standard.set("gpt-4o-mini-transcribe", forKey: "openAIModel")
-                    UserDefaults.standard.set("OpenAI", forKey: "selectedTranscriptionEngine")
-                    
-                    // Set AI engine to GPT-4.1 Mini for summaries
-                    UserDefaults.standard.set("OpenAI", forKey: "SelectedAIEngine")
-                    UserDefaults.standard.set("gpt-4.1-mini", forKey: "openAISummarizationModel")
-                    
-                    // Test the API key
-                    let config = OpenAITranscribeConfig(
-                        apiKey: apiKey,
-                        model: .gpt4oMiniTranscribe,
-                        baseURL: "https://api.openai.com/v1"
-                    )
-                    
-                    let service = OpenAITranscribeService(config: config, chunkingService: AudioFileChunkingService())
-                    try await service.testConnection()
-                    
+                } else if selectedOption == .mistralAI {
+                    // Mistral AI with existing key — activate as the selected engine
+                    UserDefaults.standard.set(true, forKey: "enableMistralAI")
+                    UserDefaults.standard.set("Mistral AI", forKey: "SelectedAIEngine")
+                    UserDefaults.standard.set("Mistral AI", forKey: "selectedTranscriptionEngine")
+                    UserDefaults.standard.set(true, forKey: "mistralTranscribeDiarize")
+
                 } else {
                     // Set transcription engine to FluidAudio (On Device) for transcription
                     UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")

@@ -177,23 +177,12 @@ struct SummaryDetailView: View {
         }
         .onAppear {
             // Debug summary data being displayed
-            print("📊 [SummaryDetailView] Summary ID: \(summaryData.id)")
-            print("📊 [SummaryDetailView] Summary length: \(summaryData.summary.count) chars")
-            print("📊 [SummaryDetailView] Tasks count: \(summaryData.tasks.count)")
-            print("📊 [SummaryDetailView] Reminders count: \(summaryData.reminders.count)")
-            print("📊 [SummaryDetailView] Titles count: \(summaryData.titles.count)")
+            AppLog.shared.summarization("SummaryDetailView opened: summary=\(summaryData.summary.count) chars, tasks=\(summaryData.tasks.count), reminders=\(summaryData.reminders.count), titles=\(summaryData.titles.count)", level: .debug)
             if summaryData.summary.isEmpty {
-                print("⚠️ [SummaryDetailView] Summary text is EMPTY!")
-            } else {
-                print("📊 [SummaryDetailView] Summary preview: \(summaryData.summary.prefix(200))...")
+                AppLog.shared.summarization("SummaryDetailView: Summary text is empty", level: .error)
             }
 
-            // Debug location data availability
-            if let locationData = recording.locationData {
-                print("📍 SummaryDetailView: Recording has location data - lat: \(locationData.latitude), lon: \(locationData.longitude)")
-            } else {
-                print("📍 SummaryDetailView: Recording has NO location data")
-            }
+            AppLog.shared.summarization("SummaryDetailView: hasLocationData=\(recording.locationData != nil)", level: .debug)
 
             // Refresh summary data from coordinator to get the latest version
             if let recordingEntry = appCoordinator.getRecording(url: recording.url),
@@ -201,8 +190,7 @@ struct SummaryDetailView: View {
                let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
                let latestSummary = completeData.summary,
                latestSummary.id != summaryData.id {
-                print("🔄 [SummaryDetailView] Refreshing summary from Core Data")
-                print("📊 [SummaryDetailView] New summary length: \(latestSummary.summary.count) chars")
+                AppLog.shared.summarization("Refreshing summary from Core Data, new length: \(latestSummary.summary.count) chars", level: .debug)
                 summaryData = latestSummary
             }
 
@@ -348,7 +336,7 @@ struct SummaryDetailView: View {
                 locationAddress = address
             }
         } catch {
-            print("❌ SummaryDetailView: Reverse geocoding failed: \(error.localizedDescription)")
+            AppLog.shared.summarization("Reverse geocoding failed: \(error.localizedDescription)", level: .error)
             await summaryGeocodeCache.store(.empty, for: cacheKey)
             if Task.isCancelled { return }
             await MainActor.run {
@@ -1077,14 +1065,13 @@ struct SummaryDetailView: View {
     // MARK: - Delete Logic
     
     private func deleteSummary() {
-        print("🗑️ Deleting summary for: \(summaryData.recordingName)")
-        print("🆔 Summary ID: \(summaryData.id)")
+        AppLog.shared.summarization("Deleting summary ID: \(summaryData.id)", level: .debug)
 
         Task {
             do {
                 // Delete the summary locally and from iCloud
                 try await appCoordinator.deleteSummary(id: summaryData.id)
-                print("✅ Summary deleted from Core Data")
+                AppLog.shared.summarization("Summary deleted from Core Data")
 
                 // If this was a preserved summary, also remove the now-empty recording anchor
                 if let recordingId = summaryData.recordingId,
@@ -1098,29 +1085,29 @@ struct SummaryDetailView: View {
                     if hadNoURL && hadNoTranscript {
                         // Safe to delete the anchor recording entry
                         appCoordinator.coreDataManager.deleteRecording(id: recordingId)
-                        print("🗑️ Deleted empty anchor recording entry after summary deletion")
+                        AppLog.shared.summarization("Deleted empty anchor recording entry after summary deletion", level: .debug)
                     } else {
                         // Save the updated recording if we keep it
                         do {
                             try appCoordinator.coreDataManager.saveContext()
-                            print("✅ Recording updated to remove summary reference")
+                            AppLog.shared.summarization("Recording updated to remove summary reference")
                         } catch {
-                            print("❌ Failed to update recording: \(error)")
+                            AppLog.shared.summarization("Failed to update recording: \(error)", level: .error)
                         }
                     }
                 } else {
-                    print("ℹ️ Recording no longer exists (orphaned summary) - skipping recording update")
+                    AppLog.shared.summarization("Recording no longer exists (orphaned summary) - skipping recording update", level: .debug)
                 }
 
                 // Notify parent views to refresh
                 NotificationCenter.default.post(name: NSNotification.Name("SummaryDeleted"), object: nil)
                 appCoordinator.objectWillChange.send()
 
-                print("✅ Summary deletion completed")
+                AppLog.shared.summarization("Summary deletion completed")
                 dismiss()
 
             } catch {
-                print("❌ Failed to delete summary: \(error)")
+                AppLog.shared.summarization("Failed to delete summary: \(error)", level: .error)
                 regenerationError = "Failed to delete summary: \(error.localizedDescription)"
                 showingRegenerationAlert = true
             }
@@ -1140,7 +1127,7 @@ struct SummaryDetailView: View {
         let recordingURL = summaryData.recordingURL
         let recordingName = summaryData.recordingName
 
-        print("🔄 Queueing summary regeneration for: \(recordingName)")
+        AppLog.shared.summarization("Queueing summary regeneration", level: .debug)
 
         Task {
             do {
@@ -1154,9 +1141,9 @@ struct SummaryDetailView: View {
                 await MainActor.run {
                     regeneratingJobId = jobId
                 }
-                print("✅ Summary regeneration job queued for: \(recordingName) (jobId=\(jobId))")
+                AppLog.shared.summarization("Summary regeneration job queued (jobId=\(jobId))")
             } catch {
-                print("❌ Failed to queue regeneration job: \(error)")
+                AppLog.shared.summarization("Failed to queue regeneration job: \(error)", level: .error)
                 await MainActor.run {
                     regenerationError = "Failed to start regeneration: \(error.localizedDescription)"
                     showingRegenerationAlert = true
@@ -1269,7 +1256,7 @@ struct SummaryDetailView: View {
                         userInfo: ["recordingId": recordingId, "newName": newName]
                     )
                     
-                    print("✅ Successfully updated recording name to: '\(newName)'")
+                    AppLog.shared.summarization("Successfully updated recording name")
                 }
             } catch {
                 await MainActor.run {
@@ -1277,7 +1264,7 @@ struct SummaryDetailView: View {
                     regenerationError = "Failed to update title: \(error.localizedDescription)"
                     showingRegenerationAlert = true
                 }
-                print("❌ Failed to update recording name: \(error)")
+                AppLog.shared.summarization("Failed to update recording name: \(error)", level: .error)
             }
         }
     }
@@ -1333,7 +1320,7 @@ struct SummaryDetailView: View {
                         userInfo: ["recordingId": recordingId, "newDate": newDateTime]
                     )
                     
-                    print("✅ Successfully updated recording date to: \(formatFullDateTime(newDateTime))")
+                    AppLog.shared.summarization("Successfully updated recording date")
                 }
             } catch {
                 await MainActor.run {
@@ -1341,7 +1328,7 @@ struct SummaryDetailView: View {
                     regenerationError = "Failed to update date: \(error.localizedDescription)"
                     showingRegenerationAlert = true
                 }
-                print("❌ Failed to update recording date: \(error)")
+                AppLog.shared.summarization("Failed to update recording date: \(error)", level: .error)
             }
         }
     }
@@ -1385,7 +1372,7 @@ struct SummaryDetailView: View {
                         userInfo: ["recordingId": recordingId, "location": locationData]
                     )
                     
-                    print("✅ Successfully added location: \(locationData.displayLocation)")
+                    AppLog.shared.summarization("Successfully added location")
                 }
             } catch {
                 await MainActor.run {
@@ -1393,7 +1380,7 @@ struct SummaryDetailView: View {
                     regenerationError = "Failed to add location: \(error.localizedDescription)"
                     showingRegenerationAlert = true
                 }
-                print("❌ Failed to update recording location: \(error)")
+                AppLog.shared.summarization("Failed to update recording location: \(error)", level: .error)
             }
         }
     }
@@ -1428,7 +1415,7 @@ struct SummaryDetailView: View {
 
         Task { @MainActor in
             do {
-                print("📄 Starting \(format.displayName) export for: \(summaryData.recordingName)")
+                AppLog.shared.summarization("Starting \(format.displayName) export", level: .debug)
 
                 let exportData: Data
                 switch format {
@@ -1446,7 +1433,7 @@ struct SummaryDetailView: View {
                     )
                 }
 
-                print("✅ \(format.displayName) generated successfully, size: \(exportData.count) bytes")
+                AppLog.shared.summarization("\(format.displayName) generated successfully, size: \(exportData.count) bytes")
 
                 exportDataToShare = exportData
                 exportFileName = sanitizeFileName("\(summaryData.recordingName)_Summary", fileExtension: format.fileExtension)
@@ -1454,9 +1441,9 @@ struct SummaryDetailView: View {
                 exportIconSystemName = format.iconSystemName
                 showingShareSheet = true
 
-                print("📤 Opening share sheet")
+                AppLog.shared.summarization("Opening share sheet", level: .debug)
             } catch {
-                print("❌ \(format.displayName) export failed: \(error)")
+                AppLog.shared.summarization("\(format.displayName) export failed: \(error)", level: .error)
                 exportError = "Failed to generate \(format.displayName): \(error.localizedDescription)"
             }
 
@@ -1581,6 +1568,9 @@ struct EnhancedTaskRowView: View {
                             }
                         }
                     }
+                },
+                onGoogleCalendarSelected: {
+                    integrationManager.addTaskToGoogleCalendar(task, recordingName: recordingName)
                 }
             )
         }
@@ -1721,6 +1711,9 @@ struct EnhancedReminderRowView: View {
                             }
                         }
                     }
+                },
+                onGoogleCalendarSelected: {
+                    integrationManager.addReminderToGoogleCalendar(reminder, recordingName: recordingName)
                 }
             )
         }
@@ -2439,18 +2432,18 @@ struct LocationPickerView: View {
     }
     
     private func requestCurrentLocation() {
-        print("🔍 Requesting current location...")
+        AppLog.shared.summarization("Requesting current location...", level: .debug)
         isGettingCurrentLocation = true
         
         locationManager.requestCurrentLocation { location in
             DispatchQueue.main.async {
                 guard let location = location else {
-                    print("❌ Failed to get current location")
+                    AppLog.shared.summarization("Failed to get current location", level: .error)
                     self.isGettingCurrentLocation = false
                     return
                 }
                 
-                print("✅ Got current location: \(location.coordinate.latitude), \(location.coordinate.longitude)")
+                AppLog.shared.summarization("Got current location", level: .debug)
                 
                 // Reverse geocode to get address
                 self.locationManager.reverseGeocodeLocation(location) { address in
@@ -2668,7 +2661,7 @@ struct LocationPickerView: View {
     private func useManualLocation() {
         guard let lat = Double(manualLatitude),
               let lng = Double(manualLongitude) else {
-            print("❌ Failed to parse manual coordinates")
+            AppLog.shared.summarization("Failed to parse manual coordinates", level: .error)
             return
         }
         
@@ -2676,7 +2669,7 @@ struct LocationPickerView: View {
         guard lat.isFinite && lng.isFinite && 
               !lat.isNaN && !lng.isNaN &&
               lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 else {
-            print("❌ Invalid coordinate values: lat=\(lat), lng=\(lng)")
+            AppLog.shared.summarization("Invalid coordinate values", level: .error)
             return
         }
         
@@ -2688,7 +2681,7 @@ struct LocationPickerView: View {
             address: "Manual: \(lat), \(lng)"
         )
         
-        print("✅ Using manual location: \(lat), \(lng)")
+        AppLog.shared.summarization("Using manual location", level: .debug)
         onLocationSelected(locationData)
         dismiss()
     }
@@ -3192,7 +3185,7 @@ private final class ExportActivityItem: NSObject, UIActivityItemSource {
             temporaryURL = destination
             return destination
         } catch {
-            print("❌ Failed to write temporary export for sharing: \(error)")
+            AppLog.shared.summarization("Failed to write temporary export for sharing: \(error)", level: .error)
             return nil
         }
     }

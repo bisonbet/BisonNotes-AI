@@ -7,12 +7,70 @@
 
 import Foundation
 
+// MARK: - Comedy Mode
+
+enum ComedyMode: String {
+    case off = "off"
+    case snarky = "snarky"
+    case funny = "funny"
+
+    struct SettingsKeys {
+        static let enabled = "comedyModeEnabled"
+        static let style = "comedyModeStyle"
+    }
+
+    /// Returns the current comedy mode based on UserDefaults
+    static var current: ComedyMode {
+        guard UserDefaults.standard.bool(forKey: SettingsKeys.enabled) else {
+            return .off
+        }
+        let style = UserDefaults.standard.string(forKey: SettingsKeys.style) ?? "snarky"
+        return ComedyMode(rawValue: style) ?? .snarky
+    }
+
+    /// Returns prompt modifier text to append to summary system prompts, or nil if comedy mode is off
+    var promptModifier: String? {
+        switch self {
+        case .off:
+            return nil
+        case .snarky:
+            return """
+
+            **IMPORTANT STYLE OVERRIDE — Snarky Comedy Mode:**
+            - Write the summary in the voice of an AGGRESSIVELY snarky comedian who roasts absolutely everything
+            - Keep ALL the factual information accurate and complete — don't skip anything important
+            - Be ruthlessly sarcastic — drip with condescension, mock bad ideas, question obvious statements, and add biting commentary after nearly every point
+            - Use heavy sarcasm tags like "oh how groundbreaking", "truly shocking", "what a revelation", "nobody saw that coming"
+            - Editorialize constantly — if something is boring, say it's boring. If something is obvious, mock it for being obvious. If a decision is questionable, tear it apart
+            - Add parenthetical asides that break the fourth wall and commiserate with the reader about having to sit through this
+            - Channel the energy of a comedian who was forced to attend this meeting/conversation and is NOT happy about it
+            - Keep it PG and family-friendly — no profanity or crude humor, but absolutely DO NOT hold back on the snark, sarcasm, and roasting
+            - Every paragraph should have at least one zinger. If you're not making the reader smirk, you're not being snarky enough
+            - Think: the lovechild of a grumpy critic and a roast comedian, not a polite observer with mild wit
+            """
+        case .funny:
+            return """
+
+            **IMPORTANT STYLE OVERRIDE — Funny Comedy Mode:**
+            - Write the summary in an over-the-top, hilariously goofy style with wild descriptions and absurd analogies
+            - Keep ALL the factual information accurate and complete — don't skip anything important
+            - Use ridiculous metaphors, dramatic exaggerations, and colorful language to describe mundane things
+            - Throw in unexpected comparisons, silly sound effects (written out), and comedic tangents
+            - Write like an excited, slightly unhinged narrator who finds everything absolutely fascinating and bonkers
+            - Keep it PG and family-friendly — no profanity or crude humor, just wholesome absurdity
+            - The goal is to make the reader laugh out loud while still getting all the key information
+            - Think: an enthusiastic cartoon narrator meets a nature documentary voiceover
+            """
+        }
+    }
+}
+
 // MARK: - OpenAI Prompt Generator
 
 class OpenAIPromptGenerator {
-    
+
     // MARK: - Prompt Types
-    
+
     enum PromptType {
         case summary
         case tasks
@@ -37,9 +95,11 @@ class OpenAIPromptGenerator {
         
         let contentTypePrompt = createContentTypeSpecificPrompt(contentType)
         
+        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+
         switch type {
         case .summary:
-            return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createSummaryPrompt()
+            return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createSummaryPrompt() + comedyModifier
         case .tasks:
             return basePrompt + "\n\n" + createTasksPrompt()
         case .reminders:
@@ -47,7 +107,7 @@ class OpenAIPromptGenerator {
         case .titles:
             return basePrompt + "\n\n" + createTitlesPrompt()
         case .complete:
-            return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createCompletePrompt()
+            return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createCompletePrompt() + comedyModifier
         }
     }
     
@@ -105,44 +165,53 @@ class OpenAIPromptGenerator {
         - Use ## headers for main sections
         - Use ### subheaders for subsections
         - Use • bullet points for lists and key takeaways
-        - Use > blockquotes for important statements or quotes
+        - Use 1. numbered lists for sequential items
+        - Use > blockquotes for important quotes or statements
         - Keep the summary well-structured and informative
-        - Focus on the most important content and insights
+        - Focus on capturing all important details, context, and nuances
+        - Include key points, main ideas, specific details, and overall themes
         - Balance comprehensiveness with conciseness
-        - Ensure the summary captures the essence of the conversation
         """
     }
-    
+
     private static func createTasksPrompt() -> String {
         return """
         **Task Extraction Guidelines:**
-        - Identify actionable tasks and to-dos
-        - Focus on items that require follow-up or action
+        - Extract ONLY personal, actionable tasks mentioned by or relevant to the speaker
+        - Focus on items that require the speaker's direct follow-up or action
         - Include specific deadlines or time references when mentioned
         - Categorize tasks appropriately (call, meeting, purchase, research, email, travel, health, general)
         - Assign priority levels (high, medium, low) based on urgency and importance
-        - Only include tasks with clear action items
-        - Avoid general statements that don't require specific action
+        - Only include tasks with clear, specific action items
+        - AVOID extracting tasks related to:
+          • National or international news events
+          • Public figures, celebrities, or politicians
+          • General world events or politics
+          • Events that don't directly affect the speaker
+        - If NO personal action items are mentioned, return an empty array
         """
     }
-    
+
     private static func createRemindersPrompt() -> String {
         return """
         **Reminder Extraction Guidelines:**
-        - Identify time-sensitive items and deadlines
-        - Focus on appointments, meetings, and scheduled events
-        - Include specific dates, times, or time references
+        - Extract ONLY personal, time-sensitive items relevant to the speaker
+        - Focus on personal appointments, deadlines, or time-sensitive commitments
+        - Include specific dates, times, or time references when mentioned
         - Categorize urgency appropriately (immediate, today, thisWeek, later)
-        - Only include items that require timely attention
-        - Avoid general information that doesn't have a time component
-        - Focus on items that would benefit from a reminder
+        - Only include items that require timely attention from the speaker
+        - AVOID extracting reminders related to:
+          • National or international news events or dates
+          • Public events, elections, or general world happenings
+          • Events that don't directly affect the speaker personally
+        - If NO personal time-sensitive items are mentioned, return an empty array
         """
     }
     
     private static func createTitlesPrompt() -> String {
         return """
         **Title Generation Guidelines:**
-        - Generate concise, descriptive titles (20-50 characters, 3-8 words)
+        - Generate concise, descriptive titles (40-60 characters, 4-6 words)
         - Capture the main topic, purpose, or key subject
         - Be specific and meaningful - avoid generic terms
         - Focus on the most important subject, person, or action mentioned
@@ -202,7 +271,9 @@ class OpenAIPromptGenerator {
     
     private static func createTasksUserPrompt(_ text: String) -> String {
         return """
-        Please extract actionable tasks from the following content. Return them as a JSON array of objects with the following structure:
+        Extract personal, actionable tasks from the following content. Focus only on tasks that are personal to the speaker or require their direct action. Avoid tasks related to national news, public figures, or general world events.
+
+        Return them as a JSON array of objects with the following structure:
         [
             {
                 "text": "task description",
@@ -213,14 +284,18 @@ class OpenAIPromptGenerator {
             }
         ]
 
+        IMPORTANT: If no personal action items are found, return an empty array: []
+
         Content:
         \(text)
         """
     }
-    
+
     private static func createRemindersUserPrompt(_ text: String) -> String {
         return """
-        Please extract reminders and time-sensitive items from the following content. Return them as a JSON array of objects with the following structure:
+        Extract personal, time-sensitive reminders from the following content. Focus only on personal appointments, deadlines, or commitments that directly affect the speaker. Avoid reminders about national news, public events, or general world happenings.
+
+        Return them as a JSON array of objects with the following structure:
         [
             {
                 "text": "reminder description",
@@ -229,6 +304,8 @@ class OpenAIPromptGenerator {
                 "confidence": 0.85
             }
         ]
+
+        IMPORTANT: If no personal time-sensitive items are found, return an empty array: []
 
         Content:
         \(text)
@@ -267,12 +344,11 @@ class OpenAIPromptGenerator {
     }
     
     private static func createCompleteUserPrompt(_ text: String) -> String {
-        _ = RecordingNameGenerator.generateStandardizedTitlePrompt(from: text)
         return """
         Please analyze the following content and provide a comprehensive response in VALID JSON format only. Do not include any text before or after the JSON. The response must be a single, well-formed JSON object with this exact structure:
 
         {
-            "summary": "A detailed summary using Markdown formatting with **bold**, *italic*, ## headers, • bullet points, etc. (aim for 15-20% of the original transcript length)",
+            "summary": "A detailed summary using Markdown formatting with **bold**, *italic*, ## headers, • bullet points, 1. numbered lists, > blockquotes, etc. (aim for 15-20% of the original transcript length)",
             "tasks": [
                 {
                     "text": "task description",
@@ -292,19 +368,21 @@ class OpenAIPromptGenerator {
             ],
             "titles": [
                 {
-                    "text": "Generate 4 high-quality titles (40-60 characters, 4-6 words each) that capture the main topics, decisions, or key subjects discussed. Focus on the most important and specific topics. Use proper capitalization (Title Case) and never end with punctuation marks.",
+                    "text": "title text (40-60 characters, 4-6 words)",
                     "category": "meeting|personal|technical|general",
                     "confidence": 0.85
                 }
             ]
         }
 
-        IMPORTANT: 
+        IMPORTANT:
         - Return ONLY valid JSON, no additional text or explanations
         - The "summary" field must use Markdown formatting: **bold**, *italic*, ## headers, • bullets, etc.
-        - If no tasks are found, use an empty array: "tasks": []
-        - If no reminders are found, use an empty array: "reminders": []
-        - If no titles are found, use an empty array: "titles": []
+        - Tasks must be PERSONAL and ACTIONABLE to the speaker — do NOT include tasks about news, public figures, or world events
+        - Reminders must be PERSONAL and TIME-SENSITIVE to the speaker — do NOT include reminders about news events or public happenings
+        - If no personal tasks are found, use an empty array: "tasks": []
+        - If no personal reminders are found, use an empty array: "reminders": []
+        - Generate exactly 4 high-quality titles using Title Case, never ending with punctuation
         - Ensure all strings are properly quoted and escaped (especially for Markdown characters)
         - Do not include trailing commas
         - Escape special characters in JSON strings (quotes, backslashes, newlines)

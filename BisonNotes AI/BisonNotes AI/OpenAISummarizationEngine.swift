@@ -66,27 +66,27 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
     }
     
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        print("🤖 OpenAISummarizationEngine: Starting summary generation")
+        AppLog.shared.summarization("OpenAISummarizationEngine: Starting summary generation")
         
         updateConfiguration()
         
         guard let service = service else {
-            print("❌ OpenAISummarizationEngine: Service is nil")
+            AppLog.shared.summarization("OpenAISummarizationEngine: Service is nil", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI service not properly configured")
         }
         
-        print("✅ OpenAISummarizationEngine: Calling OpenAI service for summary")
+        AppLog.shared.summarization("OpenAISummarizationEngine: Calling OpenAI service for summary")
         
         do {
             return try await service.generateSummary(from: text, contentType: contentType)
         } catch {
-            print("❌ OpenAISummarizationEngine: Summary generation failed: \(error)")
+            AppLog.shared.summarization("OpenAISummarizationEngine: Summary generation failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
     
     func extractTasks(from text: String) async throws -> [TaskItem] {
-        print("🤖 OpenAISummarizationEngine: Starting task extraction")
+        AppLog.shared.summarization("OpenAISummarizationEngine: Starting task extraction")
         
         updateConfiguration()
         
@@ -97,13 +97,13 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         do {
             return try await service.extractTasks(from: text)
         } catch {
-            print("❌ OpenAISummarizationEngine: Task extraction failed: \(error)")
+            AppLog.shared.summarization("OpenAISummarizationEngine: Task extraction failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
     
     func extractReminders(from text: String) async throws -> [ReminderItem] {
-        print("🤖 OpenAISummarizationEngine: Starting reminder extraction")
+        AppLog.shared.summarization("OpenAISummarizationEngine: Starting reminder extraction")
         
         updateConfiguration()
         
@@ -114,13 +114,13 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         do {
             return try await service.extractReminders(from: text)
         } catch {
-            print("❌ OpenAISummarizationEngine: Reminder extraction failed: \(error)")
+            AppLog.shared.summarization("OpenAISummarizationEngine: Reminder extraction failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
     
     func extractTitles(from text: String) async throws -> [TitleItem] {
-        print("🤖 OpenAISummarizationEngine: Starting title extraction")
+        AppLog.shared.summarization("OpenAISummarizationEngine: Starting title extraction")
         
         updateConfiguration()
         
@@ -131,13 +131,13 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         do {
             return try await service.extractTitles(from: text)
         } catch {
-            print("❌ OpenAISummarizationEngine: Title extraction failed: \(error)")
+            AppLog.shared.summarization("OpenAISummarizationEngine: Title extraction failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
     
     func classifyContent(_ text: String) async throws -> ContentType {
-        print("🤖 OpenAISummarizationEngine: Starting content classification")
+        AppLog.shared.summarization("OpenAISummarizationEngine: Starting content classification")
         
         updateConfiguration()
         
@@ -148,13 +148,13 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         do {
             return try await service.classifyContent(text)
         } catch {
-            print("❌ OpenAISummarizationEngine: Content classification failed: \(error)")
+            AppLog.shared.summarization("OpenAISummarizationEngine: Content classification failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
     
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        print("🤖 OpenAISummarizationEngine: Starting complete processing")
+        AppLog.shared.summarization("OpenAISummarizationEngine: Starting complete processing")
         
         updateConfiguration()
         
@@ -164,19 +164,19 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         
         // Check if text needs chunking based on token count
         let tokenCount = TokenManager.getTokenCount(text)
-        print("📊 Text token count: \(tokenCount)")
+        AppLog.shared.summarization("Text token count: \(tokenCount)", level: .debug)
         
         do {
             // Use GPT-4.1 context window for chunking decision
             if TokenManager.needsChunking(text, maxTokens: TokenManager.gpt41ContextWindow) {
-                print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+                AppLog.shared.summarization("Large transcript detected (\(tokenCount) tokens), using chunked processing")
                 return try await processChunkedText(text, service: service)
             } else {
-                print("📝 Processing single chunk (\(tokenCount) tokens)")
+                AppLog.shared.summarization("Processing single chunk (\(tokenCount) tokens)")
                 return try await service.processComplete(text: text)
             }
         } catch {
-            print("❌ OpenAISummarizationEngine: Complete processing failed: \(error)")
+            AppLog.shared.summarization("OpenAISummarizationEngine: Complete processing failed: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
@@ -237,7 +237,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         
         // Split text into chunks
         let chunks = TokenManager.chunkText(text)
-        print("📦 Split text into \(chunks.count) chunks")
+        AppLog.shared.summarization("Split text into \(chunks.count) chunks", level: .debug)
         
         // Process each chunk
         var allSummaries: [String] = []
@@ -247,7 +247,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         var contentType: ContentType = .general
         
         for (index, chunk) in chunks.enumerated() {
-            print("🔄 Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+            AppLog.shared.summarization("Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)", level: .debug)
             
             do {
                 let chunkResult = try await service.processComplete(text: chunk)
@@ -262,7 +262,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
                 }
                 
             } catch {
-                print("❌ Failed to process chunk \(index + 1): \(error)")
+                AppLog.shared.summarization("Failed to process chunk \(index + 1): \(error)", level: .error)
                 throw error
             }
         }
@@ -280,11 +280,8 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         let uniqueTitles = deduplicateTitles(allTitles)
         
         let processingTime = Date().timeIntervalSince(startTime)
-        print("✅ Chunked processing completed in \(String(format: "%.2f", processingTime))s")
-        print("📊 Final summary: \(combinedSummary.count) characters")
-        print("📋 Final tasks: \(uniqueTasks.count)")
-        print("🔔 Final reminders: \(uniqueReminders.count)")
-        print("📝 Final titles: \(uniqueTitles.count)")
+        AppLog.shared.summarization("Chunked processing completed in \(String(format: "%.2f", processingTime))s")
+        AppLog.shared.summarization("Final results - summary: \(combinedSummary.count) chars, tasks: \(uniqueTasks.count), reminders: \(uniqueReminders.count), titles: \(uniqueTitles.count)", level: .debug)
         
         return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
     }
@@ -353,21 +350,21 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
     // MARK: - Connection Testing
     
     func testConnection() async -> Bool {
-        print("🔧 OpenAISummarizationEngine: Testing connection...")
+        AppLog.shared.summarization("OpenAISummarizationEngine: Testing connection...")
         
         updateConfiguration()
         
         guard let service = service else {
-            print("❌ OpenAISummarizationEngine: Service is nil - configuration issue")
+            AppLog.shared.summarization("OpenAISummarizationEngine: Service is nil - configuration issue", level: .error)
             return false
         }
         
         let connectionResult = await service.testConnection()
         if connectionResult {
-            print("✅ OpenAISummarizationEngine: Connection test successful")
+            AppLog.shared.summarization("OpenAISummarizationEngine: Connection test successful")
             return true
         } else {
-            print("❌ OpenAISummarizationEngine: Connection test failed")
+            AppLog.shared.summarization("OpenAISummarizationEngine: Connection test failed", level: .error)
             return false
         }
     }
@@ -459,7 +456,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
         do {
             return try await service.generateSummary(from: text, contentType: contentType)
         } catch {
-            print("❌ OpenAICompatibleEngine: Failed to generate summary: \(error)")
+            AppLog.shared.summarization("OpenAICompatibleEngine: Failed to generate summary: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
@@ -475,7 +472,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
             let result = try await service.processComplete(text: text)
             return result.tasks
         } catch {
-            print("❌ OpenAICompatibleEngine: Failed to extract tasks: \(error)")
+            AppLog.shared.summarization("OpenAICompatibleEngine: Failed to extract tasks: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
@@ -491,7 +488,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
             let result = try await service.processComplete(text: text)
             return result.reminders
         } catch {
-            print("❌ OpenAICompatibleEngine: Failed to extract reminders: \(error)")
+            AppLog.shared.summarization("OpenAICompatibleEngine: Failed to extract reminders: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
@@ -507,7 +504,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
             let result = try await service.processComplete(text: text)
             return result.titles
         } catch {
-            print("❌ OpenAICompatibleEngine: Failed to extract titles: \(error)")
+            AppLog.shared.summarization("OpenAICompatibleEngine: Failed to extract titles: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
@@ -522,7 +519,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
         do {
             return try await service.classifyContent(text)
         } catch {
-            print("❌ OpenAICompatibleEngine: Failed to classify content: \(error)")
+            AppLog.shared.summarization("OpenAICompatibleEngine: Failed to classify content: \(error)", level: .error)
             return .general
         }
     }
@@ -537,7 +534,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
         do {
             return try await service.processComplete(text: text)
         } catch {
-            print("❌ OpenAICompatibleEngine: Failed to process complete: \(error)")
+            AppLog.shared.summarization("OpenAICompatibleEngine: Failed to process complete: \(error)", level: .error)
             throw handleAPIError(error)
         }
     }
@@ -551,10 +548,10 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
         
         let connectionResult = await service.testConnection()
         if connectionResult {
-            print("✅ OpenAICompatibleEngine: Connection test successful")
+            AppLog.shared.summarization("OpenAICompatibleEngine: Connection test successful")
             return true
         } else {
-            print("❌ OpenAICompatibleEngine: Connection test failed")
+            AppLog.shared.summarization("OpenAICompatibleEngine: Connection test failed", level: .error)
             return false
         }
     }

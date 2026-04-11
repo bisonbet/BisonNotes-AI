@@ -328,9 +328,7 @@ class MessageFormatDetector {
         if UserDefaults.standard.bool(forKey: manualOverrideEnabledKey) {
             let manualFormat = UserDefaults.standard.string(forKey: manualFormatKey) ?? "string"
             let format: MessageContentFormat = manualFormat == "blocks" ? .blocks : .string
-            #if DEBUG
-            print("🔧 Manual override enabled: \(manualFormat) format")
-            #endif
+            AppLog.shared.networking("Manual override enabled: \(manualFormat) format", level: .debug)
             return format
         }
 
@@ -338,9 +336,7 @@ class MessageFormatDetector {
         guard let url = URL(string: baseURL),
               let host = url.host?.lowercased() else {
             // If URL parsing fails, fall back to string matching
-            #if DEBUG
-            print("⚠️ Failed to parse base URL: \(baseURL), using fallback detection")
-            #endif
+            AppLog.shared.networking("Failed to parse base URL, using fallback detection", level: .error)
             return detectFormatFallback(for: baseURL)
         }
 
@@ -358,9 +354,7 @@ class MessageFormatDetector {
         // Check if it's a known block format provider using proper host matching
         for provider in blockFormatProviders {
             if isHostMatch(lowercasedHost, provider: provider) {
-                #if DEBUG
-                print("🔍 Auto-detected block format provider: \(provider)")
-                #endif
+                AppLog.shared.networking("Auto-detected block format provider: \(provider)", level: .debug)
                 return .blocks
             }
         }
@@ -368,17 +362,13 @@ class MessageFormatDetector {
         // Check if it's a known string format provider using proper host matching
         for provider in stringFormatProviders {
             if isHostMatch(lowercasedHost, provider: provider) {
-                #if DEBUG
-                print("🔍 Auto-detected string format provider: \(provider)")
-                #endif
+                AppLog.shared.networking("Auto-detected string format provider: \(provider)", level: .debug)
                 return .string
             }
         }
 
         // Default to string format (most common)
-        #if DEBUG
-        print("🔍 Unknown provider, defaulting to string format")
-        #endif
+        AppLog.shared.networking("Unknown provider, defaulting to string format", level: .debug)
         return .string
     }
 
@@ -420,10 +410,7 @@ class MessageFormatDetector {
     /// Uses more restrictive matching to avoid false positives from query params/fragments
     /// Logs a warning and defaults to .string format for safety
     private static func detectFormatFallback(for baseURL: String) -> MessageContentFormat {
-        #if DEBUG
-        print("⚠️ URL parsing failed for: \(baseURL)")
-        print("⚠️ Using fallback string matching - this may not be reliable")
-        #endif
+        AppLog.shared.networking("URL parsing failed, using fallback string matching", level: .error)
 
         // Extract only the host portion before query params (?) and fragments (#)
         // This prevents matching providers in URLs like: https://example.com?provider=openai.com
@@ -442,25 +429,19 @@ class MessageFormatDetector {
         // with proper domain boundaries (preceded by "://" or ".")
         for provider in blockFormatProviders {
             if matchesProviderDomain(lowercasedHost, provider: provider) {
-                #if DEBUG
-                print("⚠️ Fallback matched block format provider: \(provider)")
-                #endif
+                AppLog.shared.networking("Fallback matched block format provider: \(provider)", level: .debug)
                 return .blocks
             }
         }
 
         for provider in stringFormatProviders {
             if matchesProviderDomain(lowercasedHost, provider: provider) {
-                #if DEBUG
-                print("⚠️ Fallback matched string format provider: \(provider)")
-                #endif
+                AppLog.shared.networking("Fallback matched string format provider: \(provider)", level: .debug)
                 return .string
             }
         }
 
-        #if DEBUG
-        print("⚠️ No provider match in fallback, defaulting to .string format")
-        #endif
+        AppLog.shared.networking("No provider match in fallback, defaulting to string format", level: .debug)
         return .string
     }
 

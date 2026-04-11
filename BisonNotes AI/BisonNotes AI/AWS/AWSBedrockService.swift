@@ -51,7 +51,7 @@ class AWSBedrockService: ObservableObject {
             self.bedrockClient = client
             return client
         } catch {
-            print("⚠️ Failed to initialize BedrockRuntimeClient: \(error)")
+            AppLog.shared.networking("Failed to initialize BedrockRuntimeClient: \(error)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "Failed to initialize AWS Bedrock client: \(error.localizedDescription)")
         }
     }
@@ -62,16 +62,16 @@ class AWSBedrockService: ObservableObject {
         // Check if text needs chunking for this individual method
         let tokenCount = TokenManager.getTokenCount(text)
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
-        
+
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
-            print("🔀 AWS Bedrock Summary: Large text detected (\(tokenCount) tokens), using chunked processing")
+            AppLog.shared.networking("AWS Bedrock Summary: Large text detected (\(tokenCount) tokens), using chunked processing")
             let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
             var summaries: [String] = []
-            
+
             for chunk in chunks {
-                let systemPrompt = createSystemPrompt(for: contentType)
-                let userPrompt = createSummaryPrompt(text: chunk)
-                
+                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
+                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: chunk)
+
                 let response = try await invokeModel(
                     prompt: userPrompt,
                     systemPrompt: systemPrompt,
@@ -80,99 +80,99 @@ class AWSBedrockService: ObservableObject {
                 )
                 summaries.append(response)
             }
-            
+
             // Generate meta-summary from all chunk summaries
             return try await generateMetaSummary(from: summaries, contentType: contentType)
         } else {
             // Single chunk processing
-            let systemPrompt = createSystemPrompt(for: contentType)
-            let userPrompt = createSummaryPrompt(text: text)
-            
+            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
+            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: text)
+
             let response = try await invokeModel(
                 prompt: userPrompt,
                 systemPrompt: systemPrompt,
                 maxTokens: config.maxTokens,
                 temperature: config.temperature
             )
-            
+
             return response
         }
     }
-    
+
     func extractTasks(from text: String) async throws -> [TaskItem] {
         // Check if text needs chunking
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
-        
+
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
             let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
             var allTasks: [TaskItem] = []
-            
+
             for chunk in chunks {
-                let systemPrompt = "You are an AI assistant that extracts actionable tasks from text. Focus on personal, actionable items that require follow-up."
-                let userPrompt = createTaskExtractionPrompt(text: chunk)
-                
+                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
+                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .tasks, text: chunk)
+
                 let response = try await invokeModel(
                     prompt: userPrompt,
                     systemPrompt: systemPrompt,
                     maxTokens: 1024,
                     temperature: 0.1
                 )
-                
+
                 let chunkTasks = parseTasksFromResponse(response)
                 allTasks.append(contentsOf: chunkTasks)
             }
-            
+
             return deduplicateTasks(allTasks)
         } else {
-            let systemPrompt = "You are an AI assistant that extracts actionable tasks from text. Focus on personal, actionable items that require follow-up."
-            let userPrompt = createTaskExtractionPrompt(text: text)
-            
+            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
+            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .tasks, text: text)
+
             let response = try await invokeModel(
                 prompt: userPrompt,
                 systemPrompt: systemPrompt,
                 maxTokens: 1024,
                 temperature: 0.1
             )
-            
+
             return parseTasksFromResponse(response)
         }
     }
-    
+
     func extractReminders(from text: String) async throws -> [ReminderItem] {
         // Check if text needs chunking
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
-        
+
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
             let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
             var allReminders: [ReminderItem] = []
-            
+
             for chunk in chunks {
-                let systemPrompt = "You are an AI assistant that extracts time-sensitive reminders from text. Focus on deadlines, appointments, and scheduled events."
-                let userPrompt = createReminderExtractionPrompt(text: chunk)
-                
+                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
+                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .reminders, text: chunk)
+
                 let response = try await invokeModel(
                     prompt: userPrompt,
                     systemPrompt: systemPrompt,
                     maxTokens: 1024,
                     temperature: 0.1
                 )
-                
+
                 let chunkReminders = parseRemindersFromResponse(response)
                 allReminders.append(contentsOf: chunkReminders)
             }
-            
+
             return deduplicateReminders(allReminders)
         } else {
-            let systemPrompt = "You are an AI assistant that extracts time-sensitive reminders from text. Focus on deadlines, appointments, and scheduled events."
-            let userPrompt = createReminderExtractionPrompt(text: text)
-            
+            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
+            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .reminders, text: text)
+
             let response = try await invokeModel(
                 prompt: userPrompt,
                 systemPrompt: systemPrompt,
                 maxTokens: 1024,
                 temperature: 0.1
             )
-            
+
             return parseRemindersFromResponse(response)
         }
     }
@@ -180,38 +180,38 @@ class AWSBedrockService: ObservableObject {
     func extractTitles(from text: String) async throws -> [TitleItem] {
         // Check if text needs chunking
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
-        
+
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
             let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
             var allTitles: [TitleItem] = []
-            
+
             for chunk in chunks {
-                let systemPrompt = "You are an AI assistant that generates concise, descriptive titles for content. Create 3-5 titles that capture the main topics or themes."
-                let userPrompt = createTitleExtractionPrompt(text: chunk)
-                
+                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .titles, contentType: .general)
+                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .titles, text: chunk)
+
                 let response = try await invokeModel(
                     prompt: userPrompt,
                     systemPrompt: systemPrompt,
                     maxTokens: 512,
                     temperature: 0.2
                 )
-                
+
                 let chunkTitles = parseTitlesFromResponse(response)
                 allTitles.append(contentsOf: chunkTitles)
             }
-            
+
             return deduplicateTitles(allTitles)
         } else {
-            let systemPrompt = "You are an AI assistant that generates concise, descriptive titles for content. Create 3-5 titles that capture the main topics or themes."
-            let userPrompt = createTitleExtractionPrompt(text: text)
-            
+            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .titles, contentType: .general)
+            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .titles, text: text)
+
             let response = try await invokeModel(
                 prompt: userPrompt,
                 systemPrompt: systemPrompt,
                 maxTokens: 512,
                 temperature: 0.2
             )
-            
+
             return parseTitlesFromResponse(response)
         }
     }
@@ -229,13 +229,13 @@ class AWSBedrockService: ObservableObject {
         let tokenCount = TokenManager.getTokenCount(text)
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8) // Leave 20% buffer for response
         
-        print("📊 AWS Bedrock: Text token count: \(tokenCount), max allowed: \(maxTokens)")
+        AppLog.shared.networking("AWS Bedrock: Text token count: \(tokenCount), max allowed: \(maxTokens)", level: .debug)
         
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
-            print("🔀 Large transcript detected (\(tokenCount) tokens), using chunked processing")
+            AppLog.shared.networking("AWS Bedrock: Large transcript detected (\(tokenCount) tokens), using chunked processing")
             return try await processCompleteChunked(text: text, contentType: contentType, maxTokens: maxTokens)
         } else {
-            print("📝 Processing single chunk (\(tokenCount) tokens)")
+            AppLog.shared.networking("AWS Bedrock: Processing single chunk (\(tokenCount) tokens)")
             if config.model.supportsStructuredOutput {
                 // Use structured output for supported models
                 return try await processCompleteStructured(text: text, contentType: contentType)
@@ -256,10 +256,10 @@ class AWSBedrockService: ObservableObject {
                 temperature: 0.1
             )
             let success = response.contains("Test successful") || response.contains("test successful")
-            print("✅ AWS Bedrock connection test \(success ? "successful" : "failed")")
+            AppLog.shared.networking("AWS Bedrock connection test \(success ? "successful" : "failed")")
             return success
         } catch {
-            print("❌ AWS Bedrock connection test failed: \(error)")
+            AppLog.shared.networking("AWS Bedrock connection test failed: \(error)", level: .error)
             return false
         }
     }
@@ -280,11 +280,11 @@ class AWSBedrockService: ObservableObject {
     ) async throws -> String {
         // Validate configuration
         guard config.isValid else {
-            print("❌ AWS Bedrock configuration is invalid")
+            AppLog.shared.networking("AWS Bedrock configuration is invalid", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock configuration is invalid")
         }
         
-        print("🔧 AWS Bedrock API Configuration - Model: \(config.model.rawValue), Region: \(config.region)")
+        AppLog.shared.networking("AWS Bedrock API Configuration - Model: \(config.model.rawValue), Region: \(config.region)", level: .debug)
         
         // Create the model request payload
         let modelRequest = AWSBedrockModelFactory.createRequest(
@@ -305,7 +305,7 @@ class AWSBedrockService: ObservableObject {
         }
         
         do {
-            print("🌐 Making AWS Bedrock API request using official SDK...")
+            AppLog.shared.networking("Making AWS Bedrock API request using official SDK...", level: .debug)
             
             // Get the Bedrock client (initialize if needed)
             let client = try await getBedrockClient()
@@ -342,29 +342,25 @@ class AWSBedrockService: ObservableObject {
             
             // Log the raw response only when verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                let responseString = String(data: responseData, encoding: .utf8) ?? "Unable to decode response"
-                print("🌐 AWS Bedrock API Response received")
-                print("📝 Raw response: \(responseString)")
-                print("📊 Response data length: \(responseData.count) bytes")
+                AppLog.shared.networking("AWS Bedrock API Response received, size: \(responseData.count) bytes", level: .debug)
             }
             
             // Parse the model-specific response
             let modelResponse = try AWSBedrockModelFactory.parseResponse(for: config.model, data: responseData)
             
-            print("✅ AWS Bedrock API Success - Model: \(config.model.rawValue)")
-            print("📝 Response content length: \(modelResponse.content.count) characters")
+            AppLog.shared.networking("AWS Bedrock API Success - Model: \(config.model.rawValue), response: \(modelResponse.content.count) chars")
             
             return modelResponse.content
             
         } catch {
-            print("❌ AWS Bedrock API request failed: \(error)")
+            AppLog.shared.networking("AWS Bedrock API request failed: \(error)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock API request failed: \(error.localizedDescription)")
         }
     }
     
     private func processCompleteStructured(text: String, contentType: ContentType) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        let systemPrompt = createSystemPrompt(for: contentType)
-        let userPrompt = createCompleteProcessingPrompt(text: text)
+        let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
+        let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .complete, text: text)
         
         let response = try await invokeModel(
             prompt: userPrompt,
@@ -403,7 +399,7 @@ class AWSBedrockService: ObservableObject {
     private func processCompleteChunked(text: String, contentType: ContentType, maxTokens: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         // Split text into chunks
         let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
-        print("📦 AWS Bedrock: Split text into \(chunks.count) chunks")
+        AppLog.shared.networking("AWS Bedrock: Split text into \(chunks.count) chunks", level: .debug)
         
         // Process each chunk
         var allSummaries: [String] = []
@@ -412,7 +408,7 @@ class AWSBedrockService: ObservableObject {
         var allTitles: [TitleItem] = []
         
         for (index, chunk) in chunks.enumerated() {
-            print("🔄 AWS Bedrock: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)")
+            AppLog.shared.networking("AWS Bedrock: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)", level: .debug)
             
             do {
                 if config.model.supportsStructuredOutput {
@@ -434,7 +430,7 @@ class AWSBedrockService: ObservableObject {
                     try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second between chunks
                 }
             } catch {
-                print("❌ AWS Bedrock: Failed to process chunk \(index + 1): \(error)")
+                AppLog.shared.networking("AWS Bedrock: Failed to process chunk \(index + 1): \(error)", level: .error)
                 throw error
             }
         }
@@ -447,8 +443,7 @@ class AWSBedrockService: ObservableObject {
         let deduplicatedReminders = deduplicateReminders(allReminders)
         let deduplicatedTitles = deduplicateTitles(allTitles)
         
-        print("📊 AWS Bedrock: Final summary: \(combinedSummary.count) characters")
-        print("📊 AWS Bedrock: Tasks: \(deduplicatedTasks.count), Reminders: \(deduplicatedReminders.count), Titles: \(deduplicatedTitles.count)")
+        AppLog.shared.networking("AWS Bedrock: Final summary: \(combinedSummary.count) chars, tasks: \(deduplicatedTasks.count), reminders: \(deduplicatedReminders.count), titles: \(deduplicatedTitles.count)", level: .debug)
         
         return (combinedSummary, deduplicatedTasks, deduplicatedReminders, deduplicatedTitles, contentType)
     }
@@ -565,206 +560,6 @@ class AWSBedrockService: ObservableObject {
         
         return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
     }
-    
-    
-    // MARK: - Prompt Generators
-    
-    private func createSystemPrompt(for contentType: ContentType) -> String {
-        let basePrompt = """
-        You are an AI assistant specialized in analyzing and summarizing audio transcripts and conversations. Your role is to provide clear, actionable insights from the content provided.
-        
-        **Key Guidelines:**
-        - Focus on extracting meaningful, actionable information
-        - Maintain accuracy and relevance to the source material
-        - Use clear, professional language
-        - Structure responses logically and coherently
-        - Prioritize the most important information first
-        """
-        
-        switch contentType {
-        case .meeting:
-            return basePrompt + """
-            
-            **Meeting Analysis Focus:**
-            - Identify key decisions and action items
-            - Note important deadlines and commitments
-            - Highlight participant responsibilities
-            - Capture meeting outcomes and next steps
-            - Focus on business-relevant information
-            """
-        case .personalJournal:
-            return basePrompt + """
-            
-            **Personal Journal Analysis Focus:**
-            - Identify personal insights and reflections
-            - Note emotional states and personal growth
-            - Highlight personal goals and aspirations
-            - Capture meaningful life events and experiences
-            - Focus on personal development and self-awareness
-            """
-        case .technical:
-            return basePrompt + """
-            
-            **Technical Analysis Focus:**
-            - Identify technical problems and solutions
-            - Note implementation details and requirements
-            - Highlight technical decisions and trade-offs
-            - Capture technical specifications and constraints
-            - Focus on technical accuracy and precision
-            """
-        case .general:
-            return basePrompt + """
-            
-            **General Analysis Focus:**
-            - Identify main topics and themes
-            - Note important information and insights
-            - Highlight key points and takeaways
-            - Capture relevant details and context
-            - Focus on clarity and comprehensiveness
-            """
-        }
-    }
-    
-    private func createSummaryPrompt(text: String) -> String {
-        return """
-        Please provide a detailed and comprehensive summary of the following content using proper Markdown formatting (aim for 15-20% of the original transcript length):
-        
-        Use the following Markdown elements as appropriate:
-        - **Bold text** for key points and important information
-        - *Italic text* for emphasis
-        - ## Headers for main sections
-        - ### Subheaders for subsections
-        - • Bullet points for lists
-        - 1. Numbered lists for sequential items
-        - > Blockquotes for important quotes or statements
-        
-        Content to summarize:
-        \(text)
-        
-        Focus on capturing all important details, context, and nuances. Include:
-        - Key points and main ideas with sufficient detail
-        - Important context and background information
-        - Specific details that provide depth and understanding
-        - Relevant examples or explanations mentioned
-        - Overall themes and conclusions
-        
-        Make the summary thorough and informative while maintaining clarity and proper markdown formatting.
-        """
-    }
-    
-    private func createTaskExtractionPrompt(text: String) -> String {
-        return """
-        Extract actionable tasks from the following content. Return them as a JSON array of objects with the following structure:
-        [
-            {
-                "text": "task description",
-                "priority": "high|medium|low",
-                "category": "call|meeting|purchase|research|email|travel|health|general",
-                "timeReference": "today|tomorrow|this week|next week|specific date or null",
-                "confidence": 0.85
-            }
-        ]
-
-        Content:
-        \(text)
-        """
-    }
-    
-    private func createReminderExtractionPrompt(text: String) -> String {
-        return """
-        Extract reminders and time-sensitive items from the following content. Return them as a JSON array of objects with the following structure:
-        [
-            {
-                "text": "reminder description",
-                "urgency": "immediate|today|thisWeek|later",
-                "timeReference": "specific time or date mentioned",
-                "confidence": 0.85
-            }
-        ]
-
-        Content:
-        \(text)
-        """
-    }
-    
-    private func createTitleExtractionPrompt(text: String) -> String {
-        return """
-        Analyze the following transcript and extract 4 high-quality titles or headlines. Focus on:
-        - Main topics or themes discussed
-        - Key decisions or outcomes
-        - Important events or milestones
-        - Central questions or problems addressed
-
-        **Return the results in this exact JSON format:**
-        {
-          "titles": [
-            {
-              "text": "title text",
-              "category": "Meeting|Personal|Technical|General",
-              "confidence": 0.85
-            }
-          ]
-        }
-
-        Requirements:
-        - Generate exactly 4 titles with 85% or higher confidence
-        - Each title should be 40-60 characters and 4-6 words
-        - Focus on the most important and specific topics
-        - Avoid generic or vague titles
-        - If no suitable titles are found, return empty array
-
-        Transcript:
-        \(text)
-        """
-    }
-    
-    private func createCompleteProcessingPrompt(text: String) -> String {
-        return """
-        Please analyze the following content and provide a comprehensive response in VALID JSON format only. Do not include any text before or after the JSON. The response must be a single, well-formed JSON object with this exact structure:
-
-        {
-            "summary": "A detailed summary using Markdown formatting with **bold**, *italic*, ## headers, • bullet points, etc.",
-            "tasks": [
-                {
-                    "text": "task description",
-                    "priority": "high|medium|low",
-                    "category": "call|meeting|purchase|research|email|travel|health|general",
-                    "timeReference": "today|tomorrow|this week|next week|specific date or null",
-                    "confidence": 0.85
-                }
-            ],
-            "reminders": [
-                {
-                    "text": "reminder description",
-                    "urgency": "immediate|today|thisWeek|later",
-                    "timeReference": "specific time or date mentioned",
-                    "confidence": 0.85
-                }
-            ],
-            "titles": [
-                {
-                    "text": "Generate 4 high-quality titles (40-60 characters, 4-6 words each) that capture the main topics, decisions, or key subjects discussed. Focus on the most important and specific topics. Use proper capitalization (Title Case) and never end with punctuation marks.",
-                    "category": "meeting|personal|technical|general",
-                    "confidence": 0.85
-                }
-            ]
-        }
-
-        IMPORTANT: 
-        - Return ONLY valid JSON, no additional text or explanations
-        - The "summary" field must use Markdown formatting: **bold**, *italic*, ## headers, • bullets, etc.
-        - If no tasks are found, use an empty array: "tasks": []
-        - If no reminders are found, use an empty array: "reminders": []
-        - If no titles are found, use an empty array: "titles": []
-        - Ensure all strings are properly quoted and escaped (especially for Markdown characters)
-        - Do not include trailing commas
-        - Escape special characters in JSON strings (quotes, backslashes, newlines)
-
-        Content to analyze:
-        \(text)
-        """
-    }
-    
     // MARK: - Response Parsers
     
     private func parseCompleteResponseFromJSON(_ jsonString: String) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) {
@@ -776,7 +571,7 @@ class AWSBedrockService: ObservableObject {
         do {
             return try OpenAIResponseParser.parseTasksFromJSON(response)
         } catch {
-            print("❌ Failed to parse tasks JSON, falling back to text parsing")
+            AppLog.shared.networking("Failed to parse tasks JSON, falling back to text parsing", level: .error)
             return parseTasksFromPlainText(response)
         }
     }
@@ -785,7 +580,7 @@ class AWSBedrockService: ObservableObject {
         do {
             return try OpenAIResponseParser.parseRemindersFromJSON(response)
         } catch {
-            print("❌ Failed to parse reminders JSON, falling back to text parsing")
+            AppLog.shared.networking("Failed to parse reminders JSON, falling back to text parsing", level: .error)
             return parseRemindersFromPlainText(response)
         }
     }
@@ -794,7 +589,7 @@ class AWSBedrockService: ObservableObject {
         do {
             return try OpenAIResponseParser.parseTitlesFromJSON(response)
         } catch {
-            print("❌ Failed to parse titles JSON, falling back to text parsing")
+            AppLog.shared.networking("Failed to parse titles JSON, falling back to text parsing", level: .error)
             return parseTitlesFromPlainText(response)
         }
     }

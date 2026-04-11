@@ -206,23 +206,23 @@ struct OnDeviceAIDownloadView: View {
         if !parakeetReady {
             Task {
                 do {
-                    print("[OnDeviceAIDownload] Starting Parakeet download...")
+                    AppLog.shared.summarization("OnDeviceAIDownload: Starting Parakeet download...", level: .debug)
                     try await fluidAudioManager.downloadAndPrepareModel()
-                    print("[OnDeviceAIDownload] Parakeet download completed")
+                    AppLog.shared.summarization("OnDeviceAIDownload: Parakeet download completed")
                 } catch {
-                    print("[OnDeviceAIDownload] Parakeet download error: \(error)")
+                    AppLog.shared.summarization("OnDeviceAIDownload: Parakeet download error: \(error)", level: .error)
                 }
             }
         } else {
-            print("[OnDeviceAIDownload] Parakeet model already downloaded")
+            AppLog.shared.summarization("OnDeviceAIDownload: Parakeet model already downloaded", level: .debug)
         }
 
         // Start On-Device LLM download if not already downloaded
         if !onDeviceLLMReady {
-            print("[OnDeviceAIDownload] Starting On-Device LLM download...")
+            AppLog.shared.summarization("OnDeviceAIDownload: Starting On-Device LLM download...", level: .debug)
             onDeviceLLMManager.startDownload(for: onDeviceLLMModel)
         } else {
-            print("[OnDeviceAIDownload] On-Device LLM model already downloaded")
+            AppLog.shared.summarization("OnDeviceAIDownload: On-Device LLM model already downloaded", level: .debug)
         }
 
         // Close the view - downloads will continue in background

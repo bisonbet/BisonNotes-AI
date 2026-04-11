@@ -86,10 +86,10 @@ class SummaryManager: ObservableObject {
             let legacySummaries = try JSONDecoder().decode([EnhancedSummaryData].self, from: data)
             enhancedSummaries = legacySummaries
             if !legacySummaries.isEmpty {
-                print("📦 Loaded \(legacySummaries.count) legacy summaries from UserDefaults during init")
+                AppLog.shared.summarization("Loaded \(legacySummaries.count) legacy summaries from UserDefaults during init")
             }
         } catch {
-            print("Failed to load legacy enhanced summaries during init: \(error)")
+            AppLog.shared.summarization("Failed to load legacy enhanced summaries during init: \(error)", level: .error)
         }
     }
     
@@ -101,7 +101,7 @@ class SummaryManager: ObservableObject {
         DispatchQueue.main.async {
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("⚠️ saveEnhancedSummary() is deprecated - updating UI only for \(summary.recordingName)", category: "SummaryManager")
+                AppLog.shared.summarization("saveEnhancedSummary() is deprecated - updating UI only for \(summary.recordingName)", level: .debug)
             }
             
             // Remove any existing enhanced summary for this recording
@@ -111,7 +111,7 @@ class SummaryManager: ObservableObject {
             
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Enhanced summary saved. Total summaries: \(self.enhancedSummaries.count)", category: "SummaryManager")
+                AppLog.shared.summarization("Enhanced summary saved. Total summaries: \(self.enhancedSummaries.count)", level: .debug)
             }
             
             // Force a UI update
@@ -122,7 +122,7 @@ class SummaryManager: ObservableObject {
                 do {
                     try await self.iCloudManager.syncSummary(summary)
                 } catch {
-                    AppLogger.shared.error("Failed to sync summary to iCloud: \(error)", category: "SummaryManager")
+                    AppLog.shared.summarization("Failed to sync summary to iCloud: \(error)", level: .error)
                 }
             }
             
@@ -130,7 +130,7 @@ class SummaryManager: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 // Only log if verbose logging is enabled
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("Can find summary: \(self.hasSummary(for: summary.recordingURL))", category: "SummaryManager")
+                    AppLog.shared.summarization("Can find summary: \(self.hasSummary(for: summary.recordingURL))", level: .debug)
                 }
             }
         }
@@ -145,7 +145,7 @@ class SummaryManager: ObservableObject {
                 // Only update UI state, not persistence
                 self.enhancedSummaries.append(summary)
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("⚠️ Added summary to UI state only for \(summary.recordingName)", category: "SummaryManager")
+                    AppLog.shared.summarization("Added summary to UI state only for \(summary.recordingName)", level: .debug)
                 }
             }
         }
@@ -154,8 +154,8 @@ class SummaryManager: ObservableObject {
     func getEnhancedSummary(for recordingURL: URL) -> EnhancedSummaryData? {
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("Looking for enhanced summary with URL: \(recordingURL)", category: "SummaryManager")
-            AppLogger.shared.verbose("Total enhanced summaries: \(enhancedSummaries.count)", category: "SummaryManager")
+            AppLog.shared.summarization("Looking for enhanced summary with URL: \(recordingURL)", level: .debug)
+            AppLog.shared.summarization("Total enhanced summaries: \(enhancedSummaries.count)", level: .debug)
         }
         
         let targetFilename = recordingURL.lastPathComponent
@@ -163,8 +163,8 @@ class SummaryManager: ObservableObject {
         
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("Looking for filename: \(targetFilename)", category: "SummaryManager")
-            AppLogger.shared.verbose("Looking for name: \(targetName)", category: "SummaryManager")
+            AppLog.shared.summarization("Looking for filename: \(targetFilename)", level: .debug)
+            AppLog.shared.summarization("Looking for name: \(targetName)", level: .debug)
         }
         
         for (index, summary) in enhancedSummaries.enumerated() {
@@ -173,9 +173,9 @@ class SummaryManager: ObservableObject {
             
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Checking enhanced summary \(index): \(summary.recordingName)", category: "SummaryManager")
-                AppLogger.shared.verbose("Stored filename: \(summaryFilename)", category: "SummaryManager")
-                AppLogger.shared.verbose("Stored name: \(summaryName)", category: "SummaryManager")
+                AppLog.shared.summarization("Checking enhanced summary \(index): \(summary.recordingName)", level: .debug)
+                AppLog.shared.summarization("Stored filename: \(summaryFilename)", level: .debug)
+                AppLog.shared.summarization("Stored name: \(summaryName)", level: .debug)
             }
             
             // Try multiple comparison methods
@@ -187,18 +187,18 @@ class SummaryManager: ObservableObject {
             
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Exact match: \(exactMatch)", category: "SummaryManager")
-                AppLogger.shared.verbose("Path match: \(pathMatch)", category: "SummaryManager")
-                AppLogger.shared.verbose("Filename match: \(filenameMatch)", category: "SummaryManager")
-                AppLogger.shared.verbose("Name match: \(nameMatch)", category: "SummaryManager")
-                AppLogger.shared.verbose("Recording name match: \(recordingNameMatch)", category: "SummaryManager")
+                AppLog.shared.summarization("Exact match: \(exactMatch)", level: .debug)
+                AppLog.shared.summarization("Path match: \(pathMatch)", level: .debug)
+                AppLog.shared.summarization("Filename match: \(filenameMatch)", level: .debug)
+                AppLog.shared.summarization("Name match: \(nameMatch)", level: .debug)
+                AppLog.shared.summarization("Recording name match: \(recordingNameMatch)", level: .debug)
             }
             
             // Match if any of these conditions are true
             if exactMatch || pathMatch || filenameMatch || nameMatch || recordingNameMatch {
                 // Only log if verbose logging is enabled
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("Found matching enhanced summary!", category: "SummaryManager")
+                    AppLog.shared.summarization("Found matching enhanced summary", level: .debug)
                 }
                 return summary
             }
@@ -206,7 +206,7 @@ class SummaryManager: ObservableObject {
         
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("No matching enhanced summary found", category: "SummaryManager")
+            AppLog.shared.summarization("No matching enhanced summary found", level: .debug)
         }
         return nil
     }
@@ -215,7 +215,7 @@ class SummaryManager: ObservableObject {
         let result = getEnhancedSummary(for: recordingURL) != nil
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("hasEnhancedSummary for \(recordingURL.lastPathComponent) = \(result)", category: "SummaryManager")
+            AppLog.shared.summarization("hasEnhancedSummary for \(recordingURL.lastPathComponent) = \(result)", level: .debug)
         }
         return result
     }
@@ -240,7 +240,7 @@ class SummaryManager: ObservableObject {
                     do {
                         try await self.iCloudManager.deleteSummaryFromiCloud(summary.id)
                     } catch {
-                        AppLogger.shared.error("Failed to delete summary from iCloud: \(error)", category: "SummaryManager")
+                        AppLog.shared.summarization("Failed to delete summary from iCloud: \(error)", level: .error)
                     }
                 }
             }
@@ -260,13 +260,13 @@ class SummaryManager: ObservableObject {
     // MARK: - Clear All Data
     
     func clearAllSummaries() {
-        AppLogger.shared.info("Clearing all summaries...", category: "SummaryManager")
+        AppLog.shared.summarization("Clearing all summaries...")
         
         let enhancedCount = enhancedSummaries.count
 
         DispatchQueue.main.async {
             self.enhancedSummaries.removeAll()
-            AppLogger.shared.info("Cleared \(enhancedCount) summaries", category: "SummaryManager")
+            AppLog.shared.summarization("Cleared \(enhancedCount) summaries")
         }
     }
     
@@ -278,11 +278,9 @@ class SummaryManager: ObservableObject {
     // MARK: - Engine Management
     
     func initializeEngines() {
-        let logger = AppLogger.shared
-        
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            logger.verbose("Initializing AI engines using AIEngineFactory...", category: "SummaryManager")
+            AppLog.shared.summarization("Initializing AI engines using AIEngineFactory...", level: .debug)
         }
         
         // Clear any existing engines
@@ -295,7 +293,7 @@ class SummaryManager: ObservableObject {
         for engineType in allEngineTypes {
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                logger.verbose("Initializing \(engineType.rawValue)...", category: "SummaryManager")
+                AppLog.shared.summarization("Initializing \(engineType.rawValue)...", level: .debug)
             }
 
             // Create engine using the factory
@@ -306,7 +304,7 @@ class SummaryManager: ObservableObject {
             
             // Only log successful initialization if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                logger.verbose("Successfully initialized \(engine.name) (Available: \(engine.isAvailable))", category: "SummaryManager")
+                AppLog.shared.summarization("Successfully initialized \(engine.name) (Available: \(engine.isAvailable))", level: .debug)
             }
             successfullyInitialized += 1
             
@@ -314,12 +312,12 @@ class SummaryManager: ObservableObject {
         }
         
         // Log only essential initialization summary
-        logger.info("Engine initialization complete - \(successfullyInitialized)/\(allEngineTypes.count) engines initialized", category: "SummaryManager")
+        AppLog.shared.summarization("Engine initialization complete - \(successfullyInitialized)/\(allEngineTypes.count) engines initialized")
         
         // Only log detailed engine lists if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            logger.verbose("Available engines: \(getAvailableEnginesOnly())", category: "SummaryManager")
-            logger.verbose("Coming soon engines: \(getComingSoonEngines())", category: "SummaryManager")
+            AppLog.shared.summarization("Available engines: \(getAvailableEnginesOnly())", level: .debug)
+            AppLog.shared.summarization("Coming soon engines: \(getComingSoonEngines())", level: .debug)
         }
         
         // Now restore the user's selected engine from UserDefaults or set default
@@ -330,7 +328,7 @@ class SummaryManager: ObservableObject {
            savedEngine.isAvailable {
             // User has a saved preference and the engine is available
             currentEngine = savedEngine
-            logger.info("Restored previously selected engine: \(savedEngine.name)", category: "SummaryManager")
+            AppLog.shared.summarization("Restored previously selected engine: \(savedEngine.name)")
         } else if let savedEngineName = savedEngineName,
                   let savedEngine = availableEngines[savedEngineName],
                   !savedEngine.isAvailable {
@@ -338,24 +336,24 @@ class SummaryManager: ObservableObject {
             // Try to find an available alternative, but don't overwrite their preference
             if let availableEngine = availableEngines.values.first(where: { $0.isAvailable }) {
                 currentEngine = availableEngine
-                logger.warning("Saved engine '\(savedEngineName)' not available, using '\(availableEngine.name)' temporarily", category: "SummaryManager")
+                AppLog.shared.summarization("Saved engine '\(savedEngineName)' not available, using '\(availableEngine.name)' temporarily", level: .default)
             }
         } else if savedEngineName == nil {
             // No saved preference, try to set On-Device AI as the default
             if let defaultEngine = availableEngines["On-Device AI"], defaultEngine.isAvailable {
                 currentEngine = defaultEngine
                 UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
-                logger.info("No saved preference, set On-Device AI as default engine", category: "SummaryManager")
+                AppLog.shared.summarization("No saved preference, set On-Device AI as default engine")
             } else {
                 // Try to find any available engine
                 if let anyAvailableEngine = availableEngines.values.first(where: { $0.isAvailable && $0.name != "None" }) {
                     currentEngine = anyAvailableEngine
                     UserDefaults.standard.set(anyAvailableEngine.name, forKey: "SelectedAIEngine")
-                    logger.info("On-Device AI not available, using '\(anyAvailableEngine.name)' as default", category: "SummaryManager")
+                    AppLog.shared.summarization("On-Device AI not available, using '\(anyAvailableEngine.name)' as default")
                 } else {
                     // Last resort: set to None
                     UserDefaults.standard.set("None", forKey: "SelectedAIEngine")
-                    logger.info("No engines available, setting default engine to None", category: "SummaryManager")
+                    AppLog.shared.summarization("No engines available, setting default engine to None")
                 }
             }
         }
@@ -363,33 +361,33 @@ class SummaryManager: ObservableObject {
         // Ensure we have at least one working engine if one is selected
         if let engineName = UserDefaults.standard.string(forKey: "SelectedAIEngine"), engineName != "None" {
             if currentEngine == nil {
-                logger.warning("No available engines found, attempting to find any available engine", category: "SummaryManager")
+                AppLog.shared.summarization("No available engines found, attempting to find any available engine", level: .default)
                 if let fallbackEngine = availableEngines.values.first(where: { $0.isAvailable && $0.name != "None" }) {
                     currentEngine = fallbackEngine
-                    logger.info("Set \(fallbackEngine.name) as fallback engine", category: "SummaryManager")
+                    AppLog.shared.summarization("Set \(fallbackEngine.name) as fallback engine")
                 }
             }
         }
         
-        logger.info("Current active engine: \(getCurrentEngineName())", category: "SummaryManager")
+        AppLog.shared.summarization("Current active engine: \(getCurrentEngineName())")
     }
     
     func setEngine(_ engineName: String) {
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("Setting engine to '\(engineName)'", category: "SummaryManager")
+            AppLog.shared.summarization("Setting engine to '\(engineName)'", level: .debug)
         }
         
         // Validate the engine using the new validation method
         let validation = validateEngineAvailability(engineName)
         
         guard validation.isValid else {
-            AppLogger.shared.warning("\(validation.errorMessage ?? "Invalid engine")", category: "SummaryManager")
+            AppLog.shared.summarization("\(validation.errorMessage ?? "Invalid engine")", level: .default)
             return
         }
         
         guard validation.isAvailable else {
-            AppLogger.shared.warning("\(validation.errorMessage ?? "Engine not available")", category: "SummaryManager")
+            AppLog.shared.summarization("\(validation.errorMessage ?? "Engine not available")", level: .default)
             return
         }
         
@@ -400,14 +398,14 @@ class SummaryManager: ObservableObject {
             targetEngine = existingEngine
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Using existing engine '\(engineName)'", category: "SummaryManager")
+                AppLog.shared.summarization("Using existing engine '\(engineName)'", level: .debug)
             }
         } else {
             // Create the engine using the factory
             if let engineType = AIEngineType.allCases.first(where: { $0.rawValue == engineName }) {
                 // Only log if verbose logging is enabled
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("Creating new engine '\(engineName)' using factory", category: "SummaryManager")
+                    AppLog.shared.summarization("Creating new engine '\(engineName)' using factory", level: .debug)
                 }
                 let newEngine = AIEngineFactory.createEngine(type: engineType)
                 availableEngines[engineType.rawValue] = newEngine
@@ -421,7 +419,7 @@ class SummaryManager: ObservableObject {
             
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Engine set successfully to '\(engine.name)'", category: "SummaryManager")
+                AppLog.shared.summarization("Engine set successfully to '\(engine.name)'", level: .debug)
             }
             
             // Save the selected engine to UserDefaults for persistence
@@ -432,19 +430,19 @@ class SummaryManager: ObservableObject {
                 self.objectWillChange.send()
             }
         } else {
-            AppLogger.shared.warning("Failed to set engine '\(engineName)' - engine not available", category: "SummaryManager")
+            AppLog.shared.summarization("Failed to set engine '\(engineName)' - engine not available", level: .default)
             if let engine = targetEngine {
-                AppLogger.shared.debug("Engine details: \(engine.description) (Available: \(engine.isAvailable))", category: "SummaryManager")
+                AppLog.shared.summarization("Engine details: \(engine.description) (Available: \(engine.isAvailable))", level: .debug)
             }
         }
     }
     
     func updateEngineConfiguration(_ engineName: String) {
-        print("🔧 SummaryManager: Updating configuration for engine '\(engineName)'")
+        AppLog.shared.summarization("Updating configuration for engine '\(engineName)'", level: .debug)
         
         // Find the engine type for the given name
         guard let engineType = AIEngineType.allCases.first(where: { $0.rawValue == engineName }) else {
-            print("❌ SummaryManager: Unknown engine type for '\(engineName)'")
+            AppLog.shared.summarization("Unknown engine type for '\(engineName)'", level: .error)
             return
         }
         
@@ -455,10 +453,10 @@ class SummaryManager: ObservableObject {
         // If this was the current engine, update the reference
         if currentEngine?.name == engineName {
             currentEngine = updatedEngine
-            print("🎯 SummaryManager: Updated current engine configuration for '\(engineName)'")
+            AppLog.shared.summarization("Updated current engine configuration for '\(engineName)'", level: .debug)
         }
         
-        print("✅ SummaryManager: Engine configuration updated for '\(engineName)' (Available: \(updatedEngine.isAvailable))")
+        AppLog.shared.summarization("Engine configuration updated for '\(engineName)' (Available: \(updatedEngine.isAvailable))")
     }
     
     func getAvailableEngines() -> [String] {
@@ -559,16 +557,16 @@ class SummaryManager: ObservableObject {
     
     func getCurrentEngineName() -> String {
         guard let engine = currentEngine else {
-            print("⚠️ SummaryManager: No current engine set")
+            AppLog.shared.summarization("No current engine set", level: .default)
             return "None"
         }
         
         // Verify the engine is still available
         if !engine.isAvailable {
-            print("⚠️ SummaryManager: Current engine '\(engine.name)' is no longer available")
+            AppLog.shared.summarization("Current engine '\(engine.name)' is no longer available", level: .default)
             // Try to find an available fallback engine, but don't overwrite user's preference
             if let fallbackEngine = availableEngines.values.first(where: { $0.isAvailable }) {
-                print("🔄 SummaryManager: Using fallback engine '\(fallbackEngine.name)' temporarily")
+                AppLog.shared.summarization("Using fallback engine '\(fallbackEngine.name)' temporarily", level: .debug)
                 currentEngine = fallbackEngine
                 // Don't overwrite the user's saved preference - they may want to use their selected engine when it becomes available again
                 return fallbackEngine.name
@@ -585,9 +583,9 @@ class SummaryManager: ObservableObject {
         if currentEngine?.name != selectedEngineName {
             if let selectedEngine = availableEngines[selectedEngineName], selectedEngine.isAvailable {
                 currentEngine = selectedEngine
-                print("🔄 SummaryManager: Synced current engine to '\(selectedEngineName)' from settings")
+                AppLog.shared.summarization("Synced current engine to '\(selectedEngineName)' from settings", level: .debug)
             } else {
-                print("⚠️ SummaryManager: Selected engine '\(selectedEngineName)' not available, keeping current engine")
+                AppLog.shared.summarization("Selected engine '\(selectedEngineName)' not available, keeping current engine", level: .default)
             }
         }
     }
@@ -608,11 +606,9 @@ class SummaryManager: ObservableObject {
     }
     
     func getAvailableEnginesOnly() -> [String] {
-        let logger = AppLogger.shared
-        
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-            logger.verbose("Checking available engines...", category: "SummaryManager")
+            AppLog.shared.summarization("Checking available engines...", level: .debug)
         }
         
         // Get all engine types and check their real-time availability
@@ -627,12 +623,12 @@ class SummaryManager: ObservableObject {
                 availableEngines.append(engineType.rawValue)
                 // Only log if verbose logging is enabled
                 if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                    logger.verbose("\(engineType.rawValue) is available", category: "SummaryManager")
+                    AppLog.shared.summarization("\(engineType.rawValue) is available", level: .debug)
                 }
             } else {
                 // Only log if verbose logging is enabled
                 if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                    logger.verbose("\(engineType.rawValue) is not available", category: "SummaryManager")
+                    AppLog.shared.summarization("\(engineType.rawValue) is not available", level: .debug)
                 }
             }
         }
@@ -641,18 +637,16 @@ class SummaryManager: ObservableObject {
         
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-            logger.verbose("Available engines: \(sortedEngines)", category: "SummaryManager")
+            AppLog.shared.summarization("Available engines: \(sortedEngines)", level: .debug)
         }
         
         return sortedEngines
     }
     
     func getComingSoonEngines() -> [String] {
-        let logger = AppLogger.shared
-        
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-            logger.verbose("Checking coming soon engines...", category: "SummaryManager")
+            AppLog.shared.summarization("Checking coming soon engines...", level: .debug)
         }
         
         // Get all engine types
@@ -667,7 +661,7 @@ class SummaryManager: ObservableObject {
         
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-            logger.verbose("Coming soon engines: \(comingSoonEngines)", category: "SummaryManager")
+            AppLog.shared.summarization("Coming soon engines: \(comingSoonEngines)", level: .debug)
         }
         
         return comingSoonEngines
@@ -676,7 +670,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Real-time Availability Checking
     
     func checkEngineAvailability(_ engineName: String) async -> (isAvailable: Bool, errorMessage: String?) {
-        print("🔍 SummaryManager: Checking real-time availability for '\(engineName)'")
+        AppLog.shared.summarization("Checking real-time availability for '\(engineName)'", level: .debug)
         
         // Validate engine name first
         let validation = validateEngineAvailability(engineName)
@@ -694,27 +688,27 @@ class SummaryManager: ObservableObject {
         
         // Check basic availability first
         let isAvailable = engine.isAvailable
-        print("🔍 SummaryManager: \(engineName) basic availability: \(isAvailable)")
-        
+        AppLog.shared.summarization("\(engineName) basic availability: \(isAvailable)", level: .debug)
+
         if !isAvailable {
             return (false, "Engine not available")
         }
-        
+
         // For engines that support connection testing, perform additional checks
         if engineName.contains("OpenAI") || engineName.contains("Ollama") {
             // Try to perform a connection test if the engine supports it
             if let testableEngine = engine as? (any SummarizationEngine & ConnectionTestable) {
                 let isConnected = await testableEngine.testConnection()
                 if isConnected {
-                    print("✅ SummaryManager: \(engineName) connection test successful")
+                    AppLog.shared.summarization("\(engineName) connection test successful")
                     return (true, nil)
                 } else {
-                    print("❌ SummaryManager: \(engineName) connection test failed")
+                    AppLog.shared.summarization("\(engineName) connection test failed", level: .error)
                     return (false, "Connection test failed")
                 }
             } else {
                 // Engine doesn't support connection testing, rely on basic availability
-                print("⚠️ SummaryManager: \(engineName) doesn't support connection testing")
+                AppLog.shared.summarization("\(engineName) doesn't support connection testing", level: .debug)
                 return (isAvailable, nil)
             }
         } else {
@@ -724,7 +718,7 @@ class SummaryManager: ObservableObject {
     }
     
     func refreshEngineAvailability() async {
-        print("🔄 SummaryManager: Refreshing engine availability (basic check only)...")
+        AppLog.shared.summarization("Refreshing engine availability (basic check only)...")
         
         // Get all engine types
         let allEngineTypes = AIEngineFactory.getAllEngines()
@@ -740,14 +734,14 @@ class SummaryManager: ObservableObject {
             
             // Only check basic availability without connection tests to avoid API costs
             let isAvailable = engine.isAvailable
-            print("🔍 SummaryManager: \(engineType.rawValue) basic availability: \(isAvailable)")
-            
+            AppLog.shared.summarization("\(engineType.rawValue) basic availability: \(isAvailable)", level: .debug)
+
             if isAvailable {
                 availableEngines[engineType.rawValue] = engine
                 successfullyInitialized += 1
-                print("✅ SummaryManager: \(engineType.rawValue) refreshed and available")
+                AppLog.shared.summarization("\(engineType.rawValue) refreshed and available", level: .debug)
             } else {
-                print("❌ SummaryManager: \(engine.name) not available")
+                AppLog.shared.summarization("\(engine.name) not available", level: .debug)
             }
         }
         
@@ -757,20 +751,20 @@ class SummaryManager: ObservableObject {
             let currentEngineInstance = AIEngineFactory.createEngine(type: currentEngineType ?? .onDeviceLLM)
             
             if !currentEngineInstance.isAvailable {
-                print("⚠️ SummaryManager: Current engine '\(currentEngine.name)' is no longer available")
-                
+                AppLog.shared.summarization("Current engine '\(currentEngine.name)' is no longer available", level: .default)
+
                 // Try to find an available fallback engine
                 if let fallbackEngine = availableEngines.values.first {
                     self.currentEngine = fallbackEngine
                     UserDefaults.standard.set(fallbackEngine.name, forKey: "SelectedAIEngine")
-                    print("🔄 SummaryManager: Switched to fallback engine '\(fallbackEngine.name)'")
+                    AppLog.shared.summarization("Switched to fallback engine '\(fallbackEngine.name)'", level: .debug)
                 }
             }
         }
         
-        print("🔄 SummaryManager: Engine availability refresh complete")
-        print("✅ Successfully refreshed: \(successfullyInitialized)/\(totalEngines) engines")
-        print("📋 Available engines: \(getAvailableEnginesOnly())")
+        AppLog.shared.summarization("Engine availability refresh complete")
+        AppLog.shared.summarization("Successfully refreshed: \(successfullyInitialized)/\(totalEngines) engines")
+        AppLog.shared.summarization("Available engines: \(getAvailableEnginesOnly())", level: .debug)
         
         // Notify observers of the refresh
         await MainActor.run {
@@ -781,7 +775,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Connection Testing (Explicit)
     
     func testEngineConnections() async {
-        print("🔍 SummaryManager: Testing engine connections (explicit)...")
+        AppLog.shared.summarization("Testing engine connections (explicit)...")
         
         let allEngineTypes = AIEngineFactory.getAllEngines()
         
@@ -789,32 +783,32 @@ class SummaryManager: ObservableObject {
             let engine = AIEngineFactory.createEngine(type: engineType)
             let engineName = engineType.rawValue
             
-            print("🔍 SummaryManager: Testing connection for '\(engineName)'")
+            AppLog.shared.summarization("Testing connection for '\(engineName)'", level: .debug)
             
             // Only test connections for engines that support it
             if engineName.contains("OpenAI") || engineName.contains("Ollama") || engineName.contains("Google") {
                 if let testableEngine = engine as? (any SummarizationEngine & ConnectionTestable) {
                     let isConnected = await testableEngine.testConnection()
                     if isConnected {
-                        print("✅ SummaryManager: \(engineName) connection test successful")
+                        AppLog.shared.summarization("\(engineName) connection test successful")
                     } else {
-                        print("❌ SummaryManager: \(engineName) connection test failed")
+                        AppLog.shared.summarization("\(engineName) connection test failed", level: .error)
                     }
                 } else {
-                    print("⚠️ SummaryManager: \(engineName) doesn't support connection testing")
+                    AppLog.shared.summarization("\(engineName) doesn't support connection testing", level: .debug)
                 }
             } else {
-                print("ℹ️ SummaryManager: \(engineName) doesn't require connection testing")
+                AppLog.shared.summarization("\(engineName) doesn't require connection testing", level: .debug)
             }
         }
         
-        print("🔍 SummaryManager: Engine connection testing complete")
+        AppLog.shared.summarization("Engine connection testing complete")
     }
     
     func getEngineAvailabilityStatus() -> [String: EngineAvailabilityStatus] {
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-            AppLogger.shared.verbose("Getting engine availability status...", category: "SummaryManager")
+            AppLog.shared.summarization("Getting engine availability status...", level: .debug)
         }
         
         var statusMap: [String: EngineAvailabilityStatus] = [:]
@@ -839,7 +833,7 @@ class SummaryManager: ObservableObject {
         
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-            AppLogger.shared.verbose("Engine status map created with \(statusMap.count) engines", category: "SummaryManager")
+            AppLog.shared.summarization("Engine status map created with \(statusMap.count) engines", level: .debug)
         }
         return statusMap
     }
@@ -847,7 +841,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Engine Monitoring and Auto-Recovery
     
     func startEngineMonitoring() {
-        print("🔍 SummaryManager: Starting engine availability monitoring...")
+        AppLog.shared.summarization("Starting engine availability monitoring...")
         
         // Set up a timer to periodically check engine availability
         Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
@@ -856,14 +850,14 @@ class SummaryManager: ObservableObject {
             }
         }
         
-        print("✅ SummaryManager: Engine monitoring started")
+        AppLog.shared.summarization("Engine monitoring started")
     }
     
     private func monitorEngineAvailability() async {
-        print("🔍 SummaryManager: Monitoring engine availability...")
-        
+        AppLog.shared.summarization("Monitoring engine availability...", level: .debug)
+
         guard let currentEngine = currentEngine else {
-            print("⚠️ SummaryManager: No current engine to monitor")
+            AppLog.shared.summarization("No current engine to monitor", level: .default)
             return
         }
         
@@ -871,14 +865,14 @@ class SummaryManager: ObservableObject {
         let availability = await checkEngineAvailability(currentEngine.name)
         
         if !availability.isAvailable {
-            print("⚠️ SummaryManager: Current engine '\(currentEngine.name)' is no longer available")
-            print("🔄 SummaryManager: Attempting to switch to available engine...")
+            AppLog.shared.summarization("Current engine '\(currentEngine.name)' is no longer available", level: .default)
+            AppLog.shared.summarization("Attempting to switch to available engine...", level: .debug)
             
             // Try to find an available engine
             let availableEngines = getAvailableEnginesOnly()
             
             if let newEngineName = availableEngines.first {
-                print("🔄 SummaryManager: Switching to '\(newEngineName)'")
+                AppLog.shared.summarization("Switching to '\(newEngineName)'", level: .debug)
                 setEngine(newEngineName)
                 
                 // Notify observers of the engine change
@@ -886,15 +880,15 @@ class SummaryManager: ObservableObject {
                     self.objectWillChange.send()
                 }
             } else {
-                print("❌ SummaryManager: No available engines found")
+                AppLog.shared.summarization("No available engines found", level: .error)
             }
         } else {
-            print("✅ SummaryManager: Current engine '\(currentEngine.name)' is still available")
+            AppLog.shared.summarization("Current engine '\(currentEngine.name)' is still available", level: .debug)
         }
     }
     
     func getEngineHealthReport() -> [String: Any] {
-        print("🏥 SummaryManager: Generating engine health report...")
+        AppLog.shared.summarization("Generating engine health report...", level: .debug)
         
         let statusMap = getEngineAvailabilityStatus()
         let currentEngineName = getCurrentEngineName()
@@ -945,8 +939,8 @@ class SummaryManager: ObservableObject {
         healthReport["comingSoonEngines"] = comingSoonCount
         healthReport["engineDetails"] = engineDetails
         
-        print("🏥 SummaryManager: Health report generated")
-        print("📊 Available: \(availableCount), Unavailable: \(unavailableCount), Coming Soon: \(comingSoonCount)")
+        AppLog.shared.summarization("Health report generated", level: .debug)
+        AppLog.shared.summarization("Available: \(availableCount), Unavailable: \(unavailableCount), Coming Soon: \(comingSoonCount)", level: .debug)
         
         return healthReport
     }
@@ -956,7 +950,7 @@ class SummaryManager: ObservableObject {
     func generateEnhancedSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator? = nil, engineName: String? = nil) async throws -> EnhancedSummaryData {
         // Sync engine from settings before logging to avoid "No current engine set" warning
         syncCurrentEngineWithSettings()
-        AppLogger.shared.info("Starting enhanced summary generation using \(getCurrentEngineName())", category: "SummaryManager")
+        AppLog.shared.summarization("Starting enhanced summary generation using \(getCurrentEngineName())")
         
         let startTime = Date()
         
@@ -966,8 +960,8 @@ class SummaryManager: ObservableObject {
         
         // If transcript has 50 words or less, return it as-is as the summary
         if words.count <= 50 {
-            AppLogger.shared.info("Transcript has 50 words or less (\(words.count) words) - returning transcript as-is", category: "SummaryManager")
-            
+            AppLog.shared.summarization("Transcript has 50 words or less (\(words.count) words) - returning transcript as-is")
+
             let shortTranscriptSummary = EnhancedSummaryData(
                 recordingURL: recordingURL,
                 recordingName: recordingName,
@@ -982,7 +976,7 @@ class SummaryManager: ObservableObject {
                 originalLength: words.count,
                 processingTime: Date().timeIntervalSince(startTime)
             )
-            
+
             // Update UI state on the main thread
             await MainActor.run {
                 // Only update UI state - Core Data persistence should be handled by caller
@@ -992,11 +986,11 @@ class SummaryManager: ObservableObject {
                     self.enhancedSummaries.append(shortTranscriptSummary)
                 }
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("Updated UI state for short transcript summary: \(shortTranscriptSummary.recordingName)", category: "SummaryManager")
+                    AppLog.shared.summarization("Updated UI state for short transcript summary: \(shortTranscriptSummary.recordingName)", level: .debug)
                 }
             }
-            
-            AppLogger.shared.info("Short transcript summary created and saved", category: "SummaryManager")
+
+            AppLog.shared.summarization("Short transcript summary created and saved")
             return shortTranscriptSummary
         }
         
@@ -1023,13 +1017,13 @@ class SummaryManager: ObservableObject {
 
         // Ensure we have a working engine
         guard let engine = engineToUse else {
-            AppLogger.shared.warning("No AI engine available, falling back to basic processing", category: "SummaryManager")
+            AppLog.shared.summarization("No AI engine available, falling back to basic processing", level: .default)
             let fallbackError = SummarizationError.aiServiceUnavailable(service: "No AI engines available")
             handleError(fallbackError, context: "Engine Availability", recordingName: recordingName)
             return try await generateBasicSummary(from: text, for: recordingURL, recordingName: recordingName, recordingDate: recordingDate, coordinator: coordinator)
         }
         
-        AppLogger.shared.info("Using engine: \(engine.name)", category: "SummaryManager")
+        AppLog.shared.summarization("Using engine: \(engine.name)")
         
         var result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
         do {
@@ -1049,17 +1043,17 @@ class SummaryManager: ObservableObject {
             if errorDesc.contains("guardrailViolation") || errorDesc.contains("unsafe content") {
                 throw SummarizationError.contentSafetyBlock(engine: engine.name)
             }
-            AppLogger.shared.error("AI engine failed: \(error) – retrying once", category: "SummaryManager")
+            AppLog.shared.summarization("AI engine failed: \(error) - retrying once", level: .error)
             do {
                 try Task.checkCancellation()
                 result = try await engine.processComplete(text: text)
-                AppLogger.shared.info("AI engine retry succeeded", category: "SummaryManager")
+                AppLog.shared.summarization("AI engine retry succeeded")
             } catch {
                 // If cancelled during retry, propagate CancellationError
                 if Task.isCancelled || error is CancellationError || (error as NSError).code == NSURLErrorCancelled {
                     throw CancellationError()
                 }
-                AppLogger.shared.error("AI engine retry failed: \(error)", category: "SummaryManager")
+                AppLog.shared.summarization("AI engine retry failed: \(error)", level: .error)
 
                 // Handle the error and provide recovery options
                 handleError(error, context: "Enhanced Summary Generation", recordingName: recordingName)
@@ -1123,7 +1117,7 @@ class SummaryManager: ObservableObject {
         // Validate summary quality
         let qualityReport = errorHandler.validateSummaryQuality(enhancedSummary)
         if qualityReport.qualityLevel == .unacceptable {
-            AppLogger.shared.warning("Summary quality is unacceptable, attempting recovery", category: "SummaryManager")
+            AppLog.shared.summarization("Summary quality is unacceptable, attempting recovery", level: .default)
             handleError(SummarizationError.processingFailed(reason: "Summary quality below threshold"), context: "Summary Quality", recordingName: recordingName)
         }
 
@@ -1136,7 +1130,7 @@ class SummaryManager: ObservableObject {
                 self.enhancedSummaries.append(enhancedSummary)
             }
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Updated UI state for enhanced summary: \(enhancedSummary.recordingName)", category: "SummaryManager")
+                AppLog.shared.summarization("Updated UI state for enhanced summary: \(enhancedSummary.recordingName)", level: .debug)
             }
         }
 
@@ -1154,13 +1148,13 @@ class SummaryManager: ObservableObject {
             )
         }
 
-        AppLogger.shared.info("Enhanced summary generated successfully", category: "SummaryManager")
-        AppLogger.shared.info("Summary length: \(result.summary.count) characters", category: "SummaryManager")
-        AppLogger.shared.info("Tasks extracted: \(result.tasks.count)", category: "SummaryManager")
-        AppLogger.shared.info("Reminders extracted: \(result.reminders.count)", category: "SummaryManager")
-        AppLogger.shared.info("Content type: \(result.contentType.rawValue)", category: "SummaryManager")
-        AppLogger.shared.info("Recording name: '\(finalRecordingName)'", category: "SummaryManager")
-        AppLogger.shared.info("Quality score: \(qualityReport.formattedScore)", category: "SummaryManager")
+        AppLog.shared.summarization("Enhanced summary generated successfully")
+        AppLog.shared.summarization("Summary length: \(result.summary.count) characters", level: .debug)
+        AppLog.shared.summarization("Tasks extracted: \(result.tasks.count)", level: .debug)
+        AppLog.shared.summarization("Reminders extracted: \(result.reminders.count)", level: .debug)
+        AppLog.shared.summarization("Content type: \(result.contentType.rawValue)", level: .debug)
+        AppLog.shared.summarization("Recording name: '\(finalRecordingName)'", level: .debug)
+        AppLog.shared.summarization("Quality score: \(qualityReport.formattedScore)", level: .debug)
 
         return enhancedSummary
     }
@@ -1171,22 +1165,22 @@ class SummaryManager: ObservableObject {
         guard summaryBackgroundTaskID == .invalid else { return }
         summaryBackgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "AISummarization") { [weak self] in
             // Expiration handler — iOS is about to kill us
-            print("⚠️ [SummaryManager] Background task expiring for summarization")
+            AppLog.shared.summarization("Background task expiring for summarization", level: .default)
             self?.endSummaryBackgroundTask()
         }
         if summaryBackgroundTaskID != .invalid {
             let remaining = UIApplication.shared.backgroundTimeRemaining
             if remaining != Double.greatestFiniteMagnitude {
-                print("[SummaryManager] Background task started — \(Int(remaining))s remaining")
+                AppLog.shared.summarization("Background task started - \(Int(remaining))s remaining", level: .debug)
             } else {
-                print("[SummaryManager] Background task started — unlimited time (foreground or audio session active)")
+                AppLog.shared.summarization("Background task started - unlimited time (foreground or audio session active)", level: .debug)
             }
         }
     }
 
     private func endSummaryBackgroundTask() {
         guard summaryBackgroundTaskID != .invalid else { return }
-        print("[SummaryManager] Ending summarization background task")
+        AppLog.shared.summarization("Ending summarization background task", level: .debug)
         UIApplication.shared.endBackgroundTask(summaryBackgroundTaskID)
         summaryBackgroundTaskID = .invalid
     }
@@ -1194,7 +1188,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Fallback Basic Summary Generation
     
     private func generateBasicSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator?) async throws -> EnhancedSummaryData {
-        AppLogger.shared.info("Using basic fallback summarization with task/reminder extraction", category: "SummaryManager")
+        AppLog.shared.summarization("Using basic fallback summarization with task/reminder extraction")
         
         let startTime = Date()
         
@@ -1204,8 +1198,8 @@ class SummaryManager: ObservableObject {
         
         // If transcript has 50 words or less, return it as-is as the summary
         if words.count <= 50 {
-            AppLogger.shared.info("Transcript has 50 words or less (\(words.count) words) - returning transcript as-is", category: "SummaryManager")
-            
+            AppLog.shared.summarization("Transcript has 50 words or less (\(words.count) words) - returning transcript as-is")
+
             let shortTranscriptSummary = EnhancedSummaryData(
                 recordingURL: recordingURL,
                 recordingName: recordingName,
@@ -1220,7 +1214,7 @@ class SummaryManager: ObservableObject {
                 originalLength: words.count,
                 processingTime: Date().timeIntervalSince(startTime)
             )
-            
+
             // Update UI state on the main thread
             await MainActor.run {
                 // Only update UI state - Core Data persistence should be handled by caller
@@ -1230,11 +1224,11 @@ class SummaryManager: ObservableObject {
                     self.enhancedSummaries.append(shortTranscriptSummary)
                 }
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("Updated UI state for short transcript summary: \(shortTranscriptSummary.recordingName)", category: "SummaryManager")
+                    AppLog.shared.summarization("Updated UI state for short transcript summary: \(shortTranscriptSummary.recordingName)", level: .debug)
                 }
             }
-            
-            AppLogger.shared.info("Short transcript summary created and saved", category: "SummaryManager")
+
+            AppLog.shared.summarization("Short transcript summary created and saved")
             return shortTranscriptSummary
         }
         
@@ -1284,7 +1278,7 @@ class SummaryManager: ObservableObject {
         // Validate basic summary quality
         let qualityReport = errorHandler.validateSummaryQuality(enhancedSummary)
         if qualityReport.qualityLevel == SummaryQualityLevel.unacceptable {
-            print("⚠️ SummaryManager: Basic summary quality is unacceptable")
+            AppLog.shared.summarization("Basic summary quality is unacceptable", level: .default)
             handleError(SummarizationError.processingFailed(reason: "Basic summary quality below threshold"), context: "Basic Summary Quality", recordingName: recordingName)
         }
         
@@ -1297,7 +1291,7 @@ class SummaryManager: ObservableObject {
                 self.enhancedSummaries.append(enhancedSummary)
             }
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Updated UI state for basic enhanced summary: \(enhancedSummary.recordingName)", category: "SummaryManager")
+                AppLog.shared.summarization("Updated UI state for basic enhanced summary: \(enhancedSummary.recordingName)", level: .debug)
             }
         }
         
@@ -1315,17 +1309,17 @@ class SummaryManager: ObservableObject {
             )
         }
         
-        AppLogger.shared.info("Basic summary with extraction completed", category: "SummaryManager")
-        AppLogger.shared.info("Tasks extracted: \(tasks.count)", category: "SummaryManager")
-        AppLogger.shared.info("Reminders extracted: \(reminders.count)", category: "SummaryManager")
-        AppLogger.shared.info("Recording name: '\(finalRecordingName)'", category: "SummaryManager")
-        AppLogger.shared.info("Quality score: \(qualityReport.formattedScore)", category: "SummaryManager")
+        AppLog.shared.summarization("Basic summary with extraction completed")
+        AppLog.shared.summarization("Tasks extracted: \(tasks.count)", level: .debug)
+        AppLog.shared.summarization("Reminders extracted: \(reminders.count)", level: .debug)
+        AppLog.shared.summarization("Recording name: '\(finalRecordingName)'", level: .debug)
+        AppLog.shared.summarization("Quality score: \(qualityReport.formattedScore)", level: .debug)
         
         return enhancedSummary
     }
     
     private func createBasicSummary(from text: String, contentType: ContentType) -> String {
-        print("📝 Creating content-type optimized summary for: \(contentType.rawValue)")
+        AppLog.shared.summarization("Creating content-type optimized summary for: \(contentType.rawValue)", level: .debug)
         
         // Use ContentAnalyzer for better sentence extraction and scoring with content-type optimization
         let sentences = ContentAnalyzer.extractSentences(from: text)
@@ -1396,7 +1390,7 @@ class SummaryManager: ObservableObject {
         }.joined(separator: "\n")
         
         let summary = "\(contentTypeHeader)\n\n\(bulletPoints)"
-        print("✅ Content-type optimized summary created: \(summary.count) characters")
+        AppLog.shared.summarization("Content-type optimized summary created: \(summary.count) characters", level: .debug)
         
         return summary
     }
@@ -1406,7 +1400,7 @@ class SummaryManager: ObservableObject {
     func extractTasksFromText(_ text: String) async throws -> [TaskItem] {
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("Extracting tasks using dedicated TaskExtractor", category: "SummaryManager")
+            AppLog.shared.summarization("Extracting tasks using dedicated TaskExtractor", level: .debug)
         }
         
         // First try to use the current AI engine if available
@@ -1415,14 +1409,14 @@ class SummaryManager: ObservableObject {
                 let tasks = try await engine.extractTasks(from: text)
                 // Only log if verbose logging is enabled
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("AI engine extracted \(tasks.count) tasks", category: "SummaryManager")
+                    AppLog.shared.summarization("AI engine extracted \(tasks.count) tasks", level: .debug)
                 }
                 return tasks
             } catch {
                 // Only log if verbose logging is enabled
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("AI engine task extraction failed, using fallback extractor", category: "SummaryManager")
-                    AppLogger.shared.verbose("Error: \(error)", category: "SummaryManager")
+                    AppLog.shared.summarization("AI engine task extraction failed, using fallback extractor", level: .debug)
+                    AppLog.shared.summarization("Task extraction error: \(error)", level: .debug)
                 }
             }
         }
@@ -1431,7 +1425,7 @@ class SummaryManager: ObservableObject {
         let tasks = taskExtractor.extractTasks(from: text)
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("TaskExtractor extracted \(tasks.count) tasks", category: "SummaryManager")
+            AppLog.shared.summarization("TaskExtractor extracted \(tasks.count) tasks", level: .debug)
         }
         return tasks
     }
@@ -1439,7 +1433,7 @@ class SummaryManager: ObservableObject {
     func extractRemindersFromText(_ text: String) async throws -> [ReminderItem] {
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("Extracting reminders using dedicated ReminderExtractor", category: "SummaryManager")
+            AppLog.shared.summarization("Extracting reminders using dedicated ReminderExtractor", level: .debug)
         }
         
         // First try to use the current AI engine if available
@@ -1448,14 +1442,14 @@ class SummaryManager: ObservableObject {
                 let reminders = try await engine.extractReminders(from: text)
                 // Only log if verbose logging is enabled
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("AI engine extracted \(reminders.count) reminders", category: "SummaryManager")
+                    AppLog.shared.summarization("AI engine extracted \(reminders.count) reminders", level: .debug)
                 }
                 return reminders
             } catch {
                 // Only log if verbose logging is enabled
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("AI engine reminder extraction failed, using fallback extractor", category: "SummaryManager")
-                    AppLogger.shared.verbose("Error: \(error)", category: "SummaryManager")
+                    AppLog.shared.summarization("AI engine reminder extraction failed, using fallback extractor", level: .debug)
+                    AppLog.shared.summarization("Reminder extraction error: \(error)", level: .debug)
                 }
             }
         }
@@ -1464,45 +1458,45 @@ class SummaryManager: ObservableObject {
         let reminders = reminderExtractor.extractReminders(from: text)
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("ReminderExtractor extracted \(reminders.count) reminders", category: "SummaryManager")
+            AppLog.shared.summarization("ReminderExtractor extracted \(reminders.count) reminders", level: .debug)
         }
         return reminders
     }
     
     func extractTitlesFromText(_ text: String) async throws -> [TitleItem] {
-        print("📝 SummaryManager: Extracting titles using AI engine")
+        AppLog.shared.summarization("Extracting titles using AI engine", level: .debug)
         
         // First try to use the current AI engine if available
         if let engine = currentEngine {
             do {
                 let titles = try await engine.extractTitles(from: text)
-                print("✅ SummaryManager: AI engine extracted \(titles.count) titles")
+                AppLog.shared.summarization("AI engine extracted \(titles.count) titles", level: .debug)
                 return titles
             } catch {
-                print("⚠️ SummaryManager: AI engine title extraction failed")
-                print("🔍 Error: \(error)")
+                AppLog.shared.summarization("AI engine title extraction failed", level: .default)
+                AppLog.shared.summarization("Title extraction error: \(error)", level: .debug)
             }
         }
         
         // Fallback: return empty array for now
-        print("ℹ️ SummaryManager: No title extraction fallback available")
+        AppLog.shared.summarization("No title extraction fallback available", level: .debug)
         return []
     }
     
     func extractTasksAndRemindersFromText(_ text: String) async throws -> (tasks: [TaskItem], reminders: [ReminderItem]) {
-        print("📋🔔 SummaryManager: Extracting tasks and reminders from text")
+        AppLog.shared.summarization("Extracting tasks and reminders from text", level: .debug)
         
         async let tasks = extractTasksFromText(text)
         async let reminders = extractRemindersFromText(text)
         
         let (taskResults, reminderResults) = try await (tasks, reminders)
         
-        print("✅ SummaryManager: Extracted \(taskResults.count) tasks and \(reminderResults.count) reminders")
+        AppLog.shared.summarization("Extracted \(taskResults.count) tasks and \(reminderResults.count) reminders", level: .debug)
         return (taskResults, reminderResults)
     }
     
     func extractTasksRemindersAndTitlesFromText(_ text: String) async throws -> (tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) {
-        print("📋🔔📝 SummaryManager: Extracting tasks, reminders, and titles from text")
+        AppLog.shared.summarization("Extracting tasks, reminders, and titles from text", level: .debug)
         
         async let tasks = extractTasksFromText(text)
         async let reminders = extractRemindersFromText(text)
@@ -1510,14 +1504,14 @@ class SummaryManager: ObservableObject {
         
         let (taskResults, reminderResults, titleResults) = try await (tasks, reminders, titles)
         
-        print("✅ SummaryManager: Extracted \(taskResults.count) tasks, \(reminderResults.count) reminders, and \(titleResults.count) titles")
+        AppLog.shared.summarization("Extracted \(taskResults.count) tasks, \(reminderResults.count) reminders, and \(titleResults.count) titles", level: .debug)
         return (taskResults, reminderResults, titleResults)
     }
     
     // MARK: - Content Type Influenced Processing
     
     func generateContentTypeOptimizedSummary(from text: String, contentType: ContentType) async throws -> String {
-        print("🎯 SummaryManager: Generating content-type optimized summary for \(contentType.rawValue)")
+        AppLog.shared.summarization("Generating content-type optimized summary for \(contentType.rawValue)", level: .debug)
         
         // Use different approaches based on content type
         switch contentType {
@@ -1533,7 +1527,7 @@ class SummaryManager: ObservableObject {
     }
     
     private func generateMeetingSummary(from text: String) async throws -> String {
-        print("📋 SummaryManager: Generating meeting-focused summary")
+        AppLog.shared.summarization("Generating meeting-focused summary", level: .debug)
         
         // Focus on decisions, action items, and key discussion points
         let sentences = ContentAnalyzer.extractSentences(from: text)
@@ -1567,7 +1561,7 @@ class SummaryManager: ObservableObject {
     }
     
     private func generateJournalSummary(from text: String) async throws -> String {
-        print("📝 SummaryManager: Generating journal-focused summary")
+        AppLog.shared.summarization("Generating journal-focused summary", level: .debug)
         
         // Focus on emotions, insights, and personal experiences
         let sentences = ContentAnalyzer.extractSentences(from: text)
@@ -1601,7 +1595,7 @@ class SummaryManager: ObservableObject {
     }
     
     private func generateTechnicalSummary(from text: String) async throws -> String {
-        print("⚙️ SummaryManager: Generating technical-focused summary")
+        AppLog.shared.summarization("Generating technical-focused summary", level: .debug)
         
         // Focus on concepts, solutions, and important technical details
         let sentences = ContentAnalyzer.extractSentences(from: text)
@@ -1635,7 +1629,7 @@ class SummaryManager: ObservableObject {
     }
     
     private func generateGeneralSummary(from text: String) async throws -> String {
-        print("📄 SummaryManager: Generating general summary")
+        AppLog.shared.summarization("Generating general summary", level: .debug)
         
         // Use standard sentence importance scoring
         let sentences = ContentAnalyzer.extractSentences(from: text)
@@ -1667,9 +1661,9 @@ class SummaryManager: ObservableObject {
             if let transcriptText = loadTranscriptText(for: url) {
                 do {
                     _ = try await generateEnhancedSummary(from: transcriptText, for: url, recordingName: name, recordingDate: date)
-                    print("Regenerated summary for: \(name)")
+                    AppLog.shared.summarization("Regenerated summary for: \(name)")
                 } catch {
-                    print("Failed to regenerate summary for \(name): \(error)")
+                    AppLog.shared.summarization("Failed to regenerate summary for \(name): \(error)", level: .error)
                 }
             }
         }
@@ -1684,7 +1678,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Error Handling and Recovery
     
     func handleError(_ error: Error, context: String = "", recordingName: String = "") {
-        AppLogger.shared.error("Error in \(context): \(error.localizedDescription)", category: "SummaryManager")
+        AppLog.shared.summarization("Error in \(context): \(error.localizedDescription)", level: .error)
         
         let appError = AppError.from(error, context: context)
         
@@ -1710,7 +1704,7 @@ class SummaryManager: ObservableObject {
     }
     
     func performRecoveryAction(_ action: RecoveryAction, for recordingURL: URL, recordingName: String) async {
-        print("🔄 SummaryManager: Performing recovery action: \(action.title)")
+        AppLog.shared.summarization("Performing recovery action: \(action.title)", level: .debug)
         
         switch action {
         case .retryOperation:
@@ -1735,14 +1729,14 @@ class SummaryManager: ObservableObject {
             // Allow manual summary creation
             await createManualSummary(for: recordingURL, recordingName: recordingName)
         default:
-            print("⚠️ SummaryManager: Recovery action not implemented: \(action.title)")
+            AppLog.shared.summarization("Recovery action not implemented: \(action.title)", level: .default)
         }
     }
     
     // MARK: - Recovery Action Implementations
     
     private func retryLastOperation(for recordingURL: URL, recordingName: String) async {
-        print("🔄 SummaryManager: Retrying last operation")
+        AppLog.shared.summarization("Retrying last operation", level: .debug)
         
         // Get the transcript and retry summary generation
         if let transcript = transcriptManager.getTranscript(for: recordingURL) {
@@ -1762,7 +1756,7 @@ class SummaryManager: ObservableObject {
     }
     
     private func switchToNextAvailableEngine() async {
-        print("🔄 SummaryManager: Switching to next available engine")
+        AppLog.shared.summarization("Switching to next available engine", level: .debug)
         
         let availableEngines = getAvailableEnginesOnly()
         let currentEngineName = getCurrentEngineName()
@@ -1772,16 +1766,16 @@ class SummaryManager: ObservableObject {
            currentIndex + 1 < availableEngines.count {
             let nextEngine = availableEngines[currentIndex + 1]
             setEngine(nextEngine)
-            print("✅ SummaryManager: Switched to engine: \(nextEngine)")
+            AppLog.shared.summarization("Switched to engine: \(nextEngine)")
         } else if !availableEngines.isEmpty {
             // Wrap around to first engine
             setEngine(availableEngines[0])
-            print("✅ SummaryManager: Switched to first available engine: \(availableEngines[0])")
+            AppLog.shared.summarization("Switched to first available engine: \(availableEngines[0])")
         }
     }
     
     private func processWithShorterChunks(for recordingURL: URL, recordingName: String) async {
-        print("🔄 SummaryManager: Processing with shorter chunks")
+        AppLog.shared.summarization("Processing with shorter chunks", level: .debug)
         
         if let transcript = transcriptManager.getTranscript(for: recordingURL) {
             // Use TokenManager to split into smaller chunks
@@ -1792,7 +1786,7 @@ class SummaryManager: ObservableObject {
             var allReminders: [ReminderItem] = []
             
             for (index, chunk) in chunks.enumerated() {
-                print("📝 SummaryManager: Processing chunk \(index + 1)/\(chunks.count)")
+                AppLog.shared.summarization("Processing chunk \(index + 1)/\(chunks.count)", level: .debug)
                 
                 do {
                     let summary = try await generateEnhancedSummary(
@@ -1807,7 +1801,7 @@ class SummaryManager: ObservableObject {
                     allReminders.append(contentsOf: summary.reminders)
                     
                 } catch {
-                    print("⚠️ SummaryManager: Chunk \(index + 1) failed: \(error.localizedDescription)")
+                    AppLog.shared.summarization("Chunk \(index + 1) failed: \(error.localizedDescription)", level: .error)
                     // Continue with other chunks
                 }
             }
@@ -1839,7 +1833,7 @@ class SummaryManager: ObservableObject {
     }
     
     private func retryWithDelay(for recordingURL: URL, recordingName: String) async {
-        print("⏳ SummaryManager: Waiting before retry")
+        AppLog.shared.summarization("Waiting before retry", level: .debug)
         
         // Wait for 5 seconds before retrying
         try? await Task.sleep(nanoseconds: 5_000_000_000)
@@ -1848,16 +1842,16 @@ class SummaryManager: ObservableObject {
     }
     
     private func checkNetworkAndRetry(for recordingURL: URL, recordingName: String) async {
-        print("🌐 SummaryManager: Checking network connection")
+        AppLog.shared.summarization("Checking network connection", level: .debug)
         
         // Simple network check
         let isNetworkAvailable = await checkNetworkAvailability()
         
         if isNetworkAvailable {
-            print("✅ SummaryManager: Network is available, retrying")
+            AppLog.shared.summarization("Network is available, retrying")
             await retryLastOperation(for: recordingURL, recordingName: recordingName)
         } else {
-            print("❌ SummaryManager: Network is not available")
+            AppLog.shared.summarization("Network is not available", level: .error)
             handleError(
                 SummarizationError.networkError(underlying: NSError(domain: "NetworkError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Network unavailable"])),
                 context: "Network Check",
@@ -1867,14 +1861,14 @@ class SummaryManager: ObservableObject {
     }
     
     private func switchToOfflineEngine() async {
-        print("🔄 SummaryManager: Switching to offline engine")
+        AppLog.shared.summarization("Switching to offline engine", level: .debug)
         
         // Try to switch to On-Device AI (offline)
         if getAvailableEnginesOnly().contains("On-Device AI") {
             setEngine("On-Device AI")
-            print("✅ SummaryManager: Switched to offline engine")
+            AppLog.shared.summarization("Switched to offline engine")
         } else {
-            print("❌ SummaryManager: No offline engine available")
+            AppLog.shared.summarization("No offline engine available", level: .error)
             handleError(
                 SummarizationError.aiServiceUnavailable(service: "No offline engine available"),
                 context: "Offline Engine Switch"
@@ -1883,7 +1877,7 @@ class SummaryManager: ObservableObject {
     }
     
     private func createManualSummary(for recordingURL: URL, recordingName: String) async {
-        print("📝 SummaryManager: Creating manual summary placeholder")
+        AppLog.shared.summarization("Creating manual summary placeholder", level: .debug)
         
         // Create a basic summary with manual indication
         let contentType = ContentType.general
@@ -1928,7 +1922,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Recording Name Management
     
     func generateIntelligentRecordingName(from text: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) -> String {
-        print("🎯 SummaryManager: Generating intelligent recording name")
+        AppLog.shared.summarization("Generating intelligent recording name", level: .debug)
         
         // Use the RecordingNameGenerator to create a meaningful name
         let generatedName = RecordingNameGenerator.generateRecordingNameFromTranscript(
@@ -1942,23 +1936,23 @@ class SummaryManager: ObservableObject {
         // Validate and fix the generated name
         let validatedName = RecordingNameGenerator.validateAndFixRecordingName(generatedName, originalName: "Recording")
         
-        print("✅ SummaryManager: Generated name: '\(validatedName)'")
+        AppLog.shared.summarization("Generated name: '\(validatedName)'", level: .debug)
         return validatedName
     }
     
     func updateRecordingNameWithAI(from oldName: String, recordingURL: URL, transcript: String, contentType: ContentType, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], coordinator: AppDataCoordinator?) async throws {
-        print("🤖 SummaryManager: Updating recording name using AI analysis")
+        AppLog.shared.summarization("Updating recording name using AI analysis", level: .debug)
         
         // Generate intelligent name using AI analysis
         let newName = generateIntelligentRecordingName(from: transcript, contentType: contentType, tasks: tasks, reminders: reminders, titles: titles)
         
         // Only update if the new name is different and meaningful
         if newName != oldName && !newName.isEmpty && newName != "Recording" {
-            print("📝 SummaryManager: Updating name from '\(oldName)' to '\(newName)'")
+            AppLog.shared.summarization("Updating name from '\(oldName)' to '\(newName)'", level: .debug)
             if let coordinator = coordinator {
                 try await updateRecordingName(from: oldName, to: newName, recordingURL: recordingURL, coordinator: coordinator)
             } else {
-                print("⚠️ No coordinator provided, skipping Core Data update")
+                AppLog.shared.summarization("No coordinator provided, skipping Core Data update", level: .default)
             }
             
             // Update the enhanced summary with the new name
@@ -1982,33 +1976,30 @@ class SummaryManager: ObservableObject {
                 } else {
                     enhancedSummaries.append(updatedSummary)
                 }
-                print("✅ SummaryManager: Updated enhanced summary UI state with new name")
+                AppLog.shared.summarization("Updated enhanced summary UI state with new name", level: .debug)
             }
         } else {
-            print("ℹ️ SummaryManager: Keeping original name '\(oldName)' (no meaningful improvement found)")
+            AppLog.shared.summarization("Keeping original name '\(oldName)' (no meaningful improvement found)", level: .debug)
         }
     }
     
     private func updateRecordingName(from oldName: String, to newName: String, recordingURL: URL, coordinator: AppDataCoordinator) async throws {
-        print("📁 Starting file rename process:")
-        print("📁 Old name: \(oldName)")
-        print("📁 New name: \(newName)")
-        print("📁 Recording URL: \(recordingURL)")
+        AppLog.shared.summarization("Starting file rename process: '\(oldName)' -> '\(newName)'", level: .debug)
         
         // Get the recording from Core Data using the coordinator
         guard let recordingEntry = coordinator.getRecording(url: recordingURL),
               let recordingId = recordingEntry.id else {
-            print("❌ Could not find recording in Core Data for URL: \(recordingURL)")
+            AppLog.shared.summarization("Could not find recording in Core Data for URL: \(recordingURL)", level: .error)
             return
         }
         
-        print("✅ Found recording in Core Data: \(recordingEntry.recordingName ?? "unknown") with ID: \(recordingId)")
+        AppLog.shared.summarization("Found recording in Core Data with ID: \(recordingId)", level: .debug)
         
         // Use the Core Data workflow manager to update the recording name
         // This will handle both the Core Data update and file renaming
         coordinator.updateRecordingName(recordingId: recordingId, newName: newName)
         
-        print("✅ Recording name updated using Core Data workflow")
+        AppLog.shared.summarization("Recording name updated using Core Data workflow", level: .debug)
         
         // Update the enhanced summary with the new name
         if let existingSummary = getEnhancedSummary(for: recordingURL) {
@@ -2031,7 +2022,7 @@ class SummaryManager: ObservableObject {
             } else {
                 enhancedSummaries.append(updatedSummary)
             }
-            print("✅ SummaryManager: Updated enhanced summary UI state with new name")
+            AppLog.shared.summarization("Updated enhanced summary UI state with new name", level: .debug)
         }
         
         // Notify UI to refresh recordings list
@@ -2117,7 +2108,7 @@ class SummaryManager: ObservableObject {
     private func saveEnhancedSummariesToDisk() {
         // This method is deprecated and should not be used
         // Core Data handles all persistence now
-        print("⚠️ saveEnhancedSummariesToDisk() called - this is deprecated, use Core Data instead")
+        AppLog.shared.summarization("saveEnhancedSummariesToDisk() called - this is deprecated, use Core Data instead", level: .default)
     }
     
     /// DEPRECATED: UserDefaults loading is legacy - Core Data loads summaries now
@@ -2130,9 +2121,9 @@ class SummaryManager: ObservableObject {
         }
         do {
             let legacySummaries = try JSONDecoder().decode([EnhancedSummaryData].self, from: data)
-            print("⚠️ Found \(legacySummaries.count) legacy summaries in UserDefaults - consider migrating to Core Data")
+            AppLog.shared.summarization("Found \(legacySummaries.count) legacy summaries in UserDefaults - consider migrating to Core Data", level: .default)
         } catch {
-            print("Failed to load legacy enhanced summaries: \(error)")
+            AppLog.shared.summarization("Failed to load legacy enhanced summaries: \(error)", level: .error)
         }
     }
 }

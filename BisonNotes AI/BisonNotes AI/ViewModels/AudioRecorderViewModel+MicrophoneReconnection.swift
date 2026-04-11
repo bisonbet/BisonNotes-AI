@@ -15,7 +15,7 @@ extension AudioRecorderViewModel {
 	@MainActor
 	func handleMicrophoneDisconnected() async {
 		guard case .recording = recordingState else {
-			print("⚠️ Microphone disconnected but not in recording state")
+			AppLog.shared.audioSession("Microphone disconnected but not in recording state", level: .debug)
 			return
 		}
 
@@ -27,7 +27,7 @@ extension AudioRecorderViewModel {
 		if let url = recordingURL {
 			if !recordingSegments.contains(url) {
 				recordingSegments.append(url)
-				print("✅ Saved segment before microphone disconnect: \(url.lastPathComponent)")
+				AppLog.shared.audioSession("Saved segment before microphone disconnect")
 			}
 		}
 
@@ -62,7 +62,7 @@ extension AudioRecorderViewModel {
 
 		if hasMicrophone {
 			let downtime = Date().timeIntervalSince(disconnectedAt)
-			print("✅ Microphone reconnected after \(downtime) seconds")
+			AppLog.shared.audioSession("Microphone reconnected after \(Int(downtime))s")
 
 			// Stop monitoring timer
 			microphoneReconnectionTimer?.invalidate()
@@ -98,14 +98,14 @@ extension AudioRecorderViewModel {
 		}
 
 		guard let input = inputToUse else {
-			print("❌ No microphone available for reconnection")
+			AppLog.shared.audioSession("No microphone available for reconnection", level: .error)
 			recordingState = .error("No microphone available")
 			return
 		}
 
 		do {
 			try await enhancedAudioSessionManager.setPreferredInput(input)
-			print("✅ Microphone reconnected: \(input.portName)")
+			AppLog.shared.audioSession("Microphone reconnected: \(input.portName)")
 
 			// Resume recording with new segment
 			recordingState = .recording
@@ -119,7 +119,7 @@ extension AudioRecorderViewModel {
 			)
 
 		} catch {
-			print("❌ Failed to reconnect microphone: \(error)")
+			AppLog.shared.audioSession("Failed to reconnect microphone: \(error)", level: .error)
 			recordingState = .error("Failed to reconnect microphone")
 			await sendWarningNotification(
 				title: "Microphone Error",
@@ -152,7 +152,7 @@ extension AudioRecorderViewModel {
 				if elapsed > self.MICROPHONE_RECONNECTION_TIMEOUT {
 					timer.invalidate()
 					self.microphoneReconnectionTimer = nil
-					print("⏱️ Microphone reconnection timeout (5 minutes)")
+					AppLog.shared.audioSession("Microphone reconnection timeout (5 minutes)")
 					self.handleInterruptedRecording(reason: "Microphone not reconnected within 5 minutes")
 					return
 				}
@@ -193,12 +193,12 @@ extension AudioRecorderViewModel {
 				recordingURL = newSegmentURL
 				isRecording = true
 				startRecordingTimer()
-				print("✅ New segment created and recording resumed")
+				AppLog.shared.audioSession("New segment created and recording resumed")
 			} else {
 				throw AudioProcessingError.recordingFailed("Failed to start new segment")
 			}
 		} catch {
-			print("❌ Failed to create new segment: \(error)")
+			AppLog.shared.audioSession("Failed to create new segment: \(error)", level: .error)
 			recordingState = .error("Failed to resume recording")
 			errorMessage = "Failed to resume recording: \(error.localizedDescription)"
 		}

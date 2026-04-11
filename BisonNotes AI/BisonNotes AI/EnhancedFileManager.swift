@@ -215,7 +215,7 @@ class EnhancedFileManager: ObservableObject {
                 _ = fileRelationships.removeValue(forKey: normalizedURL)
                 saveFileRelationships()
             }
-            print("🧹 Cleaned up non-existent file relationship for: \(normalizedURL.lastPathComponent)")
+            AppLog.shared.fileManagement("Cleaned up non-existent file relationship for: \(normalizedURL.lastPathComponent)")
         }
     }
     
@@ -242,9 +242,9 @@ class EnhancedFileManager: ObservableObject {
                     // Normalize all URLs before adding to the set
                     let normalizedAudioFiles = audioFiles.map { normalizeURL($0) }
                     allURLs.formUnion(normalizedAudioFiles)
-                    print("🔍 Found \(audioFiles.count) actual audio files in documents directory")
+                    AppLog.shared.fileManagement("Found \(audioFiles.count) audio files in documents directory")
                 } catch {
-                    print("❌ Error scanning documents directory: \(error)")
+                    AppLog.shared.fileManagement("Error scanning documents directory: \(error)", level: .error)
                 }
             }
             
@@ -282,21 +282,21 @@ class EnhancedFileManager: ObservableObject {
                 let duplicateCount = removedFiles.count - uniqueRemoved.count
                 
                 if duplicateCount > 0 {
-                    print("🧹 Removed \(removedFiles.count) non-existent file relationships (\(uniqueRemoved.count) unique files, \(duplicateCount) duplicates)")
+                    AppLog.shared.fileManagement("Removed \(removedFiles.count) non-existent file relationships (\(uniqueRemoved.count) unique files, \(duplicateCount) duplicates)")
                 } else {
-                    print("🧹 Removed \(removedFiles.count) non-existent file relationships")
+                    AppLog.shared.fileManagement("Removed \(removedFiles.count) non-existent file relationships")
                 }
-                
+
                 // Only log individual files if there are 5 or fewer (for debugging)
                 if removedFiles.count <= 5 {
                     for filename in removedFiles.sorted() {
-                        print("   - \(filename)")
+                        AppLog.shared.fileManagement("  - \(filename)", level: .debug)
                     }
                 }
             }
             
             if migratedCount > 0 {
-                print("🔄 Migrated \(migratedCount) relationships to normalized URLs")
+                AppLog.shared.fileManagement("Migrated \(migratedCount) relationships to normalized URLs")
             }
             
             // Add URLs from coordinator (but only if they actually exist)
@@ -346,10 +346,10 @@ class EnhancedFileManager: ObservableObject {
         if relationships.hasRecording {
             do {
                 try FileManager.default.removeItem(at: normalizedURL)
-                print("✅ Deleted audio file: \(normalizedURL.lastPathComponent)")
+                AppLog.shared.fileManagement("Deleted audio file: \(normalizedURL.lastPathComponent)")
             } catch {
                 if error.isThumbnailGenerationError {
-                    print("⚠️ Thumbnail generation warning during file deletion (can be ignored): \(error.localizedDescription)")
+                    AppLog.shared.fileManagement("Thumbnail generation warning during file deletion: \(error.localizedDescription)", level: .debug)
                     // Continue with deletion even if thumbnail generation fails
                 } else {
                     throw error
@@ -361,10 +361,10 @@ class EnhancedFileManager: ObservableObject {
             if FileManager.default.fileExists(atPath: locationURL.path) {
                 do {
                     try FileManager.default.removeItem(at: locationURL)
-                    print("✅ Deleted location file: \(locationURL.lastPathComponent)")
+                    AppLog.shared.fileManagement("Deleted location file: \(locationURL.lastPathComponent)")
                 } catch {
                     if error.isThumbnailGenerationError {
-                        print("⚠️ Thumbnail generation warning during location file deletion (can be ignored): \(error.localizedDescription)")
+                        AppLog.shared.fileManagement("Thumbnail generation warning during location file deletion: \(error.localizedDescription)", level: .debug)
                         // Continue with deletion even if thumbnail generation fails
                     } else {
                         throw error
@@ -380,7 +380,7 @@ class EnhancedFileManager: ObservableObject {
             // Delete transcript if present
             if let transcript = await appCoordinator.coreDataManager.getTranscript(for: recordingId) {
                 await appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
-                print("✅ Deleted transcript for: \(relationships.recordingName)")
+                AppLog.shared.fileManagement("Deleted transcript for: \(relationships.recordingName)")
             }
 
             // Keep summary linked to the recording; ensure IDs/relationships are consistent
@@ -398,9 +398,9 @@ class EnhancedFileManager: ObservableObject {
             // Persist changes
             do {
                 try await appCoordinator.coreDataManager.saveContext()
-                print("✅ Preserved summary (kept recording entry, removed transcript) for: \(relationships.recordingName)")
+                AppLog.shared.fileManagement("Preserved summary (kept recording entry, removed transcript) for: \(relationships.recordingName)")
             } catch {
-                print("❌ Error saving preservation changes: \(error)")
+                AppLog.shared.fileManagement("Error saving preservation changes: \(error)", level: .error)
             }
 
             // Update relationships to reflect that only summary remains
@@ -416,7 +416,7 @@ class EnhancedFileManager: ObservableObject {
         } else {
             // Delete everything (recording, transcript, and summary)
             await appCoordinator.deleteRecording(id: recordingId)
-            print("✅ Deleted recording, transcript, and summary for: \(relationships.recordingName)")
+            AppLog.shared.fileManagement("Deleted recording, transcript, and summary for: \(relationships.recordingName)")
             
             // Remove the relationship entirely
             await MainActor.run {
@@ -425,7 +425,7 @@ class EnhancedFileManager: ObservableObject {
             }
         }
         
-        print("✅ Recording deletion completed: \(relationships.recordingName)")
+        AppLog.shared.fileManagement("Recording deletion completed: \(relationships.recordingName)")
     }
     
     func deleteSummary(for url: URL) async throws {
@@ -438,7 +438,7 @@ class EnhancedFileManager: ObservableObject {
             // This will now be handled by the coordinator
             // let manager = await summaryManager
             // await MainActor.run { manager.deleteSummary(for: url) }
-            print("✅ Deleted summary for: \(relationships.recordingName)")
+            AppLog.shared.fileManagement("Deleted summary for: \(relationships.recordingName)")
         }
         
         // Update relationships
@@ -470,9 +470,9 @@ class EnhancedFileManager: ObservableObject {
         if relationships.transcriptExists {
             // This will now be handled by the coordinator
             // transcriptManager.deleteTranscript(for: url)
-            print("✅ Deleted transcript for: \(relationships.recordingName)")
+            AppLog.shared.fileManagement("Deleted transcript for: \(relationships.recordingName)")
         }
-        
+
         // Update relationships
         if relationships.hasRecording || relationships.summaryExists {
             let updatedRelationships = FileRelationships(
@@ -516,13 +516,13 @@ class EnhancedFileManager: ObservableObject {
     func clearAllFileRelationships() {
         fileRelationships.removeAll()
         saveFileRelationships()
-        print("🧹 Cleared all file relationships")
+        AppLog.shared.fileManagement("Cleared all file relationships")
     }
     
     private func getRecordingDate(for url: URL) -> Date {
         // Check if file exists before trying to get its creation date
         guard FileManager.default.fileExists(atPath: url.path) else {
-            print("⚠️ File does not exist, using current date for: \(url.lastPathComponent)")
+            AppLog.shared.fileManagement("File does not exist, using current date for: \(url.lastPathComponent)", level: .debug)
             return Date()
         }
         
@@ -530,7 +530,7 @@ class EnhancedFileManager: ObservableObject {
             let resourceValues = try url.resourceValues(forKeys: [.creationDateKey])
             return resourceValues.creationDate ?? Date()
         } catch {
-            print("❌ Error getting creation date for \(url.lastPathComponent): \(error)")
+            AppLog.shared.fileManagement("Error getting creation date for \(url.lastPathComponent): \(error)", level: .error)
             return Date()
         }
     }
@@ -539,30 +539,30 @@ class EnhancedFileManager: ObservableObject {
     
     private func saveFileRelationships() {
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            print("❌ Could not get documents directory")
+            AppLog.shared.fileManagement("Could not get documents directory", level: .error)
             return
         }
-        
+
         let relationshipsURL = documentsURL.appendingPathComponent(relationshipsFileName)
-        
+
         do {
             let data = try JSONEncoder().encode(fileRelationships)
             try data.write(to: relationshipsURL)
         } catch {
-            print("❌ Error saving file relationships: \(error)")
+            AppLog.shared.fileManagement("Error saving file relationships: \(error)", level: .error)
         }
     }
     
     private func loadFileRelationships() {
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            print("❌ Could not get documents directory")
+            AppLog.shared.fileManagement("Could not get documents directory", level: .error)
             return
         }
-        
+
         let relationshipsURL = documentsURL.appendingPathComponent(relationshipsFileName)
-        
+
         guard FileManager.default.fileExists(atPath: relationshipsURL.path) else {
-            print("ℹ️ No existing file relationships found")
+            AppLog.shared.fileManagement("No existing file relationships found", level: .debug)
             return
         }
         
@@ -594,10 +594,10 @@ class EnhancedFileManager: ObservableObject {
             fileRelationships = normalizedRelationships
             
             if duplicateCount > 0 {
-                print("ℹ️ Normalized \(duplicateCount) duplicate URL entries when loading file relationships")
+                AppLog.shared.fileManagement("Normalized \(duplicateCount) duplicate URL entries when loading file relationships")
             }
         } catch {
-            print("❌ Error loading file relationships: \(error)")
+            AppLog.shared.fileManagement("Error loading file relationships: \(error)", level: .error)
             fileRelationships = [:]
         }
     }
@@ -617,7 +617,7 @@ class EnhancedFileManager: ObservableObject {
                 return ext == "m4a" || ext == "wav" || ext == "mp3" || ext == "aac"
             }
             
-            print("🔍 Found \(audioFiles.count) audio files on disk")
+            AppLog.shared.fileManagement("Found \(audioFiles.count) audio files on disk")
             
             // Get all valid recording URLs from Core Data using the proper method
             let allRecordings = coordinator.coreDataManager.getAllRecordings()
@@ -626,21 +626,21 @@ class EnhancedFileManager: ObservableObject {
                 return coordinator.coreDataManager.getAbsoluteURL(for: recording)?.path
             })
             
-            print("🔍 Found \(coreDataURLs.count) valid recording references in Core Data")
+            AppLog.shared.fileManagement("Found \(coreDataURLs.count) valid recording references in Core Data")
             
             // Find files that exist on disk but not in Core Data
             for audioFile in audioFiles {
                 if !coreDataURLs.contains(audioFile.path) {
                     orphanedFiles.append(audioFile)
-                    print("🧹 Found orphaned file: \(audioFile.lastPathComponent)")
+                    AppLog.shared.fileManagement("Found orphaned file: \(audioFile.lastPathComponent)")
                 }
             }
             
-            print("🔍 Found \(orphanedFiles.count) orphaned audio files")
+            AppLog.shared.fileManagement("Found \(orphanedFiles.count) orphaned audio files")
             return orphanedFiles
-            
+
         } catch {
-            print("❌ Error finding orphaned files: \(error)")
+            AppLog.shared.fileManagement("Error finding orphaned files: \(error)", level: .error)
             return []
         }
     }
@@ -662,23 +662,23 @@ class EnhancedFileManager: ObservableObject {
                 
                 if !dryRun {
                     try FileManager.default.removeItem(at: file)
-                    print("🗑 Deleted orphaned file: \(file.lastPathComponent) (\(fileSize) bytes)")
+                    AppLog.shared.fileManagement("Deleted orphaned file: \(file.lastPathComponent) (\(fileSize) bytes)")
                     deletedCount += 1
                 } else {
-                    print("🔍 Would delete: \(file.lastPathComponent) (\(fileSize) bytes)")
+                    AppLog.shared.fileManagement("Would delete: \(file.lastPathComponent) (\(fileSize) bytes)", level: .debug)
                 }
                 
             } catch {
                 let errorMsg = "Failed to \(dryRun ? "analyze" : "delete") \(file.lastPathComponent): \(error.localizedDescription)"
                 errors.append(errorMsg)
-                print("❌ \(errorMsg)")
+                AppLog.shared.fileManagement(errorMsg, level: .error)
             }
         }
         
         if dryRun {
-            print("🔍 Dry run complete: Found \(orphanedFiles.count) orphaned files totaling \(totalSize) bytes")
+            AppLog.shared.fileManagement("Dry run complete: Found \(orphanedFiles.count) orphaned files totaling \(totalSize) bytes")
         } else {
-            print("🧹 Cleanup complete: Deleted \(deletedCount) files, freed \(totalSize) bytes")
+            AppLog.shared.fileManagement("Cleanup complete: Deleted \(deletedCount) files, freed \(totalSize) bytes")
         }
         
         return (deleted: deletedCount, totalSize: totalSize, errors: errors)

@@ -115,7 +115,7 @@ class FileImportManager: NSObject, ObservableObject {
         } catch {
             // Check if this is a thumbnail-related error that we can ignore
             if error.isThumbnailGenerationError {
-                print("⚠️ Thumbnail generation warning (can be ignored): \(error.localizedDescription)")
+                AppLog.shared.fileManagement("Thumbnail generation warning: \(error.localizedDescription)", level: .debug)
                 // Continue with import even if thumbnail generation fails
                 // The file copy operation itself succeeded, only thumbnail generation failed
             } else {
@@ -129,7 +129,7 @@ class FileImportManager: NSObject, ObservableObject {
         // Create Core Data entry for the imported file
         try await createRecordingEntryForImportedFile(at: destinationURL)
         
-        print("✅ Successfully imported: \(filename)")
+        AppLog.shared.fileManagement("Successfully imported: \(filename)")
     }
     
     private func importVideoFile(from sourceURL: URL) async throws {
@@ -164,7 +164,7 @@ class FileImportManager: NSObject, ObservableObject {
         // Create Core Data entry
         try await createRecordingEntryForImportedFile(at: destinationURL)
 
-        print("✅ Successfully extracted audio from video: \(audioFilename)")
+        AppLog.shared.fileManagement("Successfully extracted audio from video: \(audioFilename)")
     }
 
     private func generateUniqueFilename(for sourceURL: URL) -> String {
@@ -252,11 +252,11 @@ class FileImportManager: NSObject, ObservableObject {
         do {
             let existingRecordings = try context.fetch(fetchRequest)
             if !existingRecordings.isEmpty {
-                print("⏭️ Recording entry already exists: \(recordingName)")
+                AppLog.shared.fileManagement("Recording entry already exists: \(recordingName)", level: .debug)
                 return
             }
         } catch {
-            print("❌ Error checking for existing recording: \(error)")
+            AppLog.shared.fileManagement("Error checking for existing recording: \(error)", level: .error)
             throw ImportError.copyFailed("Failed to check existing recordings: \(error.localizedDescription)")
         }
         
@@ -280,7 +280,7 @@ class FileImportManager: NSObject, ObservableObject {
             recordingEntry.duration = duration
             
         } catch {
-            print("❌ Error getting file metadata: \(error)")
+            AppLog.shared.fileManagement("Error getting file metadata: \(error)", level: .error)
             recordingEntry.recordingDate = Date()
             recordingEntry.createdAt = Date()
             recordingEntry.lastModified = Date()
@@ -296,9 +296,9 @@ class FileImportManager: NSObject, ObservableObject {
         // Save the context
         do {
             try context.save()
-            print("✅ Created Core Data entry for imported file: \(recordingName)")
+            AppLog.shared.fileManagement("Created Core Data entry for imported file: \(recordingName)")
         } catch {
-            print("❌ Failed to save Core Data entry: \(error)")
+            AppLog.shared.fileManagement("Failed to save Core Data entry: \(error)", level: .error)
             throw ImportError.copyFailed("Failed to save to database: \(error.localizedDescription)")
         }
     }
@@ -309,7 +309,7 @@ class FileImportManager: NSObject, ObservableObject {
             let duration = try await asset.load(.duration)
             return CMTimeGetSeconds(duration)
         } catch {
-            print("❌ Error getting audio duration: \(error)")
+            AppLog.shared.fileManagement("Error getting audio duration: \(error)", level: .error)
             return 0
         }
     }

@@ -40,12 +40,12 @@ class PDFExportService {
             locationSignature: locationSignature,
             scale: scale
         ) {
-            print("✅ PDFExportService: Loaded stored map image for summary \(summaryId)")
+            AppLog.shared.fileManagement("PDFExportService: Loaded stored map image")
             return storedImage
         }
 
         // If no stored image found, create a fallback with the requested size
-        print("❌ PDFExportService: No stored map image found, creating fallback")
+        AppLog.shared.fileManagement("PDFExportService: No stored map image found, creating fallback", level: .debug)
         return createSmallFallbackMapImage(for: locationData, size: size)
     }
 
@@ -56,7 +56,7 @@ class PDFExportService {
     @available(*, deprecated, message: "Maps are now stored persistently, this method is no longer needed")
     func resetMapGeneration() {
         UserDefaults.standard.set(false, forKey: "skipMapGeneration")
-        print("✅ PDFExportService: Map generation re-enabled")
+        AppLog.shared.fileManagement("PDFExportService: Map generation re-enabled")
     }
 
     // MARK: - Main Export Function
@@ -823,7 +823,7 @@ class PDFExportService {
                 }
             }
         } catch {
-            print("⚠️ PDFExportService: Regional map generation failed: \(error.localizedDescription)")
+            AppLog.shared.fileManagement("PDFExportService: Regional map generation failed: \(error.localizedDescription)", level: .error)
             return nil
         }
     }

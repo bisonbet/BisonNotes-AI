@@ -29,21 +29,21 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 				// Check if we're still in recording mode - if so, this was an interruption, not a user stop
 				// In this case, don't save as a finished recording - let the interruption handler deal with it
 				if isRecording {
-					print("⚠️ Recorder finished but still in recording mode - ignoring (interruption will be handled)")
+					AppLog.shared.recording("Recorder finished but still in recording mode - ignoring (interruption will be handled)", level: .debug)
 					return
 				}
 
 				// Check if recording is already being processed by interruption handler
 				// But allow processing if app is backgrounding (normal completion scenario)
 				if recordingBeingProcessed && !appIsBackgrounding {
-					print("⚠️ Recording already processed by interruption handler, skipping normal completion")
+					AppLog.shared.recording("Recording already processed by interruption handler, skipping normal completion", level: .debug)
 					recordingBeingProcessed = false // Reset flag
 					return
 				}
 
 				// Check if we have multiple segments - if so, the merge will handle saving
 				if recordingSegments.count > 1 {
-					print("⚠️ Multiple segments detected - merge process will handle saving")
+					AppLog.shared.recording("Multiple segments detected - merge process will handle saving", level: .debug)
 					return
 				}
 
@@ -52,9 +52,9 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 
 				if flag {
 					if appIsBackgrounding {
-						print("Recording finished successfully during backgrounding - processing normally")
+						AppLog.shared.recording("Recording finished successfully during backgrounding - processing normally")
 					} else {
-						print("Recording finished successfully")
+						AppLog.shared.recording("Recording finished successfully")
 					}
 					recordingBeingProcessed = true // Set flag to prevent duplicate processing
 
@@ -62,7 +62,7 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 						saveLocationData(for: recordingURL)
 
 						// New recordings are already in Whisper-optimized format (16kHz, 64kbps AAC)
-						print("✅ Recording saved in Whisper-optimized format")
+						AppLog.shared.recording("Recording saved in Whisper-optimized format")
 
 						// Add recording using workflow manager for proper UUID consistency
 						if let workflowManager = workflowManager {
@@ -84,12 +84,12 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 								locationData: recordingLocationSnapshot()
 							)
 
-							print("✅ Recording created with workflow manager, ID: \(recordingId)")
+							AppLog.shared.recording("Recording created with workflow manager, ID: \(recordingId)")
 
 							// Watch audio integration removed
 							self.resetRecordingLocation()
 						} else {
-							print("❌ WorkflowManager not set - recording not saved to database!")
+							AppLog.shared.recording("WorkflowManager not set - recording not saved to database", level: .error)
 						}
 					}
 
@@ -204,15 +204,15 @@ extension AudioRecorderViewModel {
 				do {
 					try await enhancedAudioSessionManager.setPreferredInput(preferredInput)
 					UserDefaults.standard.set(preferredInput.uid, forKey: preferredInputDefaultsKey)
-					print("✅ Using preferred input: \(preferredInput.portName)")
+					AppLog.shared.recording("Using preferred input: \(preferredInput.portName)")
 				} catch {
-					print("⚠️ Failed to set preferred input, falling back to default: \(error.localizedDescription)")
+					AppLog.shared.recording("Failed to set preferred input, falling back to default: \(error.localizedDescription)", level: .error)
 					// Fall through to default behavior
 					inputToUse = nil
 				}
 			} else {
 				// Preferred input is no longer available, fall back to default
-				print("⚠️ Preferred input '\(preferredInput.portName)' is no longer available, falling back to iOS default")
+				AppLog.shared.recording("Preferred input no longer available, falling back to iOS default")
 				inputToUse = nil
 			}
 		}
@@ -227,10 +227,10 @@ extension AudioRecorderViewModel {
 				UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
 				// Update selectedInput to nil so UI reflects the fallback
 				selectedInput = nil
-				print("✅ Using iOS default microphone (preferred input unavailable)")
+				AppLog.shared.recording("Using iOS default microphone (preferred input unavailable)")
 			} catch {
 				// If clearing fails, iOS will still use default, so just log it
-				print("⚠️ Could not clear preferred input, iOS will use default: \(error.localizedDescription)")
+				AppLog.shared.recording("Could not clear preferred input, iOS will use default: \(error.localizedDescription)", level: .debug)
 				// Still clear the stored preference and update UI
 				UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
 				selectedInput = nil
@@ -267,7 +267,7 @@ extension AudioRecorderViewModel {
 				let loadedDurationValue = try await asset.load(.duration)
 				loadedDuration = CMTimeGetSeconds(loadedDurationValue)
 			} catch {
-				print("⚠️ Failed to load duration for \(url.lastPathComponent): \(error.localizedDescription)")
+				AppLog.shared.recording("Failed to load duration: \(error.localizedDescription)", level: .error)
 			}
 			semaphore.signal()
 		}

@@ -35,6 +35,12 @@ struct TranscriptsView: View {
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var dateFilterEnd: Date = Date()
     @State private var isDateFilterActive = false
+    /// The recording currently undergoing audio cleanup
+    @State private var activeCleaningRecordingId: UUID?
+    /// Recordings queued for audio cleanup (waiting for the active one to finish)
+    @State private var queuedCleanupRecordings: [RecordingEntry] = []
+    /// True while the cleanup queue is being processed
+    @State private var isProcessingCleanupQueue = false
 
     var body: some View {
         AdaptiveNavigationWrapper {
@@ -137,12 +143,12 @@ struct TranscriptsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
             // Refresh recordings list when a recording is renamed
-            print("🔄 TranscriptViews: Received recording renamed notification, refreshing list")
+            AppLog.shared.transcription("Received recording renamed notification, refreshing list", level: .debug)
             loadRecordings()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionCompleted"))) { _ in
             // Refresh recordings list when transcription completes
-            print("🔄 TranscriptViews: Received transcription completed notification, refreshing list")
+            AppLog.shared.transcription("Received transcription completed notification, refreshing list", level: .debug)
             DispatchQueue.main.async {
                 self.loadRecordings()
                 self.refreshTrigger.toggle()
@@ -475,6 +481,11 @@ struct TranscriptsView: View {
     private func transcriptButtonView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
         let hasTranscript = recordingData.transcript != nil
         let hasActiveJob = hasActiveTranscriptionJob(for: recordingData.recording)
+        let recordingId = recordingData.recording.id ?? UUID()
+        let isCleaning = activeCleaningRecordingId == recordingId
+        let isQueuedForCleanup = queuedCleanupRecordings.contains { $0.id == recordingId }
+        let jobStatus = activeTranscriptionJobStatus(for: recordingData.recording)
+        let isProcessing = isCleaning || isQueuedForCleanup || hasActiveJob
 
         return Button(action: {
             if hasTranscript {
@@ -482,16 +493,17 @@ struct TranscriptsView: View {
                 selectedRecording = recordingData.recording
             } else {
                 // Generate new transcript - only if this recording doesn't already have an active job
-                if !hasActiveJob {
+                if !isProcessing {
                     generateTranscript(for: recordingData.recording)
                 }
             }
         }) {
-            HStack {
-                if hasActiveJob && !hasTranscript {
+            HStack(spacing: 6) {
+                if isProcessing && !hasTranscript {
                     ProgressView()
-                        .scaleEffect(0.8)
-                    Text("Generating...")
+                        .scaleEffect(0.7)
+                        .tint(.white)
+                    Text(processingButtonLabel(isCleaning: isCleaning, isQueuedForCleanup: isQueuedForCleanup, jobStatus: jobStatus))
                         .font(.caption2)
                 } else {
                     Image(systemName: hasTranscript ? "text.bubble.fill" : "text.bubble")
@@ -503,15 +515,33 @@ struct TranscriptsView: View {
             .padding(.vertical, 6)
             .background(
                 hasTranscript ? Color.green :
-                hasActiveJob ? Color.gray : Color.accentColor
+                isProcessing ? Color.orange : Color.accentColor
             )
             .foregroundColor(.white)
             .cornerRadius(8)
         }
-        .disabled(hasActiveJob && !hasTranscript) // Only disable if this recording has an active job
+        .disabled(isProcessing && !hasTranscript)
         .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(hasTranscript)-\(hasActiveJob)-\(refreshTrigger)")
+        .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(hasTranscript)-\(hasActiveJob)-\(isCleaning)-\(isQueuedForCleanup)-\(refreshTrigger)")
+    }
+
+    /// Returns the appropriate label for the processing button based on current phase
+    private func processingButtonLabel(isCleaning: Bool, isQueuedForCleanup: Bool, jobStatus: JobProcessingStatus?) -> String {
+        if isCleaning {
+            return "Cleaning Audio..."
+        }
+        if isQueuedForCleanup {
+            return "Queued..."
+        }
+        switch jobStatus {
+        case .queued:
+            return "Queued..."
+        case .processing:
+            return "Transcribing..."
+        default:
+            return "Processing..."
+        }
     }
 
     /// Check if a recording has an active transcription job (queued or processing)
@@ -524,9 +554,23 @@ struct TranscriptsView: View {
         return backgroundProcessingManager.activeJobs.contains { job in
             // Match by filename and check if job is active (queued or processing)
             job.recordingPath == filename &&
-            job.type.displayName == "Transcription" &&
+            job.type.isTranscription &&
             (job.status == .queued || job.status == .processing)
         }
+    }
+
+    /// Returns the current status of the active transcription job for this recording, if any
+    private func activeTranscriptionJobStatus(for recording: RecordingEntry) -> JobProcessingStatus? {
+        guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
+            return nil
+        }
+        let filename = recordingURL.lastPathComponent
+
+        return backgroundProcessingManager.activeJobs.first { job in
+            job.recordingPath == filename &&
+            job.type.isTranscription &&
+            (job.status == .queued || job.status == .processing)
+        }?.status
     }
     
     // MARK: - Search and Date Filtering
@@ -655,7 +699,7 @@ struct TranscriptsView: View {
         _ importedTranscript: (recording: RecordingEntry, transcript: TranscriptData?)
     ) {
         guard let recordingId = importedTranscript.recording.id else {
-            print("❌ Cannot delete imported transcript: missing recording ID")
+            AppLog.shared.transcription("Cannot delete imported transcript: missing recording ID", level: .error)
             return
         }
 
@@ -665,7 +709,7 @@ struct TranscriptsView: View {
             // Delete associated location file if present
             let locationURL = recordingURL.deletingPathExtension().appendingPathExtension("location")
             try? FileManager.default.removeItem(at: locationURL)
-            print("🗑️ Deleted dummy audio file: \(recordingURL.lastPathComponent)")
+            AppLog.shared.transcription("Deleted dummy audio file: \(recordingURL.lastPathComponent)", level: .debug)
         }
 
         // Check if there's an associated summary to preserve
@@ -683,11 +727,11 @@ struct TranscriptsView: View {
 
             // Save the context
             try? appCoordinator.coreDataManager.saveContext()
-            print("✅ Deleted imported transcript, preserved summary: \(importedTranscript.recording.recordingName ?? "Unknown")")
+            AppLog.shared.transcription("Deleted imported transcript, preserved summary")
         } else {
             // No summary to preserve - delete everything
             appCoordinator.coreDataManager.deleteRecording(id: recordingId)
-            print("✅ Deleted imported transcript: \(importedTranscript.recording.recordingName ?? "Unknown")")
+            AppLog.shared.transcription("Deleted imported transcript")
         }
     }
     
@@ -775,49 +819,71 @@ struct TranscriptsView: View {
         // No longer need global isGeneratingTranscript flag
 
         if cleanFirst {
-            Task {
-                guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
-                    // Job tracking handled by BackgroundProcessingManager - no local state to reset
-                    return
-                }
-                do {
-                    let tempCleanedURL = try await AudioCleanupService.shared.cleanAudio(at: recordingURL)
-                    print("🎛️ Cleaned audio created at temp location: \(tempCleanedURL.lastPathComponent)")
-
-                    // Copy cleaned file to Documents directory so the job can find it
-                    // (ProcessingJob resolves paths relative to Documents directory)
-                    guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-                        print("⚠️ Could not access Documents directory, using original file")
-                        self.performEnhancedTranscription(for: recording)
-                        return
-                    }
-
-                    let cleanedFilename = tempCleanedURL.lastPathComponent
-                    let documentsCleanedURL = documentsURL.appendingPathComponent(cleanedFilename)
-
-                    // Remove any existing file at destination
-                    try? FileManager.default.removeItem(at: documentsCleanedURL)
-
-                    // Copy from temp to Documents
-                    try FileManager.default.copyItem(at: tempCleanedURL, to: documentsCleanedURL)
-                    print("✅ Copied cleaned audio to Documents: \(cleanedFilename)")
-
-                    // Clean up temp file immediately since we've copied it
-                    await AudioCleanupService.shared.removeTempFile(at: tempCleanedURL)
-
-                    // Use the Documents copy for transcription, and mark it for cleanup after
-                    self.performEnhancedTranscription(for: recording, audioURL: documentsCleanedURL, cleanupURL: documentsCleanedURL)
-                } catch {
-                    print("⚠️ Audio cleanup failed, falling back to original: \(error)")
-                    self.performEnhancedTranscription(for: recording)
-                }
-            }
+            // Add to the cleanup queue and process serially (one cleanup at a time)
+            queuedCleanupRecordings.append(recording)
+            processCleanupQueueIfNeeded()
         } else {
             self.performEnhancedTranscription(for: recording)
         }
     }
+
+    /// Processes the cleanup queue one recording at a time to avoid concurrent heavy audio processing
+    private func processCleanupQueueIfNeeded() {
+        guard !isProcessingCleanupQueue, !queuedCleanupRecordings.isEmpty else { return }
+        isProcessingCleanupQueue = true
+
+        // Take the next recording from the front of the queue
+        let recording = queuedCleanupRecordings.removeFirst()
+        activeCleaningRecordingId = recording.id
+
+        Task {
+            defer {
+                // Clear active cleaning state and process next in queue
+                activeCleaningRecordingId = nil
+                isProcessingCleanupQueue = false
+                processCleanupQueueIfNeeded()
+            }
+
+            guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
+                self.performEnhancedTranscription(for: recording)
+                return
+            }
+            do {
+                let tempCleanedURL = try await AudioCleanupService.shared.cleanAudio(at: recordingURL)
+                AppLog.shared.transcription("Cleaned audio created at temp location: \(tempCleanedURL.lastPathComponent)", level: .debug)
+
+                // Copy cleaned file to Documents directory so the job can find it
+                // (ProcessingJob resolves paths relative to Documents directory)
+                guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                    AppLog.shared.transcription("Could not access Documents directory, using original file", level: .error)
+                    self.performEnhancedTranscription(for: recording)
+                    return
+                }
+
+                let cleanedFilename = tempCleanedURL.lastPathComponent
+                let documentsCleanedURL = documentsURL.appendingPathComponent(cleanedFilename)
+
+                // Remove any existing file at destination
+                try? FileManager.default.removeItem(at: documentsCleanedURL)
+
+                // Copy from temp to Documents
+                try FileManager.default.copyItem(at: tempCleanedURL, to: documentsCleanedURL)
+                AppLog.shared.transcription("Copied cleaned audio to Documents: \(cleanedFilename)", level: .debug)
+
+                // Clean up temp file immediately since we've copied it to Documents
+                await AudioCleanupService.shared.removeTempFile(at: tempCleanedURL)
+
+                // Pass the original recording URL for identity, cleaned URL as source audio.
+                // BackgroundProcessingManager will delete the cleaned file when the job finishes.
+                self.performEnhancedTranscription(for: recording, sourceAudioURL: documentsCleanedURL)
+            } catch {
+                AppLog.shared.transcription("Audio cleanup failed, falling back to original: \(error)", level: .error)
+                self.performEnhancedTranscription(for: recording)
+            }
+        }
+    }
     
-    private func performEnhancedTranscription(for recording: RecordingEntry, audioURL overrideURL: URL? = nil, cleanupURL: URL? = nil) {
+    private func performEnhancedTranscription(for recording: RecordingEntry, sourceAudioURL: URL? = nil) {
         // Progress is now shown inline on the button, no modal needed
 
         Task {
@@ -825,66 +891,57 @@ struct TranscriptsView: View {
             let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
 
             do {
-                // Use the cleaned URL if provided, otherwise resolve from Core Data
-                let recordingURL: URL
-                if let override = overrideURL {
-                    recordingURL = override
-                } else {
-                    guard let resolved = appCoordinator.getAbsoluteURL(for: recording) else {
-                        print("❌ Invalid recording URL: \(recording.recordingURL ?? "nil")")
-                        throw NSError(domain: "Transcription", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid recording URL"])
-                    }
-                    recordingURL = resolved
+                // Always resolve the original recording URL for identity
+                guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
+                    AppLog.shared.transcription("Invalid recording URL", level: .error)
+                    throw NSError(domain: "Transcription", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid recording URL"])
                 }
 
-                // Start transcription job through BackgroundProcessingManager
+                // Start transcription job through BackgroundProcessingManager.
+                // The original recordingURL is used for identity/Core Data; sourceAudioURL
+                // (if set) is the cleaned audio file the job will actually read from.
+                // BackgroundProcessingManager handles deleting the source audio file when done.
                 try await backgroundProcessingManager.startTranscriptionJob(
                     recordingURL: recordingURL,
                     recordingName: recording.recordingName ?? "Unknown Recording",
-                    engine: selectedEngine
+                    engine: selectedEngine,
+                    sourceAudioURL: sourceAudioURL
                 )
-                
-                print("✅ Transcription job started through BackgroundProcessingManager")
-                
-                // The job will be processed in the background and the UI will be updated
-                // through the BackgroundProcessingManager's published properties
-                
+
+                AppLog.shared.transcription("Transcription job started through BackgroundProcessingManager")
+
             } catch {
-                print("❌ Failed to start transcription job: \(error)")
-                
+                AppLog.shared.transcription("Failed to start transcription job: \(error)", level: .error)
+
                 // Fallback to direct transcription if background processing fails
-                print("🔄 Falling back to direct transcription...")
+                AppLog.shared.transcription("Falling back to direct transcription...", level: .debug)
                 do {
-                    // Use override URL (cleaned audio) if available, otherwise resolve from Core Data
-                    let recordingURL: URL
-                    if let override = overrideURL {
-                        recordingURL = override
-                    } else {
-                        guard let resolved = appCoordinator.getAbsoluteURL(for: recording) else {
-                            print("❌ Invalid recording URL for fallback transcription")
-                            return
-                        }
-                        recordingURL = resolved
+                    // Use source audio URL (cleaned audio) if available, otherwise resolve from Core Data
+                    let transcriptionURL = sourceAudioURL ?? appCoordinator.getAbsoluteURL(for: recording)
+                    guard let transcriptionURL else {
+                        AppLog.shared.transcription("Invalid recording URL for fallback transcription", level: .error)
+                        return
                     }
-                    
-                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recordingURL, using: selectedEngine)
-                    
-                    print("📊 Transcription result: success=\(result.success), textLength=\(result.fullText.count)")
-                    
+
+                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: transcriptionURL, using: selectedEngine)
+
+                    AppLog.shared.transcription("Transcription result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
+
                     if result.success && !result.fullText.isEmpty {
-                        print("✅ Creating transcript data...")
-                        // Create transcript data
+                        AppLog.shared.transcription("Creating transcript data...", level: .debug)
+                        // Use the original recording URL for identity, not the cleaned URL
+                        let identityURL = appCoordinator.getAbsoluteURL(for: recording) ?? transcriptionURL
                         let transcriptData = TranscriptData(
-                            recordingURL: recordingURL,
+                            recordingURL: identityURL,
                             recordingName: recording.recordingName ?? "Unknown Recording",
                             recordingDate: recording.recordingDate ?? Date(),
                             segments: result.segments
                         )
-                        
+
                         // Save the transcript using Core Data
                         let appCoordinator = appCoordinator
                         guard let recordingId = transcriptData.recordingId else {
-                            print("❌ Transcript data missing recording ID")
+                            AppLog.shared.transcription("Transcript data missing recording ID", level: .error)
                             return
                         }
                         let transcriptId = appCoordinator.addTranscript(
@@ -896,37 +953,29 @@ struct TranscriptsView: View {
                             confidence: transcriptData.confidence
                         )
                         if transcriptId != nil {
-                            print("✅ Transcript saved to Core Data with ID: \(transcriptId!)")
+                            AppLog.shared.transcription("Transcript saved to Core Data with ID: \(transcriptId!)")
                         } else {
-                            print("❌ Failed to save transcript to Core Data")
+                            AppLog.shared.transcription("Failed to save transcript to Core Data", level: .error)
                         }
-                        print("💾 Transcript saved successfully")
-                        
-                                            // Don't automatically open the transcript view - let user choose when to edit
-                        
+
                         // Force UI refresh to update button states
                         self.forceRefreshUI()
                     } else {
-                        print("❌ Transcription failed or returned empty result")
+                        AppLog.shared.transcription("Transcription failed or returned empty result", level: .error)
                     }
                 } catch {
-                    print("❌ Fallback transcription also failed: \(error)")
+                    AppLog.shared.transcription("Fallback transcription also failed: \(error)", level: .error)
                 }
-            }
-            
-            // Clean up any cleaned audio file (may be in Documents directory now)
-            if let cleanupURL = cleanupURL {
-                // Remove the cleaned audio file - it's a copy we made for transcription
-                if cleanupURL.lastPathComponent.hasPrefix("cleaned_") {
+
+                // Clean up source audio on fallback path failure (no BackgroundProcessingManager to do it)
+                if let cleanupURL = sourceAudioURL, cleanupURL.lastPathComponent.hasPrefix("cleaned_") {
                     try? FileManager.default.removeItem(at: cleanupURL)
-                    print("🗑️ Cleaned up temporary audio file: \(cleanupURL.lastPathComponent)")
-                } else {
-                    await AudioCleanupService.shared.removeTempFile(at: cleanupURL)
+                    AppLog.shared.transcription("Cleaned up source audio file after fallback: \(cleanupURL.lastPathComponent)", level: .debug)
                 }
             }
 
             await MainActor.run {
-                print("🏁 Transcription process completed")
+                AppLog.shared.transcription("Transcription process completed", level: .debug)
 
                 // Refresh the recordings list to show the new transcript
                 self.loadRecordings()
@@ -963,8 +1012,8 @@ struct TranscriptsView: View {
         // Set up completion handler for BackgroundProcessingManager
         backgroundProcessingManager.onTranscriptionCompleted = { transcriptData, job in
             Task { @MainActor in
-                print("🎉 Background processing transcription completed for: \(job.recordingName)")
-                
+                AppLog.shared.transcription("Background processing transcription completed for job")
+
                 // Find the recording that matches this transcription
                 if let recording = recordings.first(where: { recording in
                     guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording.recording) else {
@@ -972,7 +1021,7 @@ struct TranscriptsView: View {
                     }
                     return recordingURL == job.recordingURL
                 }) {
-                    print("💾 Background transcript already saved by BackgroundProcessingManager")
+                    AppLog.shared.transcription("Background transcript already saved by BackgroundProcessingManager", level: .debug)
                     
                     // Don't automatically open the transcript view - let user choose when to edit
                     
@@ -988,7 +1037,7 @@ struct TranscriptsView: View {
                         self.showingTranscriptionCompletionAlert = true
                     }
                 } else {
-                    print("❌ Could not find recording for completed transcription")
+                    AppLog.shared.transcription("Could not find recording for completed transcription", level: .error)
                 }
             }
         }
@@ -996,12 +1045,7 @@ struct TranscriptsView: View {
         enhancedTranscriptionManager.onTranscriptionCompleted = { result, jobInfo in
             Task { @MainActor in
                 
-                print("🎉 Background transcription completed for: \(jobInfo.recordingName)")
-                print("🔍 Looking for recording with URL: \(jobInfo.recordingURL)")
-                print("📋 Available recordings: \(recordings.count)")
-                for (index, recording) in recordings.enumerated() {
-                    print("📋 Recording \(index): \(recording.recording.recordingName ?? "Unknown Recording") - \(recording.recording.recordingURL ?? "No URL")")
-                }
+                AppLog.shared.transcription("Background transcription completed, available recordings: \(recordings.count)", level: .debug)
                 
                 // Find the recording that matches this transcription
                 if let recording = recordings.first(where: { recording in
@@ -1012,7 +1056,7 @@ struct TranscriptsView: View {
                 }) {
                     // Create transcript data and save it
                     guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording.recording) else {
-                        print("❌ Invalid recording URL in completion handler")
+                        AppLog.shared.transcription("Invalid recording URL in completion handler", level: .error)
                         return
                     }
                     
@@ -1026,7 +1070,7 @@ struct TranscriptsView: View {
                     // Save transcript using Core Data
                     let appCoordinator = appCoordinator
                     guard let recordingId = transcriptData.recordingId else {
-                        print("❌ Background transcript data missing recording ID")
+                        AppLog.shared.transcription("Background transcript data missing recording ID", level: .error)
                         return
                     }
                     let transcriptId = appCoordinator.addTranscript(
@@ -1038,11 +1082,10 @@ struct TranscriptsView: View {
                         confidence: transcriptData.confidence
                     )
                     if transcriptId != nil {
-                        print("✅ Background transcript saved to Core Data with ID: \(transcriptId!)")
+                        AppLog.shared.transcription("Background transcript saved to Core Data with ID: \(transcriptId!)")
                     } else {
-                        print("❌ Failed to save background transcript to Core Data")
+                        AppLog.shared.transcription("Failed to save background transcript to Core Data", level: .error)
                     }
-                    print("💾 Background transcript saved for: \(recording.recording.recordingName ?? "Unknown Recording")")
                     
                     // Force UI refresh to update button states
                     self.forceRefreshUI()
@@ -1056,12 +1099,7 @@ struct TranscriptsView: View {
                         self.showingTranscriptionCompletionAlert = true
                     }
                 } else {
-                    print("❌ No matching recording found for job: \(jobInfo.recordingName)")
-                    print("❌ Job URL: \(jobInfo.recordingURL)")
-                    print("❌ Available recording URLs:")
-                    for recording in self.recordings {
-                        print("❌   - \(recording.recording.recordingURL ?? "No URL")")
-                    }
+                    AppLog.shared.transcription("No matching recording found for completed job", level: .error)
                 }
             }
         }
@@ -1244,14 +1282,14 @@ struct EditableTranscriptView: View {
                    let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
                    notificationURL == recordingURL {
                     
-                    print("🎉 Received transcription rerun completion notification")
-                    
+                    AppLog.shared.transcription("Received transcription rerun completion notification", level: .debug)
+
                     // Save the new transcript to Core Data first (this will replace the existing transcript)
                     saveNewTranscriptToCoreData(segments: segments)
-                    
+
                     isRerunningTranscription = false
-                    
-                    print("✅ Transcript UI updated with rerun results from notification")
+
+                    AppLog.shared.transcription("Transcript UI updated with rerun results from notification")
                     
                     // Force the parent view to refresh by posting a notification
                     NotificationCenter.default.post(name: NSNotification.Name("TranscriptReplacementCompleted"), object: nil)
@@ -1271,9 +1309,7 @@ struct EditableTranscriptView: View {
 
     private func saveTranscript() -> Bool {
         guard let recordingId = recording.id else {
-            #if DEBUG
-            print("❌ Cannot save transcript: missing recording ID")
-            #endif
+            AppLog.shared.transcription("Cannot save transcript: missing recording ID", level: .error)
             saveErrorMessage = "Unable to save transcript because the recording is missing an identifier."
             return false
         }
@@ -1288,75 +1324,59 @@ struct EditableTranscriptView: View {
         )
 
         if let transcriptId {
-            #if DEBUG
-            print("💾 Saved edited transcript with ID: \(transcriptId)")
-            #endif
+            AppLog.shared.transcription("Saved edited transcript with ID: \(transcriptId)")
             NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
             return true
         } else {
-            #if DEBUG
-            print("❌ Failed to save edited transcript")
-            #endif
+            AppLog.shared.transcription("Failed to save edited transcript", level: .error)
             saveErrorMessage = "We couldn't save your transcript changes. Please try again."
             return false
         }
     }
     
     private func rerunTranscription() {
-        print("🔄 Starting transcription rerun for: \(recording.recordingName ?? "Unknown Recording")")
-        
+        AppLog.shared.transcription("Starting transcription rerun", level: .debug)
+
         isRerunningTranscription = true
-        
+
         Task {
             do {
                 // Get the currently configured transcription engine
                 let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
-                
-                print("🔧 Using transcription engine: \(selectedEngine.rawValue)")
-                
+
+                AppLog.shared.transcription("Using transcription engine: \(selectedEngine.rawValue)", level: .debug)
+
                 // Get the absolute URL using the coordinator
                 guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
-                    print("❌ Invalid recording URL: \(recording.recordingURL ?? "nil")")
+                    AppLog.shared.transcription("Invalid recording URL for rerun", level: .error)
                     await MainActor.run {
                         isRerunningTranscription = false
                     }
                     return
                 }
-                
-                print("🎯 Rerunning transcription for file: \(recordingURL.lastPathComponent)")
-                
-                // Check current job status before starting
-                print("🔍 Current job status check:")
-                print("   - Active jobs count: \(backgroundProcessingManager.activeJobs.count)")
-                print("   - Current job: \(backgroundProcessingManager.currentJob?.recordingName ?? "None")")
-                print("   - Processing status: \(backgroundProcessingManager.processingStatus)")
-                
+
+                AppLog.shared.transcription("Rerunning transcription for file: \(recordingURL.lastPathComponent)", level: .debug)
+
                 // Start transcription job through BackgroundProcessingManager
                 try await backgroundProcessingManager.startTranscriptionJob(
                     recordingURL: recordingURL,
                     recordingName: recording.recordingName ?? "Unknown Recording",
                     engine: selectedEngine
                 )
-                
-                print("✅ Transcription rerun job started through BackgroundProcessingManager")
-                
-                // Check job status after starting
-                print("🔍 Job status after starting:")
-                print("   - Active jobs count: \(backgroundProcessingManager.activeJobs.count)")
-                print("   - Current job: \(backgroundProcessingManager.currentJob?.recordingName ?? "None")")
-                print("   - Processing status: \(backgroundProcessingManager.processingStatus)")
+
+                AppLog.shared.transcription("Transcription rerun job started through BackgroundProcessingManager")
                 
                 // Set up a one-time completion handler for this specific rerun
                 setupRerunCompletionHandler(for: recordingURL)
                 
             } catch {
-                print("❌ Failed to start transcription rerun job: \(error)")
-                
+                AppLog.shared.transcription("Failed to start transcription rerun job: \(error)", level: .error)
+
                 // Fallback to direct transcription if background processing fails
-                print("🔄 Falling back to direct transcription for rerun...")
+                AppLog.shared.transcription("Falling back to direct transcription for rerun...", level: .debug)
                 do {
                     guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
-                        print("❌ Invalid recording URL for fallback transcription rerun")
+                        AppLog.shared.transcription("Invalid recording URL for fallback transcription rerun", level: .error)
                         await MainActor.run {
                             isRerunningTranscription = false
                         }
@@ -1368,23 +1388,23 @@ struct EditableTranscriptView: View {
                     
                     let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recordingURL, using: selectedEngine)
                     
-                    print("📊 Transcription rerun result: success=\(result.success), textLength=\(result.fullText.count)")
+                    AppLog.shared.transcription("Transcription rerun result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
                     
                     if result.success && !result.fullText.isEmpty {
                         await MainActor.run {
                             // Save the new transcript to Core Data first (this will replace the existing transcript)
                             saveNewTranscriptToCoreData(segments: result.segments)
                             
-                            print("✅ Transcript UI updated with rerun results")
+                            AppLog.shared.transcription("Transcript UI updated with rerun results")
                             
                             // Force the parent view to refresh by posting a notification
                             NotificationCenter.default.post(name: NSNotification.Name("TranscriptReplacementCompleted"), object: nil)
                         }
                     } else {
-                        print("❌ Transcription rerun failed or returned empty result")
+                        AppLog.shared.transcription("Transcription rerun failed or returned empty result", level: .error)
                     }
                 } catch {
-                    print("❌ Fallback transcription rerun also failed: \(error)")
+                    AppLog.shared.transcription("Fallback transcription rerun also failed: \(error)", level: .error)
                 }
                 
                 await MainActor.run {
@@ -1402,10 +1422,10 @@ struct EditableTranscriptView: View {
             // Only handle completion for our specific recording
             if job.recordingURL == recordingURL {
                 Task { @MainActor in
-                    print("🎉 Background processing transcription rerun completed for: \(job.recordingName)")
-                    
+                    AppLog.shared.transcription("Background processing transcription rerun completed")
+
                     // Save the new transcript to Core Data and post notification
-                    print("💾 Saving rerun transcript to Core Data...")
+                    AppLog.shared.transcription("Saving rerun transcript to Core Data...", level: .debug)
                     
                     // Post notification with the new segments
                     NotificationCenter.default.post(
@@ -1417,7 +1437,7 @@ struct EditableTranscriptView: View {
                         ]
                     )
                     
-                    print("✅ Posted transcription rerun completion notification")
+                    AppLog.shared.transcription("Posted transcription rerun completion notification", level: .debug)
                     
                     // Restore the original handler
                     BackgroundProcessingManager.shared.onTranscriptionCompleted = originalHandler
@@ -1430,11 +1450,11 @@ struct EditableTranscriptView: View {
     }
     
     private func saveNewTranscriptToCoreData(segments: [TranscriptSegment]) {
-        print("💾 Saving new transcript to Core Data...")
-        
+        AppLog.shared.transcription("Saving new transcript to Core Data...", level: .debug)
+
         // We need to find and update the existing transcript in Core Data
         guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
-            print("❌ Invalid recording URL for Core Data save")
+            AppLog.shared.transcription("Invalid recording URL for Core Data save", level: .error)
             return
         }
         
@@ -1447,7 +1467,7 @@ struct EditableTranscriptView: View {
             
             // For rerun transcriptions, we'll replace the existing transcript
             // The Core Data system will update the existing transcript instead of creating a new one
-            print("🔄 Replacing transcript for recording ID: \(recordingId)")
+            AppLog.shared.transcription("Replacing transcript for recording ID: \(recordingId)", level: .debug)
             
             // Get the selected transcription engine
             let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue
@@ -1465,7 +1485,7 @@ struct EditableTranscriptView: View {
             )
             
             if transcriptId != nil {
-                print("✅ Transcript replaced in Core Data with ID: \(transcriptId!)")
+                AppLog.shared.transcription("Transcript replaced in Core Data with ID: \(transcriptId!)")
                 
                 // Immediately refresh the UI with the updated transcript data
                 refreshTranscriptFromCoreData()
@@ -1473,10 +1493,10 @@ struct EditableTranscriptView: View {
                 // Post notification to refresh the main transcripts view
                 NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
             } else {
-                print("❌ Failed to replace transcript in Core Data")
+                AppLog.shared.transcription("Failed to replace transcript in Core Data", level: .error)
             }
         } else {
-            print("❌ Could not find recording entry in Core Data for transcript save")
+            AppLog.shared.transcription("Could not find recording entry in Core Data for transcript save", level: .error)
         }
     }
     

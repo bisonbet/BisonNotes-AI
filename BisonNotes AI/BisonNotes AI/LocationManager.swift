@@ -207,7 +207,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         
         // Check cache first
         if let cachedAddress = Self.geocodingCache[cacheKey] {
-            print("📍 LocationManager: Using cached address for \(cacheKey)")
+            AppLog.shared.recording("LocationManager: Using cached address", level: .debug)
             completion(cachedAddress)
             return
         }
@@ -237,14 +237,14 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                     Self.pendingGeocodingRequests.removeValue(forKey: cacheKey)
                     
                     if let error = error {
-                        print("❌ LocationManager: Reverse geocoding error: \(error)")
+                        AppLog.shared.recording("LocationManager: Reverse geocoding error: \(error)", level: .error)
                         // Call all pending completions with nil
                         pendingCompletions.forEach { $0(nil) }
                         return
                     }
                     
                     guard let placemark = placemarks?.first else {
-                        print("⚠️ LocationManager: No placemark found for \(cacheKey)")
+                        AppLog.shared.recording("LocationManager: No placemark found", level: .debug)
                         pendingCompletions.forEach { $0(nil) }
                         return
                     }
@@ -285,7 +285,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     static func clearGeocodingCache() {
         geocodingCache.removeAll()
         pendingGeocodingRequests.removeAll()
-        print("🧹 LocationManager: Geocoding cache and pending requests cleared")
+        AppLog.shared.recording("LocationManager: Geocoding cache and pending requests cleared")
     }
     
     static func getGeocodingCacheSize() -> Int {

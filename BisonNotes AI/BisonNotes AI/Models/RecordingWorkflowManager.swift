@@ -53,22 +53,22 @@ class RecordingWorkflowManager: ObservableObject {
         
         // Store location data if available
         if let locationData = locationData {
-            print("📍 RecordingWorkflowManager: Saving location data - lat: \(locationData.latitude), lon: \(locationData.longitude), address: \(locationData.address ?? "none")")
+            AppLog.shared.backgroundProcessing("Saving location data - lat: \(locationData.latitude), lon: \(locationData.longitude)")
             recordingEntry.locationLatitude = locationData.latitude
             recordingEntry.locationLongitude = locationData.longitude
             recordingEntry.locationTimestamp = locationData.timestamp
             recordingEntry.locationAccuracy = locationData.accuracy ?? 0.0
             recordingEntry.locationAddress = locationData.address
-            print("📍 RecordingWorkflowManager: Location saved to Core Data entry")
+            AppLog.shared.backgroundProcessing("Location saved to Core Data entry")
         } else {
-            print("📍 RecordingWorkflowManager: No location data provided")
+            AppLog.shared.backgroundProcessing("No location data provided", level: .debug)
         }
         
         // Save to Core Data
         do {
             try context.save()
         } catch {
-            print("❌ Failed to save recording to Core Data: \(error)")
+            AppLog.shared.backgroundProcessing("Failed to save recording to Core Data: \(error)", level: .error)
         }
         
         return recordingId
@@ -83,16 +83,16 @@ class RecordingWorkflowManager: ObservableObject {
         
         // Get the recording from Core Data
         guard let recordingEntry = getRecordingEntry(id: recordingId) else {
-            print("❌ Recording not found for ID: \(recordingId)")
+            AppLog.shared.backgroundProcessing("Recording not found for ID: \(recordingId)", level: .error)
             return nil
         }
-        
+
         // Log recording for debugging/analytics
-        print("📝 Creating transcript for recording: \(recordingEntry.recordingName ?? "unknown")")
+        AppLog.shared.backgroundProcessing("Creating transcript for recording: \(recordingEntry.recordingName ?? "unknown")")
         
         // Check if a transcript already exists for this recording
         if let existingTranscript = recordingEntry.transcript {
-            print("🔄 Existing transcript found, replacing with new transcript...")
+            AppLog.shared.backgroundProcessing("Existing transcript found, replacing with new transcript")
             return replaceTranscript(existingTranscript, with: segments, speakerMappings: speakerMappings, engine: engine, processingTime: processingTime, confidence: confidence)
         }
         
@@ -145,7 +145,7 @@ class RecordingWorkflowManager: ObservableObject {
         do {
             try context.save()
         } catch {
-            print("❌ Failed to save transcript to Core Data: \(error)")
+            AppLog.shared.backgroundProcessing("Failed to save transcript to Core Data: \(error)", level: .error)
             return nil
         }
         
@@ -155,7 +155,7 @@ class RecordingWorkflowManager: ObservableObject {
     /// Replaces an existing transcript with new content while preserving the same UUID
     private func replaceTranscript(_ existingTranscript: TranscriptEntry, with segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {
         
-        print("🔄 Replacing existing transcript with ID: \(existingTranscript.id?.uuidString ?? "unknown")")
+        AppLog.shared.backgroundProcessing("Replacing existing transcript with ID: \(existingTranscript.id?.uuidString ?? "unknown")")
         
         // Update the existing transcript entry with new data
         existingTranscript.lastModified = Date() 
@@ -184,10 +184,10 @@ class RecordingWorkflowManager: ObservableObject {
         // Save to Core Data
         do {
             try context.save()
-            print("✅ Transcript replaced successfully with ID: \(existingTranscript.id?.uuidString ?? "unknown")")
+            AppLog.shared.backgroundProcessing("Transcript replaced successfully with ID: \(existingTranscript.id?.uuidString ?? "unknown")")
             return existingTranscript.id
         } catch {
-            print("❌ Failed to replace transcript in Core Data: \(error)")
+            AppLog.shared.backgroundProcessing("Failed to replace transcript in Core Data: \(error)", level: .error)
             return nil
         }
     }
@@ -199,27 +199,26 @@ class RecordingWorkflowManager: ObservableObject {
         
         // Get the recording from Core Data
         guard let recordingEntry = getRecordingEntry(id: recordingId) else {
-            print("❌ Recording not found for ID: \(recordingId)")
+            AppLog.shared.backgroundProcessing("Recording not found for ID: \(recordingId)", level: .error)
             return nil
         }
-        
+
         // Get the transcript from Core Data
         guard let transcriptEntry = getTranscriptEntry(id: transcriptId) else {
-            print("❌ Transcript not found for ID: \(transcriptId)")
+            AppLog.shared.backgroundProcessing("Transcript not found for ID: \(transcriptId)", level: .error)
             return nil
         }
         
         // Reject obviously-failed summaries before touching Core Data at all
         let summaryTrimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard summaryTrimmed.count >= 30 else {
-            print("⚠️ [RecordingWorkflowManager] Summary too short (\(summaryTrimmed.count) chars) — skipping save to avoid storing a failed result")
+            AppLog.shared.backgroundProcessing("Summary too short (\(summaryTrimmed.count) chars) -- skipping save to avoid storing a failed result")
             return nil
         }
 
         // Log recording for debugging/analytics
-        print("📝 Creating summary for recording: \(recordingEntry.recordingName ?? "unknown")")
-        print("🆔 Recording UUID: \(recordingId)")
-        print("🆔 Transcript UUID: \(transcriptId)")
+        AppLog.shared.backgroundProcessing("Creating summary for recording: \(recordingEntry.recordingName ?? "unknown")")
+        AppLog.shared.backgroundProcessing("Recording UUID: \(recordingId), Transcript UUID: \(transcriptId)", level: .debug)
 
         // Capture existing summaries BEFORE creating new one using context directly
         // (appCoordinator may be nil, so we use context to avoid silent no-ops)
@@ -228,7 +227,7 @@ class RecordingWorkflowManager: ObservableObject {
         existingSummaryFetch.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
         let existingSummaries = (try? context.fetch(existingSummaryFetch)) ?? []
         if !existingSummaries.isEmpty {
-            print("📋 Found \(existingSummaries.count) existing summary(ies) to clean up after save")
+            AppLog.shared.backgroundProcessing("Found \(existingSummaries.count) existing summary(ies) to clean up after save", level: .debug)
         }
 
         // Create summary data with proper UUID linking
@@ -251,7 +250,7 @@ class RecordingWorkflowManager: ObservableObject {
             originalLength: originalLength,
             processingTime: processingTime
         )
-        print("🆔 Summary UUID: \(summaryData.id)")
+        AppLog.shared.backgroundProcessing("Summary UUID: \(summaryData.id)", level: .debug)
         
         // Create Core Data summary entry
         let summaryEntry = SummaryEntry(context: context)
@@ -295,7 +294,7 @@ class RecordingWorkflowManager: ObservableObject {
         // Save to Core Data
         do {
             try context.save()
-            print("✅ Summary saved to Core Data with ID: \(summaryData.id)")
+            AppLog.shared.backgroundProcessing("Summary saved to Core Data with ID: \(summaryData.id)")
 
             // NOW clean up old summaries using context directly (only after new one is safely saved)
             if !existingSummaries.isEmpty {
@@ -304,11 +303,11 @@ class RecordingWorkflowManager: ObservableObject {
                     let oldId = oldSummary.id?.uuidString ?? "nil"
                     context.delete(oldSummary)
                     deletedCount += 1
-                    print("🗑️ Deleted old summary \(oldId)")
+                    AppLog.shared.backgroundProcessing("Deleted old summary \(oldId)", level: .debug)
                 }
                 if deletedCount > 0 {
                     try? context.save()
-                    print("🧹 Cleaned up \(deletedCount) old summary(ies) for recording \(recordingId)")
+                    AppLog.shared.backgroundProcessing("Cleaned up \(deletedCount) old summary(ies) for recording \(recordingId)", level: .debug)
                 }
             }
 
@@ -321,7 +320,7 @@ class RecordingWorkflowManager: ObservableObject {
                 )
             }
         } catch {
-            print("❌ Failed to save summary to Core Data: \(error)")
+            AppLog.shared.backgroundProcessing("Failed to save summary to Core Data: \(error)", level: .error)
             // Note: We did NOT delete old summaries, so user still has their previous data
             return nil
         }
@@ -334,12 +333,12 @@ class RecordingWorkflowManager: ObservableObject {
     /// Updates the name of a recording and all its related files when the AI suggests a better name
     func updateRecordingName(recordingId: UUID, newName: String) {
         guard let recordingEntry = getRecordingEntry(id: recordingId) else {
-            print("❌ Recording not found for ID: \(recordingId)")
+            AppLog.shared.backgroundProcessing("Recording not found for ID: \(recordingId)", level: .error)
             return
         }
-        
+
         let oldName = recordingEntry.recordingName ?? "unknown"
-        print("📝 Updating recording name from '\(oldName)' to '\(newName)'")
+        AppLog.shared.backgroundProcessing("Updating recording name from '\(oldName)' to '\(newName)'")
         
         // Clean any [Watch] tags from the new name and use it directly
         let finalName = newName.replacingOccurrences(of: " [Watch]", with: "")
@@ -356,9 +355,9 @@ class RecordingWorkflowManager: ObservableObject {
         // Save changes
         do {
             try context.save()
-            print("✅ Recording name updated successfully")
+            AppLog.shared.backgroundProcessing("Recording name updated successfully")
         } catch {
-            print("❌ Failed to save name update: \(error)")
+            AppLog.shared.backgroundProcessing("Failed to save name update: \(error)", level: .error)
         }
     }
     
@@ -372,7 +371,7 @@ class RecordingWorkflowManager: ObservableObject {
             let results = try context.fetch(fetchRequest)
             return results.first
         } catch {
-            print("❌ Error fetching recording: \(error)")
+            AppLog.shared.backgroundProcessing("Error fetching recording: \(error)", level: .error)
             return nil
         }
     }
@@ -385,7 +384,7 @@ class RecordingWorkflowManager: ObservableObject {
             let results = try context.fetch(fetchRequest)
             return results.first
         } catch {
-            print("❌ Error fetching transcript: \(error)")
+            AppLog.shared.backgroundProcessing("Error fetching transcript: \(error)", level: .error)
             return nil
         }
     }
@@ -395,7 +394,7 @@ class RecordingWorkflowManager: ObservableObject {
     private func updateAudioFileName(recordingEntry: RecordingEntry, oldName: String, newName: String) {
         guard let urlString = recordingEntry.recordingURL,
               let oldURL = URL(string: urlString) else { 
-            print("❌ No valid URL found for recording: \(recordingEntry.recordingName ?? "unknown")")
+            AppLog.shared.backgroundProcessing("No valid URL found for recording: \(recordingEntry.recordingName ?? "unknown")", level: .error)
             return 
         }
         
@@ -407,32 +406,31 @@ class RecordingWorkflowManager: ObservableObject {
                 try FileManager.default.moveItem(at: oldURL, to: newURL)
                 recordingEntry.recordingURL = newURL.absoluteString
                 recordingEntry.lastModified = Date()
-                print("📁 Audio file renamed: \(oldURL.lastPathComponent) → \(newURL.lastPathComponent)")
-                
+                AppLog.shared.backgroundProcessing("Audio file renamed: \(oldURL.lastPathComponent) -> \(newURL.lastPathComponent)")
+
                 // Save the changes to Core Data
                 try context.save()
-                print("✅ Core Data updated with new URL")
+                AppLog.shared.backgroundProcessing("Core Data updated with new URL")
             } else {
-                print("⚠️ Audio file not found at expected location: \(oldURL.path)")
-                print("🔍 Checking if file exists with new name...")
+                AppLog.shared.backgroundProcessing("Audio file not found at expected location, checking new name", level: .debug)
                 
                 // Check if the file already exists with the new name
                 if FileManager.default.fileExists(atPath: newURL.path) {
                     recordingEntry.recordingURL = newURL.absoluteString
                     recordingEntry.lastModified = Date()
-                    print("📁 Updated Core Data URL to match existing file: \(newURL.lastPathComponent)")
-                    
+                    AppLog.shared.backgroundProcessing("Updated Core Data URL to match existing file: \(newURL.lastPathComponent)")
+
                     // Save the changes to Core Data
                     try context.save()
-                    print("✅ Core Data updated with correct URL")
+                    AppLog.shared.backgroundProcessing("Core Data updated with correct URL")
                 } else {
-                    print("❌ File not found at either old or new location")
+                    AppLog.shared.backgroundProcessing("File not found at either old or new location", level: .error)
                 }
             }
         } catch {
             // Check if this is a thumbnail-related error that we can ignore
             if error.isThumbnailGenerationError {
-                print("⚠️ Thumbnail generation warning during file rename (can be ignored): \(error.localizedDescription)")
+                AppLog.shared.backgroundProcessing("Thumbnail generation warning during file rename (can be ignored)", level: .debug)
                 // Continue with the operation even if thumbnail generation fails
                 // The file move operation itself succeeded, only thumbnail generation failed
                 
@@ -442,13 +440,12 @@ class RecordingWorkflowManager: ObservableObject {
                 
                 do {
                     try context.save()
-                    print("✅ Core Data updated with new URL (despite thumbnail warning)")
+                    AppLog.shared.backgroundProcessing("Core Data updated with new URL (despite thumbnail warning)")
                 } catch {
-                    print("❌ Failed to save Core Data after file rename: \(error)")
+                    AppLog.shared.backgroundProcessing("Failed to save Core Data after file rename: \(error)", level: .error)
                 }
             } else {
-                print("❌ Failed to rename audio file: \(error)")
-                print("🔍 Error details: \(error.localizedDescription)")
+                AppLog.shared.backgroundProcessing("Failed to rename audio file: \(error.localizedDescription)", level: .error)
             }
         }
     }
@@ -476,7 +473,7 @@ class RecordingWorkflowManager: ObservableObject {
     /// Validate that recordings are compatible with all AI processing engines
     func validateRecordingCompatibility(_ recordingId: UUID) async -> Bool {
         guard let recordingEntry = getRecordingEntry(id: recordingId) else {
-            print("❌ Recording not found for compatibility check")
+            AppLog.shared.backgroundProcessing("Recording not found for compatibility check", level: .error)
             return false
         }
         
@@ -484,7 +481,7 @@ class RecordingWorkflowManager: ObservableObject {
         guard let urlString = recordingEntry.recordingURL,
               let url = URL(string: urlString),
               FileManager.default.fileExists(atPath: url.path) else {
-            print("❌ Recording file not accessible for AI processing")
+            AppLog.shared.backgroundProcessing("Recording file not accessible for AI processing", level: .error)
             return false
         }
         
@@ -507,22 +504,22 @@ class RecordingWorkflowManager: ObservableObject {
                 audioTracks = asset.tracks(withMediaType: .audio)
             }
         } catch {
-            print("❌ Failed to load asset properties: \(error)")
+            AppLog.shared.backgroundProcessing("Failed to load asset properties: \(error)", level: .error)
             return false
         }
         
         if duration <= 0 {
-            print("❌ Watch recording has invalid duration")
+            AppLog.shared.backgroundProcessing("Recording has invalid duration", level: .error)
             return false
         }
         
         // Verify audio tracks exist
         if audioTracks.isEmpty {
-            print("❌ Watch recording has no audio tracks")
+            AppLog.shared.backgroundProcessing("Recording has no audio tracks", level: .error)
             return false
         }
         
-        print("✅ Recording is compatible with AI processing (duration: \(duration)s)")
+        AppLog.shared.backgroundProcessing("Recording is compatible with AI processing (duration: \(duration)s)")
         return true
     }
 }

@@ -467,20 +467,4 @@ struct RecordingsView: View {
 }
 
 // MARK: - Safari View Wrapper
-#if !targetEnvironment(macCatalyst)
-struct SafariView: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeUIViewController(context: Context) -> SFSafariViewController {
-        let safariVC = SFSafariViewController(url: url)
-        safariVC.preferredBarTintColor = UIColor.systemBackground
-        safariVC.preferredControlTintColor = UIColor.systemBlue
-        safariVC.dismissButtonStyle = .close
-        return safariVC
-    }
-
-    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {
-        // No updates needed
-    }
-}
-#endif
+// SafariView is now in Views/SafariView.swift

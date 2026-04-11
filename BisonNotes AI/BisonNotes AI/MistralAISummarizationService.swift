@@ -26,7 +26,7 @@ class MistralAISummarizationService {
 
     private let config: MistralAIConfig
     private let session: URLSession
-    private let logger = Logger(subsystem: "com.audiojournal.app", category: "MistralAISummarizationService")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "MistralAISummarizationService")
 
     // MARK: - Initialization
 

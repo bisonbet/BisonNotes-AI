@@ -20,7 +20,7 @@ struct GoogleAIStudioSettingsView: View {
     @State private var alertMessage = ""
     @State private var isTestingConnection = false
     
-    private let logger = Logger(subsystem: "com.audiojournal.app", category: "GoogleAIStudioSettings")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "GoogleAIStudioSettings")
     
     let onConfigurationChanged: () -> Void
     

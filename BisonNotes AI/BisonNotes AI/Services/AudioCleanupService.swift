@@ -52,7 +52,7 @@ actor AudioCleanupService {
     /// Returns the URL of a cleaned temporary file. The original file is not modified.
     func cleanAudio(at sourceURL: URL, config: CleanupConfig = .default) async throws -> URL {
         let startTime = Date()
-        print("🎛️ AudioCleanupService: Starting audio cleanup for \(sourceURL.lastPathComponent)")
+        AppLog.shared.fileManagement("AudioCleanupService: Starting audio cleanup for \(sourceURL.lastPathComponent)")
 
         // Validate source file
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
@@ -68,7 +68,7 @@ actor AudioCleanupService {
             throw AudioCleanupError.emptyAudio
         }
 
-        print("🎛️ Audio format: \(format.sampleRate)Hz, \(format.channelCount) channels, \(frameCount) frames")
+        AppLog.shared.fileManagement("Audio format: \(format.sampleRate)Hz, \(format.channelCount) channels, \(frameCount) frames", level: .debug)
 
         // Read audio data into buffer
         guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
@@ -87,7 +87,7 @@ actor AudioCleanupService {
         try await writeAudioFile(buffer: processedBuffer, to: outputURL, originalFormat: format)
 
         let duration = Date().timeIntervalSince(startTime)
-        print("✅ AudioCleanupService: Cleanup completed in \(String(format: "%.2f", duration))s → \(outputURL.lastPathComponent)")
+        AppLog.shared.fileManagement("AudioCleanupService: Cleanup completed in \(String(format: "%.2f", duration))s")
 
         return outputURL
     }
@@ -109,7 +109,7 @@ actor AudioCleanupService {
         let channelCount = Int(buffer.format.channelCount)
         let sampleRate = Float(buffer.format.sampleRate)
 
-        print("🎛️ Processing \(frameCount) frames across \(channelCount) channels...")
+        AppLog.shared.fileManagement("Processing \(frameCount) frames across \(channelCount) channels", level: .debug)
 
         // Create output buffer
         guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameCapacity) else {
@@ -127,7 +127,7 @@ actor AudioCleanupService {
 
             // Step 1: Analyze audio for noise profile (first 0.5 seconds assumed to be noise)
             let noiseProfile = analyzeNoiseProfile(samples: samples, sampleRate: sampleRate)
-            print("🎛️ Channel \(channel): Noise floor estimated at \(String(format: "%.1f", noiseProfile.noiseFloorDB)) dB")
+            AppLog.shared.fileManagement("Channel \(channel): Noise floor estimated at \(String(format: "%.1f", noiseProfile.noiseFloorDB)) dB", level: .debug)
 
             // Step 2: Apply high-pass filter to remove rumble
             samples = applyHighPassFilter(samples: samples, cutoffHz: config.highPassCutoff, sampleRate: sampleRate)
@@ -280,7 +280,7 @@ actor AudioCleanupService {
             output[i] = result
         }
 
-        print("🎛️ Applied high-pass filter at \(cutoffHz)Hz")
+        AppLog.shared.fileManagement("Applied high-pass filter at \(cutoffHz)Hz", level: .debug)
         return output
     }
 
@@ -381,7 +381,7 @@ actor AudioCleanupService {
 
         // Remove padding
         let result = Array(output[fftSize/2..<(fftSize/2 + samples.count)])
-        print("🎛️ Applied spectral subtraction noise reduction (strength: \(String(format: "%.0f", strength * 100))%)")
+        AppLog.shared.fileManagement("Applied spectral subtraction noise reduction (strength: \(String(format: "%.0f", strength * 100))%)", level: .debug)
         return result
     }
 
@@ -423,7 +423,7 @@ actor AudioCleanupService {
             }
         }
 
-        print("🎛️ Applied noise gate at \(thresholdDB)dB threshold")
+        AppLog.shared.fileManagement("Applied noise gate at \(thresholdDB)dB threshold", level: .debug)
         return output
     }
 
@@ -443,7 +443,7 @@ actor AudioCleanupService {
         var output = [Float](repeating: 0, count: samples.count)
         vDSP_vsmul(samples, 1, &gain, &output, 1, vDSP_Length(samples.count))
 
-        print("🎛️ Normalized audio: \(String(format: "%.1f", currentPeakDB))dB → \(String(format: "%.1f", targetPeakDB))dB (gain: \(String(format: "%.1f", gainDB))dB)")
+        AppLog.shared.fileManagement("Normalized audio: \(String(format: "%.1f", currentPeakDB))dB to \(String(format: "%.1f", targetPeakDB))dB (gain: \(String(format: "%.1f", gainDB))dB)", level: .debug)
         return output
     }
 

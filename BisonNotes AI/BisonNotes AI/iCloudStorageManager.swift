@@ -366,11 +366,11 @@ class iCloudStorageManager: ObservableObject {
             
             // Only perform full sync if explicitly requested or first install
             if shouldPerformFullSyncOnStartup || isFirstInstall {
-                print("🔄 Performing initial full sync (first install: \(isFirstInstall), requested: \(shouldPerformFullSyncOnStartup))")
+                AppLog.shared.iCloudSync("Performing initial full sync (first install: \(isFirstInstall), requested: \(shouldPerformFullSyncOnStartup))")
                 do {
                     try await performOneTimeFullSync()
                 } catch {
-                    print("⚠️ Initial full sync failed: \(error)")
+                    AppLog.shared.iCloudSync("Initial full sync failed: \(error.localizedDescription)", level: .error)
                     // Don't fail the entire enablement process
                 }
             } else {
@@ -390,25 +390,25 @@ class iCloudStorageManager: ObservableObject {
     }
     
     func disableiCloudSync() async {
-        print("🔄 Disabling iCloud sync...")
+        AppLog.shared.iCloudSync("Disabling iCloud sync")
         
         // Stop periodic sync
         syncTimer?.invalidate()
         syncTimer = nil
         
         await updateSyncStatus(.idle)
-        print("✅ iCloud sync disabled")
+        AppLog.shared.iCloudSync("iCloud sync disabled")
     }
     
     func syncSummary(_ summary: EnhancedSummaryData) async throws {
         guard isEnabled else {
-            print("⚠️ iCloud sync is disabled, skipping summary sync")
+            AppLog.shared.iCloudSync("iCloud sync is disabled, skipping summary sync", level: .debug)
             return
         }
         
         // Check if this summary is already being synced
         if syncingSummaries.contains(summary.id) {
-            print("🔄 Summary already being synced: \(summary.recordingName)")
+            AppLog.shared.iCloudSync("Summary already being synced, skipping", level: .debug)
             return
         }
         
@@ -416,7 +416,7 @@ class iCloudStorageManager: ObservableObject {
         if let lastSync = recentlySyncedSummaries[summary.id],
            Date().timeIntervalSince(lastSync) < syncCooldownInterval {
             let timeSince = Int(Date().timeIntervalSince(lastSync))
-            print("⏳ Summary recently synced (\(timeSince)s ago), skipping: \(summary.recordingName)")
+            AppLog.shared.iCloudSync("Summary recently synced (\(timeSince)s ago), skipping", level: .debug)
             return
         }
         
@@ -424,7 +424,7 @@ class iCloudStorageManager: ObservableObject {
         pendingSyncQueue.append(summary)
         scheduleBatchSync()
         
-        print("📋 Queued summary for batch sync: \(summary.recordingName) (Queue size: \(pendingSyncQueue.count))")
+        AppLog.shared.iCloudSync("Queued summary for batch sync (queue size: \(pendingSyncQueue.count))", level: .debug)
     }
     
     /// Schedules a batch sync operation with debouncing
@@ -448,8 +448,8 @@ class iCloudStorageManager: ObservableObject {
         let batch = Array(pendingSyncQueue.prefix(maxBatchSize))
         pendingSyncQueue.removeFirst(min(maxBatchSize, pendingSyncQueue.count))
         
-        print("🔄 Starting batch sync of \(batch.count) summaries...")
-        
+        AppLog.shared.iCloudSync("Starting batch sync of \(batch.count) summaries", level: .debug)
+
         await updateSyncStatus(.syncing)
         await MainActor.run {
             self.pendingSyncCount = batch.count
@@ -470,10 +470,10 @@ class iCloudStorageManager: ObservableObject {
                 recentlySyncedSummaries[summary.id] = Date()
                 
             } catch {
-                print("❌ Failed to sync summary \(summary.recordingName): \(error)")
+                AppLog.shared.iCloudSync("Failed to sync summary: \(error.localizedDescription)", level: .error)
                 failedCount += 1
             }
-            
+
             // Remove from syncing set (always execute)
             syncingSummaries.remove(summary.id)
             
@@ -487,10 +487,10 @@ class iCloudStorageManager: ObservableObject {
         
         if failedCount == 0 {
             await updateSyncStatus(.completed)
-            print("✅ Successfully synced batch: \(syncedCount) summaries")
+            AppLog.shared.iCloudSync("Successfully synced batch: \(syncedCount) summaries")
         } else {
             await updateSyncStatus(.failed("Batch: \(syncedCount) synced, \(failedCount) failed"))
-            print("⚠️ Batch sync completed with errors: \(syncedCount) synced, \(failedCount) failed")
+            AppLog.shared.iCloudSync("Batch sync completed with errors: \(syncedCount) synced, \(failedCount) failed", level: .error)
         }
         
         // Schedule next batch if there are more items
@@ -518,14 +518,14 @@ class iCloudStorageManager: ObservableObject {
             throw NSError(domain: "iCloudStorageManager", code: 2, userInfo: [NSLocalizedDescriptionKey: "Network unavailable"])
         }
         
-        print("🔄 Syncing summary: \(summary.recordingName)")
+        AppLog.shared.iCloudSync("Syncing individual summary", level: .debug)
         
         var retryCount = 0
         
         while retryCount < maxRetryAttempts {
             do {
                 let recordID = CKRecord.ID(recordName: summary.id.uuidString)
-                let result = try await handleConflictResolution(for: recordID, with: summary)
+                _ = try await handleConflictResolution(for: recordID, with: summary)
                 
                 // Update last sync date
                 await MainActor.run {
@@ -533,7 +533,7 @@ class iCloudStorageManager: ObservableObject {
                     UserDefaults.standard.set(self.lastSyncDate, forKey: "lastSyncDate")
                 }
                 
-                print("✅ Successfully synced summary: \(result.recordID)")
+                AppLog.shared.iCloudSync("Successfully synced summary")
                 return // Success, exit retry loop
                 
             } catch {
@@ -543,32 +543,32 @@ class iCloudStorageManager: ObservableObject {
                 if let ckError = error as? CKError {
                     switch ckError.code {
                     case .serverRecordChanged:
-                        print("🔄 Server record changed, refetching and retrying (attempt \(retryCount)/\(maxRetryAttempts))")
+                        AppLog.shared.iCloudSync("Server record changed, refetching and retrying (attempt \(retryCount)/\(maxRetryAttempts))", level: .debug)
                         // Don't wait for server changed errors, retry immediately with fresh data
                         continue
                     case .networkFailure, .networkUnavailable, .serviceUnavailable:
                         if retryCount < maxRetryAttempts {
-                            print("⚠️ Network error, retrying in \(retryDelay)s (attempt \(retryCount)/\(maxRetryAttempts))")
+                            AppLog.shared.iCloudSync("Network error, retrying in \(retryDelay)s (attempt \(retryCount)/\(maxRetryAttempts))", level: .error)
                             try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
                             continue
                         }
                     case .unknownItem:
                         // Schema issue, ensure it exists and retry once
                         if retryCount == 1 {
-                            print("⚠️ Unknown record type, setting up schema and retrying")
+                            AppLog.shared.iCloudSync("Unknown record type, setting up schema and retrying", level: .error)
                             await setupCloudKitSchema()
                             continue
                         }
                     default:
                         if ckError.isRetryable && retryCount < maxRetryAttempts {
-                            print("⚠️ Retryable CloudKit error, attempt \(retryCount)/\(maxRetryAttempts): \(ckError.localizedDescription)")
+                            AppLog.shared.iCloudSync("Retryable CloudKit error, attempt \(retryCount)/\(maxRetryAttempts): \(ckError.localizedDescription)", level: .error)
                             try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
                             continue
                         }
                     }
                 }
                 
-                print("❌ Failed to sync summary after \(retryCount) attempts: \(error)")
+                AppLog.shared.iCloudSync("Failed to sync summary after \(retryCount) attempts: \(error.localizedDescription)", level: .error)
                 throw error
             }
         }
@@ -584,18 +584,18 @@ class iCloudStorageManager: ObservableObject {
         var existingRecord: CKRecord?
         do {
             existingRecord = try await database.record(for: recordID)
-            print("📥 Fetched existing record from server for conflict resolution")
+            AppLog.shared.iCloudSync("Fetched existing record from server for conflict resolution", level: .debug)
         } catch {
             if let ckError = error as? CKError {
                 switch ckError.code {
                 case .unknownItem:
                     // Record doesn't exist, create new one
-                    print("📝 Record doesn't exist, creating new record")
+                    AppLog.shared.iCloudSync("Record doesn't exist, creating new record", level: .debug)
                     let newRecord = try createCloudKitRecord(from: summary)
                     return try await database.save(newRecord)
                 case .invalidArguments:
                     // Schema issue, ensure schema exists and try creating new record
-                    print("🔧 Schema issue detected, ensuring schema and creating record")
+                    AppLog.shared.iCloudSync("Schema issue detected, ensuring schema and creating record", level: .error)
                     await setupCloudKitSchema()
                     let newRecord = try createCloudKitRecord(from: summary)
                     return try await database.save(newRecord)
@@ -609,14 +609,14 @@ class iCloudStorageManager: ObservableObject {
         
         if let existing = existingRecord {
             // Record exists, update it with our local data
-            print("🔄 Updating existing record with local changes")
+            AppLog.shared.iCloudSync("Updating existing record with local changes", level: .debug)
             updateCloudKitRecord(existing, from: summary)
             
             // Save the updated record
             return try await database.save(existing)
         } else {
             // Shouldn't reach here, but create new record as fallback
-            print("⚠️ Unexpected state, creating new record")
+            AppLog.shared.iCloudSync("Unexpected state, creating new record", level: .error)
             let newRecord = try createCloudKitRecord(from: summary)
             return try await database.save(newRecord)
         }
@@ -624,7 +624,7 @@ class iCloudStorageManager: ObservableObject {
     
     func syncAllSummaries(_ summaries: [EnhancedSummaryData]) async throws {
         guard isEnabled else {
-            print("⚠️ iCloud sync is disabled, skipping batch sync")
+            AppLog.shared.iCloudSync("iCloud sync is disabled, skipping batch sync", level: .debug)
             return
         }
 
@@ -633,7 +633,7 @@ class iCloudStorageManager: ObservableObject {
             self.pendingSyncCount = summaries.count
         }
 
-        print("🔄 Starting batch sync of \(summaries.count) summaries...")
+        AppLog.shared.iCloudSync("Starting batch sync of \(summaries.count) summaries", level: .debug)
 
         var syncedCount = 0
         var failedCount = 0
@@ -643,7 +643,7 @@ class iCloudStorageManager: ObservableObject {
                 try await syncSummary(summary)
                 syncedCount += 1
             } catch {
-                print("❌ Failed to sync summary \(summary.recordingName): \(error)")
+                AppLog.shared.iCloudSync("Failed to sync summary: \(error.localizedDescription)", level: .error)
                 failedCount += 1
             }
 
@@ -654,10 +654,10 @@ class iCloudStorageManager: ObservableObject {
 
         if failedCount == 0 {
             await updateSyncStatus(.completed)
-            print("✅ Successfully synced all \(syncedCount) summaries")
+            AppLog.shared.iCloudSync("Successfully synced all \(syncedCount) summaries")
         } else {
             await updateSyncStatus(.failed("Synced \(syncedCount), failed \(failedCount)"))
-            print("⚠️ Batch sync completed with errors: \(syncedCount) synced, \(failedCount) failed")
+            AppLog.shared.iCloudSync("Batch sync completed with errors: \(syncedCount) synced, \(failedCount) failed", level: .error)
         }
 
         await MainActor.run {
@@ -668,7 +668,7 @@ class iCloudStorageManager: ObservableObject {
     /// Convenience wrapper that loads all locally stored summaries and syncs them
     /// This should only be called manually or during initial setup
     func syncAllSummaries() async throws {
-        print("🔄 Manual full sync requested")
+        AppLog.shared.iCloudSync("Manual full sync requested")
         // Load summaries from the local store
         let allSummaries = SummaryManager.shared.enhancedSummaries
         try await syncAllSummaries(allSummaries)
@@ -676,7 +676,7 @@ class iCloudStorageManager: ObservableObject {
     
     /// Performs a one-time full sync for new installations or user request
     func performOneTimeFullSync() async throws {
-        print("🔄 Performing one-time full sync...")
+        AppLog.shared.iCloudSync("Performing one-time full sync")
         try await syncAllSummaries()
         
         // Mark that initial setup is complete
@@ -703,22 +703,22 @@ class iCloudStorageManager: ObservableObject {
             throw NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "CloudKit not initialized"])
         }
         
-        print("🗑️ Deleting summary from iCloud: \(summaryId)")
+        AppLog.shared.iCloudSync("Deleting summary from iCloud")
         
         let recordID = CKRecord.ID(recordName: summaryId.uuidString)
         
         do {
             try await database.deleteRecord(withID: recordID)
-            print("✅ Successfully deleted summary from iCloud")
+            AppLog.shared.iCloudSync("Successfully deleted summary from iCloud")
         } catch {
-            print("❌ Failed to delete summary from iCloud: \(error)")
+            AppLog.shared.iCloudSync("Failed to delete summary from iCloud: \(error.localizedDescription)", level: .error)
             throw error
         }
     }
     
     func fetchSummariesFromiCloud(forRecovery: Bool = false) async throws -> [EnhancedSummaryData] {
         guard forRecovery || isEnabled else {
-            print("⚠️ iCloud sync is disabled, returning empty array")
+            AppLog.shared.iCloudSync("iCloud sync is disabled, returning empty array", level: .debug)
             return []
         }
         
@@ -732,11 +732,11 @@ class iCloudStorageManager: ObservableObject {
         }
         
         guard networkStatus.canSync else {
-            print("⚠️ Network unavailable, cannot fetch from iCloud")
+            AppLog.shared.iCloudSync("Network unavailable, cannot fetch from iCloud", level: .error)
             throw NSError(domain: "iCloudStorageManager", code: 2, userInfo: [NSLocalizedDescriptionKey: "Network unavailable"])
         }
         
-        print("📥 Fetching summaries from iCloud...")
+        AppLog.shared.iCloudSync("Fetching summaries from iCloud")
         
         let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: NSPredicate(value: true))
         // Note: Removed sortDescriptors to avoid CloudKit queryable field issues
@@ -757,11 +757,11 @@ class iCloudStorageManager: ObservableObject {
                             summaries.append(summary)
                         }
                     case .failure(let error):
-                        print("❌ Failed to process record: \(error)")
+                        AppLog.shared.iCloudSync("Failed to process record: \(error.localizedDescription)", level: .error)
                     }
                 }
                 
-                print("✅ Fetched \(summaries.count) summaries from iCloud")
+                AppLog.shared.iCloudSync("Fetched \(summaries.count) summaries from iCloud", level: .debug)
                 return summaries
                 
             } catch {
@@ -772,15 +772,15 @@ class iCloudStorageManager: ObservableObject {
                         await setupCloudKitSchema()
                         return []
                     } else if ckError.isRetryable && retryCount < maxRetryAttempts {
-                        print("⚠️ Retryable error fetching from iCloud, attempt \(retryCount)/\(maxRetryAttempts): \(ckError.localizedDescription)")
+                        AppLog.shared.iCloudSync("Retryable error fetching from iCloud, attempt \(retryCount)/\(maxRetryAttempts): \(ckError.localizedDescription)", level: .error)
                         try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000))
                         continue
                     } else {
-                        print("❌ Failed to fetch summaries from iCloud after \(retryCount) attempts: \(error)")
+                        AppLog.shared.iCloudSync("Failed to fetch summaries from iCloud after \(retryCount) attempts: \(error.localizedDescription)", level: .error)
                         throw error
                     }
                 } else {
-                    print("❌ Failed to fetch summaries from iCloud after \(retryCount) attempts: \(error)")
+                    AppLog.shared.iCloudSync("Failed to fetch summaries from iCloud after \(retryCount) attempts: \(error.localizedDescription)", level: .error)
                     throw error
                 }
             }
@@ -792,7 +792,7 @@ class iCloudStorageManager: ObservableObject {
     
     func performBidirectionalSync(localSummaries: [EnhancedSummaryData]) async throws {
         guard isEnabled && networkStatus.canSync else {
-            print("⚠️ Cannot perform bidirectional sync - disabled or network unavailable")
+            AppLog.shared.iCloudSync("Cannot perform bidirectional sync - disabled or network unavailable", level: .error)
             return
         }
         
@@ -836,16 +836,16 @@ class iCloudStorageManager: ObservableObject {
                 if localLookup[cloudSummary.id] == nil {
                     // Cloud summary not local - would need to notify SummaryManager
                     // For now, just log it
-                    print("📥 Found cloud-only summary: \(cloudSummary.recordingName)")
+                    AppLog.shared.iCloudSync("Found cloud-only summary", level: .debug)
                 }
             }
             
             if conflictCount == 0 {
                 await updateSyncStatus(.completed)
-                print("✅ Bidirectional sync completed: \(syncedCount) synced")
+                AppLog.shared.iCloudSync("Bidirectional sync completed: \(syncedCount) synced")
             } else {
                 await updateSyncStatus(.failed("Synced \(syncedCount), \(conflictCount) conflicts pending"))
-                print("⚠️ Bidirectional sync completed with conflicts: \(syncedCount) synced, \(conflictCount) conflicts")
+                AppLog.shared.iCloudSync("Bidirectional sync completed with conflicts: \(syncedCount) synced, \(conflictCount) conflicts", level: .error)
             }
             
         } catch {
@@ -870,25 +870,25 @@ class iCloudStorageManager: ObservableObject {
         await updateSyncStatus(.syncing)
         
         do {
-            print("🔍 Starting download process (forRecovery: \(forRecovery))")
+            AppLog.shared.iCloudSync("Starting download process (forRecovery: \(forRecovery))")
 
             // Use the recovery-aware fetch method if this is for recovery, otherwise use the comprehensive method
             let cloudSummaries = forRecovery ?
                 try await fetchSummariesFromiCloud(forRecovery: true) :
                 try await fetchAllSummariesUsingRecordOperation(appCoordinator: appCoordinator)
 
-            print("📊 Found \(cloudSummaries.count) summaries in iCloud")
+            AppLog.shared.iCloudSync("Found \(cloudSummaries.count) summaries in iCloud", level: .debug)
 
             // Get local summary IDs from Core Data for comparison
             let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
             let localSummaryIds = Set(localSummaries.compactMap { $0.id })
 
-            print("📊 Found \(localSummaries.count) local summaries")
+            AppLog.shared.iCloudSync("Found \(localSummaries.count) local summaries", level: .debug)
 
             // Find cloud-only summaries
             let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
 
-            print("📥 Found \(cloudOnlySummaries.count) cloud summaries to download")
+            AppLog.shared.iCloudSync("Found \(cloudOnlySummaries.count) cloud summaries to download", level: .debug)
             
             var downloadedCount = 0
             for cloudSummary in cloudOnlySummaries {
@@ -897,15 +897,15 @@ class iCloudStorageManager: ObservableObject {
                     let didPersist = try await createCoreDataSummary(from: cloudSummary, appCoordinator: appCoordinator)
                     if didPersist {
                         downloadedCount += 1
-                        print("📥 Downloaded cloud summary: \(cloudSummary.recordingName)")
+                        AppLog.shared.iCloudSync("Downloaded cloud summary", level: .debug)
                     }
                 } catch {
-                    print("❌ Failed to create Core Data entry for cloud summary \(cloudSummary.recordingName): \(error)")
+                    AppLog.shared.iCloudSync("Failed to create Core Data entry for cloud summary: \(error.localizedDescription)", level: .error)
                 }
             }
             
             await updateSyncStatus(.completed)
-            print("✅ Downloaded \(downloadedCount) summaries from iCloud")
+            AppLog.shared.iCloudSync("Downloaded \(downloadedCount) summaries from iCloud")
             return downloadedCount
             
         } catch {
@@ -954,10 +954,10 @@ class iCloudStorageManager: ObservableObject {
                     let summary = try createEnhancedSummaryData(from: record)
                     summaries.append(summary)
                 } catch {
-                    print("❌ Failed to decode cloud summary: \(error)")
+                    AppLog.shared.iCloudSync("Failed to decode cloud summary: \(error.localizedDescription)", level: .error)
                 }
             case .failure(let error):
-                print("❌ Failed to fetch cloud summary record: \(error)")
+                AppLog.shared.iCloudSync("Failed to fetch cloud summary record: \(error.localizedDescription)", level: .error)
             }
         }
     }
@@ -977,54 +977,54 @@ class iCloudStorageManager: ObservableObject {
     func fetchAllSummariesUsingRecordOperation(appCoordinator: AppDataCoordinator? = nil) async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
         
-        print("🔍 Fetching all summaries using record discovery (schema-safe)")
-        print("🔍 Database: \(database.databaseScope == .public ? "Public" : "Private")")
-        print("🔍 Record type: \(CloudKitSummaryRecord.recordType)")
+        AppLog.shared.iCloudSync("Fetching all summaries using record discovery (schema-safe)", level: .debug)
+        AppLog.shared.iCloudSync("Database: \(database.databaseScope == .public ? "Public" : "Private")", level: .debug)
+        AppLog.shared.iCloudSync("Record type: \(CloudKitSummaryRecord.recordType)", level: .debug)
         
         var allSummaries: [EnhancedSummaryData] = []
         
         // Approach 1: UUID scanning + change tracking (most comprehensive)
         if let appCoordinator = appCoordinator {
             do {
-                print("🔍 Attempting UUID scanning + change tracking approach...")
+                AppLog.shared.iCloudSync("Attempting UUID scanning + change tracking approach", level: .debug)
                 let summaries = try await fetchSummariesByUUIDScanning(appCoordinator: appCoordinator)
                 allSummaries.append(contentsOf: summaries)
-                print("✅ UUID scanning + change tracking found \(summaries.count) summaries")
+                AppLog.shared.iCloudSync("UUID scanning + change tracking found \(summaries.count) summaries", level: .debug)
             } catch {
-                print("⚠️ UUID scanning + change tracking failed: \(error)")
+                AppLog.shared.iCloudSync("UUID scanning + change tracking failed: \(error.localizedDescription)", level: .error)
             }
         } else {
-            print("⚠️ No appCoordinator provided, trying direct zone changes approach...")
+            AppLog.shared.iCloudSync("No appCoordinator provided, trying direct zone changes approach", level: .debug)
         }
         
         // Approach 2: Brute force record scanning (works when change tracking fails)
         if allSummaries.isEmpty {
             do {
-                print("🔍 Attempting brute force record scanning...")
+                AppLog.shared.iCloudSync("Attempting brute force record scanning", level: .debug)
                 let scannedSummaries = try await bruteForceRecordDiscovery()
                 allSummaries.append(contentsOf: scannedSummaries)
-                print("✅ Brute force scanning found \(scannedSummaries.count) summaries")
+                AppLog.shared.iCloudSync("Brute force scanning found \(scannedSummaries.count) summaries", level: .debug)
             } catch {
-                print("⚠️ Brute force scanning failed: \(error)")
+                AppLog.shared.iCloudSync("Brute force scanning failed: \(error.localizedDescription)", level: .error)
             }
         }
         
         // Approach 2b: Direct zone changes (works without appCoordinator)
         if allSummaries.isEmpty {
             do {
-                print("🔍 Attempting direct zone changes approach...")
+                AppLog.shared.iCloudSync("Attempting direct zone changes approach", level: .debug)
                 let zoneSummaries = try await fetchRecordsUsingZoneChanges()
                 allSummaries.append(contentsOf: zoneSummaries)
-                print("✅ Direct zone changes found \(zoneSummaries.count) summaries")
+                AppLog.shared.iCloudSync("Direct zone changes found \(zoneSummaries.count) summaries", level: .debug)
             } catch {
-                print("⚠️ Direct zone changes failed: \(error)")
+                AppLog.shared.iCloudSync("Direct zone changes failed: \(error.localizedDescription)", level: .error)
             }
         }
         
         // Approach 3: Database changes + zone scanning (fallback)
         if allSummaries.isEmpty {
             do {
-                print("🔍 Attempting database changes + zone scanning...")
+                AppLog.shared.iCloudSync("Attempting database changes + zone scanning", level: .debug)
                 let changesOperation = CKFetchDatabaseChangesOperation(previousServerChangeToken: nil)
                 changesOperation.database = database
                 
@@ -1051,14 +1051,14 @@ class iCloudStorageManager: ObservableObject {
                         let zoneRecords = try await fetchRecordsFromZoneUsingChanges(zoneID)
                         allSummaries.append(contentsOf: zoneRecords)
                     } catch {
-                        print("⚠️ Failed to fetch from zone \(zoneID) using changes: \(error)")
+                        AppLog.shared.iCloudSync("Failed to fetch from zone using changes: \(error.localizedDescription)", level: .error)
                     }
                 }
                 
-                print("✅ Database changes + zone scanning found \(allSummaries.count) summaries")
-                
+                AppLog.shared.iCloudSync("Database changes + zone scanning found \(allSummaries.count) summaries", level: .debug)
+
             } catch {
-                print("⚠️ Database changes + zone scanning failed: \(error)")
+                AppLog.shared.iCloudSync("Database changes + zone scanning failed: \(error.localizedDescription)", level: .error)
             }
         }
         
@@ -1068,7 +1068,7 @@ class iCloudStorageManager: ObservableObject {
             .values
             .map { $0 }
         
-        print("🔍 Total unique summaries found: \(uniqueSummaries.count) (removed \(allSummaries.count - uniqueSummaries.count) duplicates)")
+        AppLog.shared.iCloudSync("Total unique summaries found: \(uniqueSummaries.count) (removed \(allSummaries.count - uniqueSummaries.count) duplicates)", level: .debug)
         
         return Array(uniqueSummaries)
     }
@@ -1078,11 +1078,11 @@ class iCloudStorageManager: ObservableObject {
     private func fetchSummariesByUUIDScanning(appCoordinator: AppDataCoordinator) async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
         
-        print("🔍 Scanning for summaries using UUID pattern matching...")
+        AppLog.shared.iCloudSync("Scanning for summaries using UUID pattern matching", level: .debug)
         
         // Get all summaries from Core Data to get their IDs
         let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
-        print("📱 Found \(localSummaries.count) local summaries to check")
+        AppLog.shared.iCloudSync("Found \(localSummaries.count) local summaries to check", level: .debug)
         
         var foundSummaries: [EnhancedSummaryData] = []
         var checkedUUIDs: Set<String> = Set()
@@ -1090,41 +1090,41 @@ class iCloudStorageManager: ObservableObject {
         // Phase 1: Try to fetch each local summary's CloudKit record
         for (index, localSummary) in localSummaries.enumerated() {
             guard let summaryId = localSummary.id else {
-                print("⚠️ Local summary \(index + 1) has no ID, skipping")
+                AppLog.shared.iCloudSync("Local summary \(index + 1) has no ID, skipping", level: .debug)
                 continue
             }
             
             let uuidString = summaryId.uuidString
-            print("🔍 Checking local summary \(index + 1)/\(localSummaries.count): \(uuidString)")
+            AppLog.shared.iCloudSync("Checking local summary \(index + 1)/\(localSummaries.count)", level: .debug)
             checkedUUIDs.insert(uuidString)
             
             do {
                 let recordID = CKRecord.ID(recordName: uuidString)
-                print("🔍 Attempting to fetch CloudKit record: \(recordID.recordName)")
+                AppLog.shared.iCloudSync("Attempting to fetch CloudKit record", level: .debug)
                 
                 let record = try await database.record(for: recordID)
-                print("✅ Successfully fetched CloudKit record: \(record.recordID)")
+                AppLog.shared.iCloudSync("Successfully fetched CloudKit record", level: .debug)
                 
                 // Verify this is actually a summary record before processing
                 guard record.recordType == CloudKitSummaryRecord.recordType else {
-                    print("⚠️ Found non-summary record for local summary: \(summaryId) (type: \(record.recordType))")
+                    AppLog.shared.iCloudSync("Found non-summary record type: \(record.recordType)", level: .debug)
                     continue
                 }
                 
                 // Convert to EnhancedSummaryData
                 let summary = try createEnhancedSummaryData(from: record)
                 foundSummaries.append(summary)
-                print("✅ Successfully converted CloudKit record for local summary: \(summary.recordingName)")
+                AppLog.shared.iCloudSync("Successfully converted CloudKit record for local summary", level: .debug)
                 
             } catch {
                 // This summary doesn't exist in CloudKit, which is fine
-                print("ℹ️ No CloudKit record found for local summary: \(uuidString) - \(error.localizedDescription)")
+                AppLog.shared.iCloudSync("No CloudKit record found for local summary: \(error.localizedDescription)", level: .debug)
             }
         }
         
         // Phase 2: Try to find cloud-only summaries using change tracking
         // This will help us discover CloudKit records that don't have local counterparts
-        print("🔍 Phase 2: Looking for cloud-only summaries using change tracking...")
+        AppLog.shared.iCloudSync("Phase 2: Looking for cloud-only summaries using change tracking", level: .debug)
         
         do {
             let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
@@ -1141,10 +1141,10 @@ class iCloudStorageManager: ObservableObject {
                     if record.recordType == CloudKitSummaryRecord.recordType && 
                        !checkedUUIDs.contains(record.recordID.recordName) {
                         cloudOnlyRecords.append(record)
-                        print("🆕 Found potential cloud-only record: \(record.recordID.recordName)")
+                        AppLog.shared.iCloudSync("Found potential cloud-only record", level: .debug)
                     }
                 case .failure(let error):
-                    print("⚠️ Failed to fetch cloud-only record \(recordID): \(error)")
+                    AppLog.shared.iCloudSync("Failed to fetch cloud-only record: \(error.localizedDescription)", level: .error)
                 }
             }
             
@@ -1160,19 +1160,19 @@ class iCloudStorageManager: ObservableObject {
                 do {
                     let summary = try createEnhancedSummaryData(from: record)
                     foundSummaries.append(summary)
-                    print("✅ Successfully converted cloud-only record: \(summary.recordingName)")
+                    AppLog.shared.iCloudSync("Successfully converted cloud-only record", level: .debug)
                 } catch {
-                    print("❌ Failed to convert cloud-only record \(record.recordID): \(error)")
+                    AppLog.shared.iCloudSync("Failed to convert cloud-only record: \(error.localizedDescription)", level: .error)
                 }
             }
             
-            print("🔍 Change tracking found \(cloudOnlyRecords.count) cloud-only records")
-            
+            AppLog.shared.iCloudSync("Change tracking found \(cloudOnlyRecords.count) cloud-only records", level: .debug)
+
         } catch {
-            print("⚠️ Change tracking failed: \(error)")
+            AppLog.shared.iCloudSync("Change tracking failed: \(error.localizedDescription)", level: .error)
         }
         
-        print("🔍 UUID scanning + change tracking found \(foundSummaries.count) total summaries")
+        AppLog.shared.iCloudSync("UUID scanning + change tracking found \(foundSummaries.count) total summaries", level: .debug)
         return foundSummaries
     }
     
@@ -1184,21 +1184,21 @@ class iCloudStorageManager: ObservableObject {
     private func bruteForceRecordDiscovery() async throws -> [EnhancedSummaryData] {
         guard database != nil else { return [] }
         
-        print("🔍 Starting brute force record discovery...")
+        AppLog.shared.iCloudSync("Starting brute force record discovery", level: .debug)
         var foundSummaries: [EnhancedSummaryData] = []
         
         // Removed approach with hardcoded record IDs - not scalable or maintainable
         
         // Approach 2: Try with CKFetchRecordZoneChangesOperation but with specific configuration
         do {
-            print("🔍 Trying configured zone changes...")
+            AppLog.shared.iCloudSync("Trying configured zone changes", level: .debug)
             let summaries = try await fetchRecordsWithSpecificConfiguration()
             foundSummaries.append(contentsOf: summaries)
         } catch {
-            print("⚠️ Configured zone changes failed: \(error)")
+            AppLog.shared.iCloudSync("Configured zone changes failed: \(error.localizedDescription)", level: .error)
         }
         
-        print("🔍 Brute force discovery found \(foundSummaries.count) summaries")
+        AppLog.shared.iCloudSync("Brute force discovery found \(foundSummaries.count) summaries", level: .debug)
         return foundSummaries
     }
     
@@ -1208,7 +1208,7 @@ class iCloudStorageManager: ObservableObject {
     private func fetchRecordsWithSpecificConfiguration() async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
         
-        print("🔍 Using specific configuration for zone changes...")
+        AppLog.shared.iCloudSync("Using specific configuration for zone changes", level: .debug)
         
         // Try with a specific configuration that might work better
         let configuration = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
@@ -1230,10 +1230,10 @@ class iCloudStorageManager: ObservableObject {
             case .success(let record):
                 if record.recordType == CloudKitSummaryRecord.recordType {
                     foundRecords.append(record)
-                    print("📝 Configured fetch found record: \(record.recordID.recordName)")
+                    AppLog.shared.iCloudSync("Configured fetch found record", level: .debug)
                 }
             case .failure(let error):
-                print("⚠️ Failed to fetch record \(recordID) with configuration: \(error)")
+                AppLog.shared.iCloudSync("Failed to fetch record with configuration: \(error.localizedDescription)", level: .error)
             }
         }
         
@@ -1251,7 +1251,7 @@ class iCloudStorageManager: ObservableObject {
                 let summary = try createEnhancedSummaryData(from: record)
                 summaries.append(summary)
             } catch {
-                print("❌ Failed to convert configured record \(record.recordID): \(error)")
+                AppLog.shared.iCloudSync("Failed to convert configured record: \(error.localizedDescription)", level: .error)
             }
         }
         
@@ -1262,7 +1262,7 @@ class iCloudStorageManager: ObservableObject {
     private func fetchRecordsUsingZoneChanges() async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
         
-        print("🔍 Using direct zone changes to find all records...")
+        AppLog.shared.iCloudSync("Using direct zone changes to find all records", level: .debug)
         
         let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
             recordZoneIDs: [CKRecordZone.default().zoneID], 
@@ -1276,20 +1276,20 @@ class iCloudStorageManager: ObservableObject {
             case .success(let record):
                 if record.recordType == CloudKitSummaryRecord.recordType {
                     foundRecords.append(record)
-                    print("📝 Found record: \(record.recordID.recordName)")
+                    AppLog.shared.iCloudSync("Found record via direct zone changes", level: .debug)
                 }
             case .failure(let error):
-                print("⚠️ Failed to fetch record \(recordID): \(error)")
+                AppLog.shared.iCloudSync("Failed to fetch record: \(error.localizedDescription)", level: .error)
             }
         }
-        
+
         _ = try await withCheckedThrowingContinuation { continuation in
             zoneChangesOperation.fetchRecordZoneChangesResultBlock = { result in
                 continuation.resume(with: result)
             }
             database.add(zoneChangesOperation)
         }
-        
+
         // Convert records to summaries
         var summaries: [EnhancedSummaryData] = []
         for record in foundRecords {
@@ -1297,11 +1297,11 @@ class iCloudStorageManager: ObservableObject {
                 let summary = try createEnhancedSummaryData(from: record)
                 summaries.append(summary)
             } catch {
-                print("❌ Failed to convert record \(record.recordID): \(error)")
+                AppLog.shared.iCloudSync("Failed to convert record: \(error.localizedDescription)", level: .error)
             }
         }
-        
-        print("✅ Direct zone changes found \(summaries.count) summaries")
+
+        AppLog.shared.iCloudSync("Direct zone changes found \(summaries.count) summaries", level: .debug)
         return summaries
     }
     
@@ -1309,7 +1309,7 @@ class iCloudStorageManager: ObservableObject {
     private func fetchRecordsFromZoneUsingChanges(_ zoneID: CKRecordZone.ID) async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
         
-        print("🔍 Fetching records from zone \(zoneID) using changes operation...")
+        AppLog.shared.iCloudSync("Fetching records from zone using changes operation", level: .debug)
         
         let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
             recordZoneIDs: [zoneID], 
@@ -1323,10 +1323,10 @@ class iCloudStorageManager: ObservableObject {
             case .success(let record):
                 if record.recordType == CloudKitSummaryRecord.recordType {
                     foundRecords.append(record)
-                    print("📝 Found record in zone \(zoneID): \(record.recordID.recordName)")
+                    AppLog.shared.iCloudSync("Found record in zone", level: .debug)
                 }
             case .failure(let error):
-                print("⚠️ Failed to fetch record \(recordID) in zone \(zoneID): \(error)")
+                AppLog.shared.iCloudSync("Failed to fetch record in zone: \(error.localizedDescription)", level: .error)
             }
         }
         
@@ -1344,11 +1344,11 @@ class iCloudStorageManager: ObservableObject {
                 let summary = try createEnhancedSummaryData(from: record)
                 summaries.append(summary)
             } catch {
-                print("❌ Failed to convert record \(record.recordID): \(error)")
+                AppLog.shared.iCloudSync("Failed to convert record: \(error.localizedDescription)", level: .error)
             }
         }
-        
-        print("✅ Zone changes found \(summaries.count) summaries in zone \(zoneID)")
+
+        AppLog.shared.iCloudSync("Zone changes found \(summaries.count) summaries in zone", level: .debug)
         return summaries
     }
     
@@ -1357,7 +1357,7 @@ class iCloudStorageManager: ObservableObject {
     private func fetchRecordsFromZoneByScanning(_ zoneID: CKRecordZone.ID) async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
         
-        print("🔍 Scanning zone \(zoneID) for existing records...")
+        AppLog.shared.iCloudSync("Scanning zone for existing records", level: .debug)
         
         var foundRecords: [CKRecord] = []
         
@@ -1377,12 +1377,12 @@ class iCloudStorageManager: ObservableObject {
                 case .success(let record):
                     foundRecords.append(record)
                 case .failure(let error):
-                    print("⚠️ Record fetch error: \(error)")
+                    AppLog.shared.iCloudSync("Record fetch error: \(error.localizedDescription)", level: .error)
                 }
             }
-            
+
         } catch {
-            print("⚠️ Zone query failed: \(error)")
+            AppLog.shared.iCloudSync("Zone query failed: \(error.localizedDescription)", level: .error)
         }
         
         // If we found some records, try to fetch more with a larger limit
@@ -1397,16 +1397,16 @@ class iCloudStorageManager: ObservableObject {
                     case .success(let record):
                         foundRecords.append(record)
                     case .failure(let error):
-                        print("⚠️ Record fetch error: \(error)")
+                        AppLog.shared.iCloudSync("Record fetch error: \(error.localizedDescription)", level: .error)
                     }
                 }
-                
+
             } catch {
-                print("⚠️ Extended zone query failed: \(error)")
+                AppLog.shared.iCloudSync("Extended zone query failed: \(error.localizedDescription)", level: .error)
             }
         }
         
-        print("📥 Found \(foundRecords.count) records in zone \(zoneID)")
+        AppLog.shared.iCloudSync("Found \(foundRecords.count) records in zone", level: .debug)
         
         // Convert records to summaries
         var summaries: [EnhancedSummaryData] = []
@@ -1415,7 +1415,7 @@ class iCloudStorageManager: ObservableObject {
                 let summary = try createEnhancedSummaryData(from: record)
                 summaries.append(summary)
             } catch {
-                print("❌ Failed to decode record \(record.recordID): \(error)")
+                AppLog.shared.iCloudSync("Failed to decode record: \(error.localizedDescription)", level: .error)
             }
         }
         
@@ -1451,13 +1451,13 @@ class iCloudStorageManager: ObservableObject {
 
             if summaryId != nil {
                 didPersist = true
-                print("✅ Created linked Core Data entry for cloud summary: \(cloudSummary.recordingName)")
+                AppLog.shared.iCloudSync("Created linked Core Data entry for cloud summary")
             } else {
-                print("⚠️ addSummary returned nil for cloud summary: \(cloudSummary.recordingName)")
+                AppLog.shared.iCloudSync("addSummary returned nil for cloud summary", level: .error)
             }
         } else {
             // Create orphaned summary entry (similar to "summary-only recordings")
-            print("📥 Creating orphaned Core Data summary entry (no local recording/transcript): \(cloudSummary.recordingName)")
+            AppLog.shared.iCloudSync("Creating orphaned Core Data summary entry (no local recording/transcript)", level: .debug)
             try await createOrphanedSummaryEntry(cloudSummary, appCoordinator: appCoordinator)
             didPersist = true
         }
@@ -1530,7 +1530,7 @@ class iCloudStorageManager: ObservableObject {
         // Save to Core Data
         try context.save()
         
-        print("✅ Created orphaned Core Data summary entry: \(cloudSummary.recordingName)")
+        AppLog.shared.iCloudSync("Created orphaned Core Data summary entry")
     }
     
     // MARK: - Conflict Resolution Methods
@@ -1698,13 +1698,13 @@ class iCloudStorageManager: ObservableObject {
             let result = try await backupAllDataToiCloud(appCoordinator: appCoordinator, options: options)
             if !result.wasSkippedNoChanges {
                 lastAutoBackupDate = Date()
-                print("☁️ Auto-backup complete: \(result.recordingsBackedUp) recordings, \(result.transcriptsBackedUp) transcripts, \(result.summariesBackedUp) summaries")
+                AppLog.shared.iCloudSync("Auto-backup complete: \(result.recordingsBackedUp) recordings, \(result.transcriptsBackedUp) transcripts, \(result.summariesBackedUp) summaries")
             } else {
                 // Still update the timestamp to avoid retrying immediately
                 lastAutoBackupDate = Date()
             }
         } catch {
-            print("⚠️ Auto-backup failed (will retry on next data change): \(error.localizedDescription)")
+            AppLog.shared.iCloudSync("Auto-backup failed (will retry on next data change): \(error.localizedDescription)", level: .error)
         }
     }
 
@@ -1765,16 +1765,16 @@ class iCloudStorageManager: ObservableObject {
         case .changesOnly:
             // Use verbose logging instead of regular print to reduce console noise
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                print("⏭️ Skipping full periodic sync - only syncing changes as they occur")
+                AppLog.shared.iCloudSync("Skipping full periodic sync - only syncing changes as they occur", level: .debug)
             }
             // Only sync summaries that have been queued for sync
             if !pendingSyncQueue.isEmpty {
-                print("🔄 Syncing queued changes (\(pendingSyncQueue.count) items)...")
+                AppLog.shared.iCloudSync("Syncing queued changes (\(pendingSyncQueue.count) items)", level: .debug)
                 await performBatchSync()
             }
             return
         case .periodic:
-            print("🔄 Performing full periodic sync (legacy mode)...")
+            AppLog.shared.iCloudSync("Performing full periodic sync (legacy mode)")
             // Fall through to existing behavior
         }
         
@@ -1782,7 +1782,7 @@ class iCloudStorageManager: ObservableObject {
             // Perform battery-aware sync (only in periodic mode)
             try await performBatteryAwareSync()
         } catch {
-            print("❌ Periodic sync failed: \(error)")
+            AppLog.shared.iCloudSync("Periodic sync failed: \(error.localizedDescription)", level: .error)
             await updateSyncStatus(.failed(error.localizedDescription))
         }
     }
@@ -1813,7 +1813,7 @@ class iCloudStorageManager: ObservableObject {
     private func performBatteryAwareSync() async throws {
         // Apply battery-aware network settings
         if performanceOptimizer.batteryInfo.shouldOptimizeForBattery {
-            print("🔋 Using battery-optimized sync settings")
+            AppLog.shared.iCloudSync("Using battery-optimized sync settings", level: .debug)
             
             // Use smaller batch sizes for battery optimization
             let batchSize = 5 // Reduced from default
@@ -1826,7 +1826,7 @@ class iCloudStorageManager: ObservableObject {
     
     private func syncSummariesInBatches(batchSize: Int) async throws {
         // Implementation for batch-based sync to reduce network usage
-        print("📦 Syncing summaries in batches of \(batchSize)")
+        AppLog.shared.iCloudSync("Syncing summaries in batches of \(batchSize)", level: .debug)
         
         // This would implement batch processing for network efficiency
         // For now, just call the standard sync
@@ -1868,7 +1868,7 @@ class iCloudStorageManager: ObservableObject {
             _ = try await database.save(tempRecord)
             try await database.deleteRecord(withID: tempID)
         } catch {
-            print("⚠️ Failed to set up CloudKit schema: \(error)")
+            AppLog.shared.iCloudSync("Failed to set up CloudKit schema: \(error.localizedDescription)", level: .error)
         }
     }
     
@@ -1911,7 +1911,7 @@ class iCloudStorageManager: ObservableObject {
             let titlesData = try JSONEncoder().encode(summary.titles)
             record[CloudKitSummaryRecord.titlesField] = titlesData
         } catch {
-            print("❌ Failed to encode complex objects: \(error)")
+            AppLog.shared.iCloudSync("Failed to encode complex objects: \(error.localizedDescription)", level: .error)
             throw error
         }
         
@@ -1950,7 +1950,7 @@ class iCloudStorageManager: ObservableObject {
             let titlesData = try JSONEncoder().encode(summary.titles)
             record[CloudKitSummaryRecord.titlesField] = titlesData
         } catch {
-            print("❌ Failed to encode complex objects during update: \(error)")
+            AppLog.shared.iCloudSync("Failed to encode complex objects during update: \(error.localizedDescription)", level: .error)
         }
     }
     
@@ -2050,13 +2050,13 @@ class iCloudStorageManager: ObservableObject {
     
     /// Manually triggers a sync of all pending summaries (useful for testing)
     func triggerManualSync() async {
-        print("🔧 Manual sync triggered")
+        AppLog.shared.iCloudSync("Manual sync triggered")
         await performBatchSync()
     }
     
     /// Tests CloudKit fetch functionality (useful for debugging)
     func testCloudKitFetch() async -> String {
-        print("🧪 Testing CloudKit fetch functionality...")
+        AppLog.shared.iCloudSync("Testing CloudKit fetch functionality", level: .debug)
         
         do {
             let summaries = try await fetchAllSummariesUsingRecordOperation(appCoordinator: nil)
@@ -2222,19 +2222,19 @@ class iCloudStorageManager: ObservableObject {
         
         await updateSyncStatus(.syncing)
         
-        print("🧹 Starting FULL CloudKit reset and fresh sync...")
-        print("⚠️ This will DELETE ALL summaries from CloudKit and upload fresh copies")
+        AppLog.shared.iCloudSync("Starting FULL CloudKit reset and fresh sync")
+        AppLog.shared.iCloudSync("This will DELETE ALL summaries from CloudKit and upload fresh copies")
         
         var deletedCount = 0
         var uploadedCount = 0
         
         do {
             // Step 1: Find and delete ALL CloudKit summary records
-            print("📤 Step 1: Deleting ALL CloudKit summary records...")
+            AppLog.shared.iCloudSync("Step 1: Deleting ALL CloudKit summary records")
             deletedCount = try await deleteAllCloudKitSummaries()
             
             // Step 2: Upload all current Core Data summaries
-            print("📥 Step 2: Uploading all Core Data summaries...")
+            AppLog.shared.iCloudSync("Step 2: Uploading all Core Data summaries")
             let localSummaries = appCoordinator.getAllSummaries()
             
             for localSummary in localSummaries {
@@ -2243,20 +2243,20 @@ class iCloudStorageManager: ObservableObject {
                     do {
                         try await performIndividualSync(enhancedSummary)
                         uploadedCount += 1
-                        print("✅ Uploaded summary: \(enhancedSummary.recordingName)")
+                        AppLog.shared.iCloudSync("Uploaded summary", level: .debug)
                     } catch {
-                        print("❌ Failed to upload summary \(enhancedSummary.recordingName): \(error)")
+                        AppLog.shared.iCloudSync("Failed to upload summary: \(error.localizedDescription)", level: .error)
                     }
                 }
             }
             
             await updateSyncStatus(.completed)
-            print("✅ CloudKit reset and sync complete: deleted \(deletedCount), uploaded \(uploadedCount)")
+            AppLog.shared.iCloudSync("CloudKit reset and sync complete: deleted \(deletedCount), uploaded \(uploadedCount)")
             return (deleted: deletedCount, uploaded: uploadedCount)
             
         } catch {
             await updateSyncStatus(.failed(error.localizedDescription))
-            print("❌ CloudKit reset and sync failed: \(error)")
+            AppLog.shared.iCloudSync("CloudKit reset and sync failed: \(error.localizedDescription)", level: .error)
             throw error
         }
     }
@@ -2265,7 +2265,7 @@ class iCloudStorageManager: ObservableObject {
     private func deleteAllCloudKitSummaries() async throws -> Int {
         guard let database = database else { return 0 }
         
-        print("🗑️ Finding all CloudKit summary records for deletion...")
+        AppLog.shared.iCloudSync("Finding all CloudKit summary records for deletion")
         
         var deletedCount = 0
         
@@ -2282,10 +2282,10 @@ class iCloudStorageManager: ObservableObject {
             case .success(let record):
                 if record.recordType == CloudKitSummaryRecord.recordType {
                     recordsToDelete.append(record.recordID)
-                    print("📝 Found CloudKit summary record to delete: \(record.recordID.recordName)")
+                    AppLog.shared.iCloudSync("Found CloudKit summary record to delete", level: .debug)
                 }
             case .failure(let error):
-                print("⚠️ Failed to fetch record \(recordID): \(error)")
+                AppLog.shared.iCloudSync("Failed to fetch record for deletion: \(error.localizedDescription)", level: .error)
             }
         }
         
@@ -2297,24 +2297,24 @@ class iCloudStorageManager: ObservableObject {
         }
         
         // Delete all found records
-        print("🗑️ Deleting \(recordsToDelete.count) CloudKit summary records...")
+        AppLog.shared.iCloudSync("Deleting \(recordsToDelete.count) CloudKit summary records")
         
         for recordID in recordsToDelete {
             do {
                 try await database.deleteRecord(withID: recordID)
                 deletedCount += 1
-                print("✅ Deleted CloudKit record: \(recordID.recordName)")
+                AppLog.shared.iCloudSync("Deleted CloudKit record", level: .debug)
             } catch {
                 if let ckError = error as? CKError, ckError.code == .unknownItem {
-                    print("ℹ️ Record already deleted: \(recordID.recordName)")
+                    AppLog.shared.iCloudSync("Record already deleted", level: .debug)
                     deletedCount += 1 // Count as deleted since it's gone
                 } else {
-                    print("❌ Failed to delete record \(recordID.recordName): \(error)")
+                    AppLog.shared.iCloudSync("Failed to delete record: \(error.localizedDescription)", level: .error)
                 }
             }
         }
-        
-        print("✅ Deleted \(deletedCount) CloudKit summary records")
+
+        AppLog.shared.iCloudSync("Deleted \(deletedCount) CloudKit summary records")
         return deletedCount
     }
     
@@ -2631,7 +2631,7 @@ extension iCloudStorageManager {
         do {
             let bundleIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
             let containerIdentifier = container.containerIdentifier ?? "default"
-            print("☁️ Backup context - bundle: \(bundleIdentifier), container: \(containerIdentifier)")
+            AppLog.shared.iCloudSync("Backup context - bundle: \(bundleIdentifier), container: \(containerIdentifier)", level: .debug)
 
             try await validateiCloudAccountAvailability(using: container)
             await MainActor.run {
@@ -2650,9 +2650,10 @@ extension iCloudStorageManager {
             let recordings = appCoordinator.coreDataManager.getAllRecordings()
             let transcripts = appCoordinator.coreDataManager.getAllTranscripts()
             let summaries = appCoordinator.coreDataManager.getAllSummaries()
-            print(
-                "☁️ Backup source counts - recordings: \(recordings.count), " +
-                "transcripts: \(transcripts.count), summaries: \(summaries.count)"
+            AppLog.shared.iCloudSync(
+                "Backup source counts - recordings: \(recordings.count), " +
+                "transcripts: \(transcripts.count), summaries: \(summaries.count)",
+                level: .debug
             )
 
             let idFixup = try ensureBackupIdentifiers(
@@ -2661,9 +2662,10 @@ extension iCloudStorageManager {
                 summaries: summaries
             )
             if idFixup.totalAssigned > 0 {
-                print(
-                    "🔧 Assigned missing backup IDs - recordings: \(idFixup.recordingsAssigned), " +
-                    "transcripts: \(idFixup.transcriptsAssigned), summaries: \(idFixup.summariesAssigned)"
+                AppLog.shared.iCloudSync(
+                    "Assigned missing backup IDs - recordings: \(idFixup.recordingsAssigned), " +
+                    "transcripts: \(idFixup.transcriptsAssigned), summaries: \(idFixup.summariesAssigned)",
+                    level: .debug
                 )
             }
 
@@ -2686,8 +2688,8 @@ extension iCloudStorageManager {
                     }
                     return result
                 } else {
-                    print(
-                        "⚠️ Local backup signature matched but cloud content backup is empty. " +
+                    AppLog.shared.iCloudSync(
+                        "Local backup signature matched but cloud content backup is empty. " +
                         "Forcing full upload to seed this CloudKit environment."
                     )
                 }
@@ -2823,7 +2825,7 @@ extension iCloudStorageManager {
             )
             if !transcriptResolution.loserRecordIDs.isEmpty {
                 try await deleteBackupRecords(transcriptResolution.loserRecordIDs, database: database)
-                print("🧹 Removed \(transcriptResolution.loserRecordIDs.count) older transcript backup records")
+                AppLog.shared.iCloudSync("Removed \(transcriptResolution.loserRecordIDs.count) older transcript backup records", level: .debug)
             }
             transcriptRecordNames = Set(transcriptResolution.keptRecords.map { $0.recordID.recordName })
 
@@ -2894,7 +2896,7 @@ extension iCloudStorageManager {
             )
             if !summaryResolution.loserRecordIDs.isEmpty {
                 try await deleteBackupRecords(summaryResolution.loserRecordIDs, database: database)
-                print("🧹 Removed \(summaryResolution.loserRecordIDs.count) older summary backup records")
+                AppLog.shared.iCloudSync("Removed \(summaryResolution.loserRecordIDs.count) older summary backup records", level: .debug)
             }
             summaryRecordNames = Set(summaryResolution.keptRecords.map { $0.recordID.recordName })
 
@@ -2918,12 +2920,13 @@ extension iCloudStorageManager {
             let cloudRecordingCount = indexedCloudRecords.recordings.count
             let cloudTranscriptCount = indexedCloudRecords.transcripts.count
             let cloudSummaryCount = indexedCloudRecords.summaries.count
-            print(
-                "☁️ Backup write summary - processed [recordings: \(result.recordingsBackedUp), " +
+            AppLog.shared.iCloudSync(
+                "Backup write summary - processed [recordings: \(result.recordingsBackedUp), " +
                 "transcripts: \(result.transcriptsBackedUp), summaries: \(result.summariesBackedUp)], " +
                 "saved this run [recordings: \(recordingRecordsSaved), transcripts: \(transcriptRecordsSaved), " +
                 "summaries: \(summaryRecordsSaved)], cloud now [recordings: \(cloudRecordingCount), " +
-                "transcripts: \(cloudTranscriptCount), summaries: \(cloudSummaryCount)]"
+                "transcripts: \(cloudTranscriptCount), summaries: \(cloudSummaryCount)]",
+                level: .debug
             )
 
             await MainActor.run {
@@ -2965,7 +2968,7 @@ extension iCloudStorageManager {
         do {
             let bundleIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
             let containerIdentifier = container.containerIdentifier ?? "default"
-            print("☁️ Restore context - bundle: \(bundleIdentifier), container: \(containerIdentifier)")
+            AppLog.shared.iCloudSync("Restore context - bundle: \(bundleIdentifier), container: \(containerIdentifier)", level: .debug)
 
             try await validateiCloudAccountAvailability(using: container)
             await MainActor.run {
@@ -2998,16 +3001,18 @@ extension iCloudStorageManager {
                     recordingRecords = indexedRecords.recordings
                     transcriptRecords = indexedRecords.transcripts
                     summaryRecords = indexedRecords.summaries
-                    print(
-                        "☁️ Restore fallback via content index - recordings: \(recordingRecords.count), " +
-                        "transcripts: \(transcriptRecords.count), summaries: \(summaryRecords.count)"
+                    AppLog.shared.iCloudSync(
+                        "Restore fallback via content index - recordings: \(recordingRecords.count), " +
+                        "transcripts: \(transcriptRecords.count), summaries: \(summaryRecords.count)",
+                        level: .debug
                     )
                 }
             }
 
-            print(
-                "☁️ Backup restore candidates - recordings: \(recordingRecords.count), " +
-                "transcripts: \(transcriptRecords.count), summaries: \(summaryRecords.count)"
+            AppLog.shared.iCloudSync(
+                "Backup restore candidates - recordings: \(recordingRecords.count), " +
+                "transcripts: \(transcriptRecords.count), summaries: \(summaryRecords.count)",
+                level: .debug
             )
 
             // Resolve duplicate transcript/summary records for the same recording by timestamp.
@@ -3017,9 +3022,10 @@ extension iCloudStorageManager {
                 timestampKeys: [Self.fieldLastModified, Self.fieldCreatedAt]
             )
             if transcriptResolution.keptRecords.count != transcriptRecords.count {
-                print(
-                    "🧭 Restore selected newest transcript per recording; " +
-                    "ignored \(transcriptRecords.count - transcriptResolution.keptRecords.count) older records"
+                AppLog.shared.iCloudSync(
+                    "Restore selected newest transcript per recording; " +
+                    "ignored \(transcriptRecords.count - transcriptResolution.keptRecords.count) older records",
+                    level: .debug
                 )
             }
             transcriptRecords = transcriptResolution.keptRecords
@@ -3030,9 +3036,10 @@ extension iCloudStorageManager {
                 timestampKeys: [Self.fieldLastModified, Self.fieldGeneratedAt, Self.fieldCreatedAt]
             )
             if summaryResolution.keptRecords.count != summaryRecords.count {
-                print(
-                    "🧭 Restore selected newest summary per recording; " +
-                    "ignored \(summaryRecords.count - summaryResolution.keptRecords.count) older records"
+                AppLog.shared.iCloudSync(
+                    "Restore selected newest summary per recording; " +
+                    "ignored \(summaryRecords.count - summaryResolution.keptRecords.count) older records",
+                    level: .debug
                 )
             }
             summaryRecords = summaryResolution.keptRecords
@@ -3280,7 +3287,7 @@ extension iCloudStorageManager {
         do {
             cloudSummaries = try await fetchAllSummariesFromCloud(using: database)
         } catch {
-            print("☁️ Query threw error (\(error.localizedDescription)), trying schema-safe record discovery...")
+            AppLog.shared.iCloudSync("Query threw error (\(error.localizedDescription)), trying schema-safe record discovery", level: .error)
             cloudSummaries = []
         }
 
@@ -3293,7 +3300,7 @@ extension iCloudStorageManager {
             if self.database == nil {
                 self.database = database
             }
-            print("☁️ Query returned 0 summaries, trying schema-safe record discovery...")
+            AppLog.shared.iCloudSync("Query returned 0 summaries, trying schema-safe record discovery", level: .debug)
             cloudSummaries = (try? await fetchAllSummariesUsingRecordOperation(appCoordinator: appCoordinator)) ?? []
         }
 
@@ -3314,7 +3321,7 @@ extension iCloudStorageManager {
         }
 
         if restoredCount > 0 {
-            print("☁️ Restored \(restoredCount) summaries from CloudKit summary sync records")
+            AppLog.shared.iCloudSync("Restored \(restoredCount) summaries from CloudKit summary sync records")
         }
 
         return restoredCount
@@ -4033,7 +4040,7 @@ extension iCloudStorageManager {
 
                 let shouldRetry = ckError.isRetryable && attempt < maxRetryAttempts
                 guard shouldRetry else {
-                    print("❌ CloudKit save failed for \(record.recordID.recordName): \(ckError.localizedDescription)")
+                    AppLog.shared.iCloudSync("CloudKit save failed: \(ckError.localizedDescription)", level: .error)
                     throw ckError
                 }
 
@@ -4041,9 +4048,10 @@ extension iCloudStorageManager {
                     ckError.suggestedRetryAfterSeconds ?? (retryDelay * Double(attempt)),
                     0.5
                 )
-                print(
-                    "⚠️ CloudKit save retry \(attempt)/\(maxRetryAttempts) for \(record.recordID.recordName) " +
-                    "in \(String(format: "%.1f", delaySeconds))s: \(ckError.localizedDescription)"
+                AppLog.shared.iCloudSync(
+                    "CloudKit save retry \(attempt)/\(maxRetryAttempts) " +
+                    "in \(String(format: "%.1f", delaySeconds))s: \(ckError.localizedDescription)",
+                    level: .error
                 )
                 try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
             } catch {

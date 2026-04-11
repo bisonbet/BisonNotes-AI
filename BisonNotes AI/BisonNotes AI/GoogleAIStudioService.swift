@@ -12,7 +12,7 @@ import SwiftUI
 // MARK: - Google AI Studio Service
 
 class GoogleAIStudioService: ObservableObject {
-    private let logger = Logger(subsystem: "com.audiojournal.app", category: "GoogleAIStudio")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "GoogleAIStudio")
     
     @AppStorage("googleAIStudioAPIKey") private var apiKey: String = ""
     @AppStorage("googleAIStudioModel") private var selectedModel: String = "gemini-3-flash-preview"
@@ -266,33 +266,39 @@ class GoogleAIStudioService: ObservableObject {
         \(text)
         
         Please provide:
-        1. A concise summary using proper Markdown formatting (aim for 15-20% of the original transcript length):
+        1. A comprehensive summary using proper Markdown formatting (aim for 15-20% of the original transcript length):
            - Use **bold** for key points and important information
            - Use *italic* for emphasis
            - Use ## headers for main sections
            - Use ### subheaders for subsections
            - Use • bullet points for lists
-           - Use > blockquotes for important statements
-           - Keep the summary well-structured and informative
-           - Focus on the most essential points and key takeaways
-           - Be concise while maintaining completeness of important information
-        
-        2. Personal and relevant actionable tasks (not general news or public events):
-           - Focus on tasks that are personal to the speaker or their immediate context
-           - Avoid tasks related to national news, public figures, or general world events
-           - Include specific action items, to-dos, or commitments mentioned
-           - Prioritize tasks that require personal action or follow-up
-        
-        3. Personal and relevant reminders (not general news or public events):
-           - Focus on personal appointments, deadlines, or time-sensitive commitments
-           - Avoid reminders about national news, public events, or general world happenings
-           - Include specific dates, times, or deadlines mentioned
-           - Prioritize items that affect the speaker personally
-        
-        4. Suggested titles that capture the main topic or theme
-        
-        5. The content type classification (meeting, interview, lecture, conversation, presentation, or general)
-        
+           - Use 1. numbered lists for sequential items
+           - Use > blockquotes for important quotes or statements
+           - Focus on capturing all important details, context, and nuances
+           - Include key points, main ideas, specific details, and overall themes
+
+        2. Personal and relevant actionable tasks — extract ONLY if the speaker mentions THEIR OWN action items:
+           - "I need to call John" → YES
+           - "The government might shut down" → NO (not a personal task)
+           - "We should analyze this data" → YES if it's an assignment, NO if general commentary
+           - "Remember to buy groceries" → YES
+           - Do NOT create meta-tasks like "summarize the content"
+           - Avoid tasks related to national news, public figures, celebrities, or world events
+           - If NO personal action items are mentioned, return an empty array
+
+        3. Personal and relevant reminders — extract ONLY personal time-sensitive items:
+           - "Meeting tomorrow at 3pm" → YES
+           - "Election day is coming" → NO (not personal)
+           - "Doctor appointment next Tuesday" → YES
+           - Avoid reminders about news events, public happenings, or general world events
+           - If NO personal time-sensitive items are mentioned, return an empty array
+
+        4. Suggested titles (40-60 characters, 4-6 words each) that capture the main topic or theme:
+           - Use Title Case, never end with punctuation
+           - Be specific and descriptive — avoid generic titles like "Meeting Recording"
+
+        5. The content type classification (meeting, personal, technical, or general)
+
         Format your response as a JSON object with the following structure:
         {
           "summary": "detailed markdown-formatted summary of the content",
@@ -301,12 +307,12 @@ class GoogleAIStudioService: ObservableObject {
           "titles": ["title1", "title2", "title3"],
           "contentType": "content type"
         }
-        
-        IMPORTANT: Focus on personal, relevant content. Avoid extracting tasks or reminders related to:
-        - National or international news events
-        - Public figures or celebrities
-        - General world events or politics
-        - Events that don't directly affect the speaker
+
+        IMPORTANT:
+        - Return ONLY personal, relevant content for tasks and reminders
+        - If no personal tasks exist, use an empty array: "tasks": []
+        - If no personal reminders exist, use an empty array: "reminders": []
+        \(ComedyMode.current.promptModifier ?? "")
         """
     }
     
@@ -483,7 +489,7 @@ class GoogleAIStudioService: ObservableObject {
     // MARK: - Title Extraction
     
     func extractTitles(from text: String) async throws -> [TitleItem] {
-        print("🤖 GoogleAIStudioService: Starting title extraction")
+        AppLog.shared.networking("GoogleAIStudioService: Starting title extraction")
         
         let prompt = """
         Analyze the following transcript and extract 4 high-quality titles or headlines. Focus on:
@@ -518,7 +524,7 @@ class GoogleAIStudioService: ObservableObject {
             let response = try await generateContent(prompt: prompt, useStructuredOutput: false)
             return try parseTitlesFromJSON(response)
         } catch {
-            print("❌ GoogleAIStudioService: Title extraction failed: \(error)")
+            AppLog.shared.networking("GoogleAIStudioService: Title extraction failed: \(error)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "Google AI Studio title extraction failed: \(error.localizedDescription)")
         }
     }

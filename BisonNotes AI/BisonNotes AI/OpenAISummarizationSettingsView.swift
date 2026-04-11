@@ -280,13 +280,13 @@ struct OpenAICompatibleSettingsView: View {
         // If this is the selected engine, automatically enable it
         if isSelectedEngine {
             UserDefaults.standard.set(true, forKey: "enableOpenAICompatible")
-            print("🔧 OpenAICompatibleSettingsView: Auto-enabled because it's the selected engine")
+            AppLog.shared.general("OpenAICompatibleSettingsView: Auto-enabled because it's the selected engine")
         }
 
         // Ensure enableOpenAICompatible has a default value in UserDefaults
         if UserDefaults.standard.object(forKey: "enableOpenAICompatible") == nil {
             UserDefaults.standard.set(isSelectedEngine, forKey: "enableOpenAICompatible")
-            print("🔧 OpenAICompatibleSettingsView: Initialized enableOpenAICompatible to \(isSelectedEngine) in UserDefaults")
+            AppLog.shared.general("OpenAICompatibleSettingsView: Initialized enableOpenAICompatible to \(isSelectedEngine)")
         }
     }
     
@@ -326,9 +326,9 @@ struct OpenAICompatibleSettingsView: View {
 
                     isLoadingModels = false
 
-                    print("✅ Successfully loaded \(modelIds.count) models")
+                    AppLog.shared.general("Successfully loaded \(modelIds.count) models")
                     if !modelIds.isEmpty {
-                        print("📋 Models: \(modelIds.prefix(5).joined(separator: ", "))\(modelIds.count > 5 ? "..." : "")")
+                        AppLog.shared.general("Models: \(modelIds.prefix(5).joined(separator: ", "))\(modelIds.count > 5 ? "..." : "")", level: .debug)
                     }
                 }
             } catch {
@@ -336,7 +336,7 @@ struct OpenAICompatibleSettingsView: View {
                     modelFetchError = error.localizedDescription
                     showingModelFetchError = true
                     isLoadingModels = false
-                    print("❌ Failed to load models: \(error)")
+                    AppLog.shared.general("Failed to load models: \(error)", level: .error)
                 }
             }
         }
@@ -431,7 +431,7 @@ struct OpenAICompatibleSettingsView: View {
                 let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? ""
                 if selectedEngine == "OpenAI API Compatible" && !enableOpenAICompatible {
                     enableOpenAICompatible = true
-                    print("🔧 OpenAICompatibleSettingsView: Auto-enabled on appear")
+                    AppLog.shared.general("OpenAICompatibleSettingsView: Auto-enabled on appear")
                 }
             }
         }

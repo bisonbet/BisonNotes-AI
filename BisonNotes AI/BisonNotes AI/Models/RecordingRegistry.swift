@@ -168,13 +168,12 @@ public class RecordingRegistryManager: ObservableObject {
     }
     
     func getRecording(url: URL) -> RegistryRecordingEntry? {
-        print("🔍 getRecording(url:) called with: \(url.lastPathComponent)")
+        AppLog.shared.fileManagement("getRecording(url:) called with: \(url.lastPathComponent)", level: .debug)
         let result = recordings.first { recording in
             let matches = recording.recordingURL.lastPathComponent == url.lastPathComponent
-            print("   Comparing: \(recording.recordingURL.lastPathComponent) == \(url.lastPathComponent) -> \(matches)")
             return matches
         }
-        print("   Result: \(result?.recordingName ?? "nil")")
+        AppLog.shared.fileManagement("getRecording(url:) result: \(result?.recordingName ?? "nil")", level: .debug)
         return result
     }
     
@@ -301,16 +300,16 @@ public class RecordingRegistryManager: ObservableObject {
     // MARK: - Engine Management
     
     func setEngine(_ engine: String) {
-        print("🔧 RecordingRegistry: Setting engine to: \(engine)")
-        print("   - Available engines: \(availableEngines.keys.joined(separator: ", "))")
-        
+        AppLog.shared.fileManagement("RecordingRegistry: Setting engine to: \(engine)")
+        AppLog.shared.fileManagement("Available engines: \(availableEngines.keys.joined(separator: ", "))", level: .debug)
+
         currentEngine = availableEngines[engine]
-        
+
         if let currentEngine = currentEngine {
-            print("✅ Engine set successfully: \(currentEngine.name)")
+            AppLog.shared.fileManagement("Engine set successfully: \(currentEngine.name)")
         } else {
-            print("❌ Failed to set engine: \(engine)")
-            print("   - Available engines: \(availableEngines.keys.joined(separator: ", "))")
+            AppLog.shared.fileManagement("Failed to set engine: \(engine)", level: .error)
+            AppLog.shared.fileManagement("Available engines: \(availableEngines.keys.joined(separator: ", "))", level: .debug)
         }
     }
     
@@ -358,7 +357,7 @@ public class RecordingRegistryManager: ObservableObject {
         
         // Use the engine's processComplete method
         let result = try await engine.processComplete(text: transcriptText)
-        print("📋 Titles: \(result.titles.count)")
+        AppLog.shared.fileManagement("Titles: \(result.titles.count)", level: .debug)
         
         return EnhancedSummaryData(
             recordingId: recordingId,
@@ -381,20 +380,20 @@ public class RecordingRegistryManager: ObservableObject {
     // MARK: - Data Repair Methods
     
     func forceReloadTranscripts() {
-        print("🔄 Force reloading all transcripts...")
-        
+        AppLog.shared.fileManagement("Force reloading all transcripts...")
+
         // Clear existing transcripts
         transcripts.removeAll()
-        
+
         // Reload from files
         loadTranscripts()
-        
-        print("✅ Transcript reload complete. Total transcripts: \(transcripts.count)")
+
+        AppLog.shared.fileManagement("Transcript reload complete. Total transcripts: \(transcripts.count)")
     }
     
     func updateRecordingDurations() {
-        print("🔄 Updating recording durations...")
-        
+        AppLog.shared.fileManagement("Updating recording durations...")
+
         var updatedCount = 0
         for (index, recording) in recordings.enumerated() {
             let actualDuration = getRecordingDuration(url: recording.recordingURL)
@@ -403,27 +402,27 @@ public class RecordingRegistryManager: ObservableObject {
                 updatedRecording.duration = actualDuration
                 recordings[index] = updatedRecording
                 updatedCount += 1
-                print("✅ Updated duration for \(recording.recordingName): \(formatDuration(actualDuration))")
+                AppLog.shared.fileManagement("Updated duration for \(recording.recordingName): \(formatDuration(actualDuration))", level: .debug)
             }
         }
-        
-        print("✅ Updated \(updatedCount) recording durations")
+
+        AppLog.shared.fileManagement("Updated \(updatedCount) recording durations")
         saveRecordings()
     }
     
     func removeDuplicateRecordings() {
-        print("🧹 Removing duplicate recordings...")
-        
+        AppLog.shared.fileManagement("Removing duplicate recordings...")
+
         let initialCount = recordings.count
         var seenURLs = Set<URL>()
         var seenNames = Set<String>()
-        
+
         recordings = recordings.filter { recording in
             let urlExists = seenURLs.contains(recording.recordingURL)
             let nameExists = seenNames.contains(recording.recordingName)
-            
+
             if urlExists || nameExists {
-                print("🗑️ Removing duplicate recording: \(recording.recordingName)")
+                AppLog.shared.fileManagement("Removing duplicate recording: \(recording.recordingName)", level: .debug)
                 return false
             } else {
                 seenURLs.insert(recording.recordingURL)
@@ -431,10 +430,10 @@ public class RecordingRegistryManager: ObservableObject {
                 return true
             }
         }
-        
+
         let finalCount = recordings.count
-        print("✅ Removed \(initialCount - finalCount) duplicate recordings")
-        print("📊 Registry now contains \(finalCount) recordings")
+        AppLog.shared.fileManagement("Removed \(initialCount - finalCount) duplicate recordings")
+        AppLog.shared.fileManagement("Registry now contains \(finalCount) recordings", level: .debug)
         
         saveRecordings()
     }
@@ -442,78 +441,78 @@ public class RecordingRegistryManager: ObservableObject {
 
     
     func loadTranscriptsFromDiskOnly() {
-        print("🔄 Loading transcripts from disk only...")
-        
+        AppLog.shared.fileManagement("Loading transcripts from disk only...")
+
         // Clear any existing transcripts
         transcripts.removeAll()
-        
+
         // Scan the documents directory for transcript files
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         do {
             let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
             let transcriptFiles = fileURLs.filter { $0.pathExtension.lowercased() == "transcript" }
-            
-            print("🔍 Found \(transcriptFiles.count) transcript files in documents directory")
-            
+
+            AppLog.shared.fileManagement("Found \(transcriptFiles.count) transcript files in documents directory", level: .debug)
+
             for transcriptURL in transcriptFiles {
                 // Get the corresponding audio file URL
                 let audioURL = transcriptURL.deletingPathExtension()
                 let transcriptName = transcriptURL.deletingPathExtension().lastPathComponent
-                
-                print("🔍 Processing transcript: \(transcriptName)")
-                
+
+                AppLog.shared.fileManagement("Processing transcript: \(transcriptName)", level: .debug)
+
                 // Check if we have a recording for this audio file
                 if let recording = getRecording(url: audioURL) {
-                    print("✅ Found matching recording: \(recording.recordingName)")
-                    
+                    AppLog.shared.fileManagement("Found matching recording: \(recording.recordingName)", level: .debug)
+
                     // Try to load the transcript data
                     if let transcriptData = loadTranscriptFromFile(transcriptURL, for: recording) {
                         transcripts.append(transcriptData)
-                        
+
                         // Update the recording status
                         var updatedRecording = recording
                         updatedRecording.updateTranscript(id: transcriptData.id)
                         updateRecording(updatedRecording)
-                        
-                        print("✅ Successfully loaded transcript for: \(recording.recordingName)")
+
+                        AppLog.shared.fileManagement("Successfully loaded transcript for: \(recording.recordingName)")
                     }
                 } else {
-                    print("❌ No matching recording found for transcript: \(transcriptName)")
+                    AppLog.shared.fileManagement("No matching recording found for transcript: \(transcriptName)", level: .error)
                 }
             }
-            
+
             // Save the updated transcripts
             saveTranscripts()
-            
-            print("📊 Final transcript count from disk: \(transcripts.count)")
+
+            AppLog.shared.fileManagement("Final transcript count from disk: \(transcripts.count)", level: .debug)
         } catch {
-            print("Error scanning for transcript files: \(error)")
+            AppLog.shared.fileManagement("Error scanning for transcript files: \(error)", level: .error)
         }
     }
     
     func clearOrphanedTranscripts() {
-        print("🧹 Clearing orphaned transcripts...")
-        
+        AppLog.shared.fileManagement("Clearing orphaned transcripts...")
+
         let initialCount = transcripts.count
         var orphanedTranscripts: [TranscriptData] = []
-        
+
         for transcript in transcripts {
             // Check if the recording file actually exists on disk
             let fileExists = FileManager.default.fileExists(atPath: transcript.recordingURL.path)
-            
+
             if !fileExists {
-                print("🗑️ Found orphaned transcript for non-existent recording: \(transcript.recordingURL.lastPathComponent)")
+                AppLog.shared.fileManagement("Found orphaned transcript for non-existent recording: \(transcript.recordingURL.lastPathComponent)", level: .debug)
                 orphanedTranscripts.append(transcript)
             }
         }
-        
+
         // Remove orphaned transcripts
         for orphanedTranscript in orphanedTranscripts {
             transcripts.removeAll { $0.id == orphanedTranscript.id }
         }
-        
+
         let removedCount = initialCount - transcripts.count
-        print("✅ Removed \(removedCount) orphaned transcripts")
+        AppLog.shared.fileManagement("Removed \(removedCount) orphaned transcripts")
         saveTranscripts()
     }
     
@@ -524,26 +523,16 @@ public class RecordingRegistryManager: ObservableObject {
     }
     
     func debugTranscriptStatus() {
-        print("🔍 Transcript Debug Status:")
-        print("   Total transcripts: \(transcripts.count)")
-        print("   Total recordings: \(recordings.count)")
-        
+        AppLog.shared.fileManagement("Transcript Debug Status:", level: .debug)
+        AppLog.shared.fileManagement("Total transcripts: \(transcripts.count)", level: .debug)
+        AppLog.shared.fileManagement("Total recordings: \(recordings.count)", level: .debug)
+
         for (index, transcript) in transcripts.enumerated() {
-            print("   Transcript \(index):")
-            print("     ID: \(transcript.id)")
-            print("     Recording ID: \(transcript.recordingId?.uuidString ?? "None")")
-            print("     Recording URL: \(transcript.recordingURL.lastPathComponent)")
-            print("     Recording Name: \(transcript.recordingName)")
-            print("     Segments: \(transcript.segments.count)")
+            AppLog.shared.fileManagement("Transcript \(index): ID=\(transcript.id), RecordingID=\(transcript.recordingId?.uuidString ?? "None"), File=\(transcript.recordingURL.lastPathComponent), Name=\(transcript.recordingName), Segments=\(transcript.segments.count)", level: .debug)
         }
-        
+
         for (index, recording) in recordings.enumerated() {
-            print("   Recording \(index):")
-            print("     ID: \(recording.id)")
-            print("     URL: \(recording.recordingURL.lastPathComponent)")
-            print("     Name: \(recording.recordingName)")
-            print("     Has Transcript: \(recording.hasTranscript)")
-            print("     Transcript ID: \(recording.transcriptId?.uuidString ?? "None")")
+            AppLog.shared.fileManagement("Recording \(index): ID=\(recording.id), File=\(recording.recordingURL.lastPathComponent), Name=\(recording.recordingName), HasTranscript=\(recording.hasTranscript), TranscriptID=\(recording.transcriptId?.uuidString ?? "None")", level: .debug)
         }
     }
     
@@ -557,8 +546,8 @@ public class RecordingRegistryManager: ObservableObject {
     }
     
     private func initializeEngines() {
-        print("🔧 Initializing AI engines...")
-        
+        AppLog.shared.fileManagement("Initializing AI engines...")
+
         // Initialize available engines
         availableEngines["OpenAI"] = OpenAISummarizationEngine()
         availableEngines["Ollama"] = LocalLLMEngine()
@@ -567,30 +556,30 @@ public class RecordingRegistryManager: ObservableObject {
         availableEngines["Mistral AI"] = MistralAIEngine()
         availableEngines["On-Device AI"] = OnDeviceLLMEngine()
 
-        print("✅ Available engines: \(availableEngines.keys.joined(separator: ", "))")
+        AppLog.shared.fileManagement("Available engines: \(availableEngines.keys.joined(separator: ", "))")
 
         // Set default engine based on user's selection
         let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
         currentEngine = availableEngines[selectedEngineName] ?? availableEngines["On-Device AI"]
-        
+
         if let engine = currentEngine {
-            print("✅ Current engine set to: \(engine.name)")
+            AppLog.shared.fileManagement("Current engine set to: \(engine.name)")
         } else {
-            print("❌ Failed to set current engine!")
+            AppLog.shared.fileManagement("Failed to set current engine!", level: .error)
         }
     }
     
     func checkEngineStatus() {
-        print("🔍 Engine Status Check:")
-        print("   Available engines: \(availableEngines.count)")
-        print("   Current engine: \(currentEngine?.name ?? "None")")
-        print("   Engine names: \(availableEngines.keys.joined(separator: ", "))")
-        
+        AppLog.shared.fileManagement("Engine Status Check:", level: .debug)
+        AppLog.shared.fileManagement("Available engines: \(availableEngines.count)", level: .debug)
+        AppLog.shared.fileManagement("Current engine: \(currentEngine?.name ?? "None")", level: .debug)
+        AppLog.shared.fileManagement("Engine names: \(availableEngines.keys.joined(separator: ", "))", level: .debug)
+
         if let engine = currentEngine {
-            print("✅ Current engine is available: \(engine.name)")
+            AppLog.shared.fileManagement("Current engine is available: \(engine.name)")
         } else {
-            print("❌ No current engine available!")
-            print("🔧 Re-initializing engines...")
+            AppLog.shared.fileManagement("No current engine available!", level: .error)
+            AppLog.shared.fileManagement("Re-initializing engines...")
             initializeEngines()
         }
     }
@@ -636,7 +625,7 @@ public class RecordingRegistryManager: ObservableObject {
             // Save the updated recordings
             saveRecordings()
         } catch {
-            print("Error scanning documents directory: \(error)")
+            AppLog.shared.fileManagement("Error scanning documents directory: \(error)", level: .error)
         }
     }
     
@@ -647,225 +636,210 @@ public class RecordingRegistryManager: ObservableObject {
     }
     
     private func loadTranscripts() {
-        print("🔄 Loading transcripts...")
-        
+        AppLog.shared.fileManagement("Loading transcripts...")
+
         // First load any saved transcripts from UserDefaults
         if let data = UserDefaults.standard.data(forKey: transcriptsKey),
            let loadedTranscripts = try? JSONDecoder().decode([TranscriptData].self, from: data) {
             transcripts = loadedTranscripts
-            print("📥 Loaded \(loadedTranscripts.count) transcripts from UserDefaults")
+            AppLog.shared.fileManagement("Loaded \(loadedTranscripts.count) transcripts from UserDefaults", level: .debug)
         } else {
-            print("📥 No transcripts found in UserDefaults")
+            AppLog.shared.fileManagement("No transcripts found in UserDefaults", level: .debug)
         }
-        
+
         // Then scan the documents directory for any transcript files that aren't in the registry
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         do {
             let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
             let transcriptFiles = fileURLs.filter { $0.pathExtension.lowercased() == "transcript" }
-            
-            print("🔍 Found \(transcriptFiles.count) transcript files in documents directory")
-            
+
+            AppLog.shared.fileManagement("Found \(transcriptFiles.count) transcript files in documents directory", level: .debug)
+
             for transcriptURL in transcriptFiles {
                 // Get the corresponding audio file URL
                 let audioURL = transcriptURL.deletingPathExtension()
                 let transcriptName = transcriptURL.deletingPathExtension().lastPathComponent
-                
-                print("🔍 Processing transcript: \(transcriptName)")
-                
+
+                AppLog.shared.fileManagement("Processing transcript: \(transcriptName)", level: .debug)
+
                 // Check if we have a recording for this audio file
                 if let recording = getRecording(url: audioURL) {
-                    print("✅ Found matching recording: \(recording.recordingName)")
-                    
+                    AppLog.shared.fileManagement("Found matching recording: \(recording.recordingName)", level: .debug)
+
                     // Check if we already have a transcript for this recording
                     if !transcripts.contains(where: { $0.recordingId == recording.id }) {
-                        print("📝 Loading transcript for recording: \(recording.recordingName)")
-                        
+                        AppLog.shared.fileManagement("Loading transcript for recording: \(recording.recordingName)", level: .debug)
+
                         // Try to load the transcript data
                         if let transcriptData = loadTranscriptFromFile(transcriptURL, for: recording) {
                             transcripts.append(transcriptData)
-                            
+
                             // Update the recording status
                             var updatedRecording = recording
                             updatedRecording.updateTranscript(id: transcriptData.id)
                             updateRecording(updatedRecording)
-                            
-                            print("✅ Successfully loaded transcript for: \(recording.recordingName)")
+
+                            AppLog.shared.fileManagement("Successfully loaded transcript for: \(recording.recordingName)")
                         }
                     } else {
-                        print("⚠️ Transcript already exists for recording: \(recording.recordingName)")
+                        AppLog.shared.fileManagement("Transcript already exists for recording: \(recording.recordingName)", level: .debug)
                     }
                 } else {
-                    print("❌ No matching recording found for transcript: \(transcriptName)")
+                    AppLog.shared.fileManagement("No matching recording found for transcript: \(transcriptName)", level: .error)
                 }
             }
-            
+
             // Fix any transcripts with nil recordingId
-            print("🔧 Calling fixTranscriptRecordingIds()...")
+            AppLog.shared.fileManagement("Calling fixTranscriptRecordingIds()...", level: .debug)
             fixTranscriptRecordingIds()
-            
+
             // Clean up any duplicate transcripts
             removeDuplicateTranscripts()
-            
+
             // Save the updated transcripts
             saveTranscripts()
-            
-            print("📊 Final transcript count: \(transcripts.count)")
+
+            AppLog.shared.fileManagement("Final transcript count: \(transcripts.count)", level: .debug)
         } catch {
-            print("Error scanning for transcript files: \(error)")
+            AppLog.shared.fileManagement("Error scanning for transcript files: \(error)", level: .error)
         }
     }
     
     func clearAndReloadRegistry() {
-        print("🧹 Clearing and reloading registry completely...")
-        
+        AppLog.shared.fileManagement("Clearing and reloading registry completely...")
+
         // Clear all data
         recordings.removeAll()
         transcripts.removeAll()
         enhancedSummaries.removeAll()
-        
+
         // Clear UserDefaults
         UserDefaults.standard.removeObject(forKey: recordingsKey)
         UserDefaults.standard.removeObject(forKey: transcriptsKey)
         UserDefaults.standard.removeObject(forKey: enhancedSummariesKey)
-        
-        print("🧹 Cleared all registry data")
-        
+
+        AppLog.shared.fileManagement("Cleared all registry data")
+
         // Reload from disk only
         loadRecordings()
         loadTranscripts()
         loadEnhancedSummaries()
-        
-        print("✅ Registry cleared and reloaded")
-        print("📊 Current state:")
-        print("   • Recordings: \(recordings.count)")
-        print("   • Transcripts: \(transcripts.count)")
-        print("   • Summaries: \(enhancedSummaries.count)")
+
+        AppLog.shared.fileManagement("Registry cleared and reloaded")
+        AppLog.shared.fileManagement("Current state: Recordings=\(recordings.count), Transcripts=\(transcripts.count), Summaries=\(enhancedSummaries.count)", level: .debug)
     }
     
     func debugTranscriptLinking() {
-        print("🔍 Debugging transcript linking...")
-        
+        AppLog.shared.fileManagement("Debugging transcript linking...", level: .debug)
+
         for transcript in transcripts {
-            print("📝 Transcript: \(transcript.recordingName)")
-            print("   - ID: \(transcript.id)")
-            print("   - Recording ID: \(transcript.recordingId?.uuidString ?? "nil")")
-            print("   - Recording URL: \(transcript.recordingURL.lastPathComponent)")
-            
+            AppLog.shared.fileManagement("Transcript: \(transcript.recordingName), ID=\(transcript.id), RecordingID=\(transcript.recordingId?.uuidString ?? "nil"), File=\(transcript.recordingURL.lastPathComponent)", level: .debug)
+
             if let recordingId = transcript.recordingId {
                 if let recording = getRecording(id: recordingId) {
-                    print("   ✅ Linked to recording: \(recording.recordingName)")
+                    AppLog.shared.fileManagement("Linked to recording: \(recording.recordingName)", level: .debug)
                 } else {
-                    print("   ❌ Recording not found for ID: \(recordingId)")
+                    AppLog.shared.fileManagement("Recording not found for ID: \(recordingId)", level: .error)
                 }
             } else {
-                print("   ⚠️ No recording ID")
+                AppLog.shared.fileManagement("No recording ID for transcript: \(transcript.recordingName)", level: .debug)
             }
         }
     }
     
     func recoverTranscriptsFromDisk() {
-        print("🔧 Recovering transcripts from disk...")
-        
+        AppLog.shared.fileManagement("Recovering transcripts from disk...")
+
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         do {
             let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
             let transcriptFiles = fileURLs.filter { $0.pathExtension.lowercased() == "transcript" }
-            
-            print("🔍 Found \(transcriptFiles.count) transcript files on disk")
-            
+
+            AppLog.shared.fileManagement("Found \(transcriptFiles.count) transcript files on disk", level: .debug)
+
             for transcriptURL in transcriptFiles {
                 let transcriptName = transcriptURL.deletingPathExtension().lastPathComponent
-                print("🔍 Processing transcript file: \(transcriptName)")
-                
+                AppLog.shared.fileManagement("Processing transcript file: \(transcriptName)", level: .debug)
+
                 // Try to find a matching recording
                 let audioURL = transcriptURL.deletingPathExtension()
                 if let recording = getRecording(url: audioURL) {
-                    print("✅ Found matching recording: \(recording.recordingName)")
-                    
+                    AppLog.shared.fileManagement("Found matching recording: \(recording.recordingName)", level: .debug)
+
                     // Check if we already have this transcript in the registry
                     let alreadyExists = transcripts.contains { transcript in
                         transcript.recordingId == recording.id || transcript.recordingURL == recording.recordingURL
                     }
-                    
+
                     if !alreadyExists {
-                        print("📝 Loading transcript for recording: \(recording.recordingName)")
-                        
+                        AppLog.shared.fileManagement("Loading transcript for recording: \(recording.recordingName)", level: .debug)
+
                         // Try to load the transcript data
                         if let transcriptData = loadTranscriptFromFile(transcriptURL, for: recording) {
                             transcripts.append(transcriptData)
-                            
+
                             // Update the recording status
                             var updatedRecording = recording
                             updatedRecording.updateTranscript(id: transcriptData.id)
                             updateRecording(updatedRecording)
-                            
-                            print("✅ Successfully recovered transcript for: \(recording.recordingName)")
+
+                            AppLog.shared.fileManagement("Successfully recovered transcript for: \(recording.recordingName)")
                         } else {
-                            print("❌ Failed to load transcript data from: \(transcriptURL.lastPathComponent)")
+                            AppLog.shared.fileManagement("Failed to load transcript data from: \(transcriptURL.lastPathComponent)", level: .error)
                         }
                     } else {
-                        print("⚠️ Transcript already exists in registry for: \(recording.recordingName)")
+                        AppLog.shared.fileManagement("Transcript already exists in registry for: \(recording.recordingName)", level: .debug)
                     }
                 } else {
-                    print("❌ No matching recording found for transcript: \(transcriptName)")
-                    print("   - Audio URL: \(audioURL.lastPathComponent)")
-                    
-                    // Check if the audio file exists on disk
-                    let audioFileExists = FileManager.default.fileExists(atPath: audioURL.path)
-                    print("   - Audio file exists: \(audioFileExists)")
-                    
-                    // List all recordings to help debug
-                    print("   - Available recordings:")
-                    for (index, recording) in recordings.enumerated() {
-                        print("     \(index): \(recording.recordingName) (\(recording.recordingURL.lastPathComponent))")
-                    }
+                    AppLog.shared.fileManagement("No matching recording found for transcript: \(transcriptName)", level: .error)
+                    AppLog.shared.fileManagement("Audio file: \(audioURL.lastPathComponent), exists: \(FileManager.default.fileExists(atPath: audioURL.path))", level: .debug)
+                    AppLog.shared.fileManagement("Available recordings: \(recordings.map { $0.recordingName }.joined(separator: ", "))", level: .debug)
                 }
             }
-            
+
             // Save the updated transcripts
             saveTranscripts()
-            
-            print("📊 Final transcript count: \(transcripts.count)")
+
+            AppLog.shared.fileManagement("Final transcript count: \(transcripts.count)", level: .debug)
         } catch {
-            print("❌ Error scanning for transcript files: \(error)")
+            AppLog.shared.fileManagement("Error scanning for transcript files: \(error)", level: .error)
         }
     }
     
     func cleanupDuplicateSummaries() {
-        print("🧹 Cleaning up duplicate summaries...")
-        
+        AppLog.shared.fileManagement("Cleaning up duplicate summaries...")
+
         var cleanedSummaries: [EnhancedSummaryData] = []
         var removedCount = 0
         var fixedCount = 0
-        
+
         // Group summaries by recording ID
         let groupedSummaries = Dictionary(grouping: enhancedSummaries) { $0.recordingId }
-        
+
         for (recordingId, summaries) in groupedSummaries {
             if summaries.count > 1 {
-                print("📁 Found \(summaries.count) summaries for recording ID: \(recordingId?.uuidString ?? "nil")")
-                
+                AppLog.shared.fileManagement("Found \(summaries.count) summaries for recording ID: \(recordingId?.uuidString ?? "nil")", level: .debug)
+
                 // Keep only the most recent summary
                 if let mostRecent = summaries.max(by: { $0.generatedAt < $1.generatedAt }) {
                     cleanedSummaries.append(mostRecent)
                     removedCount += summaries.count - 1
-                    print("✅ Kept most recent summary (generated at: \(mostRecent.generatedAt))")
+                    AppLog.shared.fileManagement("Kept most recent summary (generated at: \(mostRecent.generatedAt))", level: .debug)
                 }
             } else {
                 // Single summary, keep it
                 cleanedSummaries.append(contentsOf: summaries)
             }
         }
-        
+
         // Fix summaries with nil recordingId by matching them to recordings
         for (index, summary) in cleanedSummaries.enumerated() {
             if summary.recordingId == nil {
-                print("🔧 Found summary with nil recordingId: \(summary.recordingName)")
-                
+                AppLog.shared.fileManagement("Found summary with nil recordingId: \(summary.recordingName)", level: .debug)
+
                 // Try to find a matching recording by URL
                 if let recording = getRecording(url: summary.recordingURL) {
-                    print("✅ Found matching recording: \(recording.recordingName)")
+                    AppLog.shared.fileManagement("Found matching recording: \(recording.recordingName)", level: .debug)
                     
                     // Create a new summary with the correct recordingId
                     let fixedSummary = EnhancedSummaryData(
@@ -887,31 +861,31 @@ public class RecordingRegistryManager: ObservableObject {
                     
                     cleanedSummaries[index] = fixedSummary
                     fixedCount += 1
-                    print("✅ Fixed summary recordingId for: \(summary.recordingName)")
+                    AppLog.shared.fileManagement("Fixed summary recordingId for: \(summary.recordingName)")
                 } else {
-                    print("❌ No matching recording found for summary: \(summary.recordingName)")
+                    AppLog.shared.fileManagement("No matching recording found for summary: \(summary.recordingName)", level: .error)
                 }
             }
         }
-        
+
         enhancedSummaries = cleanedSummaries
         saveEnhancedSummaries()
-        
-        print("✅ Cleanup complete. Removed \(removedCount) duplicate summaries and fixed \(fixedCount) summaries with nil recordingId.")
+
+        AppLog.shared.fileManagement("Cleanup complete. Removed \(removedCount) duplicate summaries and fixed \(fixedCount) summaries with nil recordingId.")
     }
     
     func fixSummariesWithNilRecordingId() {
-        print("🔧 Fixing summaries with nil recordingId...")
-        
+        AppLog.shared.fileManagement("Fixing summaries with nil recordingId...")
+
         var fixedCount = 0
-        
+
         for (index, summary) in enhancedSummaries.enumerated() {
             if summary.recordingId == nil {
-                print("🔧 Found summary with nil recordingId: \(summary.recordingName)")
-                
+                AppLog.shared.fileManagement("Found summary with nil recordingId: \(summary.recordingName)", level: .debug)
+
                 // Try to find a matching recording by URL first
                 if let recording = getRecording(url: summary.recordingURL) {
-                    print("✅ Found matching recording by URL: \(recording.recordingName)")
+                    AppLog.shared.fileManagement("Found matching recording by URL: \(recording.recordingName)", level: .debug)
                     
                     // Create a new summary with the correct recordingId
                     let fixedSummary = EnhancedSummaryData(
@@ -933,12 +907,12 @@ public class RecordingRegistryManager: ObservableObject {
                     
                     enhancedSummaries[index] = fixedSummary
                     fixedCount += 1
-                    print("✅ Fixed summary recordingId for: \(summary.recordingName)")
+                    AppLog.shared.fileManagement("Fixed summary recordingId for: \(summary.recordingName)")
                 } else {
                     // Try to find a matching recording by name
                     let matchingRecordings = recordings.filter { $0.recordingName == summary.recordingName }
                     if let recording = matchingRecordings.first {
-                        print("✅ Found matching recording by name: \(recording.recordingName)")
+                        AppLog.shared.fileManagement("Found matching recording by name: \(recording.recordingName)", level: .debug)
                         
                         // Create a new summary with the correct recordingId
                         let fixedSummary = EnhancedSummaryData(
@@ -960,41 +934,36 @@ public class RecordingRegistryManager: ObservableObject {
                         
                         enhancedSummaries[index] = fixedSummary
                         fixedCount += 1
-                        print("✅ Fixed summary recordingId for: \(summary.recordingName)")
+                        AppLog.shared.fileManagement("Fixed summary recordingId for: \(summary.recordingName)")
                     } else {
-                        print("❌ No matching recording found for summary: \(summary.recordingName)")
-                        print("   - Available recordings:")
-                        for recording in recordings {
-                            print("     - \(recording.recordingName) (\(recording.recordingURL.lastPathComponent))")
-                        }
+                        AppLog.shared.fileManagement("No matching recording found for summary: \(summary.recordingName)", level: .error)
+                        AppLog.shared.fileManagement("Available recordings: \(recordings.map { $0.recordingName }.joined(separator: ", "))", level: .debug)
                     }
                 }
             }
         }
-        
+
         if fixedCount > 0 {
             saveEnhancedSummaries()
-            print("✅ Fixed \(fixedCount) summaries with nil recordingId.")
+            AppLog.shared.fileManagement("Fixed \(fixedCount) summaries with nil recordingId.")
         } else {
-            print("ℹ️ No summaries with nil recordingId found.")
+            AppLog.shared.fileManagement("No summaries with nil recordingId found.", level: .debug)
         }
     }
     
     func linkSummariesToRecordings() {
-        print("🔧 Linking summaries to recordings...")
-        
+        AppLog.shared.fileManagement("Linking summaries to recordings...")
+
         var linkedCount = 0
-        
+
         for (index, summary) in enhancedSummaries.enumerated() {
-            print("🔍 Processing summary: \(summary.recordingName)")
-            print("   - Current recordingId: \(summary.recordingId?.uuidString ?? "nil")")
-            
+            AppLog.shared.fileManagement("Processing summary: \(summary.recordingName), recordingId=\(summary.recordingId?.uuidString ?? "nil")", level: .debug)
+
             // Try to find a matching recording by name
             let matchingRecordings = recordings.filter { $0.recordingName == summary.recordingName }
-            
+
             if let recording = matchingRecordings.first {
-                print("✅ Found matching recording: \(recording.recordingName)")
-                print("   - Recording ID: \(recording.id)")
+                AppLog.shared.fileManagement("Found matching recording: \(recording.recordingName), ID=\(recording.id)", level: .debug)
                 
                 // Create a new summary with the correct recordingId
                 let linkedSummary = EnhancedSummaryData(
@@ -1016,72 +985,69 @@ public class RecordingRegistryManager: ObservableObject {
                 
                 enhancedSummaries[index] = linkedSummary
                 linkedCount += 1
-                print("✅ Linked summary to recording: \(summary.recordingName)")
+                AppLog.shared.fileManagement("Linked summary to recording: \(summary.recordingName)")
             } else {
-                print("❌ No matching recording found for summary: \(summary.recordingName)")
-                print("   - Available recordings:")
-                for recording in recordings {
-                    print("     - \(recording.recordingName)")
-                }
+                AppLog.shared.fileManagement("No matching recording found for summary: \(summary.recordingName)", level: .error)
+                AppLog.shared.fileManagement("Available recordings: \(recordings.map { $0.recordingName }.joined(separator: ", "))", level: .debug)
             }
         }
-        
+
         if linkedCount > 0 {
             saveEnhancedSummaries()
-            print("✅ Linked \(linkedCount) summaries to recordings.")
+            AppLog.shared.fileManagement("Linked \(linkedCount) summaries to recordings.")
         } else {
-            print("ℹ️ No summaries needed linking.")
+            AppLog.shared.fileManagement("No summaries needed linking.", level: .debug)
         }
     }
-    
+
     func linkSummariesToRecordingsWithTranscripts() {
-        print("🔧 Linking summaries to recordings that have transcripts...")
-        
+        AppLog.shared.fileManagement("Linking summaries to recordings that have transcripts...")
+
         var linkedCount = 0
-        
+
         // Get recordings that have transcripts
         let recordingsWithTranscripts = recordings.filter { recording in
             transcripts.contains { transcript in
                 transcript.recordingId == recording.id || transcript.recordingURL == recording.recordingURL
             }
         }
-        
-        print("📊 Found \(recordingsWithTranscripts.count) recordings with transcripts:")
+
+        AppLog.shared.fileManagement("Found \(recordingsWithTranscripts.count) recordings with transcripts", level: .debug)
         for recording in recordingsWithTranscripts {
-            print("   - \(recording.recordingName)")
+            AppLog.shared.fileManagement("Recording with transcript: \(recording.recordingName)", level: .debug)
         }
-        
+
         // Get summaries that don't have matching recordings with transcripts
         let orphanedSummaries = enhancedSummaries.filter { summary in
             !recordingsWithTranscripts.contains { recording in
                 recording.id == summary.recordingId
             }
         }
-        
-        print("📊 Found \(orphanedSummaries.count) orphaned summaries:")
+
+        AppLog.shared.fileManagement("Found \(orphanedSummaries.count) orphaned summaries", level: .debug)
         for summary in orphanedSummaries {
-            print("   - \(summary.recordingName) (recordingId: \(summary.recordingId?.uuidString ?? "nil"))")
+            AppLog.shared.fileManagement("Orphaned summary: \(summary.recordingName), recordingId=\(summary.recordingId?.uuidString ?? "nil")", level: .debug)
         }
-        
+
         // Link orphaned summaries to recordings with transcripts
         for (index, summary) in enhancedSummaries.enumerated() {
             // Check if this summary is orphaned (not linked to a recording with transcript)
             let isOrphaned = !recordingsWithTranscripts.contains { recording in
                 recording.id == summary.recordingId
             }
-            
+
             if isOrphaned {
-                print("🔧 Found orphaned summary: \(summary.recordingName)")
-                
+                AppLog.shared.fileManagement("Found orphaned summary: \(summary.recordingName)", level: .debug)
+
                 // Find a recording with transcript that doesn't have a summary
                 let availableRecordings = recordingsWithTranscripts.filter { recording in
                     !enhancedSummaries.contains { summary in
                         summary.recordingId == recording.id
                     }
                 }
-                
+
                 if let targetRecording = availableRecordings.first {
-                    print("✅ Linking to recording with transcript: \(targetRecording.recordingName)")
+                    AppLog.shared.fileManagement("Linking to recording with transcript: \(targetRecording.recordingName)", level: .debug)
                     
                     // Create a new summary with the correct recordingId
                     let linkedSummary = EnhancedSummaryData(
@@ -1103,41 +1069,36 @@ public class RecordingRegistryManager: ObservableObject {
                     
                     enhancedSummaries[index] = linkedSummary
                     linkedCount += 1
-                    print("✅ Linked summary to recording: \(targetRecording.recordingName)")
+                    AppLog.shared.fileManagement("Linked summary to recording: \(targetRecording.recordingName)")
                 } else {
-                    print("❌ No available recording with transcript for summary: \(summary.recordingName)")
+                    AppLog.shared.fileManagement("No available recording with transcript for summary: \(summary.recordingName)", level: .error)
                 }
             }
         }
-        
+
         if linkedCount > 0 {
             saveEnhancedSummaries()
-            print("✅ Linked \(linkedCount) summaries to recordings with transcripts.")
+            AppLog.shared.fileManagement("Linked \(linkedCount) summaries to recordings with transcripts.")
         } else {
-            print("ℹ️ No summaries needed linking.")
+            AppLog.shared.fileManagement("No summaries needed linking.", level: .debug)
         }
     }
     
     private func fixTranscriptRecordingIds() {
-        print("🔧 Fixing transcripts with nil recordingId...")
-        print("📊 Total transcripts to check: \(transcripts.count)")
-        print("📊 Total recordings available: \(recordings.count)")
-        
+        AppLog.shared.fileManagement("Fixing transcripts with nil recordingId...")
+        AppLog.shared.fileManagement("Total transcripts to check: \(transcripts.count), Total recordings available: \(recordings.count)", level: .debug)
+
         var fixedCount = 0
-        
+
         for (index, transcript) in transcripts.enumerated() {
-            print("🔍 Checking transcript \(index): \(transcript.recordingName)")
-            print("   - RecordingId: \(transcript.recordingId?.uuidString ?? "nil")")
-            print("   - RecordingURL: \(transcript.recordingURL.lastPathComponent)")
-            
+            AppLog.shared.fileManagement("Checking transcript \(index): \(transcript.recordingName), RecordingId=\(transcript.recordingId?.uuidString ?? "nil"), File=\(transcript.recordingURL.lastPathComponent)", level: .debug)
+
             if transcript.recordingId == nil {
-                print("🔧 Found transcript with nil recordingId: \(transcript.recordingName)")
-                
+                AppLog.shared.fileManagement("Found transcript with nil recordingId: \(transcript.recordingName)", level: .debug)
+
                 // Try to find a matching recording by URL
                 if let matchingRecording = recordings.first(where: { $0.recordingURL.lastPathComponent == transcript.recordingURL.lastPathComponent }) {
-                    print("✅ Found matching recording for transcript: \(transcript.recordingName)")
-                    print("   - Recording ID: \(matchingRecording.id)")
-                    print("   - Recording URL: \(matchingRecording.recordingURL.lastPathComponent)")
+                    AppLog.shared.fileManagement("Found matching recording for transcript: \(transcript.recordingName), RecordingID=\(matchingRecording.id)", level: .debug)
                     
                     // Update the transcript with the correct recording ID
                     var updatedTranscript = transcript
@@ -1149,67 +1110,62 @@ public class RecordingRegistryManager: ObservableObject {
                     updatedRecording.updateTranscript(id: updatedTranscript.id)
                     updateRecording(updatedRecording)
                     
-                    print("✅ Fixed transcript recordingId for: \(transcript.recordingName)")
+                    AppLog.shared.fileManagement("Fixed transcript recordingId for: \(transcript.recordingName)")
                     fixedCount += 1
                 } else {
-                    print("❌ No matching recording found for transcript: \(transcript.recordingName)")
-                    print("   - Available recording URLs:")
-                    for recording in recordings {
-                        print("     - \(recording.recordingURL.lastPathComponent)")
-                    }
+                    AppLog.shared.fileManagement("No matching recording found for transcript: \(transcript.recordingName)", level: .error)
+                    AppLog.shared.fileManagement("Available recording files: \(recordings.map { $0.recordingURL.lastPathComponent }.joined(separator: ", "))", level: .debug)
                 }
             } else {
-                print("✅ Transcript already has recordingId: \(transcript.recordingId?.uuidString ?? "nil")")
+                AppLog.shared.fileManagement("Transcript already has recordingId: \(transcript.recordingId?.uuidString ?? "nil")", level: .debug)
             }
         }
-        
-        print("🔧 Fixed \(fixedCount) transcripts with nil recordingId")
+
+        AppLog.shared.fileManagement("Fixed \(fixedCount) transcripts with nil recordingId")
     }
     
     private func removeDuplicateTranscripts() {
-        print("🧹 Starting duplicate transcript cleanup...")
-        print("📊 Initial transcript count: \(transcripts.count)")
-        
+        AppLog.shared.fileManagement("Starting duplicate transcript cleanup...")
+        AppLog.shared.fileManagement("Initial transcript count: \(transcripts.count)", level: .debug)
+
         var seenRecordingIds: Set<UUID> = []
         var seenRecordingURLs: Set<URL> = []
         var transcriptsToRemove: [Int] = []
-        
+
         for (index, transcript) in transcripts.enumerated() {
-            print("🔍 Checking transcript \(index): \(transcript.recordingName)")
-            
+            AppLog.shared.fileManagement("Checking transcript \(index): \(transcript.recordingName)", level: .debug)
+
             // Check for duplicate recording IDs
             if let recordingId = transcript.recordingId {
                 if seenRecordingIds.contains(recordingId) {
-                    print("🗑️ Removing duplicate transcript with recording ID: \(recordingId)")
+                    AppLog.shared.fileManagement("Removing duplicate transcript with recording ID: \(recordingId)", level: .debug)
                     transcriptsToRemove.append(index)
                     continue
                 }
                 seenRecordingIds.insert(recordingId)
-                print("✅ Recording ID \(recordingId) is unique")
             }
-            
+
             // Check for duplicate recording URLs
             if seenRecordingURLs.contains(transcript.recordingURL) {
-                print("🗑️ Removing duplicate transcript with URL: \(transcript.recordingURL.lastPathComponent)")
+                AppLog.shared.fileManagement("Removing duplicate transcript with file: \(transcript.recordingURL.lastPathComponent)", level: .debug)
                 transcriptsToRemove.append(index)
                 continue
             }
             seenRecordingURLs.insert(transcript.recordingURL)
-            print("✅ Recording URL \(transcript.recordingURL.lastPathComponent) is unique")
         }
-        
+
         // Remove duplicates in reverse order to maintain indices
         for index in transcriptsToRemove.sorted(by: >) {
             transcripts.remove(at: index)
         }
-        
+
         if !transcriptsToRemove.isEmpty {
-            print("🧹 Cleaned up \(transcriptsToRemove.count) duplicate transcripts")
+            AppLog.shared.fileManagement("Cleaned up \(transcriptsToRemove.count) duplicate transcripts")
         } else {
-            print("✅ No duplicate transcripts found")
+            AppLog.shared.fileManagement("No duplicate transcripts found", level: .debug)
         }
-        
-        print("📊 Final transcript count after deduplication: \(transcripts.count)")
+
+        AppLog.shared.fileManagement("Final transcript count after deduplication: \(transcripts.count)", level: .debug)
     }
     
 
@@ -1238,7 +1194,7 @@ public class RecordingRegistryManager: ObservableObject {
                 confidence: 1.0
             )
         } catch {
-            print("Error loading transcript from file \(transcriptURL): \(error)")
+            AppLog.shared.fileManagement("Error loading transcript from file \(transcriptURL.lastPathComponent): \(error)", level: .error)
             return nil
         }
     }
@@ -1286,7 +1242,7 @@ public class RecordingRegistryManager: ObservableObject {
             // Save the updated summaries
             saveEnhancedSummaries()
         } catch {
-            print("Error scanning for summary files: \(error)")
+            AppLog.shared.fileManagement("Error scanning for summary files: \(error)", level: .error)
         }
     }
     
@@ -1311,7 +1267,7 @@ public class RecordingRegistryManager: ObservableObject {
                 processingTime: 0
             )
         } catch {
-            print("Error loading summary from file \(summaryURL): \(error)")
+            AppLog.shared.fileManagement("Error loading summary from file \(summaryURL.lastPathComponent): \(error)", level: .error)
             return nil
         }
     }
@@ -1334,7 +1290,7 @@ public class RecordingRegistryManager: ObservableObject {
                 let loadedDurationValue = try await asset.load(.duration)
                 loadedDuration = CMTimeGetSeconds(loadedDurationValue)
             } catch {
-                print("⚠️ Failed to load duration for \(url.lastPathComponent): \(error.localizedDescription)")
+                AppLog.shared.fileManagement("Failed to load duration for \(url.lastPathComponent): \(error.localizedDescription)", level: .error)
             }
             semaphore.signal()
         }
@@ -1357,31 +1313,31 @@ public class RecordingRegistryManager: ObservableObject {
     // MARK: - Public Interface
     
     func refreshRecordingsFromDisk() {
-        print("🔄 Refreshing recordings from disk...")
-        
+        AppLog.shared.fileManagement("Refreshing recordings from disk...")
+
         // Get all audio files from documents directory
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         do {
             let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: [.creationDateKey], options: [])
             let audioFiles = fileURLs.filter { ["m4a", "mp3", "wav"].contains($0.pathExtension.lowercased()) }
-            
-            print("🔍 Found \(audioFiles.count) audio files in documents directory")
-            
+
+            AppLog.shared.fileManagement("Found \(audioFiles.count) audio files in documents directory", level: .debug)
+
             var addedCount = 0
             for url in audioFiles {
                 // Check if this file is already in our registry
                 if !recordings.contains(where: { $0.recordingURL.lastPathComponent == url.lastPathComponent }) {
-                    print("📝 Adding missing recording: \(url.lastPathComponent)")
-                    
+                    AppLog.shared.fileManagement("Adding missing recording: \(url.lastPathComponent)", level: .debug)
+
                     // Add it to the registry
-                    guard let creationDate = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate else { 
-                        print("⚠️ Could not get creation date for \(url.lastPathComponent)")
-                        continue 
+                    guard let creationDate = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate else {
+                        AppLog.shared.fileManagement("Could not get creation date for \(url.lastPathComponent)", level: .error)
+                        continue
                     }
-                    
+
                     let duration = getRecordingDuration(url: url)
                     let fileSize = getFileSize(url: url)
-                    
+
                     let recording = RegistryRecordingEntry(
                         recordingURL: url,
                         recordingName: url.deletingPathExtension().lastPathComponent,
@@ -1390,28 +1346,26 @@ public class RecordingRegistryManager: ObservableObject {
                         duration: duration,
                         audioQuality: .whisperOptimized
                     )
-                    
+
                     recordings.append(recording)
                     addedCount += 1
-                    print("✅ Added recording: \(recording.recordingName)")
-                } else {
-                    print("✅ Recording already exists: \(url.lastPathComponent)")
+                    AppLog.shared.fileManagement("Added recording: \(recording.recordingName)", level: .debug)
                 }
             }
-            
+
             if addedCount > 0 {
                 // Remove any duplicate recordings
                 removeDuplicateRecordings()
-                
+
                 // Save the updated recordings
                 saveRecordings()
-                print("📊 Added \(addedCount) new recordings to registry")
+                AppLog.shared.fileManagement("Added \(addedCount) new recordings to registry", level: .debug)
             } else {
-                print("📊 No new recordings to add")
+                AppLog.shared.fileManagement("No new recordings to add", level: .debug)
             }
-            
+
         } catch {
-            print("❌ Error scanning documents directory: \(error)")
+            AppLog.shared.fileManagement("Error scanning documents directory: \(error)", level: .error)
         }
     }
 }

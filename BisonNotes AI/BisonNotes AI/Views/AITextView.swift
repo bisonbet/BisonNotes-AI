@@ -66,10 +66,9 @@ struct AITextView: View {
         // Debug logging for empty content detection
         let _ = {
             if text.isEmpty {
-                print("⚠️ [AITextView] Received empty text")
+                AppLog.shared.summarization("AITextView received empty text", level: .error)
             } else if cleanedText.isEmpty {
-                print("⚠️ [AITextView] Text was cleaned to empty! Original length: \(text.count)")
-                print("⚠️ [AITextView] First 200 chars: \(text.prefix(200))")
+                AppLog.shared.summarization("AITextView text was cleaned to empty, original length: \(text.count)", level: .error)
             }
         }()
 
@@ -102,12 +101,7 @@ struct AITextView: View {
         // Step 4: Basic spacing normalization
         cleaned = cleaned.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
 
-        #if DEBUG
-        print("🔍 Textual Input Debug:")
-        print("Original length: \(text.count)")
-        print("Cleaned length: \(cleaned.count)")
-        print("First 200 chars: \(cleaned.prefix(200))")
-        #endif
+        AppLog.shared.summarization("AITextView cleaning: original=\(text.count), cleaned=\(cleaned.count)", level: .debug)
 
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }

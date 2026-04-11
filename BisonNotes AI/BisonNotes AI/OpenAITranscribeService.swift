@@ -179,7 +179,7 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        print("🔌 Testing OpenAI API connection...")
+        AppLog.shared.transcription("Testing OpenAI API connection...")
         
         let (_, response) = try await session.data(for: request)
         
@@ -202,7 +202,7 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         currentStatus = "Preparing audio file..."
         progress = 0.0
         
-        print("🚀 Starting OpenAI transcription for: \(url.lastPathComponent)")
+        AppLog.shared.transcription("Starting OpenAI transcription for: \(url.lastPathComponent)")
         
         do {
             // Validate file
@@ -277,7 +277,7 @@ class OpenAITranscribeService: NSObject, ObservableObject {
                 progress = 0.1
                 
                 let audioData = try Data(contentsOf: url)
-                print("📁 Audio file size: \(audioData.count) bytes")
+                AppLog.shared.transcription("Audio file size: \(audioData.count) bytes", level: .debug)
                 
                 currentStatus = "Sending to OpenAI..."
                 progress = 0.2
@@ -348,8 +348,7 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         
         request.httpBody = body
         
-        print("🔧 Using model: \(config.model.displayName)")
-        print("📊 Request body size: \(body.count) bytes")
+        AppLog.shared.transcription("Using model: \(config.model.displayName), request size: \(body.count) bytes", level: .debug)
         
         currentStatus = "Processing with \(config.model.displayName)..."
         progress = 0.5
@@ -360,11 +359,11 @@ class OpenAITranscribeService: NSObject, ObservableObject {
             throw OpenAITranscribeError.invalidResponse("Not an HTTP response")
         }
         
-        print("📡 HTTP response status: \(httpResponse.statusCode)")
+        AppLog.shared.transcription("HTTP response status: \(httpResponse.statusCode)", level: .debug)
         
         guard httpResponse.statusCode == 200 else {
             let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("❌ OpenAI API error: \(errorText)")
+            AppLog.shared.transcription("OpenAI API error: HTTP \(httpResponse.statusCode)", level: .error)
             
             // Try to parse error response
             if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
@@ -378,26 +377,22 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         progress = 0.8
         
         // Parse response
-        let responseText = String(data: data, encoding: .utf8) ?? ""
-        print("📄 Response data length: \(data.count) bytes")
-        print("📋 Response preview: \(responseText.prefix(200))...")
+        AppLog.shared.transcription("Response data length: \(data.count) bytes", level: .debug)
         
         let transcribeResponse: OpenAITranscribeResponse
         do {
             transcribeResponse = try JSONDecoder().decode(OpenAITranscribeResponse.self, from: data)
         } catch {
-            print("❌ Failed to parse JSON response: \(error)")
-            print("🔍 Raw response: \(responseText)")
+            AppLog.shared.transcription("Failed to parse JSON response: \(error)", level: .error)
             throw OpenAITranscribeError.invalidResponse("Failed to parse response: \(error.localizedDescription)")
         }
         
         let processingTime = Date().timeIntervalSince(startTime)
         
-        print("📝 Transcript length: \(transcribeResponse.text.count) characters")
-        print("⏱️ Processing time: \(processingTime) seconds")
+        AppLog.shared.transcription("Transcript length: \(transcribeResponse.text.count) chars, processing time: \(String(format: "%.1f", processingTime))s")
         
         if let usage = transcribeResponse.usage {
-            print("💰 Token usage - Input: \(usage.inputTokens ?? 0), Output: \(usage.outputTokens ?? 0), Total: \(usage.totalTokens ?? 0)")
+            AppLog.shared.transcription("Token usage - Input: \(usage.inputTokens ?? 0), Output: \(usage.outputTokens ?? 0), Total: \(usage.totalTokens ?? 0)", level: .debug)
         }
         
         // Create segments (OpenAI doesn't provide timestamps in basic response, so create one segment)

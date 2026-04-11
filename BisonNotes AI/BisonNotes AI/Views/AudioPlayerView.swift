@@ -48,7 +48,6 @@ struct AudioPlayerView: View {
                     currentTime: recorderVM.playingTime,
                     duration: duration,
                     onSeek: { time in
-                        print("🎵 AudioPlayerView: Seeking to time: \(time)")
                         recorderVM.seekToTime(time)
                     }
                 )
@@ -117,11 +116,11 @@ struct AudioPlayerView: View {
             ShareSheet(activityItems: [recording.url])
         }
         .onAppear {
-            print("🎵 AudioPlayerView appeared for: \(recording.name)")
+            AppLog.shared.recording("AudioPlayerView appeared", level: .debug)
             setupAudio()
         }
         .onDisappear {
-            print("🎵 AudioPlayerView disappeared")
+            AppLog.shared.recording("AudioPlayerView disappeared", level: .debug)
             if recorderVM.isPlaying {
                 recorderVM.stopPlaying()
             }
@@ -129,25 +128,22 @@ struct AudioPlayerView: View {
     }
     
     private func setupAudio() {
-        print("🎵 AudioPlayerView setupAudio called for: \(recording.name)")
-        print("🎵 Recording URL: \(recording.url)")
-        print("🎵 Recording duration from struct: \(recording.duration)")
-        
+        AppLog.shared.recording("AudioPlayerView setupAudio called", level: .debug)
+
         // Get duration from the audio file
         do {
             let player = try AVAudioPlayer(contentsOf: recording.url)
             duration = player.duration
-            print("🎵 Duration loaded from AVAudioPlayer: \(duration)")
+            AppLog.shared.recording("Duration loaded from AVAudioPlayer: \(duration)", level: .debug)
         } catch {
-            print("❌ Error getting audio duration: \(error)")
+            AppLog.shared.recording("Error getting audio duration: \(error)", level: .error)
             // Fallback to recording duration if available
             duration = recording.duration
-            print("🎵 Using fallback duration: \(duration)")
         }
     }
     
     private func togglePlayback() {
-        print("🎵 AudioPlayerView: Toggle playback - currently playing: \(recorderVM.isPlaying)")
+        AppLog.shared.recording("Toggle playback - currently playing: \(recorderVM.isPlaying)", level: .debug)
         if recorderVM.isPlaying {
             recorderVM.stopPlaying()
         } else {

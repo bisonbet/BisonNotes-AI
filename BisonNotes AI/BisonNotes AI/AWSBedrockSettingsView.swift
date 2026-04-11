@@ -72,7 +72,7 @@ struct AWSBedrockSettingsView: View {
             
             // Validate and fix invalid stored model selection
             if AWSBedrockModel(rawValue: selectedModel) == nil {
-                print("⚠️ Invalid stored model '\(selectedModel)', resetting to default")
+                AppLog.shared.general("Invalid stored model, resetting to default")
                 selectedModel = AWSBedrockModel.llama4Maverick.rawValue
             }
         }

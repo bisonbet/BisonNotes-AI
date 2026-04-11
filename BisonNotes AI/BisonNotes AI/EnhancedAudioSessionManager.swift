@@ -89,7 +89,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             currentConfiguration = config
             isConfigured = true
             
-            print("✅ Mixed audio session configured successfully")
+            AppLog.shared.audioSession("Mixed audio session configured successfully")
 
             // Prefer Bluetooth HFP if available for recording input
             await autoSelectBestInput()
@@ -119,7 +119,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             currentConfiguration = config
             isConfigured = true
             
-            print("✅ Background recording session configured successfully")
+            AppLog.shared.audioSession("Background recording session configured successfully")
 
             // Prefer Bluetooth HFP if available for recording input
             await autoSelectBestInput()
@@ -158,14 +158,14 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
                 // Now try to reactivate with the previous configuration
                 try await applyConfiguration(config)
-                print("✅ Audio session restored successfully on attempt \(attempt)")
+                AppLog.shared.audioSession("Audio session restored successfully on attempt \(attempt)")
                 return
 
             } catch {
                 lastAttemptError = error
-                print("⚠️ Failed to restore audio session on attempt \(attempt): \(error.localizedDescription)")
+                AppLog.shared.audioSession("Failed to restore audio session on attempt \(attempt): \(error.localizedDescription)", level: .error)
                 if attempt < maxAttempts {
-                    print("🔄 Retrying session restoration...")
+                    AppLog.shared.audioSession("Retrying session restoration...", level: .debug)
                 }
             }
         }
@@ -187,7 +187,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             currentConfiguration = config
             isConfigured = true
             
-            print("✅ Standard recording session configured successfully")
+            AppLog.shared.audioSession("Standard recording session configured successfully")
             
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Standard recording configuration failed: \(error.localizedDescription)")
@@ -208,7 +208,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             currentConfiguration = nil // This is a lightweight playback config
             isConfigured = true
             
-            print("✅ Playback session configured successfully with mixWithOthers")
+            AppLog.shared.audioSession("Playback session configured successfully with mixWithOthers")
             
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Playback configuration failed: \(error.localizedDescription)")
@@ -221,7 +221,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     func setPreferredInput(_ input: AVAudioSessionPortDescription) async throws {
         do {
             try session.setPreferredInput(input)
-            print("✅ Preferred input set to: \(input.portName) (\(input.portType.rawValue))")
+            AppLog.shared.audioSession("Preferred input set to: \(input.portName) (\(input.portType.rawValue))")
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Failed to set preferred input: \(error.localizedDescription)")
             lastError = audioError
@@ -233,7 +233,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     func clearPreferredInput() async throws {
         do {
             try session.setPreferredInput(nil)
-            print("✅ Preferred input cleared, iOS will use default microphone")
+            AppLog.shared.audioSession("Preferred input cleared, iOS will use default microphone")
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Failed to clear preferred input: \(error.localizedDescription)")
             lastError = audioError
@@ -269,7 +269,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             isMixedAudioEnabled = false
             isBackgroundRecordingEnabled = false
             currentConfiguration = nil
-            print("✅ Audio session deactivated and reset")
+            AppLog.shared.audioSession("Audio session deactivated and reset")
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Failed to deactivate session: \(error.localizedDescription)")
             lastError = audioError
@@ -302,7 +302,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         // Check if the app has background audio capability in Info.plist
         guard let backgroundModes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String],
               backgroundModes.contains("audio") else {
-            print("❌ Background audio mode not configured in Info.plist")
+            AppLog.shared.audioSession("Background audio mode not configured in Info.plist", level: .error)
             return false
         }
         

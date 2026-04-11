@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var showingParakeetMigrationAlert = false
     @State private var showingFluidAudioSettings = false
     @State private var showingUnsupportedFileAlert = false
+    @State private var showingCrashReport = false
     @StateObject private var downloadMonitor = OnDeviceAIDownloadMonitor.shared
     @State private var showSplash = true
 
@@ -54,6 +55,12 @@ struct ContentView: View {
         .onAppear {
             DispatchQueue.main.async {
                 initializeApp()
+            }
+            // Check if previous session crashed
+            if AppLog.shared.previousSessionCrashed {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    showingCrashReport = true
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("FirstSetupCompleted"))) { _ in
@@ -163,6 +170,19 @@ struct ContentView: View {
         } message: {
             Text("This file type cannot be imported as a recording or transcript.")
         }
+        .alert("Unexpected Shutdown", isPresented: $showingCrashReport) {
+            Button("Send Report") {
+                do {
+                    let url = try LogExporter.exportLogs()
+                    LogEmailPresenter.shared.presentLogEmail(logFileURL: url) {}
+                } catch {
+                    AppLog.shared.error("Failed to generate crash report: \(error.localizedDescription)", category: .general)
+                }
+            }
+            Button("Dismiss", role: .cancel) { }
+        } message: {
+            Text("It looks like BisonNotes AI didn't shut down properly last time. Would you like to send a diagnostic report to help us fix this?")
+        }
     }
 
     private var tabContentView: some View {
@@ -231,7 +251,7 @@ struct ContentView: View {
 
         // Phase 6: Set AppDelegate reference to AudioRecorderViewModel for notification handling
         AppDelegate.recorderViewModel = recorderVM
-        print("✅ AppDelegate.recorderViewModel reference set")
+        AppLog.shared.log("AppDelegate.recorderViewModel reference set", category: .general)
 
         // Use a longer delay to ensure the app is fully loaded
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -240,40 +260,40 @@ struct ContentView: View {
                     // Check if Core Data has recordings, if not, trigger migration
                     let coreDataRecordings = appCoordinator.getAllRecordingsWithData()
                     if coreDataRecordings.isEmpty {
-                        print("🔄 No recordings found in Core Data, triggering migration...")
+                        AppLog.shared.log("No recordings found in Core Data, triggering migration...", category: .general)
                         let migrationManager = DataMigrationManager()
                         await migrationManager.performDataMigration()
-                        print("✅ Migration completed")
+                        AppLog.shared.log("Migration completed", category: .general)
                     } else {
                         // Core Data has existing recordings
                         
                         // Always run URL migration to ensure relative paths
-                        print("🔄 Running URL migration to ensure relative paths...")
+                        AppLog.shared.log("Running URL migration to ensure relative paths...", level: .debug, category: .general)
                         appCoordinator.syncRecordingURLs()
-                        print("✅ URL migration completed")
-                        
+                        AppLog.shared.log("URL migration completed", category: .general)
+
                         // Clean up any orphaned records and missing files
-                        print("🔄 Cleaning up orphaned records...")
+                        AppLog.shared.log("Cleaning up orphaned records...", level: .debug, category: .general)
                         let cleanedCount = appCoordinator.cleanupOrphanedRecordings()
                         let fixedCount = appCoordinator.fixIncompletelyDeletedRecordings()
                         
                         // Also clean up recordings that reference missing files
-                        print("🔄 Cleaning up recordings with missing files...")
+                        AppLog.shared.log("Cleaning up recordings with missing files...", level: .debug, category: .general)
                         let missingFileCount = appCoordinator.cleanupRecordingsWithMissingFiles()
                         
                         let totalCleaned = cleanedCount + fixedCount + missingFileCount
                         
                         if totalCleaned > 0 {
-                            print("✅ Cleaned up \(totalCleaned) orphaned records (\(cleanedCount) orphaned, \(fixedCount) incomplete deletions, \(missingFileCount) missing files)")
+                            AppLog.shared.log("Cleaned up \(totalCleaned) orphaned records (\(cleanedCount) orphaned, \(fixedCount) incomplete deletions, \(missingFileCount) missing files)", category: .general)
                         }
                         
                         // Check if any recordings have transcripts in Core Data
                         let recordingsWithTranscripts = coreDataRecordings.filter { $0.transcript != nil }
                         if recordingsWithTranscripts.isEmpty {
-                            print("🔄 Recordings found but no transcripts in Core Data, triggering migration...")
+                            AppLog.shared.log("Recordings found but no transcripts in Core Data, triggering migration...", category: .general)
                             let migrationManager = DataMigrationManager()
                             await migrationManager.performDataMigration()
-                            print("✅ Migration completed")
+                            AppLog.shared.log("Migration completed", category: .general)
                         } else {
                             // Core Data has existing transcripts, no migration needed
                         }
@@ -339,12 +359,12 @@ struct ContentView: View {
 
     private func handleActionButtonLaunchIfNeeded() {
         if ActionButtonLaunchManager.consumeRecordingRequest() {
-            print("📱 ContentView: Action button recording requested!")
+            AppLog.shared.log("Action button recording requested", level: .debug, category: .general)
             if isInitialized {
-                print("📱 ContentView: App is initialized, triggering recording immediately")
+                AppLog.shared.log("App is initialized, triggering recording immediately", level: .debug, category: .general)
                 triggerActionButtonRecording()
             } else {
-                print("📱 ContentView: App not initialized yet, setting pending flag")
+                AppLog.shared.log("App not initialized yet, setting pending flag", level: .debug, category: .general)
                 pendingActionButtonRecording = true
             }
         } else {
@@ -352,16 +372,13 @@ struct ContentView: View {
     }
 
     private func triggerActionButtonRecording() {
-        print("🎙️ ContentView: Triggering action button recording")
+        AppLog.shared.log("Triggering action button recording", level: .debug, category: .general)
         selectedTab = 0
 
         DispatchQueue.main.async {
-            print("🎙️ ContentView: On main queue, current recording state: \(recorderVM.isRecording)")
+            AppLog.shared.log("Action button: isRecording=\(recorderVM.isRecording)", level: .debug, category: .general)
             if !recorderVM.isRecording {
-                print("🎙️ ContentView: Starting recording...")
                 recorderVM.startRecording()
-            } else {
-                print("🎙️ ContentView: Already recording, skipping")
             }
         }
     }

@@ -4,7 +4,7 @@ SwiftUI iOS + watchOS app for recording audio, transcribing it with local or clo
 
 AVAILABLE ON THE APP STORE: https://apps.apple.com/us/app/bisonnotes-ai-voice-notes/id6749189425
 
-Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Build & Test](#build-and-test) • [Architecture](#architecture)
+Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
 
 ## Architecture
 - Data: Core Data model at `BisonNotes AI/BisonNotes_AI.xcdatamodeld` stores recordings, transcripts, summaries, and jobs.
@@ -73,7 +73,7 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - **Watch App**: Full recording control from Apple Watch with automatic sync via WatchConnectivity
 - **Multiple AI Engines**: Support for OpenAI, AWS Bedrock, Google AI Studio, Mistral AI, Ollama, On-Device AI, and Apple Native (Apple Intelligence)
 - **Apple Native AI Engine**: On-device summarization using Apple's Foundation Models framework (iOS 26+, iPhone 15 Pro+). No data leaves the device.
-- **Mistral AI Transcription**: Cloud transcription via Voxtral Mini with speaker diarization support ($0.003/min)
+- **Mistral AI (Free & Paid Tiers)**: Guided in-app setup wizard for Mistral's free tier -- transcription and summarization with no credit card required. Paid tiers available for higher rate limits. Cloud transcription via Voxtral Mini with speaker diarization support.
 - **On-Device Processing**: Complete privacy with FluidAudio Parakeet transcription and On-Device AI summarization (default for new installs)
 - **Audio Export**: Share any recording as an audio file via the iOS share sheet
 - **Video Import**: Import video files; audio is automatically extracted to M4A
@@ -175,7 +175,9 @@ AWS Bedrock provides access to multiple foundation models:
 
 ### Mistral AI Models
 
-Mistral AI summarization supports multiple models:
+Mistral AI offers a **free Experiment tier** (no credit card required) with access to all models, plus paid Build and Scale tiers for higher rate limits. The app includes a **guided in-app setup wizard** that walks new users through account creation and API key provisioning in about 2 minutes. See [Mistral AI Free Setup Guide](docs/mistral-free-setup.md) for details.
+
+Summarization models:
 
 - **Mistral Large (25.12)**: Most capable Mistral model with 128K context window (Premium tier)
 - **Mistral Medium (25.08)**: Balanced performance and cost with 128K context (Standard tier)

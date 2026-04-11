@@ -14,16 +14,16 @@ extension AudioRecorderViewModel {
 
 	func beginBackgroundTask() {
 		guard backgroundTask == .invalid else { return }
-		print("🔄 Starting background task for recording")
+		AppLog.shared.backgroundProcessing("Starting background task for recording")
 		backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Recording") { [weak self] in
-			print("⚠️ Recording background task expiring!")
+			AppLog.shared.backgroundProcessing("Recording background task expiring", level: .error)
 			self?.endBackgroundTask()
 		}
 	}
 
 	func endBackgroundTask() {
 		guard backgroundTask != .invalid else { return }
-		print("⏹️ Ending recording background task")
+		AppLog.shared.backgroundProcessing("Ending recording background task")
 		UIApplication.shared.endBackgroundTask(backgroundTask)
 		backgroundTask = .invalid
 	}
@@ -39,7 +39,7 @@ extension AudioRecorderViewModel {
 
 			// Only log/warn if actually limited (not infinite)
 			if remaining < Double.greatestFiniteMagnitude {
-				print("⏱️ Background time remaining: \(Int(remaining)) seconds")
+				AppLog.shared.backgroundProcessing("Background time remaining: \(Int(remaining))s", level: .debug)
 
 				// Warn user when less than 1 minute remains
 				if remaining < 60 {

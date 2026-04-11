@@ -165,11 +165,7 @@ class OpenAISummarizationService: ObservableObject {
             reasoningEffort: reasoningEffort()
         )
 
-        #if DEBUG
-        print("🔧 Provider: \(config.baseURL)")
-        print("🔧 Message format: \(cachedMessageFormat.displayName)")
-        print("🔧 Using response_format: \(cachedShouldUseResponseFormat ? "json_object" : "none (flexible parsing)")")
-        #endif
+        AppLog.shared.networking("Provider: \(config.baseURL), format: \(cachedMessageFormat.displayName), response_format: \(cachedShouldUseResponseFormat ? "json_object" : "none")", level: .debug)
 
         let response = try await makeAPICall(request: request)
 
@@ -188,14 +184,10 @@ class OpenAISummarizationService: ObservableObject {
             let testPrompt = "Hello, this is a test message. Please respond with 'Test successful'."
             let response = try await generateSummary(from: testPrompt, contentType: .general)
             let success = response.contains("Test successful") || response.contains("test successful")
-            #if DEBUG
-            print("✅ OpenAI connection test \(success ? "successful" : "failed")")
-            #endif
+            AppLog.shared.networking("OpenAI connection test \(success ? "successful" : "failed")")
             return success
         } catch {
-            #if DEBUG
-            print("❌ OpenAI connection test failed: \(error)")
-            #endif
+            AppLog.shared.networking("OpenAI connection test failed: \(error)", level: .error)
             return false
         }
     }
@@ -250,9 +242,7 @@ class OpenAISummarizationService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid base URL: \(baseURL)")
         }
 
-        #if DEBUG
-        print("🔍 Fetching models from: \(url.absoluteString)")
-        #endif
+        AppLog.shared.networking("Fetching models from: \(url.absoluteString)", level: .debug)
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -267,9 +257,7 @@ class OpenAISummarizationService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid response from server")
         }
 
-        #if DEBUG
-        print("📡 Models endpoint response status: \(httpResponse.statusCode)")
-        #endif
+        AppLog.shared.networking("Models endpoint response status: \(httpResponse.statusCode)", level: .debug)
 
         guard httpResponse.statusCode == 200 else {
             // Try to parse error response
@@ -286,18 +274,11 @@ class OpenAISummarizationService: ObservableObject {
             let modelsResponse = try JSONDecoder().decode(OpenAIModelsListResponse.self, from: data)
             let modelIds = modelsResponse.data.map { $0.id }.sorted()
 
-            #if DEBUG
-            print("✅ Successfully fetched \(modelIds.count) models from OpenAI-compatible API")
-            if !modelIds.isEmpty {
-                print("📋 Available models: \(modelIds.prefix(10).joined(separator: ", "))\(modelIds.count > 10 ? "..." : "")")
-            }
-            #endif
+            AppLog.shared.networking("Fetched \(modelIds.count) models from OpenAI-compatible API", level: .debug)
 
             return modelIds
         } catch {
-            #if DEBUG
-            print("❌ Failed to parse models response: \(error)")
-            #endif
+            AppLog.shared.networking("Failed to parse models response: \(error)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "Failed to parse models response: \(error.localizedDescription)")
         }
     }
@@ -342,9 +323,7 @@ class OpenAISummarizationService: ObservableObject {
     private func makeAPICall(request: OpenAIChatCompletionRequest) async throws -> OpenAIChatCompletionResponse {
         // Validate configuration before making API call
         guard !config.apiKey.isEmpty else {
-            #if DEBUG
-            print("❌ OpenAI API key is empty")
-            #endif
+            AppLog.shared.networking("OpenAI API key is empty", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI API key not configured")
         }
 
@@ -352,16 +331,11 @@ class OpenAISummarizationService: ObservableObject {
         // Third-party providers (LiteLLM, Nebius, etc.) use different key formats
         // Use precise URL matching to avoid false positives (e.g., malicious-api.openai.com.evil.com)
         if isOfficialOpenAI(baseURL: config.baseURL) && !config.apiKey.hasPrefix("sk-") {
-            #if DEBUG
-            print("❌ OpenAI API key format is invalid (should start with 'sk-')")
-            #endif
+            AppLog.shared.networking("OpenAI API key format is invalid", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI API key format is invalid")
         }
 
-        #if DEBUG
-        print("🔧 OpenAI API Configuration - Model: \(config.effectiveModelId), BaseURL: \(config.baseURL)")
-        print("🔑 API Key: \(String(config.apiKey.prefix(7)))...")
-        #endif
+        AppLog.shared.networking("OpenAI API Configuration - Model: \(config.effectiveModelId), BaseURL: \(config.baseURL)", level: .debug)
         
         guard let url = URL(string: "\(config.baseURL)/chat/completions") else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid OpenAI base URL: \(config.baseURL)")
@@ -377,48 +351,30 @@ class OpenAISummarizationService: ObservableObject {
             let encoder = JSONEncoder()
             urlRequest.httpBody = try encoder.encode(request)
 
-            #if DEBUG
-            // Log the request details for debugging
-            if let requestBody = String(data: urlRequest.httpBody!, encoding: .utf8) {
-                print("📤 OpenAI API Request Body (first 300 chars): \(requestBody.prefix(300))...")
-                print("📊 Total request size: \(requestBody.count) characters")
-            }
-            #endif
+            AppLog.shared.networking("OpenAI API request size: \(urlRequest.httpBody?.count ?? 0) bytes", level: .debug)
         } catch {
             throw SummarizationError.aiServiceUnavailable(service: "Failed to encode request: \(error.localizedDescription)")
         }
         
         do {
-            #if DEBUG
-            print("🌐 Making OpenAI API request...")
-            #endif
+            AppLog.shared.networking("Making OpenAI API request...", level: .debug)
             let (data, response) = try await session.data(for: urlRequest)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw SummarizationError.aiServiceUnavailable(service: "Invalid response from OpenAI")
             }
 
-            #if DEBUG
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
-                print("🌐 OpenAI API Response - Status: \(httpResponse.statusCode)")
-                print("📝 Raw response: \(responseString)")
-                print("📊 Response data length: \(data.count) bytes")
+                AppLog.shared.networking("OpenAI API Response - Status: \(httpResponse.statusCode), size: \(data.count) bytes", level: .debug)
             }
-            #endif
             
             if httpResponse.statusCode != 200 {
                 // Try to parse error response
                 if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
-                    #if DEBUG
-                    print("❌ OpenAI API Error: \(errorResponse.error.message)")
-                    #endif
+                    AppLog.shared.networking("OpenAI API Error: \(errorResponse.error.message)", level: .error)
                     throw SummarizationError.aiServiceUnavailable(service: "OpenAI API Error: \(errorResponse.error.message)")
                 } else {
-                    #if DEBUG
-                    let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
-                    print("❌ OpenAI API Error: HTTP \(httpResponse.statusCode) - \(responseString)")
-                    #endif
+                    AppLog.shared.networking("OpenAI API Error: HTTP \(httpResponse.statusCode)", level: .error)
                     throw SummarizationError.aiServiceUnavailable(service: "OpenAI API Error: HTTP \(httpResponse.statusCode)")
                 }
             }
@@ -428,23 +384,13 @@ class OpenAISummarizationService: ObservableObject {
             decoder.userInfo[ChatMessage.formatKey] = cachedMessageFormat
             let apiResponse = try decoder.decode(OpenAIChatCompletionResponse.self, from: data)
 
-            #if DEBUG
-            // Log the parsed response for debugging
-            if let firstChoice = apiResponse.choices.first {
-                let tokenCount = apiResponse.usage?.totalTokens ?? 0
-                print("✅ OpenAI API Success - Model: \(apiResponse.model), Tokens: \(tokenCount)")
-                print("📝 Response content length: \(firstChoice.message.content.count) characters")
-            } else {
-                print("⚠️ OpenAI API returned no choices")
-            }
-            #endif
+            let tokenCount = apiResponse.usage?.totalTokens ?? 0
+            AppLog.shared.networking("OpenAI API Success - Model: \(apiResponse.model), Tokens: \(tokenCount), response: \(apiResponse.choices.first?.message.content.count ?? 0) chars", level: .debug)
 
             return apiResponse
 
         } catch {
-            #if DEBUG
-            print("❌ OpenAI API request failed: \(error)")
-            #endif
+            AppLog.shared.networking("OpenAI API request failed: \(error)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI API request failed: \(error.localizedDescription)")
         }
     }

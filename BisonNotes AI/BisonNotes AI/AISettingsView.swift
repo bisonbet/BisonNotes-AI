@@ -73,27 +73,27 @@ final class AISettingsViewModel: ObservableObject {
         switch engineType {
         case .openAICompatible:
             UserDefaults.standard.set(true, forKey: "enableOpenAICompatible")
-            print("🔧 Auto-enabled OpenAI Compatible engine")
+            AppLog.shared.general("Auto-enabled OpenAI Compatible engine")
         case .localLLM:
             UserDefaults.standard.set(true, forKey: "enableOllama")
-            print("🔧 Auto-enabled Ollama engine")
+            AppLog.shared.general("Auto-enabled Ollama engine")
         case .googleAIStudio:
             UserDefaults.standard.set(true, forKey: "enableGoogleAIStudio")
-            print("🔧 Auto-enabled Google AI Studio engine")
+            AppLog.shared.general("Auto-enabled Google AI Studio engine")
         case .awsBedrock:
             UserDefaults.standard.set(true, forKey: "enableAWSBedrock")
-            print("🔧 Auto-enabled AWS Bedrock engine")
+            AppLog.shared.general("Auto-enabled AWS Bedrock engine")
         case .mistralAI:
             UserDefaults.standard.set(true, forKey: "enableMistralAI")
-            print("🔧 Auto-enabled Mistral AI engine")
+            AppLog.shared.general("Auto-enabled Mistral AI engine")
         case .openAI:
             UserDefaults.standard.set(true, forKey: "enableOpenAI")
-            print("🔧 Auto-enabled OpenAI engine")
+            AppLog.shared.general("Auto-enabled OpenAI engine")
         case .onDeviceLLM:
             UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
-            print("🔧 Auto-enabled On-Device AI engine")
+            AppLog.shared.general("Auto-enabled On-Device AI engine")
         case .appleNative:
-            print("🔧 Selected Apple Native engine")
+            AppLog.shared.general("Selected Apple Native engine")
         }
 
         // Update the regeneration manager
@@ -117,6 +117,7 @@ struct AISettingsView: View {
     @State private var showingMistralAISettings = false
     @State private var showingAWSBedrockSettings = false
     @State private var showingOnDeviceLLMSettings = false
+    @State private var showingMistralOnboarding = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
     @State private var showingRegenerateConfirmation = false
@@ -323,6 +324,11 @@ struct AISettingsView: View {
                 OnDeviceLLMSettingsView()
             }
         }
+        .fullScreenCover(isPresented: $showingMistralOnboarding) {
+            MistralOnboardingView(onSetupComplete: {
+                refreshEngineStatuses()
+            })
+        }
     }
 }
 
@@ -516,7 +522,12 @@ private extension AISettingsView {
         case .googleAIStudio:
             showingGoogleAIStudioSettings = true
         case .mistralAI:
-            showingMistralAISettings = true
+            let mistralKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+            if mistralKey.isEmpty {
+                showingMistralOnboarding = true
+            } else {
+                showingMistralAISettings = true
+            }
         case .awsBedrock:
             showingAWSBedrockSettings = true
         case .onDeviceLLM:
@@ -549,6 +560,19 @@ private extension AISettingsView {
             Text("Not Supported")
                 .font(.caption2.weight(.medium))
                 .foregroundColor(.secondary)
+        } else if engine == .mistralAI && !(status?.isAvailable ?? false) {
+            HStack(spacing: 4) {
+                Text("Free")
+                    .font(.caption2.weight(.bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.orange)
+                    .clipShape(Capsule())
+                Text("Setup")
+                    .font(.caption2.weight(.medium))
+                    .foregroundColor(.orange)
+            }
         } else {
             Text((status?.isAvailable ?? false) ? "Ready" : "Setup")
                 .font(.caption2.weight(.medium))

@@ -118,7 +118,7 @@ class DataMigrationManager: ObservableObject {
     }
     
     func performDataMigration() async {
-        print("🔄 Starting data migration...")
+        AppLog.shared.dataMigration("Starting data migration")
         migrationStatus = "Starting migration..."
         migrationProgress = 0.0
         
@@ -150,10 +150,10 @@ class DataMigrationManager: ObservableObject {
             
             migrationStatus = "Migration completed successfully!"
             isCompleted = true
-            print("✅ Data migration completed successfully")
+            AppLog.shared.dataMigration("Data migration completed successfully")
             
         } catch {
-            print("❌ Data migration failed: \(error)")
+            AppLog.shared.dataMigration("Data migration failed: \(error)", level: .error)
             migrationStatus = "Migration failed: \(error.localizedDescription)"
         }
     }
@@ -172,11 +172,11 @@ class DataMigrationManager: ObservableObject {
                 ["m4a", "mp3", "wav", "aac"].contains(url.pathExtension.lowercased())
             }
             
-            print("📁 Found \(audioFiles.count) audio files")
+            AppLog.shared.dataMigration("Found \(audioFiles.count) audio files", level: .debug)
             return audioFiles
             
         } catch {
-            print("❌ Error scanning for audio files: \(error)")
+            AppLog.shared.dataMigration("Error scanning for audio files: \(error)", level: .error)
             return []
         }
     }
@@ -188,11 +188,11 @@ class DataMigrationManager: ObservableObject {
             let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: nil, options: [])
             let transcriptFiles = fileURLs.filter { $0.pathExtension.lowercased() == "transcript" }
             
-            print("📄 Found \(transcriptFiles.count) transcript files")
+            AppLog.shared.dataMigration("Found \(transcriptFiles.count) transcript files", level: .debug)
             return transcriptFiles
             
         } catch {
-            print("❌ Error scanning for transcript files: \(error)")
+            AppLog.shared.dataMigration("Error scanning for transcript files: \(error)", level: .error)
             return []
         }
     }
@@ -204,11 +204,11 @@ class DataMigrationManager: ObservableObject {
             let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: nil, options: [])
             let summaryFiles = fileURLs.filter { $0.pathExtension.lowercased() == "summary" }
             
-            print("📝 Found \(summaryFiles.count) summary files")
+            AppLog.shared.dataMigration("Found \(summaryFiles.count) summary files", level: .debug)
             return summaryFiles
             
         } catch {
-            print("❌ Error scanning for summary files: \(error)")
+            AppLog.shared.dataMigration("Error scanning for summary files: \(error)", level: .error)
             return []
         }
     }
@@ -228,11 +228,11 @@ class DataMigrationManager: ObservableObject {
         do {
             let existingRecordings = try context.fetch(fetchRequest)
             if !existingRecordings.isEmpty {
-                print("⏭️ Recording already exists: \(recordingName)")
+                AppLog.shared.dataMigration("Recording already exists, skipping", level: .debug)
                 return
             }
         } catch {
-            print("❌ Error checking for existing recording: \(error)")
+            AppLog.shared.dataMigration("Error checking for existing recording: \(error)", level: .error)
             return
         }
         
@@ -257,7 +257,7 @@ class DataMigrationManager: ObservableObject {
             recordingEntry.duration = duration
             
         } catch {
-            print("❌ Error getting file metadata: \(error)")
+            AppLog.shared.dataMigration("Error getting file metadata: \(error)", level: .error)
             recordingEntry.recordingDate = Date()
             recordingEntry.createdAt = Date()
             recordingEntry.lastModified = Date()
@@ -283,9 +283,9 @@ class DataMigrationManager: ObservableObject {
                 recordingEntry.locationAccuracy = location.accuracy ?? 0.0
                 recordingEntry.locationAddress = location.address
                 
-                print("📍 Location data migrated for: \(recordingName)")
+                AppLog.shared.dataMigration("Location data migrated for recording", level: .debug)
             } catch {
-                print("❌ Error migrating location data: \(error)")
+                AppLog.shared.dataMigration("Error migrating location data: \(error)", level: .error)
             }
         }
         
@@ -307,7 +307,7 @@ class DataMigrationManager: ObservableObject {
             await createSummaryEntry(summaryFile: summaryFile, recordingEntry: recordingEntry)
         }
         
-        print("✅ Created recording entry: \(recordingName)")
+        AppLog.shared.dataMigration("Created recording entry")
     }
     
     private func createTranscriptEntry(transcriptFile: URL, recordingEntry: RecordingEntry) async {
@@ -340,10 +340,10 @@ class DataMigrationManager: ObservableObject {
             recordingEntry.transcriptId = transcript.id
             recordingEntry.transcriptionStatus = "Completed"
             
-            print("✅ Created transcript entry for: \(recordingEntry.recordingName ?? "unknown")")
+            AppLog.shared.dataMigration("Created transcript entry for recording ID: \(recordingEntry.id?.uuidString ?? "nil")")
             
         } catch {
-            print("❌ Error creating transcript entry: \(error)")
+            AppLog.shared.dataMigration("Error creating transcript entry: \(error)", level: .error)
         }
     }
     
@@ -389,10 +389,10 @@ class DataMigrationManager: ObservableObject {
                 summaryEntry.transcript = transcriptEntry
             }
             
-            print("✅ Created summary entry for: \(recordingEntry.recordingName ?? "unknown")")
+            AppLog.shared.dataMigration("Created summary entry for recording ID: \(recordingEntry.id?.uuidString ?? "nil")")
             
         } catch {
-            print("❌ Error creating summary entry: \(error)")
+            AppLog.shared.dataMigration("Error creating summary entry: \(error)", level: .error)
         }
     }
     
@@ -401,7 +401,7 @@ class DataMigrationManager: ObservableObject {
             let player = try AVAudioPlayer(contentsOf: url)
             return player.duration
         } catch {
-            print("❌ Error getting audio duration for \(url.lastPathComponent): \(error)")
+            AppLog.shared.dataMigration("Error getting audio duration: \(error)", level: .error)
             return 0.0
         }
     }
@@ -413,43 +413,43 @@ class DataMigrationManager: ObservableObject {
         var summaryCount = 0
         var errors: [String] = []
         
-        print("📥 Starting iCloud data recovery...")
+        AppLog.shared.dataMigration("Starting iCloud data recovery")
         
         // Try UnifiediCloudSyncManager first
         if let unifiedManager = unifiediCloudSyncManager {
-            print("🔍 Using UnifiediCloudSyncManager for recovery...")
+            AppLog.shared.dataMigration("Using UnifiediCloudSyncManager for recovery")
             do {
                 if !unifiedManager.isEnabled {
-                    print("⚠️ Unified iCloud sync is disabled")
+                    AppLog.shared.dataMigration("Unified iCloud sync is disabled", level: .error)
                     errors.append("Unified iCloud sync is disabled - enable it in Settings")
                 } else {
-                    print("🔄 Fetching data from unified iCloud sync...")
+                    AppLog.shared.dataMigration("Fetching data from unified iCloud sync")
                     try await unifiedManager.fetchAllDataFromCloud()
                     
                     // The unified manager updates the registry, but we need Core Data entries
                     // This would need integration with the registry to create Core Data entries
-                    print("⚠️ Unified iCloud recovery fetched data to registry, but Core Data integration needed")
+                    AppLog.shared.dataMigration("Unified iCloud recovery fetched data to registry, but Core Data integration needed", level: .error)
                     errors.append("Unified iCloud recovery needs Core Data integration")
                 }
             } catch {
-                print("❌ Unified iCloud recovery failed: \(error)")
+                AppLog.shared.dataMigration("Unified iCloud recovery failed: \(error)", level: .error)
                 errors.append("Unified iCloud error: \(error.localizedDescription)")
             }
         }
         
         // Try legacy iCloudStorageManager if unified is not available
         else if let legacyManager = iCloudStorageManager {
-            print("🔍 Using legacy iCloudStorageManager for recovery...")
+            AppLog.shared.dataMigration("Using legacy iCloudStorageManager for recovery")
             do {
                 if !legacyManager.isEnabled {
-                    print("⚠️ Legacy iCloud sync is disabled")
+                    AppLog.shared.dataMigration("Legacy iCloud sync is disabled", level: .error)
                     errors.append("Legacy iCloud sync is disabled - enable it in Settings")
                 } else {
-                    print("📥 Fetching summaries from legacy iCloud...")
+                    AppLog.shared.dataMigration("Fetching summaries from legacy iCloud")
                     let summaries = try await legacyManager.fetchSummariesFromiCloud()
                     
                     if !summaries.isEmpty {
-                        print("📊 Found \(summaries.count) summaries in legacy iCloud")
+                        AppLog.shared.dataMigration("Found \(summaries.count) summaries in legacy iCloud", level: .debug)
                         
                         // Create Core Data entries for recovered summaries
                         for summary in summaries {
@@ -487,33 +487,33 @@ class DataMigrationManager: ObservableObject {
                                 summaryEntry.transcriptId = summary.transcriptId
                                 
                                 summaryCount += 1
-                                print("✅ Recovered summary: \(summary.recordingName)")
+                                AppLog.shared.dataMigration("Recovered summary for recording ID: \(summary.recordingId?.uuidString ?? "nil")")
                             } else {
-                                print("⚠️ Summary already exists: \(summary.recordingName)")
+                                AppLog.shared.dataMigration("Summary already exists for recording ID: \(summary.recordingId?.uuidString ?? "nil")", level: .debug)
                             }
                         }
                         
                         // Save the context
                         try context.save()
-                        print("✅ Saved \(summaryCount) recovered summaries to Core Data")
+                        AppLog.shared.dataMigration("Saved \(summaryCount) recovered summaries to Core Data")
                         
                     } else {
-                        print("📋 No summaries found in legacy iCloud")
+                        AppLog.shared.dataMigration("No summaries found in legacy iCloud")
                     }
                 }
             } catch {
-                print("❌ Legacy iCloud recovery failed: \(error)")
+                AppLog.shared.dataMigration("Legacy iCloud recovery failed: \(error)", level: .error)
                 errors.append("Legacy iCloud error: \(error.localizedDescription)")
             }
         }
         
         // No iCloud managers available
         else {
-            print("⚠️ No iCloud sync managers available")
+            AppLog.shared.dataMigration("No iCloud sync managers available", level: .error)
             errors.append("No iCloud sync managers available - they need to be passed to DataMigrationManager")
         }
         
-        print("📊 Recovery results: \(transcriptCount) transcripts, \(summaryCount) summaries recovered")
+        AppLog.shared.dataMigration("Recovery results: \(transcriptCount) transcripts, \(summaryCount) summaries recovered")
         return (transcriptCount, summaryCount, errors)
     }
     
@@ -528,17 +528,17 @@ class DataMigrationManager: ObservableObject {
             
             do {
                 try context.execute(deleteRequest)
-                print("🗑️ Cleared all \(entityName) entries")
+                AppLog.shared.dataMigration("Cleared all \(entityName) entries")
             } catch {
-                print("❌ Error clearing \(entityName): \(error)")
+                AppLog.shared.dataMigration("Error clearing \(entityName): \(error)", level: .error)
             }
         }
         
         do {
             try context.save()
-            print("✅ Core Data cleared successfully")
+            AppLog.shared.dataMigration("Core Data cleared successfully")
         } catch {
-            print("❌ Error saving after clearing Core Data: \(error)")
+            AppLog.shared.dataMigration("Error saving after clearing Core Data: \(error)", level: .error)
         }
     }
     
@@ -547,32 +547,30 @@ class DataMigrationManager: ObservableObject {
         let recordingFetch: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         do {
             let recordings = try context.fetch(recordingFetch)
-            print("📊 Core Data contains \(recordings.count) recordings:")
+            AppLog.shared.dataMigration("Core Data contains \(recordings.count) recordings", level: .debug)
             for recording in recordings {
-                print("  - \(recording.recordingName ?? "unknown") (ID: \(recording.id?.uuidString ?? "nil"))")
-                print("    Has transcript: \(recording.transcript != nil)")
-                print("    Has summary: \(recording.summary != nil)")
+                AppLog.shared.dataMigration("  Recording ID: \(recording.id?.uuidString ?? "nil") - hasTranscript: \(recording.transcript != nil), hasSummary: \(recording.summary != nil)", level: .debug)
             }
         } catch {
-            print("❌ Error fetching recordings: \(error)")
+            AppLog.shared.dataMigration("Error fetching recordings: \(error)", level: .error)
         }
         
         // Check transcripts
         let transcriptFetch: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
         do {
             let transcripts = try context.fetch(transcriptFetch)
-            print("📊 Core Data contains \(transcripts.count) transcripts")
+            AppLog.shared.dataMigration("Core Data contains \(transcripts.count) transcripts", level: .debug)
         } catch {
-            print("❌ Error fetching transcripts: \(error)")
+            AppLog.shared.dataMigration("Error fetching transcripts: \(error)", level: .error)
         }
         
         // Check summaries
         let summaryFetch: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         do {
             let summaries = try context.fetch(summaryFetch)
-            print("📊 Core Data contains \(summaries.count) summaries")
+            AppLog.shared.dataMigration("Core Data contains \(summaries.count) summaries", level: .debug)
         } catch {
-            print("❌ Error fetching summaries: \(error)")
+            AppLog.shared.dataMigration("Error fetching summaries: \(error)", level: .error)
         }
     }
     
@@ -599,7 +597,7 @@ class DataMigrationManager: ObservableObject {
     // MARK: - Enhanced Data Repair Functionality
     
     func performDataIntegrityCheck() async -> DataIntegrityReport {
-        print("🔍 Starting comprehensive data integrity check...")
+        AppLog.shared.dataMigration("Starting comprehensive data integrity check")
         migrationStatus = "Checking data integrity..."
         migrationProgress = 0.0
         
@@ -636,7 +634,7 @@ class DataMigrationManager: ObservableObject {
     }
     
     func repairDataIntegrityIssues(report: DataIntegrityReport) async -> DataRepairResults {
-        print("🔧 Starting data repair process...")
+        AppLog.shared.dataMigration("Starting data repair process")
         migrationStatus = "Repairing data integrity issues..."
         migrationProgress = 0.0
         
@@ -669,10 +667,10 @@ class DataMigrationManager: ObservableObject {
             migrationProgress = 1.0
             
             migrationStatus = "Data repair completed successfully!"
-            print("✅ Data repair completed successfully")
+            AppLog.shared.dataMigration("Data repair completed successfully")
             
         } catch {
-            print("❌ Data repair failed: \(error)")
+            AppLog.shared.dataMigration("Data repair failed: \(error)", level: .error)
             migrationStatus = "Data repair failed: \(error.localizedDescription)"
         }
         
@@ -716,10 +714,10 @@ class DataMigrationManager: ObservableObject {
                 }
             }
         } catch {
-            print("❌ Error finding orphaned recordings: \(error)")
+            AppLog.shared.dataMigration("Error finding orphaned recordings: \(error)", level: .error)
         }
         
-        print("🔍 Found \(orphaned.count) orphaned recordings")
+        AppLog.shared.dataMigration("Found \(orphaned.count) orphaned recordings", level: .debug)
         return orphaned
     }
     
@@ -770,10 +768,10 @@ class DataMigrationManager: ObservableObject {
             }
             
         } catch {
-            print("❌ Error finding orphaned files: \(error)")
+            AppLog.shared.dataMigration("Error finding orphaned files: \(error)", level: .error)
         }
         
-        print("🔍 Found \(orphaned.count) orphaned files")
+        AppLog.shared.dataMigration("Found \(orphaned.count) orphaned files", level: .debug)
         return orphaned
     }
     
@@ -795,7 +793,7 @@ class DataMigrationManager: ObservableObject {
                 }
             }
         } catch {
-            print("❌ Error checking transcript relationships: \(error)")
+            AppLog.shared.dataMigration("Error checking transcript relationships: \(error)", level: .error)
         }
         
         // Check summaries with missing recordings
@@ -813,10 +811,10 @@ class DataMigrationManager: ObservableObject {
                 }
             }
         } catch {
-            print("❌ Error checking summary relationships: \(error)")
+            AppLog.shared.dataMigration("Error checking summary relationships: \(error)", level: .error)
         }
         
-        print("🔍 Found \(broken.count) broken relationships")
+        AppLog.shared.dataMigration("Found \(broken.count) broken relationships", level: .debug)
         return broken
     }
     
@@ -842,7 +840,7 @@ class DataMigrationManager: ObservableObject {
                 }
                 
                 guard let resolvedURL = fileURL else {
-                    print("⚠️ Could not resolve URL for recording: \(recording.recordingName ?? "unknown")")
+                    AppLog.shared.dataMigration("Could not resolve URL for recording ID: \(recording.id?.uuidString ?? "nil")", level: .error)
                     missing.append(MissingAudioFile(
                         recording: recording,
                         expectedPath: urlString
@@ -858,10 +856,10 @@ class DataMigrationManager: ObservableObject {
                 }
             }
         } catch {
-            print("❌ Error checking for missing audio files: \(error)")
+            AppLog.shared.dataMigration("Error checking for missing audio files: \(error)", level: .error)
         }
         
-        print("🔍 Found \(missing.count) recordings with missing audio files")
+        AppLog.shared.dataMigration("Found \(missing.count) recordings with missing audio files", level: .debug)
         return missing
     }
     
@@ -909,10 +907,10 @@ class DataMigrationManager: ObservableObject {
                 ))
             }
         } catch {
-            print("❌ Error checking for duplicate recordings: \(error)")
+            AppLog.shared.dataMigration("Error checking for duplicate recordings: \(error)", level: .error)
         }
         
-        print("🔍 Found \(duplicates.count) sets of duplicate entries")
+        AppLog.shared.dataMigration("Found \(duplicates.count) sets of duplicate entries", level: .debug)
         return duplicates
     }
     
@@ -944,7 +942,7 @@ class DataMigrationManager: ObservableObject {
             }
         }
         
-        print("🔧 Repaired \(repaired) orphaned recording relationships")
+        AppLog.shared.dataMigration("Repaired \(repaired) orphaned recording relationships")
         return repaired
     }
     
@@ -968,11 +966,11 @@ class DataMigrationManager: ObservableObject {
                     imported += 1
                 }
             } catch {
-                print("❌ Error importing orphaned file \(orphanedFile.fileURL.lastPathComponent): \(error)")
+                AppLog.shared.dataMigration("Error importing orphaned file: \(error)", level: .error)
             }
         }
         
-        print("🔧 Imported \(imported) orphaned files")
+        AppLog.shared.dataMigration("Imported \(imported) orphaned files")
         return imported
     }
     
@@ -1005,7 +1003,7 @@ class DataMigrationManager: ObservableObject {
                             repaired += 1
                         }
                     } catch {
-                        print("❌ Error repairing transcript relationship: \(error)")
+                        AppLog.shared.dataMigration("Error repairing transcript relationship: \(error)", level: .error)
                     }
                 }
                 
@@ -1044,13 +1042,13 @@ class DataMigrationManager: ObservableObject {
                             repaired += 1
                         }
                     } catch {
-                        print("❌ Error repairing summary relationship: \(error)")
+                        AppLog.shared.dataMigration("Error repairing summary relationship: \(error)", level: .error)
                     }
                 }
             }
         }
         
-        print("🔧 Repaired \(repaired) broken relationships")
+        AppLog.shared.dataMigration("Repaired \(repaired) broken relationships")
         return repaired
     }
     
@@ -1069,7 +1067,7 @@ class DataMigrationManager: ObservableObject {
             cleaned += 1
         }
         
-        print("🗑️ Cleaned up \(cleaned) recordings with missing audio files")
+        AppLog.shared.dataMigration("Cleaned up \(cleaned) recordings with missing audio files")
         return cleaned
     }
     
@@ -1077,7 +1075,7 @@ class DataMigrationManager: ObservableObject {
     
     /// Performs comprehensive validation and repair of data inconsistencies
     func performComprehensiveDataRepair() async -> DataRepairResults {
-        print("🔧 Starting comprehensive data repair...")
+        AppLog.shared.dataMigration("Starting comprehensive data repair")
         migrationStatus = "Performing comprehensive data repair..."
         migrationProgress = 0.0
         
@@ -1112,15 +1110,11 @@ class DataMigrationManager: ObservableObject {
             migrationProgress = 1.0
             
             migrationStatus = "Comprehensive data repair completed successfully!"
-            print("✅ Comprehensive data repair completed successfully")
-            print("📊 Repair summary:")
-            print("   - Relationship fixes: \(relationshipFixes)")
-            print("   - Name synchronizations: \(nameFixes)")
-            print("   - URL conversions: \(urlFixes)")
-            print("   - Duplicate resolutions: \(duplicateFixes)")
+            AppLog.shared.dataMigration("Comprehensive data repair completed successfully")
+            AppLog.shared.dataMigration("Repair summary - relationships: \(relationshipFixes), names: \(nameFixes), URLs: \(urlFixes), duplicates: \(duplicateFixes)", level: .debug)
             
         } catch {
-            print("❌ Comprehensive data repair failed: \(error)")
+            AppLog.shared.dataMigration("Comprehensive data repair failed: \(error)", level: .error)
             migrationStatus = "Comprehensive data repair failed: \(error.localizedDescription)"
         }
         
@@ -1150,19 +1144,19 @@ class DataMigrationManager: ObservableObject {
                             recording.transcript = transcript
                             transcript.recording = recording
                             wasFixed = true
-                            print("🔗 Fixed transcript relationship for: \(recording.recordingName ?? "unknown")")
+                            AppLog.shared.dataMigration("Fixed transcript relationship for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                         }
                     } else if recording.transcript?.id != transcriptId {
                         // Relationship exists but ID doesn't match - sync the ID
                         recording.transcriptId = recording.transcript?.id
                         wasFixed = true
-                        print("🔄 Synced transcript ID for: \(recording.recordingName ?? "unknown")")
+                        AppLog.shared.dataMigration("Synced transcript ID for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                     }
                 } else if let transcript = recording.transcript {
                     // Has relationship but no ID - sync the ID
                     recording.transcriptId = transcript.id
                     wasFixed = true
-                    print("🆔 Added missing transcript ID for: \(recording.recordingName ?? "unknown")")
+                    AppLog.shared.dataMigration("Added missing transcript ID for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                 }
                 
                 // Fix summary relationship mismatches
@@ -1176,19 +1170,19 @@ class DataMigrationManager: ObservableObject {
                             recording.summary = summary
                             summary.recording = recording
                             wasFixed = true
-                            print("🔗 Fixed summary relationship for: \(recording.recordingName ?? "unknown")")
+                            AppLog.shared.dataMigration("Fixed summary relationship for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                         }
                     } else if recording.summary?.id != summaryId {
                         // Relationship exists but ID doesn't match - sync the ID
                         recording.summaryId = recording.summary?.id
                         wasFixed = true
-                        print("🔄 Synced summary ID for: \(recording.recordingName ?? "unknown")")
+                        AppLog.shared.dataMigration("Synced summary ID for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                     }
                 } else if let summary = recording.summary {
                     // Has relationship but no ID - sync the ID
                     recording.summaryId = summary.id
                     wasFixed = true
-                    print("🆔 Added missing summary ID for: \(recording.recordingName ?? "unknown")")
+                    AppLog.shared.dataMigration("Added missing summary ID for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                 }
                 
                 if wasFixed {
@@ -1197,10 +1191,10 @@ class DataMigrationManager: ObservableObject {
                 }
             }
         } catch {
-            print("❌ Error fixing relationship inconsistencies: \(error)")
+            AppLog.shared.dataMigration("Error fixing relationship inconsistencies: \(error)", level: .error)
         }
         
-        print("🔧 Fixed \(fixedCount) relationship inconsistencies")
+        AppLog.shared.dataMigration("Fixed \(fixedCount) relationship inconsistencies")
         return fixedCount
     }
     
@@ -1218,9 +1212,9 @@ class DataMigrationManager: ObservableObject {
                 // Check if this uses the new standardized naming conventions (these are already meaningful, skip them)
                 let isStandardizedName = currentName.hasPrefix("apprecording-") || 
                                          currentName.hasPrefix("importedfile-")
-                if isStandardizedName { 
-                    print("⏭️ Skipping standardized name: '\(currentName)'")
-                    continue 
+                if isStandardizedName {
+                    AppLog.shared.dataMigration("Skipping standardized name for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
+                    continue
                 }
                 
                 // Check if this is a generic filename pattern (comprehensive check)
@@ -1233,23 +1227,23 @@ class DataMigrationManager: ObservableObject {
                                    currentName.hasPrefix("Recording ") ||
                                    (currentName.count > 15 && (currentName.contains("1754") || currentName.contains("2025")))
                 
-                if !isGenericName { 
-                    print("⏭️ Skipping non-generic name: '\(currentName)'")
-                    continue 
+                if !isGenericName {
+                    AppLog.shared.dataMigration("Skipping non-generic name for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
+                    continue
                 }
-                
+
                 var bestTitle: String?
-                
+
                 // First, try to get a title from the summary
                 if let summary = recording.summary,
                    let titlesString = summary.titles,
                    let titlesData = titlesString.data(using: .utf8),
                    let titles = try? JSONDecoder().decode([TitleItem].self, from: titlesData) {
-                    
+
                     // Find the best title (highest confidence)
                     if let bestTitleItem = titles.max(by: { $0.confidence < $1.confidence }) {
                         bestTitle = bestTitleItem.text
-                        print("📝 Found summary title for \(currentName): '\(bestTitleItem.text)' (confidence: \(bestTitleItem.confidence))")
+                        AppLog.shared.dataMigration("Found summary title for recording ID: \(recording.id?.uuidString ?? "nil") (confidence: \(bestTitleItem.confidence))", level: .debug)
                     }
                 }
                 
@@ -1271,25 +1265,25 @@ class DataMigrationManager: ObservableObject {
                         )
                         if !generatedName.isEmpty && generatedName != "Untitled Conversation" {
                             bestTitle = generatedName
-                            print("🎯 Generated title from transcript for \(currentName): '\(generatedName)'")
+                            AppLog.shared.dataMigration("Generated title from transcript for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                         }
                     }
                 }
-                
+
                 // Update the recording name if we found a better title
                 if let newTitle = bestTitle, newTitle != currentName {
                     let validatedTitle = RecordingNameGenerator.validateAndFixRecordingName(newTitle, originalName: currentName)
                     recording.recordingName = validatedTitle
                     recording.lastModified = Date()
                     syncedCount += 1
-                    print("✅ Updated recording name: '\(currentName)' → '\(validatedTitle)'")
+                    AppLog.shared.dataMigration("Updated recording name for ID: \(recording.id?.uuidString ?? "nil")")
                 }
             }
         } catch {
-            print("❌ Error syncing recording names: \(error)")
+            AppLog.shared.dataMigration("Error syncing recording names: \(error)", level: .error)
         }
         
-        print("🏷️ Synced \(syncedCount) recording names with titles")
+        AppLog.shared.dataMigration("Synced \(syncedCount) recording names with titles")
         return syncedCount
     }
     
@@ -1311,15 +1305,15 @@ class DataMigrationManager: ObservableObject {
                         recording.recordingURL = relativePath
                         recording.lastModified = Date()
                         convertedCount += 1
-                        print("🔄 Converted to relative path: \(url.lastPathComponent)")
+                        AppLog.shared.dataMigration("Converted URL to relative path for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                     }
                 }
             }
         } catch {
-            print("❌ Error converting URLs to relative paths: \(error)")
+            AppLog.shared.dataMigration("Error converting URLs to relative paths: \(error)", level: .error)
         }
         
-        print("📁 Converted \(convertedCount) URLs to relative paths")
+        AppLog.shared.dataMigration("Converted \(convertedCount) URLs to relative paths")
         return convertedCount
     }
     
@@ -1340,8 +1334,8 @@ class DataMigrationManager: ObservableObject {
                 nameGroups[name, default: []].append(recording)
             }
             
-            for (name, group) in nameGroups where group.count > 1 {
-                print("🔍 Resolving \(group.count) duplicates for: \(name)")
+            for (_, group) in nameGroups where group.count > 1 {
+                AppLog.shared.dataMigration("Resolving \(group.count) duplicates for a recording", level: .debug)
                 
                 // Find the most complete recording (has both transcript and summary)
                 let scored = group.map { recording in
@@ -1359,18 +1353,18 @@ class DataMigrationManager: ObservableObject {
                 
                 // Delete the others
                 for duplicate in group where duplicate != keeper {
-                    print("🗑️ Removing duplicate: \(duplicate.id?.uuidString ?? "unknown")")
+                    AppLog.shared.dataMigration("Removing duplicate recording ID: \(duplicate.id?.uuidString ?? "nil")", level: .debug)
                     context.delete(duplicate)
                     resolvedCount += 1
                 }
                 
-                print("✅ Kept recording with ID: \(keeper.id?.uuidString ?? "unknown")")
+                AppLog.shared.dataMigration("Kept recording with ID: \(keeper.id?.uuidString ?? "nil")", level: .debug)
             }
         } catch {
-            print("❌ Error resolving duplicate entries: \(error)")
+            AppLog.shared.dataMigration("Error resolving duplicate entries: \(error)", level: .error)
         }
         
-        print("🧹 Resolved \(resolvedCount) duplicate entries")
+        AppLog.shared.dataMigration("Resolved \(resolvedCount) duplicate entries")
         return resolvedCount
     }
     
@@ -1378,7 +1372,7 @@ class DataMigrationManager: ObservableObject {
     
     /// Detects and resolves filename-based duplicates (generic names + AI-generated titles for same audio)
     func resolveFilenameTitleDuplicates() async -> Int {
-        print("🔍 Detecting filename/title duplicate pairs...")
+        AppLog.shared.dataMigration("Detecting filename/title duplicate pairs")
         var resolvedCount = 0
         
         let recordingFetch: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
@@ -1427,10 +1421,7 @@ class DataMigrationManager: ObservableObject {
                             // If recorded within 10 minutes or at same location, likely duplicates
                             if timeDifference < 600 || sameLocation {
                                 potentialDuplicates.append((generic: recording, titled: otherRecording))
-                                print("🔗 Potential duplicate pair found:")
-                                print("   Generic: '\(name)' (ID: \(recording.id?.uuidString ?? "nil"))")
-                                print("   Titled: '\(otherName)' (ID: \(otherRecording.id?.uuidString ?? "nil"))")
-                                print("   Time diff: \(Int(timeDifference))s, Same location: \(sameLocation)")
+                                AppLog.shared.dataMigration("Potential duplicate pair found - generic ID: \(recording.id?.uuidString ?? "nil"), titled ID: \(otherRecording.id?.uuidString ?? "nil"), timeDiff: \(Int(timeDifference))s, sameLocation: \(sameLocation)", level: .debug)
                                 break
                             }
                         }
@@ -1443,7 +1434,7 @@ class DataMigrationManager: ObservableObject {
                 let generic = pair.generic
                 let titled = pair.titled
                 
-                print("🔄 Merging duplicate: '\(generic.recordingName ?? "unknown")' -> '\(titled.recordingName ?? "unknown")'")
+                AppLog.shared.dataMigration("Merging duplicate generic ID: \(generic.id?.uuidString ?? "nil") into titled ID: \(titled.id?.uuidString ?? "nil")", level: .debug)
                 
                 // Transfer any missing data from generic to titled recording
                 if titled.duration == 0 && generic.duration > 0 {
@@ -1502,14 +1493,14 @@ class DataMigrationManager: ObservableObject {
                 context.delete(generic)
                 resolvedCount += 1
                 
-                print("✅ Merged and deleted generic recording: '\(generic.recordingName ?? "unknown")'")
+                AppLog.shared.dataMigration("Merged and deleted generic recording ID: \(generic.id?.uuidString ?? "nil")")
             }
             
         } catch {
-            print("❌ Error resolving filename/title duplicates: \(error)")
+            AppLog.shared.dataMigration("Error resolving filename/title duplicates: \(error)", level: .error)
         }
         
-        print("🧹 Resolved \(resolvedCount) filename/title duplicate pairs")
+        AppLog.shared.dataMigration("Resolved \(resolvedCount) filename/title duplicate pairs")
         return resolvedCount
     }
     
@@ -1536,13 +1527,13 @@ class DataMigrationManager: ObservableObject {
             let transcripts = try context.fetch(transcriptFetch)
             for transcript in transcripts {
                 if transcript.recording == nil {
-                    print("🗑️ Removing orphaned transcript: \(transcript.id?.uuidString ?? "unknown")")
+                    AppLog.shared.dataMigration("Removing orphaned transcript ID: \(transcript.id?.uuidString ?? "nil")", level: .debug)
                     context.delete(transcript)
                     cleanedCount += 1
                 }
             }
         } catch {
-            print("❌ Error cleaning orphaned transcripts: \(error)")
+            AppLog.shared.dataMigration("Error cleaning orphaned transcripts: \(error)", level: .error)
         }
         
         // Clean up orphaned summaries
@@ -1555,24 +1546,24 @@ class DataMigrationManager: ObservableObject {
                 let hasAnchorRecordingId = (summary.recordingId != nil)
                 let isFullyOrphaned = (summary.recording == nil && summary.recordingId == nil)
                 if isFullyOrphaned {
-                    print("🗑️ Removing orphaned summary: \(summary.id?.uuidString ?? "unknown")")
+                    AppLog.shared.dataMigration("Removing orphaned summary ID: \(summary.id?.uuidString ?? "nil")", level: .debug)
                     context.delete(summary)
                     cleanedCount += 1
                 } else if summary.recording == nil && hasAnchorRecordingId {
                     // Keep: preserved summary; do not delete
-                    print("🛑 Keeping preserved summary (anchor recordingId present): \(summary.id?.uuidString ?? "unknown")")
+                    AppLog.shared.dataMigration("Keeping preserved summary (anchor recordingId present) ID: \(summary.id?.uuidString ?? "nil")", level: .debug)
                 }
             }
         } catch {
-            print("❌ Error cleaning orphaned summaries: \(error)")
+            AppLog.shared.dataMigration("Error cleaning orphaned summaries: \(error)", level: .error)
         }
         
         if cleanedCount > 0 {
             do {
                 try context.save()
-                print("✅ Cleaned up \(cleanedCount) orphaned transcripts and summaries")
+                AppLog.shared.dataMigration("Cleaned up \(cleanedCount) orphaned transcripts and summaries")
             } catch {
-                print("❌ Failed to save after cleaning orphaned entries: \(error)")
+                AppLog.shared.dataMigration("Failed to save after cleaning orphaned entries: \(error)", level: .error)
             }
         }
         
@@ -1581,7 +1572,7 @@ class DataMigrationManager: ObservableObject {
     
     /// Comprehensive duplicate resolution including filename/title pairs
     func performAdvancedDuplicateResolution() async -> Int {
-        print("🧹 Starting advanced duplicate resolution...")
+        AppLog.shared.dataMigration("Starting advanced duplicate resolution")
         var totalResolved = 0
         
         // Step 1: Resolve filename/title duplicate pairs
@@ -1596,53 +1587,45 @@ class DataMigrationManager: ObservableObject {
         let standardDuplicates = await resolveDuplicateEntries()
         totalResolved += standardDuplicates
         
-        print("🎯 Advanced duplicate resolution completed: \(totalResolved) total items resolved")
+        AppLog.shared.dataMigration("Advanced duplicate resolution completed: \(totalResolved) total items resolved")
         return totalResolved
     }
     
     /// Diagnostic function to debug the UI vs Database disconnect
     func diagnoseRecordingDisplayIssue() async {
-        print("🔍 DIAGNOSTIC: Investigating recording display vs database issue...")
+        AppLog.shared.dataMigration("DIAGNOSTIC: Investigating recording display vs database issue")
         
         let recordingFetch: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         recordingFetch.sortDescriptors = [NSSortDescriptor(keyPath: \RecordingEntry.recordingDate, ascending: false)]
         
         do {
             let recordings = try context.fetch(recordingFetch)
-            print("📊 Found \(recordings.count) recordings in database:")
-            
+            AppLog.shared.dataMigration("Found \(recordings.count) recordings in database", level: .debug)
+
             for (index, recording) in recordings.enumerated() {
                 let id = recording.id?.uuidString ?? "NO-ID"
-                let name = recording.recordingName ?? "NO-NAME"
-                let url = recording.recordingURL ?? "NO-URL"
                 let hasTranscript = recording.transcript != nil
                 let hasTranscriptId = recording.transcriptId != nil
                 let hasSummary = recording.summary != nil
                 let hasSummaryId = recording.summaryId != nil
                 let transcriptionStatus = recording.transcriptionStatus ?? "NO-STATUS"
                 let summaryStatus = recording.summaryStatus ?? "NO-STATUS"
-                
-                print("\n📝 Recording #\(index + 1):")
-                print("   ID: \(id)")
-                print("   Name: '\(name)'")
-                print("   URL: \(url)")
-                print("   Has Transcript: \(hasTranscript) | TranscriptId: \(hasTranscriptId)")
-                print("   Has Summary: \(hasSummary) | SummaryId: \(hasSummaryId)")
-                print("   Transcription Status: '\(transcriptionStatus)'")
-                print("   Summary Status: '\(summaryStatus)'")
-                
+
+                AppLog.shared.dataMigration("Recording #\(index + 1): ID=\(id), hasTranscript=\(hasTranscript), hasTranscriptId=\(hasTranscriptId), hasSummary=\(hasSummary), hasSummaryId=\(hasSummaryId), transcriptionStatus=\(transcriptionStatus), summaryStatus=\(summaryStatus)", level: .debug)
+
                 // Check if file exists
+                let url = recording.recordingURL ?? "NO-URL"
                 if let fileURL = relativePathToURL(url) {
                     let fileExists = FileManager.default.fileExists(atPath: fileURL.path)
-                    print("   File Exists: \(fileExists) at \(fileURL.path)")
+                    AppLog.shared.dataMigration("Recording #\(index + 1) file exists: \(fileExists)", level: .debug)
                 } else {
-                    print("   File: Could not resolve path")
+                    AppLog.shared.dataMigration("Recording #\(index + 1) could not resolve path", level: .debug)
                 }
-                
-                // Show first few generic-looking names in detail
+
+                // Check first few generic-looking names
+                let name = recording.recordingName ?? "NO-NAME"
                 if index < 10 && (name.hasPrefix("recording_") || name.hasPrefix("V20210426-")) {
-                    print("   🚨 FOUND GENERIC NAME IN DATABASE: '\(name)'")
-                    print("   🔍 This contradicts the log output - investigating further...")
+                    AppLog.shared.dataMigration("Recording #\(index + 1) has generic name pattern, ID: \(id)", level: .debug)
                 }
             }
             
@@ -1655,37 +1638,30 @@ class DataMigrationManager: ObservableObject {
             orphanedSummaryFetch.predicate = NSPredicate(format: "recording == nil")
             let orphanedSummaries = try context.fetch(orphanedSummaryFetch)
             
-            print("\n🔍 Orphaned Content:")
-            print("   Orphaned Transcripts: \(orphanedTranscripts.count)")
+            AppLog.shared.dataMigration("Orphaned transcripts: \(orphanedTranscripts.count)", level: .debug)
             for transcript in orphanedTranscripts.prefix(5) {
-                print("     - TranscriptID: \(transcript.id?.uuidString ?? "NO-ID"), RecordingID: \(transcript.recordingId?.uuidString ?? "NO-RECORDING-ID")")
+                AppLog.shared.dataMigration("  Orphaned transcript ID: \(transcript.id?.uuidString ?? "nil"), recordingId: \(transcript.recordingId?.uuidString ?? "nil")", level: .debug)
             }
-            
-            print("   Orphaned Summaries: \(orphanedSummaries.count)")
+
+            AppLog.shared.dataMigration("Orphaned summaries: \(orphanedSummaries.count)", level: .debug)
             for summary in orphanedSummaries.prefix(5) {
-                print("     - SummaryID: \(summary.id?.uuidString ?? "NO-ID"), RecordingID: \(summary.recordingId?.uuidString ?? "NO-RECORDING-ID")")
-                if let titlesString = summary.titles,
-                   let titlesData = titlesString.data(using: .utf8),
-                   let titles = try? JSONDecoder().decode([TitleItem].self, from: titlesData),
-                   let firstTitle = titles.first {
-                    print("       Title: '\(firstTitle.text)'")
-                }
+                AppLog.shared.dataMigration("  Orphaned summary ID: \(summary.id?.uuidString ?? "nil"), recordingId: \(summary.recordingId?.uuidString ?? "nil")", level: .debug)
             }
             
         } catch {
-            print("❌ Error in diagnostic: \(error)")
+            AppLog.shared.dataMigration("Error in diagnostic: \(error)", level: .error)
         }
     }
     
     /// Scans for orphaned audio files that exist on disk but aren't in the database
     func findAndImportOrphanedAudioFiles() async -> Int {
-        print("🔍 Scanning for orphaned audio files...")
+        AppLog.shared.dataMigration("Scanning for orphaned audio files")
         
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            print("❌ Could not access documents directory")
+            AppLog.shared.dataMigration("Could not access documents directory", level: .error)
             return 0
         }
-        
+
         var importedCount = 0
         let supportedExtensions = ["m4a", "mp3", "wav", "aac"]
         
@@ -1696,7 +1672,7 @@ class DataMigrationManager: ObservableObject {
                 supportedExtensions.contains(url.pathExtension.lowercased())
             }
             
-            print("📁 Found \(audioFiles.count) audio files on disk")
+            AppLog.shared.dataMigration("Found \(audioFiles.count) audio files on disk", level: .debug)
             
             // Get all existing recording URLs from database
             let recordingFetch: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
@@ -1718,44 +1694,40 @@ class DataMigrationManager: ObservableObject {
                 return nil
             })
             
-            print("💾 Found \(existingURLs.count) recordings in database")
-            print("🔍 Existing filenames in DB: \(existingURLs.prefix(5).joined(separator: ", "))")
+            AppLog.shared.dataMigration("Found \(existingURLs.count) recordings in database", level: .debug)
             
             // Find orphaned files
-            print("🔍 Looking for orphaned files...")
+            AppLog.shared.dataMigration("Looking for orphaned files", level: .debug)
             for audioFile in audioFiles {
                 let filename = audioFile.lastPathComponent
                 
                 if !existingURLs.contains(filename) {
-                    print("🆕 Found orphaned audio file: \(filename)")
+                    AppLog.shared.dataMigration("Found orphaned audio file", level: .debug)
                     
                     // Import this file into the database
                     await importOrphanedAudioFile(audioFile)
                     importedCount += 1
                 } else {
-                    print("✅ File already in database: \(filename)")
+                    AppLog.shared.dataMigration("File already in database", level: .debug)
                 }
             }
             
-            print("📊 Import summary:")
-            print("   - Total audio files found: \(audioFiles.count)")
-            print("   - Files already in database: \(existingURLs.count)")
-            print("   - Orphaned files imported: \(importedCount)")
+            AppLog.shared.dataMigration("Import summary - total files: \(audioFiles.count), already in DB: \(existingURLs.count), imported: \(importedCount)", level: .debug)
             
             if importedCount > 0 {
                 try context.save()
-                print("✅ Successfully imported \(importedCount) orphaned audio files")
+                AppLog.shared.dataMigration("Successfully imported \(importedCount) orphaned audio files")
                 
                 // Refresh the UI
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(name: NSNotification.Name("RecordingRenamed"), object: nil)
                 }
             } else {
-                print("ℹ️ No orphaned audio files found")
+                AppLog.shared.dataMigration("No orphaned audio files found")
             }
             
         } catch {
-            print("❌ Error scanning for orphaned files: \(error)")
+            AppLog.shared.dataMigration("Error scanning for orphaned files: \(error)", level: .error)
         }
         
         return importedCount
@@ -1763,7 +1735,7 @@ class DataMigrationManager: ObservableObject {
     
     /// Imports a single orphaned audio file into the database
     private func importOrphanedAudioFile(_ fileURL: URL) async {
-        print("📥 Importing orphaned file: \(fileURL.lastPathComponent)")
+        AppLog.shared.dataMigration("Importing orphaned audio file")
         
         // Create new recording entry
         let recordingEntry = RecordingEntry(context: context)
@@ -1790,7 +1762,7 @@ class DataMigrationManager: ObservableObject {
             recordingEntry.duration = CMTimeGetSeconds(duration)
             
         } catch {
-            print("⚠️ Could not get metadata for \(fileURL.lastPathComponent): \(error)")
+            AppLog.shared.dataMigration("Could not get metadata for orphaned file: \(error)", level: .error)
             recordingEntry.recordingDate = Date()
             recordingEntry.createdAt = Date()
             recordingEntry.lastModified = Date()
@@ -1803,12 +1775,12 @@ class DataMigrationManager: ObservableObject {
         recordingEntry.transcriptionStatus = "Not Started"
         recordingEntry.summaryStatus = "Not Started"
         
-        print("✅ Imported: '\(recordingEntry.recordingName ?? "unknown")' from \(fileURL.lastPathComponent)")
+        AppLog.shared.dataMigration("Imported orphaned audio file as recording ID: \(recordingEntry.id?.uuidString ?? "nil")")
     }
     
     /// Forces name synchronization for all recordings with generic names
     func forceNameSynchronization() async -> Int {
-        print("🏷️ Forcing name synchronization for all generic recording names...")
+        AppLog.shared.dataMigration("Forcing name synchronization for all generic recording names")
         var renamedCount = 0
         
         let recordingFetch: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
@@ -1828,12 +1800,12 @@ class DataMigrationManager: ObservableObject {
                                    currentName.hasPrefix("Recording ") ||
                                    (currentName.count > 15 && (currentName.contains("1754") || currentName.contains("2025")))
                 
-                if !isGenericName { 
-                    print("⏭️ Skipping non-generic name: '\(currentName)'")
-                    continue 
+                if !isGenericName {
+                    AppLog.shared.dataMigration("Skipping non-generic name for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
+                    continue
                 }
-                
-                print("🔍 Processing generic name: '\(currentName)'")
+
+                AppLog.shared.dataMigration("Processing generic name for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                 var bestTitle: String?
                 
                 // First, try to get a title from the summary
@@ -1845,7 +1817,7 @@ class DataMigrationManager: ObservableObject {
                     // Find the best title (highest confidence)
                     if let bestTitleItem = titles.max(by: { $0.confidence < $1.confidence }) {
                         bestTitle = bestTitleItem.text
-                        print("📝 Found summary title: '\(bestTitleItem.text)' (confidence: \(bestTitleItem.confidence))")
+                        AppLog.shared.dataMigration("Found summary title for recording ID: \(recording.id?.uuidString ?? "nil") (confidence: \(bestTitleItem.confidence))", level: .debug)
                     }
                 }
                 
@@ -1853,7 +1825,7 @@ class DataMigrationManager: ObservableObject {
                 if bestTitle == nil, let summary = recording.summary, 
                    let summaryName = getSummaryRecordingName(from: summary) {
                     bestTitle = summaryName
-                    print("📋 Using summary recording name: '\(summaryName)'")
+                    AppLog.shared.dataMigration("Using summary recording name for ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                 }
                 
                 // If still no title, generate one from transcript
@@ -1874,7 +1846,7 @@ class DataMigrationManager: ObservableObject {
                         )
                         if !generatedName.isEmpty && generatedName != "Untitled Conversation" {
                             bestTitle = generatedName
-                            print("🎯 Generated title from transcript: '\(generatedName)'")
+                            AppLog.shared.dataMigration("Generated title from transcript for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                         }
                     }
                 }
@@ -1886,16 +1858,16 @@ class DataMigrationManager: ObservableObject {
                         recording.recordingName = validatedTitle
                         recording.lastModified = Date()
                         renamedCount += 1
-                        print("✅ Renamed: '\(currentName)' → '\(validatedTitle)'")
+                        AppLog.shared.dataMigration("Renamed recording ID: \(recording.id?.uuidString ?? "nil")")
                     }
                 } else {
-                    print("⚠️ No suitable title found for: '\(currentName)'")
+                    AppLog.shared.dataMigration("No suitable title found for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                 }
             }
             
             if renamedCount > 0 {
                 try context.save()
-                print("✅ Saved \(renamedCount) name updates")
+                AppLog.shared.dataMigration("Saved \(renamedCount) name updates")
                 
                 // Post notification to refresh UI
                 DispatchQueue.main.async {
@@ -1904,10 +1876,10 @@ class DataMigrationManager: ObservableObject {
             }
             
         } catch {
-            print("❌ Error during force name synchronization: \(error)")
+            AppLog.shared.dataMigration("Error during force name synchronization: \(error)", level: .error)
         }
         
-        print("🏷️ Force name synchronization completed: \(renamedCount) recordings renamed")
+        AppLog.shared.dataMigration("Force name synchronization completed: \(renamedCount) recordings renamed")
         return renamedCount
     }
     
@@ -1926,7 +1898,7 @@ class DataMigrationManager: ObservableObject {
     
     /// Validates and ensures all recordings appear in transcript listings
     func validateTranscriptListings() async -> Int {
-        print("📋 Validating transcript listings...")
+        AppLog.shared.dataMigration("Validating transcript listings")
         var validatedCount = 0
         
         let recordingFetch: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
@@ -1961,23 +1933,23 @@ class DataMigrationManager: ObservableObject {
             
             if validatedCount > 0 {
                 try context.save()
-                print("✅ Validated \(validatedCount) recording fields")
+                AppLog.shared.dataMigration("Validated \(validatedCount) recording fields")
             }
             
         } catch {
-            print("❌ Error validating transcript listings: \(error)")
+            AppLog.shared.dataMigration("Error validating transcript listings: \(error)", level: .error)
         }
         
-        print("📋 Transcript listing validation completed: \(validatedCount) fields updated")
+        AppLog.shared.dataMigration("Transcript listing validation completed: \(validatedCount) fields updated")
         return validatedCount
     }
     
     /// Fix recordings with invalid URLs by matching them to existing audio files
     func fixInvalidURLs() async -> Int {
-        print("🔗 Starting invalid URL repair...")
+        AppLog.shared.dataMigration("Starting invalid URL repair")
         
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            print("❌ Could not access documents directory")
+            AppLog.shared.dataMigration("Could not access documents directory", level: .error)
             return 0
         }
         
@@ -1989,9 +1961,9 @@ class DataMigrationManager: ObservableObject {
                 let ext = url.pathExtension.lowercased()
                 return ext == "m4a" || ext == "wav" || ext == "mp3" || ext == "aac"
             }
-            print("🔍 Found \(audioFiles.count) audio files in documents directory")
+            AppLog.shared.dataMigration("Found \(audioFiles.count) audio files in documents directory", level: .debug)
         } catch {
-            print("❌ Error scanning documents directory: \(error)")
+            AppLog.shared.dataMigration("Error scanning documents directory: \(error)", level: .error)
             return 0
         }
         
@@ -2015,7 +1987,7 @@ class DataMigrationManager: ObservableObject {
                 
                 // If URL is invalid or file doesn't exist, try to fix it
                 if currentURL == nil || !FileManager.default.fileExists(atPath: currentURL!.path) {
-                    print("⚠️ Recording has invalid URL: \(recording.recordingName ?? "unknown")")
+                    AppLog.shared.dataMigration("Recording has invalid URL, ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                     
                     // Try to match by recording name
                     if let recordingName = recording.recordingName {
@@ -2035,13 +2007,13 @@ class DataMigrationManager: ObservableObject {
                         if let matchedFile = matchingFiles.first {
                             // Convert to relative path for storage
                             if let relativePath = urlToRelativePath(matchedFile) {
-                                print("✅ Fixed URL for '\(recordingName)': \(relativePath)")
+                                AppLog.shared.dataMigration("Fixed URL for recording ID: \(recording.id?.uuidString ?? "nil")")
                                 recording.recordingURL = relativePath
                                 recording.lastModified = Date()
                                 fixedCount += 1
                             }
                         } else {
-                            print("❌ Could not find matching file for: \(recordingName)")
+                            AppLog.shared.dataMigration("Could not find matching file for recording ID: \(recording.id?.uuidString ?? "nil")", level: .error)
                         }
                     }
                 }
@@ -2050,11 +2022,11 @@ class DataMigrationManager: ObservableObject {
             // Save changes
             if fixedCount > 0 {
                 try context.save()
-                print("✅ Fixed \(fixedCount) invalid URLs")
+                AppLog.shared.dataMigration("Fixed \(fixedCount) invalid URLs")
             }
             
         } catch {
-            print("❌ Error fixing invalid URLs: \(error)")
+            AppLog.shared.dataMigration("Error fixing invalid URLs: \(error)", level: .error)
         }
         
         return fixedCount
@@ -2063,22 +2035,22 @@ class DataMigrationManager: ObservableObject {
     /// Clean up recordings with missing audio files by setting their URLs to nil
     /// This is for recordings where we want to keep summaries/transcripts but acknowledge the audio is gone
     func cleanupMissingAudioReferences() async -> Int {
-        print("🧹 Starting cleanup of missing audio file references...")
+        AppLog.shared.dataMigration("Starting cleanup of missing audio file references")
         
         let recordingFetch: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         var cleanedCount = 0
         
         do {
             let recordings = try context.fetch(recordingFetch)
-            print("🔍 Found \(recordings.count) recordings to check")
+            AppLog.shared.dataMigration("Found \(recordings.count) recordings to check", level: .debug)
             
             for recording in recordings {
                 guard let urlString = recording.recordingURL else { 
-                    print("⚠️ Recording has no URL: \(recording.recordingName ?? "unknown")")
+                    AppLog.shared.dataMigration("Recording has no URL, ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                     
                     // Clean up any remaining transcripts for recordings with no URL
                     if let transcript = recording.transcript {
-                        print("🗑️ Cleaning up orphaned transcript for URL-less recording: \(recording.recordingName ?? "unknown")")
+                        AppLog.shared.dataMigration("Cleaning up orphaned transcript for URL-less recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                         recording.transcript = nil
                         recording.transcriptId = nil
                         context.delete(transcript)
@@ -2087,7 +2059,7 @@ class DataMigrationManager: ObservableObject {
                     continue 
                 }
                 
-                print("🔍 Checking recording: '\(recording.recordingName ?? "unknown")' with URL: '\(urlString)'")
+                AppLog.shared.dataMigration("Checking recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                 
                 // Check if URL is invalid or file doesn't exist
                 var shouldCleanup = false
@@ -2099,27 +2071,27 @@ class DataMigrationManager: ObservableObject {
                     let fileExists = FileManager.default.fileExists(atPath: url.path)
                     shouldCleanup = !fileExists
                     reason = fileExists ? "absolute URL file exists" : "absolute URL file missing"
-                    print("   📁 Absolute URL check: \(url.path) - exists: \(fileExists)")
+                    AppLog.shared.dataMigration("Absolute URL check - exists: \(fileExists)", level: .debug)
                 } else {
                     // Try as relative path
                     if let relativeURL = relativePathToURL(urlString) {
                         let fileExists = FileManager.default.fileExists(atPath: relativeURL.path)
                         shouldCleanup = !fileExists
                         reason = fileExists ? "relative URL file exists" : "relative URL file missing"
-                        print("   📁 Relative URL check: \(relativeURL.path) - exists: \(fileExists)")
+                        AppLog.shared.dataMigration("Relative URL check - exists: \(fileExists)", level: .debug)
                     } else {
                         // URL is completely invalid
                         shouldCleanup = true
                         reason = "invalid URL format"
-                        print("   ⚠️ Invalid URL format: \(urlString)")
+                        AppLog.shared.dataMigration("Invalid URL format for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                     }
                 }
                 
-                print("   🎯 Decision: shouldCleanup = \(shouldCleanup) (\(reason))")
+                AppLog.shared.dataMigration("Cleanup decision for recording ID \(recording.id?.uuidString ?? "nil"): shouldCleanup=\(shouldCleanup) (\(reason))", level: .debug)
                 
                 // If URL is invalid or file doesn't exist, clean it up
                 if shouldCleanup {
-                    print("🧹 Cleaning missing audio reference for: \(recording.recordingName ?? "unknown")")
+                    AppLog.shared.dataMigration("Cleaning missing audio reference for recording ID: \(recording.id?.uuidString ?? "nil")")
                     
                     // Clear the invalid URL
                     recording.recordingURL = nil
@@ -2127,7 +2099,7 @@ class DataMigrationManager: ObservableObject {
                     
                     // Delete transcript since it's useless without audio
                     if let transcript = recording.transcript {
-                        print("🗑️ Deleting transcript (no audio file): \(recording.recordingName ?? "unknown")")
+                        AppLog.shared.dataMigration("Deleting transcript for recording with no audio file, ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                         recording.transcript = nil
                         recording.transcriptId = nil
                         context.delete(transcript)
@@ -2142,11 +2114,11 @@ class DataMigrationManager: ObservableObject {
             // Save changes
             if cleanedCount > 0 {
                 try context.save()
-                print("✅ Cleaned up \(cleanedCount) missing audio file references")
+                AppLog.shared.dataMigration("Cleaned up \(cleanedCount) missing audio file references")
             }
             
         } catch {
-            print("❌ Error cleaning up missing audio references: \(error)")
+            AppLog.shared.dataMigration("Error cleaning up missing audio references: \(error)", level: .error)
         }
         
         return cleanedCount
@@ -2154,7 +2126,7 @@ class DataMigrationManager: ObservableObject {
     
     /// Comprehensive fix for current issues
     func fixCurrentIssues() async -> (renames: Int, validations: Int) {
-        print("🎯 Starting comprehensive fix for current issues...")
+        AppLog.shared.dataMigration("Starting comprehensive fix for current issues")
         
         // Step 1: Clean up orphaned recordings first
         let coreDataManager = CoreDataManager()
@@ -2173,20 +2145,14 @@ class DataMigrationManager: ObservableObject {
         // Step 5: Fix the specific issue where recordings have generic names
         let specificFixes = await fixGenericNamedRecordingsIssue()
         
-        print("✅ Comprehensive fix completed:")
-        print("   - Orphaned records cleaned: \(cleanedOrphans)")
-        print("   - Incomplete deletions fixed: \(fixedIncomplete)")
-        print("   - Invalid URLs fixed: \(urlFixes)")
-        print("   - Recordings renamed: \(renames)")
-        print("   - Validations: \(validations)")
-        print("   - Specific fixes: \(specificFixes)")
+        AppLog.shared.dataMigration("Comprehensive fix completed - orphans: \(cleanedOrphans), incomplete: \(fixedIncomplete), URLs: \(urlFixes), renames: \(renames), validations: \(validations), specific: \(specificFixes)")
         
         return (renames: renames + specificFixes, validations: validations)
     }
     
     /// Specifically fixes recordings with generic names that should be in transcript listings
     private func fixGenericNamedRecordingsIssue() async -> Int {
-        print("🔧 Fixing generic-named recordings issue...")
+        AppLog.shared.dataMigration("Fixing generic-named recordings issue")
         var fixedCount = 0
         
         let recordingFetch: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
@@ -2205,37 +2171,37 @@ class DataMigrationManager: ObservableObject {
                                    (currentName.count > 15 && (currentName.contains("1754") || currentName.contains("2025")))
                 
                 if isGenericName {
-                    print("🔍 Found generic recording: '\(currentName)'")
+                    AppLog.shared.dataMigration("Found generic recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                     
                     // Ensure this recording has proper fields for transcript listing
                     if recording.id == nil {
                         recording.id = UUID()
                         wasFixed = true
-                        print("   ➕ Added missing ID")
+                        AppLog.shared.dataMigration("Added missing ID", level: .debug)
                     }
                     
                     if recording.transcriptionStatus == nil {
                         recording.transcriptionStatus = "Not Started"
                         wasFixed = true
-                        print("   ➕ Set transcription status to 'Not Started'")
+                        AppLog.shared.dataMigration("Set transcription status to Not Started", level: .debug)
                     }
                     
                     if recording.summaryStatus == nil {
                         recording.summaryStatus = "Not Started"  
                         wasFixed = true
-                        print("   ➕ Set summary status to 'Not Started'")
+                        AppLog.shared.dataMigration("Set summary status to Not Started", level: .debug)
                     }
                     
                     if recording.recordingDate == nil {
                         recording.recordingDate = recording.createdAt ?? Date()
                         wasFixed = true
-                        print("   ➕ Set recording date")
+                        AppLog.shared.dataMigration("Set recording date", level: .debug)
                     }
                     
                     if recording.createdAt == nil {
                         recording.createdAt = Date()
                         wasFixed = true
-                        print("   ➕ Set created date")
+                        AppLog.shared.dataMigration("Set created date", level: .debug)
                     }
                     
                     // Look for orphaned summaries/transcripts that might belong to this recording
@@ -2244,18 +2210,18 @@ class DataMigrationManager: ObservableObject {
                     if wasFixed {
                         recording.lastModified = Date()
                         fixedCount += 1
-                        print("   ✅ Fixed recording: '\(currentName)'")
+                        AppLog.shared.dataMigration("Fixed recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                     }
                 }
             }
             
             if fixedCount > 0 {
                 try context.save()
-                print("✅ Saved \(fixedCount) recording fixes")
+                AppLog.shared.dataMigration("Saved \(fixedCount) recording fixes")
             }
             
         } catch {
-            print("❌ Error fixing generic recordings: \(error)")
+            AppLog.shared.dataMigration("Error fixing generic recordings: \(error)", level: .error)
         }
         
         return fixedCount
@@ -2272,7 +2238,7 @@ class DataMigrationManager: ObservableObject {
         do {
             let orphanedTranscripts = try context.fetch(transcriptFetch)
             for transcript in orphanedTranscripts {
-                print("   🔗 Linking orphaned transcript to recording by ID: \(recordingId)")
+                AppLog.shared.dataMigration("Linking orphaned transcript to recording ID: \(recordingId)", level: .debug)
                 transcript.recording = recording
                 recording.transcript = transcript
                 recording.transcriptId = transcript.id
@@ -2294,13 +2260,13 @@ class DataMigrationManager: ObservableObject {
                         )
                         if !generatedName.isEmpty && generatedName != "Untitled Conversation" {
                             recording.recordingName = generatedName
-                            print("   🏷️ Updated recording name from transcript to: '\(generatedName)'")
+                            AppLog.shared.dataMigration("Updated recording name from transcript for ID: \(recordingId)", level: .debug)
                         }
                     }
                 }
             }
         } catch {
-            print("❌ Error linking orphaned transcripts: \(error)")
+            AppLog.shared.dataMigration("Error linking orphaned transcripts: \(error)", level: .error)
         }
         
         // Try to find orphaned summaries that match this recording by recordingId
@@ -2310,7 +2276,7 @@ class DataMigrationManager: ObservableObject {
         do {
             let orphanedSummaries = try context.fetch(summaryFetch)
             for summary in orphanedSummaries {
-                print("   🔗 Linking orphaned summary to recording by ID: \(recordingId)")
+                AppLog.shared.dataMigration("Linking orphaned summary to recording ID: \(recordingId)", level: .debug)
                 summary.recording = recording
                 recording.summary = summary
                 recording.summaryId = summary.id
@@ -2324,18 +2290,18 @@ class DataMigrationManager: ObservableObject {
                     let cleanedTitle = RecordingNameGenerator.validateAndFixRecordingName(bestTitle.text, originalName: recording.recordingName ?? "")
                     if !cleanedTitle.isEmpty && cleanedTitle != recording.recordingName {
                         recording.recordingName = cleanedTitle
-                        print("   🏷️ Updated recording name from summary to: '\(cleanedTitle)'")
+                        AppLog.shared.dataMigration("Updated recording name from summary for ID: \(recordingId)", level: .debug)
                     }
                 }
             }
         } catch {
-            print("❌ Error linking orphaned summaries: \(error)")
+            AppLog.shared.dataMigration("Error linking orphaned summaries: \(error)", level: .error)
         }
     }
     
     /// Quick fix for the specific issues mentioned - can be called standalone
     func fixSpecificDataIssues() async -> (resolved: Int, saved: Bool) {
-        print("🎯 Fixing specific data issues (filename/title duplicates and orphaned entries)...")
+        AppLog.shared.dataMigration("Fixing specific data issues (filename/title duplicates and orphaned entries)")
         migrationStatus = "Fixing data issues..."
         migrationProgress = 0.0
         
@@ -2360,11 +2326,11 @@ class DataMigrationManager: ObservableObject {
             migrationProgress = 1.0
             
             migrationStatus = "Data issues fixed successfully!"
-            print("✅ Fixed \(totalResolved) data issues successfully")
+            AppLog.shared.dataMigration("Fixed \(totalResolved) data issues successfully")
             return (resolved: totalResolved, saved: true)
             
         } catch {
-            print("❌ Error fixing data issues: \(error)")
+            AppLog.shared.dataMigration("Error fixing data issues: \(error)", level: .error)
             migrationStatus = "Failed to fix data issues: \(error.localizedDescription)"
             return (resolved: totalResolved, saved: false)
         }

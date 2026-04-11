@@ -77,7 +77,7 @@ class TranscriptManager: ObservableObject {
         
         // Get absolute URL using local logic to avoid main actor issues
         guard let url = getAbsoluteURL(from: recordingURLString) else {
-            print("❌ Could not resolve URL for recording: \(recordingEntry.recordingName ?? "unknown")")
+            AppLog.shared.transcription("Could not resolve URL for recording: \(recordingEntry.recordingName ?? "unknown")", level: .error)
             return nil
         }
         

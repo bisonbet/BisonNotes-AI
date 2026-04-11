@@ -11,9 +11,9 @@ class RecordingNameGenerator {
         let minLength = 20  // More flexible minimum length
         let maxLength = 80  // More flexible maximum length
         
-        print("🎯 RecordingNameGenerator: Starting name generation with \(titles.count) titles")
+        AppLog.shared.recording("RecordingNameGenerator: Starting name generation with \(titles.count) titles", level: .debug)
         for (index, title) in titles.enumerated() {
-            print("📝 RecordingNameGenerator: Title \(index + 1): '\(title.text)' (confidence: \(title.confidence))")
+            AppLog.shared.recording("RecordingNameGenerator: Title \(index + 1): confidence \(title.confidence)", level: .debug)
         }
         
         // Strategy 0: Use AI-generated title if available (for Ollama and other AI engines)
@@ -31,25 +31,25 @@ class RecordingNameGenerator {
         
         // Strategy 1: Use the first high-confidence title from the titles array
         if let bestTitle = titles.first(where: { $0.confidence >= 0.8 }) {
-            print("🔍 RecordingNameGenerator: Processing high-confidence title: '\(bestTitle.text)' (confidence: \(bestTitle.confidence))")
+            AppLog.shared.recording("RecordingNameGenerator: Processing high-confidence title (confidence: \(bestTitle.confidence))", level: .debug)
             let titleName = generateNameFromTitle(bestTitle, minLength: minLength, maxLength: maxLength)
             if !titleName.isEmpty {
-                print("✅ RecordingNameGenerator: Generated name from title: '\(titleName)'")
+                AppLog.shared.recording("RecordingNameGenerator: Generated name from title", level: .debug)
                 return titleName
             } else {
-                print("⚠️ RecordingNameGenerator: Failed to generate name from title: '\(bestTitle.text)'")
+                AppLog.shared.recording("RecordingNameGenerator: Failed to generate name from title", level: .debug)
             }
         }
         
         // Strategy 2: Use any title from the titles array (even lower confidence)
         if let anyTitle = titles.first {
-            print("🔍 RecordingNameGenerator: Processing any title: '\(anyTitle.text)' (confidence: \(anyTitle.confidence))")
+            AppLog.shared.recording("RecordingNameGenerator: Processing any title (confidence: \(anyTitle.confidence))", level: .debug)
             let titleName = generateNameFromTitle(anyTitle, minLength: minLength, maxLength: maxLength)
             if !titleName.isEmpty {
-                print("✅ RecordingNameGenerator: Generated name from any title: '\(titleName)'")
+                AppLog.shared.recording("RecordingNameGenerator: Generated name from any title", level: .debug)
                 return titleName
             } else {
-                print("⚠️ RecordingNameGenerator: Failed to generate name from any title: '\(anyTitle.text)'")
+                AppLog.shared.recording("RecordingNameGenerator: Failed to generate name from any title", level: .debug)
             }
         }
         
@@ -128,7 +128,7 @@ class RecordingNameGenerator {
         
         // Check if name is too short or generic (more flexible minimum)
         if trimmedName.count < 10 || genericNames.contains(trimmedName.lowercased()) {
-            print("⚠️ Generated name '\(trimmedName)' is too generic, using fallback")
+            AppLog.shared.recording("Generated name is too generic, using fallback", level: .debug)
             
             // Try to extract a better name from the original filename
             let cleanedOriginal = originalName
@@ -600,12 +600,11 @@ class RecordingNameGenerator {
     private static func generateNameFromTitle(_ title: TitleItem, minLength: Int, maxLength: Int) -> String {
         let words = title.text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
         
-        print("🔍 RecordingNameGenerator: Processing title '\(title.text)' with \(words.count) words")
-        print("🔍 RecordingNameGenerator: Length constraints: min=\(minLength), max=\(maxLength)")
-        
+        AppLog.shared.recording("RecordingNameGenerator: Processing title with \(words.count) words, constraints: min=\(minLength), max=\(maxLength)", level: .debug)
+
         // Check if the original title meets our flexible criteria
         if title.text.count >= minLength && title.text.count <= maxLength && words.count >= 3 && words.count <= 10 {
-            print("✅ RecordingNameGenerator: Original title meets criteria, using: '\(title.text)'")
+            AppLog.shared.recording("RecordingNameGenerator: Original title meets criteria", level: .debug)
             return title.text
         }
         
@@ -614,41 +613,41 @@ class RecordingNameGenerator {
             let keyWords = words.prefix(4).map { $0.capitalized }
             let name = keyWords.joined(separator: " ")
             
-            print("🔍 RecordingNameGenerator: Generated name: '\(name)' (length: \(name.count))")
-            
+            AppLog.shared.recording("RecordingNameGenerator: Generated name length: \(name.count)", level: .debug)
+
             // If the name is within the length constraints, use it
             if name.count >= minLength && name.count <= maxLength {
-                print("✅ RecordingNameGenerator: Name within constraints, using: '\(name)'")
+                AppLog.shared.recording("RecordingNameGenerator: Name within constraints", level: .debug)
                 return name
             } else if name.count > maxLength {
                 // Try with fewer words
                 let shortName = keyWords.prefix(3).joined(separator: " ")
-                print("🔍 RecordingNameGenerator: Name too long, trying shorter: '\(shortName)' (length: \(shortName.count))")
+                AppLog.shared.recording("RecordingNameGenerator: Name too long, trying shorter (length: \(shortName.count))", level: .debug)
                 if shortName.count >= minLength && shortName.count <= maxLength {
-                    print("✅ RecordingNameGenerator: Shorter name within constraints, using: '\(shortName)'")
+                    AppLog.shared.recording("RecordingNameGenerator: Shorter name within constraints", level: .debug)
                     return shortName
                 }
             } else if name.count < minLength {
-                print("🔍 RecordingNameGenerator: Name too short, trying longer version")
+                AppLog.shared.recording("RecordingNameGenerator: Name too short, trying longer version", level: .debug)
                 // If too short, try with more words or use the original title
                 if words.count >= 3 {
                     let longerName = words.prefix(5).map { $0.capitalized }.joined(separator: " ")
-                    print("🔍 RecordingNameGenerator: Trying longer name: '\(longerName)' (length: \(longerName.count))")
+                    AppLog.shared.recording("RecordingNameGenerator: Trying longer name (length: \(longerName.count))", level: .debug)
                     if longerName.count >= minLength && longerName.count <= maxLength {
-                        print("✅ RecordingNameGenerator: Longer name within constraints, using: '\(longerName)'")
+                        AppLog.shared.recording("RecordingNameGenerator: Longer name within constraints", level: .debug)
                         return longerName
                     }
                 }
                 
                 // If still too short, use the original title if it's reasonable
                 if title.text.count >= 20 && title.text.count <= maxLength {
-                    print("✅ RecordingNameGenerator: Using original title: '\(title.text)' (length: \(title.text.count))")
+                    AppLog.shared.recording("RecordingNameGenerator: Using original title (length: \(title.text.count))", level: .debug)
                     return title.text
                 }
             }
         }
         
-        print("❌ RecordingNameGenerator: Failed to generate valid name from title: '\(title.text)'")
+        AppLog.shared.recording("RecordingNameGenerator: Failed to generate valid name from title", level: .debug)
         return ""
     }
     
