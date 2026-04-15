@@ -37,32 +37,12 @@ struct AudioPlayerView: View {
                 .fontWeight(.bold)
                 .foregroundColor(.primary)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Recording Title")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                HStack(spacing: 8) {
-                    TextField("Enter title", text: $editableTitle)
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(isUpdatingTitle)
-                        .onSubmit {
-                            updateRecordingTitle()
-                        }
-
-                    Button(action: updateRecordingTitle) {
-                        if isUpdatingTitle {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        } else {
-                            Text("Save")
-                                .fontWeight(.semibold)
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isUpdatingTitle || editableTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || editableTitle.trimmingCharacters(in: .whitespacesAndNewlines) == currentSavedTitle)
-                }
-            }
+            RecordingTitleEditorView(
+                title: $editableTitle,
+                savedTitle: currentSavedTitle,
+                isSaving: isUpdatingTitle,
+                onSave: updateRecordingTitle
+            )
             .frame(maxWidth: .infinity)
 
             Text("Date: \(recording.dateString)")
@@ -214,7 +194,7 @@ struct AudioPlayerView: View {
         let trimmedName = editableTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isUpdatingTitle,
               !trimmedName.isEmpty,
-              trimmedName != recording.name else {
+              trimmedName != currentSavedTitle else {
             return
         }
 
@@ -228,6 +208,8 @@ struct AudioPlayerView: View {
 
         Task {
             do {
+                // Updates the display name only (recordingName field in Core Data).
+                // Physical audio file renaming is not performed here, consistent with SummaryDetailView.
                 try appCoordinator.coreDataManager.updateRecordingName(for: recordingId, newName: trimmedName)
 
                 await MainActor.run {
@@ -246,6 +228,45 @@ struct AudioPlayerView: View {
                     isUpdatingTitle = false
                     titleUpdateError = error.localizedDescription
                 }
+            }
+        }
+    }
+}
+
+/// Reusable title-editing row shared by AudioPlayerView and EditableTranscriptView.
+struct RecordingTitleEditorView: View {
+    @Binding var title: String
+    let savedTitle: String
+    let isSaving: Bool
+    let onSave: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Recording Title")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            HStack(spacing: 8) {
+                TextField("Enter title", text: $title)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(isSaving)
+                    .onSubmit { onSave() }
+
+                Button(action: onSave) {
+                    if isSaving {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Text("Save")
+                            .fontWeight(.semibold)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    isSaving ||
+                    title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    title.trimmingCharacters(in: .whitespacesAndNewlines) == savedTitle
+                )
             }
         }
     }
