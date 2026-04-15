@@ -281,6 +281,33 @@ struct TitleItem: Codable, Identifiable, Equatable, Hashable, Sendable {
     }
 }
 
+// MARK: - Summary Attachments
+
+struct SummaryAttachment: Codable, Identifiable, Equatable, Hashable, Sendable {
+    let id: UUID
+    let fileName: String
+    let storedFileName: String
+    let contentType: String?
+    let fileSize: Int64
+    let createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        fileName: String,
+        storedFileName: String,
+        contentType: String? = nil,
+        fileSize: Int64,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.fileName = fileName
+        self.storedFileName = storedFileName
+        self.contentType = contentType
+        self.fileSize = fileSize
+        self.createdAt = createdAt
+    }
+}
+
 // MARK: - Enhanced Summary Data
 
 public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
@@ -296,6 +323,8 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     let tasks: [TaskItem]
     let reminders: [ReminderItem]
     let titles: [TitleItem]
+    let attachments: [SummaryAttachment]
+    let userNotes: String?
     
     // Metadata
     let contentType: ContentType
@@ -324,7 +353,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     }
     
     // Legacy initializer for backward compatibility
-    init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) {
+    init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
         self.recordingId = nil
         self.transcriptId = nil
@@ -335,6 +364,8 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         self.tasks = tasks.sorted { $0.priority.sortOrder < $1.priority.sortOrder }
         self.reminders = reminders.sorted { $0.urgency.sortOrder < $1.urgency.sortOrder }
         self.titles = titles.sorted { $0.confidence > $1.confidence }
+        self.attachments = attachments
+        self.userNotes = userNotes
         self.contentType = contentType
         self.aiEngine = aiEngine
         self.aiModel = aiModel
@@ -353,7 +384,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     }
     
     // New initializer for unified architecture
-    init(recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) {
+    init(recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
         self.recordingId = recordingId
         self.transcriptId = transcriptId
@@ -364,6 +395,8 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         self.tasks = tasks.sorted { $0.priority.sortOrder < $1.priority.sortOrder }
         self.reminders = reminders.sorted { $0.urgency.sortOrder < $1.urgency.sortOrder }
         self.titles = titles.sorted { $0.confidence > $1.confidence }
+        self.attachments = attachments
+        self.userNotes = userNotes
         self.contentType = contentType
         self.aiEngine = aiEngine
         self.aiModel = aiModel
@@ -382,7 +415,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     }
     
     // Initializer for Core Data conversion that preserves the original ID
-    init(id: UUID, recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0, generatedAt: Date? = nil, version: Int = 1, wordCount: Int? = nil, compressionRatio: Double? = nil, confidence: Double? = nil) {
+    init(id: UUID, recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0, generatedAt: Date? = nil, version: Int = 1, wordCount: Int? = nil, compressionRatio: Double? = nil, confidence: Double? = nil) {
         self.id = id
         self.recordingId = recordingId
         self.transcriptId = transcriptId
@@ -393,6 +426,8 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         self.tasks = tasks.sorted { $0.priority.sortOrder < $1.priority.sortOrder }
         self.reminders = reminders.sorted { $0.urgency.sortOrder < $1.urgency.sortOrder }
         self.titles = titles.sorted { $0.confidence > $1.confidence }
+        self.attachments = attachments
+        self.userNotes = userNotes
         self.contentType = contentType
         self.aiEngine = aiEngine
         self.aiModel = aiModel
