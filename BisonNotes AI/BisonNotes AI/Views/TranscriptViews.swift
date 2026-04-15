@@ -1116,6 +1116,10 @@ struct EditableTranscriptView: View {
     @State private var editedSegments: [TranscriptSegment]
     @State private var speakerMappings: [String: String]
     @State private var isRerunningTranscription = false
+    @State private var editableRecordingName: String
+    @State private var savedRecordingName: String
+    @State private var isUpdatingRecordingName = false
+    @State private var recordingRenameError: String?
     @State private var showingRerunAlert = false
     @State private var showingSaveSuccessAlert = false
     @State private var showingSaveErrorAlert = false
@@ -1139,6 +1143,9 @@ struct EditableTranscriptView: View {
         self.transcriptManager = transcriptManager
         self._editedSegments = State(initialValue: transcript.segments)
         self._speakerMappings = State(initialValue: transcript.speakerMappings)
+        let initialName = recording.recordingName ?? transcript.recordingName
+        self._editableRecordingName = State(initialValue: initialName)
+        self._savedRecordingName = State(initialValue: initialName)
     }
     
     var body: some View {
@@ -1147,6 +1154,9 @@ struct EditableTranscriptView: View {
                 
                 // Transcript Content
                 ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        recordingTitleEditor
+
                     if editedSegments.isEmpty {
                         VStack(spacing: 16) {
                             Image(systemName: "doc.text")
@@ -1189,6 +1199,7 @@ struct EditableTranscriptView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                         .id("transcript-\(editedSegments.count)-\(editedSegments.first?.text.prefix(10).hashValue ?? 0)")
+                    }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1268,6 +1279,16 @@ struct EditableTranscriptView: View {
             } message: {
                 Text(saveErrorMessage)
             }
+            .alert("Rename Failed", isPresented: Binding(
+                get: { recordingRenameError != nil },
+                set: { if !$0 { recordingRenameError = nil } }
+            )) {
+                Button("OK", role: .cancel) {
+                    recordingRenameError = nil
+                }
+            } message: {
+                Text(recordingRenameError ?? "Unknown error")
+            }
             .sheet(isPresented: $showingSpeakerEditor) {
                 SpeakerEditingView(
                     speakerIds: uniqueSpeakers,
@@ -1307,6 +1328,36 @@ struct EditableTranscriptView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var recordingTitleEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Recording Title")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            HStack(spacing: 8) {
+                TextField("Enter title", text: $editableRecordingName)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(isUpdatingRecordingName)
+                    .onSubmit {
+                        renameRecordingFromTranscript()
+                    }
+
+                Button(action: renameRecordingFromTranscript) {
+                    if isUpdatingRecordingName {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Text("Save")
+                            .fontWeight(.semibold)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isUpdatingRecordingName || editableRecordingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || editableRecordingName.trimmingCharacters(in: .whitespacesAndNewlines) == savedRecordingName)
+            }
+        }
+        .padding(.horizontal, 16)
+    }
+
     private func saveTranscript() -> Bool {
         guard let recordingId = recording.id else {
             AppLog.shared.transcription("Cannot save transcript: missing recording ID", level: .error)
@@ -1331,6 +1382,42 @@ struct EditableTranscriptView: View {
             AppLog.shared.transcription("Failed to save edited transcript", level: .error)
             saveErrorMessage = "We couldn't save your transcript changes. Please try again."
             return false
+        }
+    }
+
+    private func renameRecordingFromTranscript() {
+        let trimmedName = editableRecordingName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isUpdatingRecordingName,
+              !trimmedName.isEmpty,
+              trimmedName != savedRecordingName,
+              let recordingId = recording.id else {
+            return
+        }
+
+        isUpdatingRecordingName = true
+
+        Task {
+            do {
+                try appCoordinator.coreDataManager.updateRecordingName(for: recordingId, newName: trimmedName)
+
+                await MainActor.run {
+                    isUpdatingRecordingName = false
+                    savedRecordingName = trimmedName
+                    editableRecordingName = trimmedName
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("RecordingRenamed"),
+                        object: nil,
+                        userInfo: ["recordingId": recordingId, "newName": trimmedName]
+                    )
+                    AppLog.shared.transcription("Updated recording title from transcript editor to: \(trimmedName)")
+                }
+            } catch {
+                await MainActor.run {
+                    isUpdatingRecordingName = false
+                    recordingRenameError = error.localizedDescription
+                }
+                AppLog.shared.transcription("Failed to update recording title from transcript editor: \(error)", level: .error)
+            }
         }
     }
     
