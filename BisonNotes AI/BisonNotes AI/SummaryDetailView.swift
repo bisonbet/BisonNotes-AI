@@ -4,6 +4,9 @@ import Contacts
 @preconcurrency import CoreLocation
 import UIKit
 import LinkPresentation
+import UniformTypeIdentifiers
+import PDFKit
+import QuickLook
 
 private actor SummaryGeocodeCache {
     enum Entry: Sendable {
@@ -59,6 +62,18 @@ struct SummaryDetailView: View {
     @State private var exportError: String?
     @State private var geocodingTask: Task<Void, Never>?
     @State private var showingExportFormatPicker = false
+    @State private var showingAttachmentPicker = false
+    @State private var attachmentError: String?
+    @State private var attachments: [SummaryAttachment] = []
+    @State private var noteDraft: String = ""
+    @State private var isLoadingSupplemental = false
+    @State private var noteSaveTask: Task<Void, Never>?
+    @State private var showingTextAttachment = false
+    @State private var showingPDFAttachment = false
+    @State private var selectedAttachmentName: String = ""
+    @State private var selectedAttachmentText: String = ""
+    @State private var selectedAttachmentPDFURL: URL?
+    @State private var selectedAttachmentGenericURL: URL?
 
     private enum ExportFormat {
         case pdf
@@ -161,6 +176,9 @@ struct SummaryDetailView: View {
                     
                     // Titles Section (Expandable)
                     titlesSection
+
+                    // Attachments + Note Section
+                    attachmentsSection
                     
                     // Date/Time Editor Section
                     dateTimeEditorSection
@@ -195,6 +213,7 @@ struct SummaryDetailView: View {
             }
 
             scheduleLocationGeocoding()
+            loadSupplementalSummaryData()
         }
         .onDisappear {
             geocodingTask?.cancel()
@@ -292,6 +311,56 @@ struct SummaryDetailView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("Export includes summary, tasks, reminders, and processing details.")
+        }
+        .fileImporter(
+            isPresented: $showingAttachmentPicker,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            handleAttachmentImport(result)
+        }
+        .sheet(isPresented: $showingTextAttachment) {
+            NavigationView {
+                ScrollView {
+                    Text(selectedAttachmentText)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+                .navigationTitle(selectedAttachmentName)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") {
+                            showingTextAttachment = false
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingPDFAttachment) {
+            if let selectedAttachmentPDFURL {
+                NavigationView {
+                    SummaryAttachmentPDFView(url: selectedAttachmentPDFURL)
+                        .navigationTitle(selectedAttachmentName)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Done") {
+                                    showingPDFAttachment = false
+                                }
+                            }
+                        }
+                }
+            }
+        }
+        .quickLookPreview($selectedAttachmentGenericURL)
+        .alert("Attachment Error", isPresented: .constant(attachmentError != nil)) {
+            Button("OK") {
+                attachmentError = nil
+            }
+        } message: {
+            Text(attachmentError ?? "")
         }
     }
     
@@ -820,7 +889,87 @@ struct SummaryDetailView: View {
             }
         }
     }
-    
+
+    // MARK: - Attachments Section
+
+    private var attachmentsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "paperclip")
+                    .foregroundColor(.accentColor)
+                Text("Attachments & Notes")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    showingAttachmentPicker = true
+                } label: {
+                    Label("Attach File", systemImage: "plus.circle")
+                        .font(.caption)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Note")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+
+                TextEditor(text: $noteDraft)
+                    .frame(minHeight: 110)
+                    .padding(6)
+                    .background(Color(.systemGray6))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .onChange(of: noteDraft) { _, _ in
+                        guard !isLoadingSupplemental else { return }
+                        noteSaveTask?.cancel()
+                        noteSaveTask = Task {
+                            try? await Task.sleep(for: .milliseconds(500))
+                            guard !Task.isCancelled else { return }
+                            saveUserNotes()
+                        }
+                    }
+            }
+
+            if attachments.isEmpty {
+                emptyStateView(message: "No attachments yet", icon: "paperclip")
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(attachments, id: \.id) { attachment in
+                        HStack(spacing: 10) {
+                            Image(systemName: iconName(for: attachment))
+                                .foregroundColor(.secondary)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(attachment.fileName)
+                                    .font(.subheadline)
+                                    .lineLimit(2)
+
+                                Text(ByteCountFormatter.string(fromByteCount: attachment.fileSize, countStyle: .file))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+
+                            Button("Open") {
+                                openAttachment(attachment)
+                            }
+                            .font(.caption)
+
+                            Button(role: .destructive) {
+                                removeAttachment(attachment)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(10)
+                        .background(Color(.systemGray6))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Date/Time Editor Section
     
     private var dateTimeEditorSection: some View {
@@ -1069,6 +1218,9 @@ struct SummaryDetailView: View {
 
         Task {
             do {
+                // Clean up attachment files before removing the Core Data entry.
+                try? SummaryAttachmentStore.shared.deleteAll(for: summaryData.id)
+
                 // Delete the summary locally and from iCloud
                 try await appCoordinator.deleteSummary(id: summaryData.id)
                 AppLog.shared.summarization("Summary deleted from Core Data")
@@ -1234,6 +1386,8 @@ struct SummaryDetailView: View {
                         tasks: summaryData.tasks,
                         reminders: summaryData.reminders,
                         titles: summaryData.titles,
+                        attachments: attachments,
+                        userNotes: noteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : noteDraft,
                         contentType: summaryData.contentType,
                         aiEngine: summaryData.aiEngine,
                         aiModel: summaryData.aiModel,
@@ -1298,6 +1452,8 @@ struct SummaryDetailView: View {
                         tasks: summaryData.tasks,
                         reminders: summaryData.reminders,
                         titles: summaryData.titles,
+                        attachments: attachments,
+                        userNotes: noteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : noteDraft,
                         contentType: summaryData.contentType,
                         aiEngine: summaryData.aiEngine,
                         aiModel: summaryData.aiModel,
@@ -1399,6 +1555,156 @@ struct SummaryDetailView: View {
         recording.lastModified = Date()
         
         try appCoordinator.coreDataManager.saveContext()
+    }
+
+    // MARK: - Attachments / Notes
+
+    private func loadSupplementalSummaryData() {
+        isLoadingSupplemental = true
+        defer { isLoadingSupplemental = false }
+        let supplemental = SummaryAttachmentStore.shared.load(for: summaryData.id)
+        attachments = supplemental.attachments
+        noteDraft = supplemental.userNotes ?? ""
+        summaryData = rebuildSummaryData(userNotes: supplemental.userNotes, attachments: supplemental.attachments)
+    }
+
+    private func saveUserNotes() {
+        do {
+            try SummaryAttachmentStore.shared.saveUserNotes(noteDraft, summaryId: summaryData.id)
+            summaryData = rebuildSummaryData(userNotes: noteDraft, attachments: attachments)
+        } catch {
+            attachmentError = "Unable to save notes: \(error.localizedDescription)"
+        }
+    }
+
+    private func handleAttachmentImport(_ result: Result<[URL], Error>) {
+        do {
+            let urls = try result.get()
+            guard !urls.isEmpty else { return }
+
+            for url in urls {
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer {
+                    if accessed {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+
+                let attachment = try SummaryAttachmentStore.shared.addAttachment(from: url, summaryId: summaryData.id)
+                attachments.insert(attachment, at: 0)
+            }
+
+            summaryData = rebuildSummaryData(userNotes: noteDraft, attachments: attachments)
+        } catch {
+            attachmentError = "Unable to attach file: \(error.localizedDescription)"
+        }
+    }
+
+    private func removeAttachment(_ attachment: SummaryAttachment) {
+        do {
+            try SummaryAttachmentStore.shared.removeAttachment(attachment, summaryId: summaryData.id)
+            attachments.removeAll { $0.id == attachment.id }
+            summaryData = rebuildSummaryData(userNotes: noteDraft, attachments: attachments)
+        } catch {
+            attachmentError = "Unable to remove attachment: \(error.localizedDescription)"
+        }
+    }
+
+    private func openAttachment(_ attachment: SummaryAttachment) {
+        let url = SummaryAttachmentStore.shared.fileURL(for: attachment, summaryId: summaryData.id)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            attachmentError = "Attachment file no longer exists."
+            return
+        }
+
+        let ext = url.pathExtension.lowercased()
+        if ext == "pdf" {
+            selectedAttachmentName = attachment.fileName
+            selectedAttachmentPDFURL = url
+            showingPDFAttachment = true
+            return
+        }
+
+        let textBasedExtensions: Set<String> = ["txt", "md", "markdown", "csv", "json", "log", "xml", "yaml", "yml"]
+        if textBasedExtensions.contains(ext) {
+            selectedAttachmentName = attachment.fileName
+            Task.detached {
+                guard let data = try? Data(contentsOf: url),
+                      let text = String(data: data, encoding: .utf8) else { return }
+                await MainActor.run {
+                    selectedAttachmentText = text
+                    showingTextAttachment = true
+                }
+            }
+            return
+        }
+
+        // Fallback: use QuickLook which can open any file type within the app sandbox.
+        selectedAttachmentGenericURL = url
+    }
+
+    private func iconName(for attachment: SummaryAttachment) -> String {
+        let ext = (attachment.fileName as NSString).pathExtension.lowercased()
+        switch ext {
+        case "pdf":
+            return "doc.richtext"
+        case "txt", "md", "markdown", "csv", "json":
+            return "doc.text"
+        case "doc", "docx":
+            return "doc"
+        case "jpg", "jpeg", "png", "heic", "gif":
+            return "photo"
+        default:
+            return "doc"
+        }
+    }
+
+    private func rebuildSummaryData(userNotes: String?, attachments: [SummaryAttachment]) -> EnhancedSummaryData {
+        let normalizedNotes = userNotes?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : userNotes
+
+        if let recordingId = summaryData.recordingId {
+            return EnhancedSummaryData(
+                id: summaryData.id,
+                recordingId: recordingId,
+                transcriptId: summaryData.transcriptId,
+                recordingURL: summaryData.recordingURL,
+                recordingName: summaryData.recordingName,
+                recordingDate: summaryData.recordingDate,
+                summary: summaryData.summary,
+                tasks: summaryData.tasks,
+                reminders: summaryData.reminders,
+                titles: summaryData.titles,
+                attachments: attachments,
+                userNotes: normalizedNotes,
+                contentType: summaryData.contentType,
+                aiEngine: summaryData.aiEngine,
+                aiModel: summaryData.aiModel,
+                originalLength: summaryData.originalLength,
+                processingTime: summaryData.processingTime,
+                generatedAt: summaryData.generatedAt,
+                version: summaryData.version,
+                wordCount: summaryData.wordCount,
+                compressionRatio: summaryData.compressionRatio,
+                confidence: summaryData.confidence
+            )
+        }
+
+        return EnhancedSummaryData(
+            recordingURL: summaryData.recordingURL,
+            recordingName: summaryData.recordingName,
+            recordingDate: summaryData.recordingDate,
+            summary: summaryData.summary,
+            tasks: summaryData.tasks,
+            reminders: summaryData.reminders,
+            titles: summaryData.titles,
+            attachments: attachments,
+            userNotes: normalizedNotes,
+            contentType: summaryData.contentType,
+            aiEngine: summaryData.aiEngine,
+            aiModel: summaryData.aiModel,
+            originalLength: summaryData.originalLength,
+            processingTime: summaryData.processingTime
+        )
     }
 
     // MARK: - Export Functions
@@ -3083,6 +3389,27 @@ private struct StaticLocationMapView: View {
             }
             isLoadingSnapshot = true
             return true
+        }
+    }
+}
+
+// MARK: - Attachment Preview
+
+private struct SummaryAttachmentPDFView: UIViewRepresentable {
+    let url: URL
+
+    func makeUIView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePageContinuous
+        view.displayDirection = .vertical
+        view.document = PDFDocument(url: url)
+        return view
+    }
+
+    func updateUIView(_ uiView: PDFView, context: Context) {
+        if uiView.document?.documentURL != url {
+            uiView.document = PDFDocument(url: url)
         }
     }
 }
