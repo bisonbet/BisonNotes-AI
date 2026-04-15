@@ -1157,49 +1157,49 @@ struct EditableTranscriptView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         recordingTitleEditor
 
-                    if editedSegments.isEmpty {
-                        VStack(spacing: 16) {
-                            Image(systemName: "doc.text")
-                                .font(.system(size: 48))
-                                .foregroundColor(.gray)
-                            Text("No transcript content available")
-                                .font(.title2)
-                                .foregroundColor(.secondary)
-                            Text("Transcript segments: \(editedSegments.count)")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding()
-                    } else {
-                        LazyVStack(alignment: .leading, spacing: 16) {
-                            if !uniqueSpeakers.isEmpty {
-                                Button(action: { showingSpeakerEditor = true }) {
-                                    HStack {
-                                        Image(systemName: "person.2.fill")
-                                        Text("Edit Speakers (\(uniqueSpeakers.count))")
-                                        Spacer()
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption)
+                        if editedSegments.isEmpty {
+                            VStack(spacing: 16) {
+                                Image(systemName: "doc.text")
+                                    .font(.system(size: 48))
+                                    .foregroundColor(.gray)
+                                Text("No transcript content available")
+                                    .font(.title2)
+                                    .foregroundColor(.secondary)
+                                Text("Transcript segments: \(editedSegments.count)")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding()
+                        } else {
+                            LazyVStack(alignment: .leading, spacing: 16) {
+                                if !uniqueSpeakers.isEmpty {
+                                    Button(action: { showingSpeakerEditor = true }) {
+                                        HStack {
+                                            Image(systemName: "person.2.fill")
+                                            Text("Edit Speakers (\(uniqueSpeakers.count))")
+                                            Spacer()
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption)
+                                        }
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 10)
+                                        .background(Color.purple.opacity(0.1))
+                                        .foregroundColor(.purple)
+                                        .cornerRadius(10)
                                     }
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 10)
-                                    .background(Color.purple.opacity(0.1))
-                                    .foregroundColor(.purple)
-                                    .cornerRadius(10)
+                                }
+
+                                ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, segment in
+                                    TranscriptSegmentView(segment: $editedSegments[index], speakerMappings: speakerMappings)
                                 }
                             }
-
-                            ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, segment in
-                                TranscriptSegmentView(segment: $editedSegments[index], speakerMappings: speakerMappings)
-                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .id("transcript-\(editedSegments.count)-\(editedSegments.first?.text.prefix(10).hashValue ?? 0)")
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .id("transcript-\(editedSegments.count)-\(editedSegments.first?.text.prefix(10).hashValue ?? 0)")
-                    }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1329,32 +1329,12 @@ struct EditableTranscriptView: View {
     }
 
     private var recordingTitleEditor: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Recording Title")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            HStack(spacing: 8) {
-                TextField("Enter title", text: $editableRecordingName)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(isUpdatingRecordingName)
-                    .onSubmit {
-                        renameRecordingFromTranscript()
-                    }
-
-                Button(action: renameRecordingFromTranscript) {
-                    if isUpdatingRecordingName {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    } else {
-                        Text("Save")
-                            .fontWeight(.semibold)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(isUpdatingRecordingName || editableRecordingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || editableRecordingName.trimmingCharacters(in: .whitespacesAndNewlines) == savedRecordingName)
-            }
-        }
+        RecordingTitleEditorView(
+            title: $editableRecordingName,
+            savedTitle: savedRecordingName,
+            isSaving: isUpdatingRecordingName,
+            onSave: renameRecordingFromTranscript
+        )
         .padding(.horizontal, 16)
     }
 
@@ -1398,6 +1378,8 @@ struct EditableTranscriptView: View {
 
         Task {
             do {
+                // Updates the display name only (recordingName field in Core Data).
+                // Physical audio file renaming is not performed here, consistent with SummaryDetailView.
                 try appCoordinator.coreDataManager.updateRecordingName(for: recordingId, newName: trimmedName)
 
                 await MainActor.run {
