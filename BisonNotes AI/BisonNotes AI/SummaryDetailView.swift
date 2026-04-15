@@ -6,6 +6,7 @@ import UIKit
 import LinkPresentation
 import UniformTypeIdentifiers
 import PDFKit
+import QuickLook
 
 private actor SummaryGeocodeCache {
     enum Entry: Sendable {
@@ -65,11 +66,14 @@ struct SummaryDetailView: View {
     @State private var attachmentError: String?
     @State private var attachments: [SummaryAttachment] = []
     @State private var noteDraft: String = ""
+    @State private var isLoadingSupplemental = false
+    @State private var noteSaveTask: Task<Void, Never>?
     @State private var showingTextAttachment = false
     @State private var showingPDFAttachment = false
     @State private var selectedAttachmentName: String = ""
     @State private var selectedAttachmentText: String = ""
     @State private var selectedAttachmentPDFURL: URL?
+    @State private var selectedAttachmentGenericURL: URL?
 
     private enum ExportFormat {
         case pdf
@@ -350,6 +354,7 @@ struct SummaryDetailView: View {
                 }
             }
         }
+        .quickLookPreview($selectedAttachmentGenericURL)
         .alert("Attachment Error", isPresented: .constant(attachmentError != nil)) {
             Button("OK") {
                 attachmentError = nil
@@ -914,7 +919,13 @@ struct SummaryDetailView: View {
                     .background(Color(.systemGray6))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .onChange(of: noteDraft) { _, _ in
-                        saveUserNotes()
+                        guard !isLoadingSupplemental else { return }
+                        noteSaveTask?.cancel()
+                        noteSaveTask = Task {
+                            try? await Task.sleep(for: .milliseconds(500))
+                            guard !Task.isCancelled else { return }
+                            saveUserNotes()
+                        }
                     }
             }
 
@@ -1207,6 +1218,9 @@ struct SummaryDetailView: View {
 
         Task {
             do {
+                // Clean up attachment files before removing the Core Data entry.
+                try? SummaryAttachmentStore.shared.deleteAll(for: summaryData.id)
+
                 // Delete the summary locally and from iCloud
                 try await appCoordinator.deleteSummary(id: summaryData.id)
                 AppLog.shared.summarization("Summary deleted from Core Data")
@@ -1546,6 +1560,8 @@ struct SummaryDetailView: View {
     // MARK: - Attachments / Notes
 
     private func loadSupplementalSummaryData() {
+        isLoadingSupplemental = true
+        defer { isLoadingSupplemental = false }
         let supplemental = SummaryAttachmentStore.shared.load(for: summaryData.id)
         attachments = supplemental.attachments
         noteDraft = supplemental.userNotes ?? ""
@@ -1610,16 +1626,21 @@ struct SummaryDetailView: View {
         }
 
         let textBasedExtensions: Set<String> = ["txt", "md", "markdown", "csv", "json", "log", "xml", "yaml", "yml"]
-        if textBasedExtensions.contains(ext),
-           let data = try? Data(contentsOf: url),
-           let text = String(data: data, encoding: .utf8) {
+        if textBasedExtensions.contains(ext) {
             selectedAttachmentName = attachment.fileName
-            selectedAttachmentText = text
-            showingTextAttachment = true
+            Task.detached {
+                guard let data = try? Data(contentsOf: url),
+                      let text = String(data: data, encoding: .utf8) else { return }
+                await MainActor.run {
+                    selectedAttachmentText = text
+                    showingTextAttachment = true
+                }
+            }
             return
         }
 
-        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+        // Fallback: use QuickLook which can open any file type within the app sandbox.
+        selectedAttachmentGenericURL = url
     }
 
     private func iconName(for attachment: SummaryAttachment) -> String {

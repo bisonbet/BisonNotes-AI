@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 struct SummarySupplementalData: Codable, Sendable {
     var userNotes: String?
@@ -47,11 +48,13 @@ final class SummaryAttachmentStore {
         let attributes = try? fileManager.attributesOfItem(atPath: destinationURL.path)
         let fileSize = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
 
+        let contentType = UTType(filenameExtension: sourceURL.pathExtension)?.identifier
+
         let attachment = SummaryAttachment(
             id: id,
             fileName: fileName,
             storedFileName: storedFileName,
-            contentType: nil,
+            contentType: contentType,
             fileSize: fileSize,
             createdAt: Date()
         )
@@ -77,8 +80,15 @@ final class SummaryAttachmentStore {
     func saveUserNotes(_ notes: String?, summaryId: UUID) throws {
         var supplemental = load(for: summaryId)
         let trimmed = notes?.trimmingCharacters(in: .whitespacesAndNewlines)
-        supplemental.userNotes = (trimmed?.isEmpty == true) ? nil : notes
+        supplemental.userNotes = (trimmed?.isEmpty == true) ? nil : trimmed
         try save(supplemental, summaryId: summaryId)
+    }
+
+    func deleteAll(for summaryId: UUID) throws {
+        let dir = storageDirectory(for: summaryId)
+        if fileManager.fileExists(atPath: dir.path) {
+            try fileManager.removeItem(at: dir)
+        }
     }
 
     func fileURL(for attachment: SummaryAttachment, summaryId: UUID) -> URL {

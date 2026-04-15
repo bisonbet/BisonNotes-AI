@@ -448,9 +448,46 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     var formattedCompressionRatio: String {
         return String(format: "%.1f%%", compressionRatio * 100)
     }
-    
+
     var formattedProcessingTime: String {
         return String(format: "%.1fs", processingTime)
+    }
+
+    // Custom decoder so that legacy serialized summaries (which lack the
+    // `attachments` / `userNotes` keys) still decode successfully instead of
+    // throwing a keyNotFound error.
+    private enum CodingKeys: String, CodingKey {
+        case id, recordingId, transcriptId, recordingURL, recordingName, recordingDate
+        case summary, tasks, reminders, titles, attachments, userNotes
+        case contentType, aiEngine, aiModel, generatedAt, version
+        case wordCount, originalLength, compressionRatio, confidence, processingTime
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        recordingId = try c.decodeIfPresent(UUID.self, forKey: .recordingId)
+        transcriptId = try c.decodeIfPresent(UUID.self, forKey: .transcriptId)
+        recordingURL = try c.decode(URL.self, forKey: .recordingURL)
+        recordingName = try c.decode(String.self, forKey: .recordingName)
+        recordingDate = try c.decode(Date.self, forKey: .recordingDate)
+        summary = try c.decode(String.self, forKey: .summary)
+        tasks = try c.decode([TaskItem].self, forKey: .tasks)
+        reminders = try c.decode([ReminderItem].self, forKey: .reminders)
+        titles = try c.decode([TitleItem].self, forKey: .titles)
+        // New fields — fall back gracefully so legacy stored summaries still load.
+        attachments = try c.decodeIfPresent([SummaryAttachment].self, forKey: .attachments) ?? []
+        userNotes = try c.decodeIfPresent(String.self, forKey: .userNotes)
+        contentType = try c.decode(ContentType.self, forKey: .contentType)
+        aiEngine = try c.decode(String.self, forKey: .aiEngine)
+        aiModel = try c.decode(String.self, forKey: .aiModel)
+        generatedAt = try c.decode(Date.self, forKey: .generatedAt)
+        version = try c.decode(Int.self, forKey: .version)
+        wordCount = try c.decode(Int.self, forKey: .wordCount)
+        originalLength = try c.decode(Int.self, forKey: .originalLength)
+        compressionRatio = try c.decode(Double.self, forKey: .compressionRatio)
+        confidence = try c.decode(Double.self, forKey: .confidence)
+        processingTime = try c.decode(TimeInterval.self, forKey: .processingTime)
     }
 }
 
