@@ -11,9 +11,14 @@ import AVFoundation
 struct AudioPlayerView: View {
     let recording: AudioRecordingFile
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
+    @EnvironmentObject var appCoordinator: AppDataCoordinator
     @Environment(\.dismiss) private var dismiss
     @State private var duration: TimeInterval = 0
     @State private var showingShareSheet = false
+    @State private var editableTitle: String = ""
+    @State private var currentSavedTitle: String = ""
+    @State private var isUpdatingTitle = false
+    @State private var titleUpdateError: String?
 
     var body: some View {
         VStack(spacing: 20) {
@@ -32,9 +37,33 @@ struct AudioPlayerView: View {
                 .fontWeight(.bold)
                 .foregroundColor(.primary)
 
-            Text("Recording: \(recording.name)")
-                .font(.title2)
-                .multilineTextAlignment(.center)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Recording Title")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 8) {
+                    TextField("Enter title", text: $editableTitle)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(isUpdatingTitle)
+                        .onSubmit {
+                            updateRecordingTitle()
+                        }
+
+                    Button(action: updateRecordingTitle) {
+                        if isUpdatingTitle {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Text("Save")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isUpdatingTitle || editableTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || editableTitle.trimmingCharacters(in: .whitespacesAndNewlines) == currentSavedTitle)
+                }
+            }
+            .frame(maxWidth: .infinity)
 
             Text("Date: \(recording.dateString)")
                 .font(.subheadline)
@@ -117,7 +146,19 @@ struct AudioPlayerView: View {
         }
         .onAppear {
             AppLog.shared.recording("AudioPlayerView appeared", level: .debug)
+            editableTitle = recording.name
+            currentSavedTitle = recording.name
             setupAudio()
+        }
+        .alert("Unable to Update Title", isPresented: Binding(
+            get: { titleUpdateError != nil },
+            set: { if !$0 { titleUpdateError = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                titleUpdateError = nil
+            }
+        } message: {
+            Text(titleUpdateError ?? "Unknown error")
         }
         .onDisappear {
             AppLog.shared.recording("AudioPlayerView disappeared", level: .debug)
@@ -167,5 +208,45 @@ struct AudioPlayerView: View {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    private func updateRecordingTitle() {
+        let trimmedName = editableTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isUpdatingTitle,
+              !trimmedName.isEmpty,
+              trimmedName != recording.name else {
+            return
+        }
+
+        guard let recordingEntry = appCoordinator.getRecording(url: recording.url),
+              let recordingId = recordingEntry.id else {
+            titleUpdateError = "Could not find this recording in storage."
+            return
+        }
+
+        isUpdatingTitle = true
+
+        Task {
+            do {
+                try appCoordinator.coreDataManager.updateRecordingName(for: recordingId, newName: trimmedName)
+
+                await MainActor.run {
+                    isUpdatingTitle = false
+                    currentSavedTitle = trimmedName
+                    editableTitle = trimmedName
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("RecordingRenamed"),
+                        object: nil,
+                        userInfo: ["recordingId": recordingId, "newName": trimmedName]
+                    )
+                    AppLog.shared.recording("Updated recording title from AudioPlayerView to: \(trimmedName)")
+                }
+            } catch {
+                await MainActor.run {
+                    isUpdatingTitle = false
+                    titleUpdateError = error.localizedDescription
+                }
+            }
+        }
     }
 }
