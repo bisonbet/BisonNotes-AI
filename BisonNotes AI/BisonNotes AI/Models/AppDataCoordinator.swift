@@ -151,6 +151,9 @@ class AppDataCoordinator: ObservableObject {
     }
 
     func deleteSummary(id: UUID) async throws {
+        // Clean up supplemental data (notes + attachment files) before removing the Core Data entry.
+        try? SummaryAttachmentStore.shared.deleteAll(for: id)
+
         try coreDataManager.deleteSummary(id: id)
         do {
             try await SummaryManager.shared.getiCloudManager().deleteSummaryFromiCloud(id)

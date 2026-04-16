@@ -124,7 +124,7 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
         }
 
         AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Starting download for \(modelToDownload.displayName)")
-        AppLog.shared.summarization("[OnDeviceLLMDownloadManager] URL: \(url)", level: .debug)
+        AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Starting download from host: \(url.host ?? "unknown")", level: .debug)
 
         // Cancel any existing download
         downloadTask?.cancel()
@@ -399,7 +399,7 @@ extension OnDeviceLLMDownloadManager: URLSessionDownloadDelegate {
     }
 
     public nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Redirect to: \(request.url?.absoluteString ?? "unknown")", level: .debug)
+        AppLog.shared.summarization("[OnDeviceLLMDownloadManager] Redirect to host: \(request.url?.host ?? "unknown")", level: .debug)
         completionHandler(request)
     }
 

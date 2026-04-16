@@ -172,11 +172,13 @@ struct ContentView: View {
         }
         .alert("Unexpected Shutdown", isPresented: $showingCrashReport) {
             Button("Send Report") {
-                do {
-                    let url = try LogExporter.exportLogs()
-                    LogEmailPresenter.shared.presentLogEmail(logFileURL: url) {}
-                } catch {
-                    AppLog.shared.error("Failed to generate crash report: \(error.localizedDescription)", category: .general)
+                Task {
+                    do {
+                        let url = try await LogExporter.exportLogs()
+                        LogEmailPresenter.shared.presentLogEmail(logFileURL: url) {}
+                    } catch {
+                        AppLog.shared.error("Failed to generate crash report: \(error.localizedDescription)", category: .general)
+                    }
                 }
             }
             Button("Dismiss", role: .cancel) { }

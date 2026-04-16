@@ -298,9 +298,24 @@ class RecordingWorkflowManager: ObservableObject {
 
             // NOW clean up old summaries using context directly (only after new one is safely saved)
             if !existingSummaries.isEmpty {
+                // Migrate supplemental data (notes/attachments) from the most recent old summary
+                // to the new summary so user data is not lost on regeneration.
+                if let primaryOld = existingSummaries.first, let oldId = primaryOld.id {
+                    do {
+                        try SummaryAttachmentStore.shared.migrate(from: oldId, to: summaryData.id)
+                        AppLog.shared.backgroundProcessing("Migrated supplemental data from \(oldId) to \(summaryData.id)", level: .debug)
+                    } catch {
+                        AppLog.shared.backgroundProcessing("Failed to migrate supplemental data from \(oldId): \(error)", level: .error)
+                    }
+                }
+
                 var deletedCount = 0
                 for oldSummary in existingSummaries {
                     let oldId = oldSummary.id?.uuidString ?? "nil"
+                    // Clean up any remaining supplemental folders that were not migrated
+                    if let oldUUID = oldSummary.id, oldUUID != existingSummaries.first?.id {
+                        try? SummaryAttachmentStore.shared.deleteAll(for: oldUUID)
+                    }
                     context.delete(oldSummary)
                     deletedCount += 1
                     AppLog.shared.backgroundProcessing("Deleted old summary \(oldId)", level: .debug)

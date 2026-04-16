@@ -8,6 +8,7 @@
 import Foundation
 @preconcurrency import CoreLocation
 import Combine
+import os.log
 
 /// Location manager for Apple Watch to collect location data during recordings
 @MainActor
@@ -23,6 +24,7 @@ class WatchLocationManager: NSObject, ObservableObject {
     private let locationManager = CLLocationManager()
     private var locationCompletion: ((CLLocation?) -> Void)?
     private var isRequestingLocation = false
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.watchapp", category: "Location")
     
     override init() {
         super.init()
@@ -44,14 +46,14 @@ class WatchLocationManager: NSObject, ObservableObject {
     
     /// Request location permission from user
     func requestLocationPermission() {
-        print("📍⌚ Requesting location permission on watch...")
+        logger.debug("Requesting location permission on watch")
         locationManager.requestWhenInUseAuthorization()
     }
     
     /// Get current location for recording
     func getCurrentLocation(completion: @escaping (CLLocation?) -> Void) {
         guard isLocationAvailable else {
-            print("📍⌚ Location not available")
+            logger.debug("Location not available")
             completion(nil)
             return
         }
@@ -59,13 +61,13 @@ class WatchLocationManager: NSObject, ObservableObject {
         // If we have a recent location (less than 30 seconds old), use it
         if let currentLocation = currentLocation,
            currentLocation.timestamp.timeIntervalSinceNow > -30 {
-            print("📍⌚ Using cached location")
+            logger.debug("Using cached location")
             completion(currentLocation)
             return
         }
         
         // Request fresh location
-        print("📍⌚ Requesting fresh location...")
+        logger.debug("Requesting fresh location")
         locationCompletion = completion
         isRequestingLocation = true
         locationManager.requestLocation()
@@ -75,13 +77,13 @@ class WatchLocationManager: NSObject, ObservableObject {
     func startLocationUpdates() {
         guard isLocationAvailable else { return }
         
-        print("📍⌚ Starting location monitoring...")
+        logger.debug("Starting location monitoring")
         locationManager.startUpdatingLocation()
     }
     
     /// Stop monitoring location changes
     func stopLocationUpdates() {
-        print("📍⌚ Stopping location monitoring...")
+        logger.debug("Stopping location monitoring")
         locationManager.stopUpdatingLocation()
         isRequestingLocation = false
         locationCompletion = nil
@@ -95,7 +97,7 @@ class WatchLocationManager: NSObject, ObservableObject {
             let servicesEnabled = CLLocationManager.locationServicesEnabled()
             await MainActor.run {
                 self.isLocationAvailable = (self.authorizationStatus == .authorizedWhenInUse || self.authorizationStatus == .authorizedAlways) && servicesEnabled
-                print("📍⌚ Location availability updated: \(self.isLocationAvailable)")
+                self.logger.debug("Location availability updated: \(self.isLocationAvailable, privacy: .public)")
             }
         }
     }
@@ -109,7 +111,7 @@ class WatchLocationManager: NSObject, ObservableObject {
             isRequestingLocation = false
         }
         
-        print("📍⌚ Location updated: \(location.coordinate.latitude), \(location.coordinate.longitude), accuracy: \(location.horizontalAccuracy)m")
+        logger.debug("Location updated, accuracy: \(location.horizontalAccuracy, privacy: .public)m")
     }
     
     private func handleLocationError(_ error: Error) {
@@ -121,7 +123,7 @@ class WatchLocationManager: NSObject, ObservableObject {
             isRequestingLocation = false
         }
         
-        print("📍⌚ Location error: \(error.localizedDescription)")
+        logger.error("Location error: \(error.localizedDescription, privacy: .public)")
     }
 }
 
@@ -134,7 +136,7 @@ extension WatchLocationManager: CLLocationManagerDelegate {
         
         // Filter out invalid or inaccurate locations
         guard location.horizontalAccuracy < 100 && location.horizontalAccuracy > 0 else {
-            print("📍⌚ Location accuracy too low: \(location.horizontalAccuracy)m")
+            Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.watchapp", category: "Location").debug("Location accuracy too low: \(location.horizontalAccuracy, privacy: .public)m")
             return
         }
         
@@ -150,7 +152,7 @@ extension WatchLocationManager: CLLocationManagerDelegate {
     }
     
     nonisolated func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        print("📍⌚ Location authorization changed to: \(status.rawValue)")
+        Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.watchapp", category: "Location").debug("Location authorization changed to: \(status.rawValue, privacy: .public)")
         
         Task { @MainActor in
             authorizationStatus = status

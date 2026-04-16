@@ -1579,7 +1579,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 )
             } catch {
                 logger.error("GoogleAIStudioEngine: Failed to parse JSON response: \(error)")
-                logger.error("GoogleAIStudioEngine: Raw response: \(response)")
+                logger.error("GoogleAIStudioEngine: Response length: \(response.count) chars, starts with valid JSON: \(response.hasPrefix("{"))")
             }
         }
         

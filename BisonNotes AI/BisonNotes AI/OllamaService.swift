@@ -2570,7 +2570,7 @@ class OllamaService: ObservableObject {
                 }
             }
 
-            throw OllamaError.parsingError("Failed to parse JSON response: \(error.localizedDescription). Raw response: \(String(data: data, encoding: .utf8) ?? "Unable to decode raw response")")
+            throw OllamaError.parsingError("Failed to parse JSON response: \(error.localizedDescription). Response length: \(data.count) bytes")
         }
     }
     

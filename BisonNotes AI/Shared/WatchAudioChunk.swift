@@ -187,7 +187,7 @@ class WatchAudioChunkManager: ObservableObject {
                 orderedChunks.append(chunk)
             } else {
                 // Create a silent chunk for the missing sequence
-                print("⚠️ Creating silent chunk for missing sequence \(i)")
+                // Silent chunk created for missing sequence
                 let silentChunk = createSilentChunk(sequenceNumber: i, sessionId: sessionId)
                 orderedChunks.append(silentChunk)
             }
@@ -218,7 +218,7 @@ class WatchAudioChunkManager: ObservableObject {
         // First try to get complete chunks without gaps
         if let completeChunks = getAllChunksInOrder(),
            completeChunks.count == totalChunksExpected {
-            print("✅ Combining \(completeChunks.count) complete audio chunks")
+            // Combining complete audio chunks
             var combinedData = Data()
             for chunk in completeChunks {
                 combinedData.append(chunk.audioData)
@@ -228,7 +228,7 @@ class WatchAudioChunkManager: ObservableObject {
         
         // If we have missing chunks, use gap filling
         if let chunksWithGaps = getAllChunksWithGapFilling() {
-            print("⚠️ Combining \(chunksWithGaps.count) audio chunks with \(getMissingChunks().count) gaps filled with silence")
+            // Combining audio chunks with gaps filled with silence
             var combinedData = Data()
             for chunk in chunksWithGaps {
                 combinedData.append(chunk.audioData)

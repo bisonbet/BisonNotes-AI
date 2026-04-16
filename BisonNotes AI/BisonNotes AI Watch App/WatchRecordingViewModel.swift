@@ -8,6 +8,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import os.log
 
 #if canImport(WatchKit)
 import WatchKit
@@ -537,7 +538,7 @@ class WatchRecordingViewModel: ObservableObject {
                         accuracy: location.horizontalAccuracy
                     )
                     self?.recordingStartLocation = watchLocationData
-                    print("📍⌚ Captured recording location: \(location.coordinate.latitude), \(location.coordinate.longitude)")
+                    Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.watchapp", category: "Recording").debug("Captured recording location, accuracy: \(location.horizontalAccuracy, privacy: .public)m")
                 } else {
                     print("📍⌚ Failed to get recording location")
                 }
@@ -655,7 +656,7 @@ class WatchRecordingViewModel: ObservableObject {
             return
         }
         
-        print("⌚ Starting sync for recording: \(recording.filename)")
+        Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.watchapp", category: "Recording").debug("Starting sync for recording")
         startRecordingSync(recording)
     }
     
@@ -683,7 +684,7 @@ class WatchRecordingViewModel: ObservableObject {
             return
         }
         
-        print("⌚ Recording completed and saved locally: \(metadata.filename)")
+        Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.watchapp", category: "Recording").debug("Recording completed and saved locally")
         
         // Update state
         recordingState = .processing

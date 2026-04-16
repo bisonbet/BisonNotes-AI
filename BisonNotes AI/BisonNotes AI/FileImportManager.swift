@@ -252,7 +252,7 @@ class FileImportManager: NSObject, ObservableObject {
         do {
             let existingRecordings = try context.fetch(fetchRequest)
             if !existingRecordings.isEmpty {
-                AppLog.shared.fileManagement("Recording entry already exists: \(recordingName)", level: .debug)
+                AppLog.shared.fileManagement("Recording entry already exists for imported file", level: .debug)
                 return
             }
         } catch {
@@ -296,7 +296,7 @@ class FileImportManager: NSObject, ObservableObject {
         // Save the context
         do {
             try context.save()
-            AppLog.shared.fileManagement("Created Core Data entry for imported file: \(recordingName)")
+            AppLog.shared.fileManagement("Created Core Data entry for imported file")
         } catch {
             AppLog.shared.fileManagement("Failed to save Core Data entry: \(error)", level: .error)
             throw ImportError.copyFailed("Failed to save to database: \(error.localizedDescription)")

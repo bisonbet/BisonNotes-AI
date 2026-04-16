@@ -114,7 +114,7 @@ struct EnhancedDeleteDialog: View {
                                         .fontWeight(.medium)
                                         .foregroundColor(.primary)
                                     
-                                    Text("Delete recording, transcript, and summary")
+                                    Text("Delete recording, transcript, summary, and any notes or attached files")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }

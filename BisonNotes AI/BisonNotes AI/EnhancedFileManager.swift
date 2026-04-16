@@ -380,7 +380,7 @@ class EnhancedFileManager: ObservableObject {
             // Delete transcript if present
             if let transcript = await appCoordinator.coreDataManager.getTranscript(for: recordingId) {
                 await appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
-                AppLog.shared.fileManagement("Deleted transcript for: \(relationships.recordingName)")
+                AppLog.shared.fileManagement("Deleted transcript for recording")
             }
 
             // Keep summary linked to the recording; ensure IDs/relationships are consistent
@@ -398,7 +398,7 @@ class EnhancedFileManager: ObservableObject {
             // Persist changes
             do {
                 try await appCoordinator.coreDataManager.saveContext()
-                AppLog.shared.fileManagement("Preserved summary (kept recording entry, removed transcript) for: \(relationships.recordingName)")
+                AppLog.shared.fileManagement("Preserved summary (kept recording entry, removed transcript)")
             } catch {
                 AppLog.shared.fileManagement("Error saving preservation changes: \(error)", level: .error)
             }
@@ -416,7 +416,7 @@ class EnhancedFileManager: ObservableObject {
         } else {
             // Delete everything (recording, transcript, and summary)
             await appCoordinator.deleteRecording(id: recordingId)
-            AppLog.shared.fileManagement("Deleted recording, transcript, and summary for: \(relationships.recordingName)")
+            AppLog.shared.fileManagement("Deleted recording, transcript, and summary")
             
             // Remove the relationship entirely
             await MainActor.run {
@@ -425,7 +425,7 @@ class EnhancedFileManager: ObservableObject {
             }
         }
         
-        AppLog.shared.fileManagement("Recording deletion completed: \(relationships.recordingName)")
+        AppLog.shared.fileManagement("Recording deletion completed")
     }
     
     func deleteSummary(for url: URL) async throws {
@@ -438,7 +438,7 @@ class EnhancedFileManager: ObservableObject {
             // This will now be handled by the coordinator
             // let manager = await summaryManager
             // await MainActor.run { manager.deleteSummary(for: url) }
-            AppLog.shared.fileManagement("Deleted summary for: \(relationships.recordingName)")
+            AppLog.shared.fileManagement("Deleted summary for recording")
         }
         
         // Update relationships
@@ -470,7 +470,7 @@ class EnhancedFileManager: ObservableObject {
         if relationships.transcriptExists {
             // This will now be handled by the coordinator
             // transcriptManager.deleteTranscript(for: url)
-            AppLog.shared.fileManagement("Deleted transcript for: \(relationships.recordingName)")
+            AppLog.shared.fileManagement("Deleted transcript for recording")
         }
 
         // Update relationships

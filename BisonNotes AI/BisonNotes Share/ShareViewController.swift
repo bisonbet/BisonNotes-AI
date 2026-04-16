@@ -78,7 +78,7 @@ class ShareViewController: UIViewController {
                         return
                     }
 
-                    NSLog("📎 Share Extension: received temp file: \(url.lastPathComponent)")
+                    NSLog("📎 Share Extension: received temp file with extension: \(url.pathExtension)")
 
                     // Verify the file extension is one we support
                     let ext = url.pathExtension.lowercased()
@@ -172,7 +172,7 @@ class ShareViewController: UIViewController {
 
         do {
             try FileManager.default.copyItem(at: url, to: destination)
-            NSLog("✅ Share Extension: saved \(url.lastPathComponent) → \(destination.lastPathComponent)")
+            NSLog("✅ Share Extension: saved file with extension: \(url.pathExtension)")
             return true
         } catch {
             NSLog("❌ Share Extension: copy failed: \(error.localizedDescription)")

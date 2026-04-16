@@ -68,6 +68,7 @@ struct SummaryDetailView: View {
     @State private var noteDraft: String = ""
     @State private var isLoadingSupplemental = false
     @State private var noteSaveTask: Task<Void, Never>?
+    @State private var showingNoteEditor = false
     @State private var showingTextAttachment = false
     @State private var showingPDFAttachment = false
     @State private var selectedAttachmentName: String = ""
@@ -251,7 +252,7 @@ struct SummaryDetailView: View {
                 deleteSummary()
             }
         } message: {
-            Text("Are you sure you want to delete this summary? This action cannot be undone. The audio file and transcript will remain unchanged.")
+            Text("Are you sure you want to delete this summary? Any notes and attached files will also be deleted. This action cannot be undone. The audio file and transcript will remain unchanged.")
         }
         .sheet(isPresented: $showingLocationDetail) {
             if let locationData = recording.locationData {
@@ -352,6 +353,11 @@ struct SummaryDetailView: View {
                             }
                         }
                 }
+            }
+        }
+        .sheet(isPresented: $showingNoteEditor) {
+            NoteEditorSheet(text: $noteDraft) {
+                saveUserNotes()
             }
         }
         .quickLookPreview($selectedAttachmentGenericURL)
@@ -908,25 +914,40 @@ struct SummaryDetailView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Note")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-
-                TextEditor(text: $noteDraft)
-                    .frame(minHeight: 110)
-                    .padding(6)
-                    .background(Color(.systemGray6))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .onChange(of: noteDraft) { _, _ in
-                        guard !isLoadingSupplemental else { return }
-                        noteSaveTask?.cancel()
-                        noteSaveTask = Task {
-                            try? await Task.sleep(for: .milliseconds(500))
-                            guard !Task.isCancelled else { return }
-                            saveUserNotes()
+            if noteDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    showingNoteEditor = true
+                } label: {
+                    Label("Add Note", systemImage: "note.text.badge.plus")
+                        .font(.subheadline)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "note.text")
+                            .foregroundColor(.secondary)
+                        Text("Note")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Button("Edit") {
+                            showingNoteEditor = true
                         }
+                        .font(.caption)
                     }
+
+                    Text(noteDraft)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(3)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.systemGray6))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .onTapGesture {
+                            showingNoteEditor = true
+                        }
+                }
             }
 
             if attachments.isEmpty {
@@ -3518,6 +3539,46 @@ private final class ExportActivityItem: NSObject, UIActivityItemSource {
     }
 }
 
+// MARK: - Note Editor Sheet
+
+private struct NoteEditorSheet: View {
+    @Binding var text: String
+    var onSave: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: String = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 0) {
+                TextEditor(text: $draft)
+                    .focused($isFocused)
+                    .padding()
+            }
+            .navigationTitle("Note")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        text = draft
+                        onSave()
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .onAppear {
+            draft = text
+            isFocused = true
+        }
+    }
+}
+
 // MARK: - Helper Functions
 
 struct SafeConfidenceHelper {
@@ -3525,4 +3586,4 @@ struct SafeConfidenceHelper {
         guard confidence.isFinite else { return 0 }
         return Int(confidence * 100)
     }
-} 
+}

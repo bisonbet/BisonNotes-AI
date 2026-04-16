@@ -362,14 +362,13 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         AppLog.shared.transcription("HTTP response status: \(httpResponse.statusCode)", level: .debug)
         
         guard httpResponse.statusCode == 200 else {
-            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-            AppLog.shared.transcription("OpenAI API error: HTTP \(httpResponse.statusCode)", level: .error)
-            
-            // Try to parse error response
+            AppLog.shared.transcription("OpenAI API error: HTTP \(httpResponse.statusCode), response size: \(data.count) bytes", level: .error)
+
+            // Try to parse error response for the error code/type only
             if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
                 throw OpenAITranscribeError.apiError(errorResponse.error.message)
             } else {
-                throw OpenAITranscribeError.apiError("HTTP \(httpResponse.statusCode): \(errorText)")
+                throw OpenAITranscribeError.apiError("HTTP \(httpResponse.statusCode)")
             }
         }
         

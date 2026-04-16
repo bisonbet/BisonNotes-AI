@@ -91,6 +91,19 @@ final class SummaryAttachmentStore {
         }
     }
 
+    /// Moves supplemental data (notes + attachments) from one summary ID to another.
+    /// Used when a summary is regenerated and receives a new UUID so existing user
+    /// data is not orphaned.
+    func migrate(from oldSummaryId: UUID, to newSummaryId: UUID) throws {
+        let oldDir = storageDirectory(for: oldSummaryId)
+        guard fileManager.fileExists(atPath: oldDir.path) else { return }
+        let newDir = storageDirectory(for: newSummaryId)
+        if fileManager.fileExists(atPath: newDir.path) {
+            try fileManager.removeItem(at: newDir)
+        }
+        try fileManager.moveItem(at: oldDir, to: newDir)
+    }
+
     func fileURL(for attachment: SummaryAttachment, summaryId: UUID) -> URL {
         attachmentsDirectory(for: summaryId).appendingPathComponent(attachment.storedFileName)
     }

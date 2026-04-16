@@ -886,7 +886,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // Save the context
         do {
             try context.save()
-            AppLog.shared.transcription("Created transcript entry for imported transcript: \(recording.recordingName ?? "unknown")")
+            AppLog.shared.transcription("Created transcript entry for imported transcript")
         } catch {
             AppLog.shared.transcription("Failed to save transcript entry: \(error)", level: .error)
             throw TranscriptImportError.databaseError("Failed to save transcript: \(error.localizedDescription)")

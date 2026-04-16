@@ -101,7 +101,7 @@ class SummaryManager: ObservableObject {
         DispatchQueue.main.async {
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.summarization("saveEnhancedSummary() is deprecated - updating UI only for \(summary.recordingName)", level: .debug)
+                AppLog.shared.summarization("saveEnhancedSummary() is deprecated - updating UI only", level: .debug)
             }
             
             // Remove any existing enhanced summary for this recording
@@ -145,7 +145,7 @@ class SummaryManager: ObservableObject {
                 // Only update UI state, not persistence
                 self.enhancedSummaries.append(summary)
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLog.shared.summarization("Added summary to UI state only for \(summary.recordingName)", level: .debug)
+                    AppLog.shared.summarization("Added summary to UI state", level: .debug)
                 }
             }
         }
@@ -173,9 +173,7 @@ class SummaryManager: ObservableObject {
             
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.summarization("Checking enhanced summary \(index): \(summary.recordingName)", level: .debug)
-                AppLog.shared.summarization("Stored filename: \(summaryFilename)", level: .debug)
-                AppLog.shared.summarization("Stored name: \(summaryName)", level: .debug)
+                AppLog.shared.summarization("Checking enhanced summary \(index)", level: .debug)
             }
             
             // Try multiple comparison methods
@@ -986,7 +984,7 @@ class SummaryManager: ObservableObject {
                     self.enhancedSummaries.append(shortTranscriptSummary)
                 }
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLog.shared.summarization("Updated UI state for short transcript summary: \(shortTranscriptSummary.recordingName)", level: .debug)
+                    AppLog.shared.summarization("Updated UI state for short transcript summary", level: .debug)
                 }
             }
 
@@ -1130,7 +1128,7 @@ class SummaryManager: ObservableObject {
                 self.enhancedSummaries.append(enhancedSummary)
             }
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.summarization("Updated UI state for enhanced summary: \(enhancedSummary.recordingName)", level: .debug)
+                AppLog.shared.summarization("Updated UI state for enhanced summary", level: .debug)
             }
         }
 
@@ -1224,7 +1222,7 @@ class SummaryManager: ObservableObject {
                     self.enhancedSummaries.append(shortTranscriptSummary)
                 }
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLog.shared.summarization("Updated UI state for short transcript summary: \(shortTranscriptSummary.recordingName)", level: .debug)
+                    AppLog.shared.summarization("Updated UI state for short transcript summary", level: .debug)
                 }
             }
 
@@ -1291,7 +1289,7 @@ class SummaryManager: ObservableObject {
                 self.enhancedSummaries.append(enhancedSummary)
             }
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.summarization("Updated UI state for basic enhanced summary: \(enhancedSummary.recordingName)", level: .debug)
+                AppLog.shared.summarization("Updated UI state for basic enhanced summary", level: .debug)
             }
         }
         

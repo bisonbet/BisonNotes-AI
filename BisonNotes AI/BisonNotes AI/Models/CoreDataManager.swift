@@ -649,10 +649,15 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Recording not found for deletion: \(id)", level: .error)
             return
         }
-        
+
+        // Clean up supplemental data (notes + attachment files) before the cascade delete removes the summary entry.
+        if let summaryId = recording.summaryId {
+            try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
+        }
+
         // Core Data will handle cascade deletion of related transcript and summary
         context.delete(recording)
-        
+
         do {
             try context.save()
             AppLog.shared.coreData("Recording deleted: \(id)")

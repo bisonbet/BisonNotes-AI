@@ -623,10 +623,10 @@ struct BisonNotesAIApp: App {
         let textExtensions: Set<String> = ["txt", "text", "md", "markdown", "pdf", "doc", "docx"]
 
         if audioExtensions.contains(ext) {
-            NSLog("📎 Importing audio file: \(url.lastPathComponent)")
+            NSLog("📎 Importing audio file (.\(ext))")
             await fileImportManager.importAudioFiles(from: [url])
         } else if textExtensions.contains(ext) {
-            NSLog("📎 Importing text file: \(url.lastPathComponent)")
+            NSLog("📎 Importing text file (.\(ext))")
             await transcriptImportManager.importTranscriptFiles(from: [url])
         } else {
             NSLog("📎 Unsupported file type: \(ext)")

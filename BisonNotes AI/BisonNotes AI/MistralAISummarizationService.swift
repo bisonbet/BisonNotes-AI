@@ -231,9 +231,8 @@ class MistralAISummarizationService {
                     logger.error("Mistral API Error: \(errorResponse.error.message, privacy: .public)")
                     throw SummarizationError.aiServiceUnavailable(service: "Mistral API Error: \(errorResponse.error.message)")
                 } else {
-                    let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
-                    logger.error("Mistral API Error: HTTP \(httpResponse.statusCode, privacy: .public)")
-                    throw SummarizationError.aiServiceUnavailable(service: "Mistral API Error: HTTP \(httpResponse.statusCode) - \(responseString)")
+                    logger.error("Mistral API Error: HTTP \(httpResponse.statusCode, privacy: .public), response size: \(data.count, privacy: .public) bytes")
+                    throw SummarizationError.aiServiceUnavailable(service: "Mistral API Error: HTTP \(httpResponse.statusCode)")
                 }
             }
 
