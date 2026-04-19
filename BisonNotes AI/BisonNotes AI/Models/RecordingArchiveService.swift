@@ -38,16 +38,7 @@ class RecordingArchiveService: ObservableObject {
             recording.lastModified = now
 
             if removeLocal, let urlString = recording.recordingURL {
-                let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-                let fileURL: URL?
-
-                if urlString.hasPrefix("/") {
-                    fileURL = URL(fileURLWithPath: urlString)
-                } else if let docs = documentsPath {
-                    fileURL = docs.appendingPathComponent(urlString)
-                } else {
-                    fileURL = nil
-                }
+                let fileURL = Self.resolveLocalURL(from: urlString)
 
                 if let url = fileURL, FileManager.default.fileExists(atPath: url.path) {
                     do {
@@ -129,19 +120,28 @@ class RecordingArchiveService: ObservableObject {
 
     /// Get absolute file URLs for recordings that still have local audio files.
     func audioURLs(for recordings: [RecordingEntry]) -> [URL] {
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
         return recordings.compactMap { recording -> URL? in
-            guard let urlString = recording.recordingURL else { return nil }
-            let url: URL
-            if urlString.hasPrefix("/") {
-                url = URL(fileURLWithPath: urlString)
-            } else if let docs = documentsPath {
-                url = docs.appendingPathComponent(urlString)
-            } else {
-                return nil
-            }
+            guard let urlString = recording.recordingURL,
+                  let url = Self.resolveLocalURL(from: urlString) else { return nil }
             return FileManager.default.fileExists(atPath: url.path) ? url : nil
         }
+    }
+
+    /// Resolve a stored recordingURL string to a local file URL.
+    /// Handles absolute POSIX paths, file:// URLs (legacy format), and
+    /// Documents-relative paths with percent-encoding (e.g. "My%20Recording.m4a").
+    private static func resolveLocalURL(from urlString: String) -> URL? {
+        if urlString.hasPrefix("/") {
+            return URL(fileURLWithPath: urlString)
+        }
+        if let parsed = URL(string: urlString), parsed.scheme != nil {
+            return parsed.isFileURL ? parsed : nil
+        }
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let decoded = urlString.removingPercentEncoding ?? urlString
+        return docs.appendingPathComponent(decoded)
     }
 
     /// Calculate total file size for a set of recordings.

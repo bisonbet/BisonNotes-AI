@@ -225,6 +225,9 @@ class RecordingWorkflowManager: ObservableObject {
         // We'll delete these only AFTER successfully saving the new summary
         let existingSummaryFetch: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         existingSummaryFetch.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
+        // Sort most-recent-first so existingSummaries.first is deterministic and matches
+        // the summary most likely to hold the user's latest notes/attachments.
+        existingSummaryFetch.sortDescriptors = [NSSortDescriptor(key: "generatedAt", ascending: false)]
         let existingSummaries = (try? context.fetch(existingSummaryFetch)) ?? []
         if !existingSummaries.isEmpty {
             AppLog.shared.backgroundProcessing("Found \(existingSummaries.count) existing summary(ies) to clean up after save", level: .debug)

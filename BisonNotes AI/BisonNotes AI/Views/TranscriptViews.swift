@@ -652,7 +652,14 @@ struct TranscriptsView: View {
 		}
 
 		for rd in recordingsWithData {
-			guard let url = appCoordinator.getAbsoluteURL(for: rd.recording) else { continue }
+			let resolvedURL: URL?
+			if rd.recording.isArchived {
+				resolvedURL = appCoordinator.getAbsoluteURL(for: rd.recording)
+					?? appCoordinator.getStoredURL(for: rd.recording)
+			} else {
+				resolvedURL = appCoordinator.getAbsoluteURL(for: rd.recording)
+			}
+			guard let url = resolvedURL else { continue }
 			let key = url.lastPathComponent
 			let candidate = (recording: rd.recording, transcript: rd.transcript)
 			if let existing = bestByFilename[key] {

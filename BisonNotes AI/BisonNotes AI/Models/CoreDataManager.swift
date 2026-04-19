@@ -953,10 +953,15 @@ class CoreDataManager: ObservableObject {
     func cleanupRecordingsWithMissingFiles() -> Int {
         let allRecordings = getAllRecordings()
         var cleanedCount = 0
-        
+
         for recording in allRecordings {
+            // Never touch archived recordings — their audio was intentionally offloaded
+            if recording.isArchived {
+                continue
+            }
+
             guard let urlString = recording.recordingURL else { continue }
-            
+
             // Skip if this is a summary-only recording (no URL expected)
             if recording.summary != nil && urlString.isEmpty {
                 continue
