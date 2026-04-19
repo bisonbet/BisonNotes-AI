@@ -30,19 +30,19 @@ struct RecordingsListView: View {
     @State private var selectedRecordingForPlayer: AudioRecordingFile?
     enum SelectionAction {
         case combine
-        // Future actions can be added here, e.g.:
-        // case export
-        // case delete
+        case archive
 
         var instruction: String {
             switch self {
             case .combine: return "Select 2 recordings to combine"
+            case .archive: return "Select recordings to archive"
             }
         }
 
         var maxSelection: Int? {
             switch self {
             case .combine: return 2
+            case .archive: return nil
             }
         }
     }
@@ -54,6 +54,14 @@ struct RecordingsListView: View {
     @State private var recordingsToCombine: (first: AudioRecordingFile, second: AudioRecordingFile)?
     @State private var showSelectionWarning = false
     @State private var searchText = ""
+    @State private var showingArchiveConfirmation = false
+    @State private var showingArchiveExportPicker = false
+    @State private var showingArchiveOlderThan = false
+    @State private var archiveOlderThanDays = 30
+    @State private var removeLocalAfterArchive = false
+    @State private var recordingsToArchive: [RecordingEntry] = []
+    @State private var archiveExportURLs: [URL] = []
+    @State private var archiveInfoRecording: AudioRecordingFile?
     @State private var showDateFilter = false
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var dateFilterEnd: Date = Date()
@@ -79,6 +87,14 @@ struct RecordingsListView: View {
                                 .foregroundColor(.blue)
                             }
 
+                            if selectionAction == .archive && !selectedRecordings.isEmpty {
+                                Button("Archive") {
+                                    prepareArchiveFromSelection()
+                                }
+                                .font(.headline)
+                                .foregroundColor(.orange)
+                            }
+
                             Button("Cancel") {
                                 isSelectionMode = false
                                 selectedRecordings.removeAll()
@@ -93,8 +109,8 @@ struct RecordingsListView: View {
                                     .font(.title2)
                             }
 
-                            if recordings.count >= 2 {
-                                Menu {
+                            Menu {
+                                if recordings.count >= 2 {
                                     Button(action: {
                                         selectionAction = .combine
                                         isSelectionMode = true
@@ -103,10 +119,25 @@ struct RecordingsListView: View {
                                     }) {
                                         Label("Combine Recordings", systemImage: "link")
                                     }
-                                } label: {
-                                    Image(systemName: "ellipsis.circle")
-                                        .font(.title2)
                                 }
+
+                                Button(action: {
+                                    selectionAction = .archive
+                                    isSelectionMode = true
+                                    selectedRecordings.removeAll()
+                                    showSelectionWarning = false
+                                }) {
+                                    Label("Archive Selected", systemImage: "archivebox")
+                                }
+
+                                Button(action: {
+                                    showingArchiveOlderThan = true
+                                }) {
+                                    Label("Archive Older Than...", systemImage: "calendar.badge.clock")
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                                    .font(.title2)
                             }
 
                             Button("Done") {
@@ -203,6 +234,57 @@ struct RecordingsListView: View {
                         recommendedFirst: recommendedRecording
                     )
                     .environmentObject(appCoordinator)
+                }
+            }
+            .sheet(isPresented: $showingArchiveConfirmation) {
+                ArchiveConfirmationView(
+                    recordingCount: recordingsToArchive.count,
+                    totalSize: RecordingArchiveService.shared.totalFileSize(for: recordingsToArchive),
+                    recordingNames: recordingsToArchive.compactMap { $0.recordingName },
+                    removeLocal: $removeLocalAfterArchive,
+                    onConfirm: {
+                        showingArchiveConfirmation = false
+                        archiveExportURLs = RecordingArchiveService.shared.audioURLs(for: recordingsToArchive)
+                        if !archiveExportURLs.isEmpty {
+                            showingArchiveExportPicker = true
+                        }
+                    },
+                    onCancel: {
+                        showingArchiveConfirmation = false
+                        recordingsToArchive = []
+                    }
+                )
+                .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $showingArchiveExportPicker) {
+                DocumentExportPicker(urls: archiveExportURLs) { success in
+                    showingArchiveExportPicker = false
+                    if success {
+                        RecordingArchiveService.shared.archiveRecordings(
+                            recordingsToArchive,
+                            removeLocal: removeLocalAfterArchive
+                        )
+                        isSelectionMode = false
+                        selectedRecordings.removeAll()
+                        loadRecordings()
+                    }
+                    recordingsToArchive = []
+                    archiveExportURLs = []
+                }
+            }
+            .sheet(isPresented: $showingArchiveOlderThan) {
+                archiveOlderThanSheet
+            }
+            .alert("Audio Archived", isPresented: Binding(
+                get: { archiveInfoRecording != nil },
+                set: { if !$0 { archiveInfoRecording = nil } }
+            )) {
+                Button("OK", role: .cancel) { archiveInfoRecording = nil }
+            } message: {
+                if let rec = archiveInfoRecording {
+                    let note = rec.archiveNote ?? "Exported to Files"
+                    let dateStr = rec.archivedAtString ?? ""
+                    Text("\(note)\(dateStr.isEmpty ? "" : " on \(dateStr)")\n\nThe audio file is no longer stored locally. Transcripts and summaries are still available. Use \"Import Audio Files\" to restore.")
                 }
             }
         }
@@ -403,6 +485,11 @@ struct RecordingsListView: View {
             Button(action: {
                 if isSelectionMode {
                     toggleSelection(for: recording)
+                } else if recording.isArchived && !recording.hasLocalAudio {
+                    // Archived with no local file — show info instead of player
+                    selectedRecordingForPlayer = nil
+                    // Show alert with archive info
+                    archiveInfoRecording = recording
                 } else {
                     selectedRecordingForPlayer = recording
                 }
@@ -431,8 +518,28 @@ struct RecordingsListView: View {
                             .foregroundColor(.secondary)
                     }
                     
-                    // File availability indicator
-                    if let relationships = enhancedFileManager.getFileRelationships(for: recording.url) {
+                    // Archive or file availability indicator
+                    if recording.isArchived {
+                        HStack(spacing: 4) {
+                            Image(systemName: "archivebox.fill")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                            if let dateStr = recording.archivedAtString {
+                                Text("Archived \(dateStr)")
+                                    .font(.caption2)
+                                    .foregroundColor(.orange)
+                            } else {
+                                Text("Archived")
+                                    .font(.caption2)
+                                    .foregroundColor(.orange)
+                            }
+                            if !recording.hasLocalAudio {
+                                Text("(audio offloaded)")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    } else if let relationships = enhancedFileManager.getFileRelationships(for: recording.url) {
                         FileAvailabilityIndicator(
                             status: relationships.availabilityStatus,
                             showLabel: true,
@@ -533,8 +640,17 @@ struct RecordingsListView: View {
                 continue
             }
 
-            guard let url = appCoordinator.getAbsoluteURL(for: entry.recording) else { continue }
-            let key = url.lastPathComponent
+            // For archived recordings, use stored URL even if file is missing
+            let url: URL?
+            if entry.recording.isArchived {
+                url = appCoordinator.getAbsoluteURL(for: entry.recording)
+                    ?? appCoordinator.getStoredURL(for: entry.recording)
+            } else {
+                url = appCoordinator.getAbsoluteURL(for: entry.recording)
+            }
+
+            guard let resolvedURL = url else { continue }
+            let key = resolvedURL.lastPathComponent
             if let existing = bestByFilename[key] {
                 bestByFilename[key] = score(existing) >= score(entry) ? existing : entry
             } else {
@@ -546,24 +662,46 @@ struct RecordingsListView: View {
 
         recordings = deduped.compactMap { recordingData -> AudioRecordingFile? in
             let recording = recordingData.recording
-            guard let recordingName = recording.recordingName,
-                  let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
-                  FileManager.default.fileExists(atPath: recordingURL.path) else {
+            guard let recordingName = recording.recordingName else {
+                return nil
+            }
+
+            let isArchived = recording.isArchived
+            let recordingURL: URL?
+
+            if isArchived {
+                recordingURL = appCoordinator.getAbsoluteURL(for: recording)
+                    ?? appCoordinator.getStoredURL(for: recording)
+            } else {
+                recordingURL = appCoordinator.getAbsoluteURL(for: recording)
+            }
+
+            guard let url = recordingURL else {
                 AppLog.shared.recording("Skipping recording with missing data", level: .debug)
                 return nil
             }
-            
+
+            // Non-archived recordings must have a local file
+            if !isArchived && !FileManager.default.fileExists(atPath: url.path) {
+                AppLog.shared.recording("Skipping recording with missing file", level: .debug)
+                return nil
+            }
 
             let date = recording.recordingDate ?? recording.createdAt ?? Date()
-            let duration = recording.duration > 0 ? recording.duration : getRecordingDuration(url: recordingURL)
+            let duration = recording.duration > 0 ? recording.duration : getRecordingDuration(url: url)
             let locationData = appCoordinator.loadLocationData(for: recording)
 
             return AudioRecordingFile(
-                url: recordingURL,
+                url: url,
                 name: recordingName,
                 date: date,
                 duration: duration,
-                locationData: locationData
+                locationData: locationData,
+                isArchived: isArchived,
+                archivedAt: recording.archivedAt,
+                archiveNote: recording.archiveNote,
+                recordingId: recording.id,
+                storedFileSize: recording.fileSize
             )
         }
         .sorted { $0.date > $1.date }
@@ -822,5 +960,82 @@ struct RecordingsListView: View {
         selectedRecordings.removeAll()
         showSelectionWarning = false
     }
-    
+
+    // MARK: - Archive Helpers
+
+    private func prepareArchiveFromSelection() {
+        let selectedURLs = selectedRecordings
+        let allRecordings = appCoordinator.getAllRecordingsWithData()
+        recordingsToArchive = allRecordings.compactMap { entry -> RecordingEntry? in
+            guard !entry.recording.isArchived,
+                  let url = appCoordinator.getAbsoluteURL(for: entry.recording),
+                  selectedURLs.contains(url) else { return nil }
+            return entry.recording
+        }
+        if !recordingsToArchive.isEmpty {
+            removeLocalAfterArchive = false
+            showingArchiveConfirmation = true
+        }
+    }
+
+    private var archiveOlderThanSheet: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 40))
+                    .foregroundColor(.accentColor)
+                    .padding(.top, 20)
+
+                Text("Archive Older Than")
+                    .font(.title2)
+                    .fontWeight(.bold)
+
+                Picker("Days", selection: $archiveOlderThanDays) {
+                    Text("7 days").tag(7)
+                    Text("14 days").tag(14)
+                    Text("30 days").tag(30)
+                    Text("60 days").tag(60)
+                    Text("90 days").tag(90)
+                }
+                .pickerStyle(.wheel)
+                .frame(height: 120)
+
+                let matchCount = RecordingArchiveService.shared.recordingsOlderThan(days: archiveOlderThanDays).count
+                Text("\(matchCount) recording\(matchCount == 1 ? "" : "s") match")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                Button(action: {
+                    showingArchiveOlderThan = false
+                    recordingsToArchive = RecordingArchiveService.shared.recordingsOlderThan(days: archiveOlderThanDays)
+                    if !recordingsToArchive.isEmpty {
+                        removeLocalAfterArchive = false
+                        showingArchiveConfirmation = true
+                    }
+                }) {
+                    Text("Continue")
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(matchCount > 0 ? Color.accentColor : Color.gray)
+                        )
+                }
+                .disabled(matchCount == 0)
+                .padding(.horizontal)
+
+                Button("Cancel") {
+                    showingArchiveOlderThan = false
+                }
+                .foregroundColor(.secondary)
+                .padding(.bottom, 20)
+            }
+            .navigationBarHidden(true)
+        }
+        .presentationDetents([.medium])
+    }
 }

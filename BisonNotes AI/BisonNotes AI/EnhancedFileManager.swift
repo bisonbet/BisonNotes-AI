@@ -53,8 +53,9 @@ enum FileAvailabilityStatus: String, CaseIterable {
     case recordingOnly = "Recording Only"
     case summaryOnly = "Summary Only"
     case transcriptOnly = "Transcript Only"
+    case archived = "Archived"
     case none = "None"
-    
+
     var icon: String {
         switch self {
         case .complete:
@@ -65,11 +66,13 @@ enum FileAvailabilityStatus: String, CaseIterable {
             return "doc.text"
         case .transcriptOnly:
             return "text.quote"
+        case .archived:
+            return "archivebox.fill"
         case .none:
             return "questionmark.circle"
         }
     }
-    
+
     var color: String {
         switch self {
         case .complete:
@@ -80,11 +83,13 @@ enum FileAvailabilityStatus: String, CaseIterable {
             return "orange"
         case .transcriptOnly:
             return "purple"
+        case .archived:
+            return "orange"
         case .none:
             return "gray"
         }
     }
-    
+
     var description: String {
         switch self {
         case .complete:
@@ -95,6 +100,8 @@ enum FileAvailabilityStatus: String, CaseIterable {
             return "Only summary available (recording deleted)"
         case .transcriptOnly:
             return "Only transcript available (recording deleted)"
+        case .archived:
+            return "Audio exported to external storage"
         case .none:
             return "No files available"
         }

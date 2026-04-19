@@ -19,6 +19,9 @@
         <attribute name="summaryStatus" optional="YES" attributeType="String"/>
         <attribute name="transcriptId" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
         <attribute name="transcriptionStatus" optional="YES" attributeType="String"/>
+        <attribute name="isArchived" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="archivedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="archiveNote" optional="YES" attributeType="String"/>
         <relationship name="summary" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="SummaryEntry" inverseName="recording" inverseEntity="SummaryEntry"/>
         <relationship name="transcript" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="TranscriptEntry" inverseName="recording" inverseEntity="TranscriptEntry"/>
         <relationship name="processingJobs" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="ProcessingJobEntry" inverseName="recording" inverseEntity="ProcessingJobEntry"/>

@@ -179,6 +179,17 @@ class CoreDataManager: ObservableObject {
         return nil
     }
     
+    /// Returns a URL derived from the stored recordingURL string without checking file existence.
+    /// Used for archived recordings where the local file may have been intentionally removed.
+    func getStoredURL(for recording: RecordingEntry) -> URL? {
+        guard let urlString = recording.recordingURL else { return nil }
+
+        if let url = URL(string: urlString), url.scheme != nil {
+            return url
+        }
+        return relativePathToURL(urlString)
+    }
+
     // MARK: - Location Data Helpers
     
     func getLocationData(for recording: RecordingEntry) -> LocationData? {
