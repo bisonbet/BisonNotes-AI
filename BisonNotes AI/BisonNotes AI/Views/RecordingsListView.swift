@@ -244,9 +244,11 @@ struct RecordingsListView: View {
                     removeLocal: $removeLocalAfterArchive,
                     onConfirm: {
                         showingArchiveConfirmation = false
-                        archiveExportURLs = RecordingArchiveService.shared.audioURLs(for: recordingsToArchive)
+                        archiveExportURLs = RecordingArchiveService.shared.prepareArchiveExportURLs(for: recordingsToArchive)
                         if !archiveExportURLs.isEmpty {
                             showingArchiveExportPicker = true
+                        } else {
+                            RecordingArchiveService.shared.cleanupArchiveStaging()
                         }
                     },
                     onCancel: {
@@ -270,6 +272,7 @@ struct RecordingsListView: View {
                     }
                     recordingsToArchive = []
                     archiveExportURLs = []
+                    RecordingArchiveService.shared.cleanupArchiveStaging()
                 }
             }
             .sheet(isPresented: $showingArchiveOlderThan) {

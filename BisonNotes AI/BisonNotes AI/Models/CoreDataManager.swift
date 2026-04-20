@@ -685,9 +685,16 @@ class CoreDataManager: ObservableObject {
     
     private func convertToTranscriptData(transcriptEntry: TranscriptEntry, recordingEntry: RecordingEntry) -> TranscriptData? {
         guard let _ = transcriptEntry.id,
-              let recordingId = recordingEntry.id,
-              let url = getAbsoluteURL(for: recordingEntry) else {
-            AppLog.shared.coreData("Could not get absolute URL for recording ID: \(recordingEntry.id?.uuidString ?? "nil")", level: .error)
+              let recordingId = recordingEntry.id else {
+            AppLog.shared.coreData("Transcript missing id for recording: \(recordingEntry.id?.uuidString ?? "nil")", level: .error)
+            return nil
+        }
+
+        // The transcript is valid even when the audio file is gone (archived
+        // recordings intentionally have no local audio). Fall back to the
+        // stored URL so the transcript stays visible in the Transcripts list.
+        guard let url = getAbsoluteURL(for: recordingEntry) ?? getStoredURL(for: recordingEntry) else {
+            AppLog.shared.coreData("Could not resolve any URL for recording ID: \(recordingEntry.id?.uuidString ?? "nil")", level: .error)
             return nil
         }
         

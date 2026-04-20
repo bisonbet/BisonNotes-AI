@@ -95,23 +95,30 @@ class FileImportManager: NSObject, ObservableObject {
         guard supportedExtensions.contains(fileExtension) else {
             throw ImportError.unsupportedFormat(fileExtension)
         }
-        
+
+        // If the filename carries an archive token, try to restore onto the
+        // original recording entry rather than create a duplicate.
+        if let restoreCandidate = matchArchivedRecording(for: sourceURL) {
+            try await restoreArchivedRecording(restoreCandidate, from: sourceURL)
+            return
+        }
+
         // Get documents directory
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        
+
         // Generate unique filename
         let filename = generateUniqueFilename(for: sourceURL)
         let destinationURL = documentsPath.appendingPathComponent(filename)
-        
+
         // Check if file already exists
         if FileManager.default.fileExists(atPath: destinationURL.path) {
             throw ImportError.fileAlreadyExists(filename)
         }
-        
+
         // Copy file to documents directory with comprehensive error handling for thumbnail issues
         do {
             try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-            
+
         } catch {
             // Check if this is a thumbnail-related error that we can ignore
             if error.isThumbnailGenerationError {
@@ -122,14 +129,119 @@ class FileImportManager: NSObject, ObservableObject {
                 throw ImportError.copyFailed(error.localizedDescription)
             }
         }
-        
+
         // Validate the copied file
         try validateAudioFile(at: destinationURL)
-        
+
         // Create Core Data entry for the imported file
         try await createRecordingEntryForImportedFile(at: destinationURL)
-        
+
         AppLog.shared.fileManagement("Successfully imported: \(filename)")
+    }
+
+    /// Decision about how to handle an incoming import URL based on the archive
+    /// token embedded in its filename.
+    private enum ArchiveMatchResult {
+        /// Audio is missing locally — copy the imported file into Documents and
+        /// relink it onto this recording entry, clearing archive flags.
+        case restoreWithCopy(RecordingEntry)
+        /// The recording already has its audio present (user archived without
+        /// removing local). Just clear the archive flags.
+        case clearFlagsOnly(RecordingEntry)
+        /// All matching recordings are healthy duplicates — user is re-importing
+        /// a file whose original is already on the device.
+        case alreadyImported(String)
+    }
+
+    /// Decide how to handle an incoming import URL based on the archive token
+    /// embedded in its filename (if any). Returns nil when the file should go
+    /// through the regular new-entry import path.
+    private func matchArchivedRecording(for sourceURL: URL) -> ArchiveMatchResult? {
+        guard let parsed = RecordingArchiveService.parseArchiveToken(fromFilename: sourceURL.lastPathComponent) else {
+            return nil
+        }
+
+        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        let candidates: [RecordingEntry]
+        do {
+            candidates = try context.fetch(fetchRequest)
+        } catch {
+            AppLog.shared.fileManagement("Archive restore: fetch failed: \(error.localizedDescription)", level: .error)
+            return nil
+        }
+
+        let matches = candidates.filter { recording in
+            guard let id = recording.id?.uuidString.replacingOccurrences(of: "-", with: "").lowercased() else {
+                return false
+            }
+            return id.hasPrefix(parsed.token)
+        }
+
+        guard !matches.isEmpty else { return nil }
+
+        if matches.count > 1 {
+            AppLog.shared.fileManagement("Archive restore: \(matches.count) UUID-prefix matches for token \(parsed.token)", level: .debug)
+        }
+
+        func hasLocalAudio(_ recording: RecordingEntry) -> Bool {
+            guard let urlString = recording.recordingURL,
+                  let url = RecordingArchiveService.resolveLocalURL(from: urlString) else { return false }
+            return FileManager.default.fileExists(atPath: url.path)
+        }
+
+        // 1. Archived recording missing its audio — the pure restore case.
+        if let recording = matches.first(where: { $0.isArchived && !hasLocalAudio($0) }) {
+            return .restoreWithCopy(recording)
+        }
+        // 2. Non-archived recording whose local audio has gone missing — re-link.
+        if let recording = matches.first(where: { !$0.isArchived && !hasLocalAudio($0) }) {
+            return .restoreWithCopy(recording)
+        }
+        // 3. Archived but local audio still present (archive kept local copy).
+        //    Reuse existing file; just flip the flags.
+        if let recording = matches.first(where: { $0.isArchived && hasLocalAudio($0) }) {
+            return .clearFlagsOnly(recording)
+        }
+        // 4. Every match is a healthy, non-archived recording — duplicate import.
+        let name = matches.first?.recordingName ?? parsed.baseName
+        return .alreadyImported(name)
+    }
+
+    private func restoreArchivedRecording(_ match: ArchiveMatchResult, from sourceURL: URL) async throws {
+        switch match {
+        case .alreadyImported(let name):
+            throw ImportError.alreadyImported(name)
+
+        case .clearFlagsOnly(let recording):
+            RecordingArchiveService.shared.clearArchiveFlags(for: recording)
+            NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+            AppLog.shared.fileManagement("Cleared archive flags for \(recording.recordingName ?? "unknown") (local audio still present)")
+
+        case .restoreWithCopy(let recording):
+            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let filename = generateUniqueFilename(for: sourceURL)
+            let destinationURL = documentsPath.appendingPathComponent(filename)
+
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                throw ImportError.fileAlreadyExists(filename)
+            }
+
+            do {
+                try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            } catch {
+                if error.isThumbnailGenerationError {
+                    AppLog.shared.fileManagement("Thumbnail generation warning: \(error.localizedDescription)", level: .debug)
+                } else {
+                    throw ImportError.copyFailed(error.localizedDescription)
+                }
+            }
+
+            try validateAudioFile(at: destinationURL)
+
+            RecordingArchiveService.shared.restoreRecording(recording, newAudioURL: destinationURL)
+            NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+            AppLog.shared.fileManagement("Restored archived recording \(recording.recordingName ?? "unknown") from import \(sourceURL.lastPathComponent)")
+        }
     }
     
     private func importVideoFile(from sourceURL: URL) async throws {
@@ -267,18 +379,24 @@ class FileImportManager: NSObject, ObservableObject {
         // Store relative path instead of absolute URL for resilience across app launches
         recordingEntry.recordingURL = urlToRelativePath(fileURL)
         
-        // Get file metadata
+        // Get file metadata. Prefer the file's modification date as the recording
+        // date: archives exported by this app stamp mtime with the original
+        // recording date, and iCloud preserves mtime across round-trips (while
+        // it resets creation date to upload time).
         do {
-            let resourceValues = try fileURL.resourceValues(forKeys: [.creationDateKey, .fileSizeKey])
-            recordingEntry.recordingDate = resourceValues.creationDate ?? Date()
-            recordingEntry.createdAt = resourceValues.creationDate ?? Date()
+            let resourceValues = try fileURL.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey, .fileSizeKey])
+            let originalDate = resourceValues.contentModificationDate
+                ?? resourceValues.creationDate
+                ?? Date()
+            recordingEntry.recordingDate = originalDate
+            recordingEntry.createdAt = originalDate
             recordingEntry.lastModified = Date()
             recordingEntry.fileSize = Int64(resourceValues.fileSize ?? 0)
-            
+
             // Get duration
             let duration = await getAudioDuration(url: fileURL)
             recordingEntry.duration = duration
-            
+
         } catch {
             AppLog.shared.fileManagement("Error getting file metadata: \(error)", level: .error)
             recordingEntry.recordingDate = Date()
@@ -342,7 +460,8 @@ enum ImportError: LocalizedError {
     case fileAlreadyExists(String)
     case invalidAudioFile(String)
     case copyFailed(String)
-    
+    case alreadyImported(String)
+
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat(let format):
@@ -353,6 +472,8 @@ enum ImportError: LocalizedError {
             return "Invalid audio file: \(reason)"
         case .copyFailed(let reason):
             return "Failed to copy file: \(reason)"
+        case .alreadyImported(let name):
+            return "Already imported: \(name). The original recording still has its audio on this device."
         }
     }
 }
