@@ -32,6 +32,12 @@ struct ArchiveConfirmationView: View {
                     Text(fileSizeString)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+
+                    Text("Archive copies are currently limited to iCloud Drive so the app can reliably track, restore, and clean them up.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
                 }
                 .padding(.top, 20)
 
@@ -88,7 +94,7 @@ struct ArchiveConfirmationView: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
                             .font(.caption)
-                        Text("You'll need to re-import audio files to play them again")
+                        Text("Use the download button to restore audio later")
                             .font(.caption)
                             .foregroundColor(.orange)
                     }
@@ -102,7 +108,7 @@ struct ArchiveConfirmationView: View {
                     Button(action: onConfirm) {
                         HStack {
                             Image(systemName: "square.and.arrow.up")
-                            Text("Export to Files")
+                            Text("Choose iCloud Location")
                                 .fontWeight(.semibold)
                         }
                         .foregroundColor(.white)

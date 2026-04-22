@@ -76,6 +76,7 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - **Mistral AI (Free & Paid Tiers)**: Guided in-app setup wizard for Mistral's free tier -- transcription and summarization with no credit card required. Paid tiers available for higher rate limits. Cloud transcription via Voxtral Mini with speaker diarization support.
 - **On-Device Processing**: Complete privacy with FluidAudio Parakeet transcription and On-Device AI summarization (default for new installs)
 - **Audio Export**: Share any recording as an audio file via the iOS share sheet
+- **Audio Archive to iCloud Drive**: Offload selected recordings, or recordings older than a chosen age, while keeping transcripts, summaries, and a saved restore pointer in the app. Third-party file providers are disabled for archive targets for now.
 - **Video Import**: Import video files; audio is automatically extracted to M4A
 - **Audio Cleanup**: Optional pre-transcription DSP processing — high-pass filter, noise gate, dynamic normalization, and peak limiting
 - **Live Transcription**: On-device live speech-to-text via SFSpeechRecognizer during recording; transcript auto-saved on stop
@@ -91,13 +92,21 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel`, `RecordingCombiner`
 - Transcription: `FluidAudioManager` (Parakeet), `OpenAITranscribeService`, `MistralTranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`, `LiveTranscriptionService`
 - Summarization: `OpenAISummarizationService`, `MistralAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `OnDeviceLLMService`, `AppleNativeEngine`
-- Export: `PDFExportService`, `SummaryExportFormatter`
+- Export: `PDFExportService`, `SummaryExportFormatter`, `RecordingArchiveService`
 - UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI), `CombineRecordingsView`
 - Persistence: `Persistence`, `CoreDataManager`, models under `Models/`
 - Background: `BackgroundProcessingManager`
 - Watch: `WatchConnectivityManager` (both targets)
 - Share Extension: `ShareViewController` (imports audio from other apps via share sheet)
 - Action Button: `StartRecordingIntent`, `ActionButtonLaunchManager`, `AppShortcuts`
+
+## Audio Archive
+
+Audio archive is different from deleting an audio file. When a recording is archived, BisonNotes exports the audio file to iCloud Drive, stores the archive location in Core Data, and can optionally remove only the local audio file. The recording row, transcript, summary, tasks, reminders, and metadata stay in the app.
+
+Archived recordings show their saved iCloud Drive location and a download button when local audio has been offloaded. Restoring copies the audio back into the app, validates that it is playable audio, clears the archive state, and removes the archived iCloud Drive copy so there is not a second stale file left behind. If the app cannot save a trackable iCloud location, it leaves the local audio in place and does not mark the recording archived.
+
+For now, archive destinations are intentionally limited to iCloud Drive. Dropbox, Google Drive, Proton Drive, and other iOS File Provider extensions can appear in Files, but they have not been reliable enough for batch export, restore, and post-restore deletion.
 
 ## Transcription Engines
 

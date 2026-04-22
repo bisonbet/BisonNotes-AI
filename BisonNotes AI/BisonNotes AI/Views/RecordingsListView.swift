@@ -62,6 +62,8 @@ struct RecordingsListView: View {
     @State private var recordingsToArchive: [RecordingEntry] = []
     @State private var archiveExportURLs: [URL] = []
     @State private var archiveInfoRecording: AudioRecordingFile?
+    @State private var archiveRestoreError: String?
+    @State private var restoringArchiveRecordingId: UUID?
     @State private var showDateFilter = false
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var dateFilterEnd: Date = Date()
@@ -259,13 +261,17 @@ struct RecordingsListView: View {
                 .presentationDetents([.medium, .large])
             }
             .sheet(isPresented: $showingArchiveExportPicker) {
-                DocumentExportPicker(urls: archiveExportURLs) { success in
+                DocumentExportPicker(urls: archiveExportURLs) { success, exportedURLs in
                     showingArchiveExportPicker = false
                     if success {
-                        RecordingArchiveService.shared.archiveRecordings(
+                        let archivedCount = RecordingArchiveService.shared.archiveRecordings(
                             recordingsToArchive,
-                            removeLocal: removeLocalAfterArchive
+                            removeLocal: removeLocalAfterArchive,
+                            exportedURLs: exportedURLs
                         )
+                        if archivedCount == 0 {
+                            archiveRestoreError = "The export completed, but the selected destination was not iCloud Drive or was not trackable. The audio was left local so you can archive it again to iCloud Drive."
+                        }
                         isSelectionMode = false
                         selectedRecordings.removeAll()
                         loadRecordings()
@@ -285,10 +291,20 @@ struct RecordingsListView: View {
                 Button("OK", role: .cancel) { archiveInfoRecording = nil }
             } message: {
                 if let rec = archiveInfoRecording {
-                    let note = rec.archiveNote ?? "Exported to Files"
+                    let note = rec.archiveNote ?? "Exported to iCloud Drive"
                     let dateStr = rec.archivedAtString ?? ""
-                    Text("\(note)\(dateStr.isEmpty ? "" : " on \(dateStr)")\n\nThe audio file is no longer stored locally. Transcripts and summaries are still available. Use \"Import Audio Files\" to restore.")
+                    let location = RecordingArchiveService.shared.primaryArchiveLocation(for: rec.recordingId)
+                    let locationText = location.map { "\nSaved location: \($0.providerDisplayName) / \($0.displayName)" } ?? ""
+                    Text("\(note)\(dateStr.isEmpty ? "" : " on \(dateStr)")\(locationText)\n\nThe audio file is no longer stored locally. Use the download button to restore it, or use \"Import Audio Files\" if the file was moved.")
                 }
+            }
+            .alert("Audio File Error", isPresented: Binding(
+                get: { archiveRestoreError != nil },
+                set: { if !$0 { archiveRestoreError = nil } }
+            )) {
+                Button("OK", role: .cancel) { archiveRestoreError = nil }
+            } message: {
+                Text(archiveRestoreError ?? "Unknown error")
             }
         }
         .onAppear {
@@ -540,6 +556,21 @@ struct RecordingsListView: View {
                                 Text("(audio offloaded)")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
+                            } else {
+                                Text("(local audio present)")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        if let location = RecordingArchiveService.shared.primaryArchiveLocation(for: recording.recordingId) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "externaldrive.badge.checkmark")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text("\(location.providerDisplayName) / \(location.displayName)")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
                             }
                         }
                     } else if let relationships = enhancedFileManager.getFileRelationships(for: recording.url) {
@@ -571,14 +602,40 @@ struct RecordingsListView: View {
             
             // Action buttons - separate from main clickable area
             HStack(spacing: 12) {
-                Button(action: {
-                    selectedRecordingForPlayer = recording
-                }) {
-                    Image(systemName: "play.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.accentColor)
+                if recording.isArchived && !recording.hasLocalAudio {
+                    Button(action: {
+                        restoreArchivedAudio(recording)
+                    }) {
+                        if restoringArchiveRecordingId != nil && restoringArchiveRecordingId == recording.recordingId {
+                            ProgressView()
+                                .frame(width: 28, height: 28)
+                        } else {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.title2)
+                                .foregroundColor(.accentColor)
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(restoringArchiveRecordingId != nil && restoringArchiveRecordingId == recording.recordingId)
+                } else if recording.isArchived && recording.hasLocalAudio {
+                    Button(action: {
+                        clearLocalArchiveState(recording)
+                    }) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.green)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                } else {
+                    Button(action: {
+                        selectedRecordingForPlayer = recording
+                    }) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
-                .buttonStyle(PlainButtonStyle())
                 
                 Button(action: {
                     deletionData.recordingToDelete = recording
@@ -966,12 +1023,46 @@ struct RecordingsListView: View {
 
     // MARK: - Archive Helpers
 
+    private func restoreArchivedAudio(_ recording: AudioRecordingFile) {
+        guard restoringArchiveRecordingId == nil else { return }
+        guard let recordingId = recording.recordingId,
+              let recordingEntry = appCoordinator.getRecording(id: recordingId) else {
+            archiveRestoreError = "Could not find this recording in storage."
+            return
+        }
+
+        restoringArchiveRecordingId = recordingId
+
+        Task { @MainActor in
+            do {
+                _ = try RecordingArchiveService.shared.restoreArchivedRecording(recordingEntry)
+                loadRecordings()
+                refreshFileRelationships()
+                selectedRecordingForPlayer = recordings.first { $0.recordingId == recordingId }
+            } catch {
+                archiveRestoreError = error.localizedDescription
+            }
+            restoringArchiveRecordingId = nil
+        }
+    }
+
+    private func clearLocalArchiveState(_ recording: AudioRecordingFile) {
+        guard let recordingId = recording.recordingId,
+              let recordingEntry = appCoordinator.getRecording(id: recordingId) else {
+            archiveRestoreError = "Could not find this recording in storage."
+            return
+        }
+
+        RecordingArchiveService.shared.clearArchiveFlags(for: recordingEntry)
+        loadRecordings()
+        refreshFileRelationships()
+    }
+
     private func prepareArchiveFromSelection() {
         let selectedURLs = selectedRecordings
         let allRecordings = appCoordinator.getAllRecordingsWithData()
         recordingsToArchive = allRecordings.compactMap { entry -> RecordingEntry? in
-            guard !entry.recording.isArchived,
-                  let url = appCoordinator.getAbsoluteURL(for: entry.recording),
+            guard let url = appCoordinator.getAbsoluteURL(for: entry.recording),
                   selectedURLs.contains(url) else { return nil }
             return entry.recording
         }

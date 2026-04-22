@@ -74,10 +74,24 @@
         <attribute name="status" optional="YES" attributeType="String"/>
         <relationship name="recording" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="RecordingEntry" inverseName="processingJobs" inverseEntity="RecordingEntry"/>
     </entity>
+    <entity name="RecordingArchiveLocationEntry" representedClassName="RecordingArchiveLocationEntry" syncable="YES" codeGenerationType="class">
+        <attribute name="bookmarkData" optional="YES" attributeType="Binary"/>
+        <attribute name="destinationURLString" optional="YES" attributeType="String"/>
+        <attribute name="displayName" optional="YES" attributeType="String"/>
+        <attribute name="exportedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="exportedFilename" optional="YES" attributeType="String"/>
+        <attribute name="fileSize" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="lastVerifiedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="providerDisplayName" optional="YES" attributeType="String"/>
+        <attribute name="recordingId" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="status" optional="YES" attributeType="String"/>
+    </entity>
     <elements>
         <element name="RecordingEntry" positionX="-63" positionY="-18" width="128" height="254"/>
         <element name="SummaryEntry" positionX="144" positionY="72" width="128" height="284"/>
         <element name="TranscriptEntry" positionX="144" positionY="-117" width="128" height="194"/>
         <element name="ProcessingJobEntry" positionX="144" positionY="180" width="128" height="194"/>
+        <element name="RecordingArchiveLocationEntry" positionX="342" positionY="180" width="128" height="209"/>
     </elements>
 </model>

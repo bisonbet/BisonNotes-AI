@@ -250,12 +250,14 @@ body.page .entry-header {
 <details>
   <summary>Managing &amp; Deleting Recordings</summary>
   <div class="dd">
-    <p>Long press on any recording, or tap and use the "..." menu. Deletion options:</p>
+    <p>Long press on any recording, or tap and use the "..." menu. Storage options:</p>
     <ul>
+      <li><strong>Archive to iCloud Drive</strong> — Copies audio to iCloud Drive, keeps transcript/summary and a saved restore location, and can optionally remove only the local audio file.</li>
       <li><strong>Audio File Only</strong> — Keeps transcript/summary, removes audio. Good for saving storage.</li>
       <li><strong>Everything</strong> — Removes audio, transcript, and summary. Cannot be undone.</li>
       <li><strong>Summary Only</strong> — Keeps audio and transcript. Useful for regenerating with a different engine.</li>
     </ul>
+    <div class="bn-info"><strong>Archive note:</strong> Audio archive targets are currently limited to iCloud Drive. Other Files providers such as Dropbox, Google Drive, and Proton Drive are not used for new archives until restore and cleanup behavior is reliable.</div>
     <div class="bn-warn"><strong>Important:</strong> Deletion is permanent. Make sure you have backups if needed.</div>
   </div>
 </details>
@@ -299,6 +301,15 @@ body.page .entry-header {
   <li>Select audio files from your device.</li>
   <li>Files are automatically added to your recordings library.</li>
 </ol>
+
+<h3>Archive Audio to iCloud Drive</h3>
+<ol class="bn-sl">
+  <li>Select one or more recordings, or choose the archive option for recordings older than a selected age.</li>
+  <li>Choose an iCloud Drive location when the document picker opens.</li>
+  <li>Optionally remove the local audio after export. Transcripts, summaries, tasks, reminders, and metadata remain in BisonNotes.</li>
+  <li>Use the download button on an archived recording to restore the audio. After restore, BisonNotes removes the archived iCloud Drive copy.</li>
+</ol>
+<div class="bn-info"><strong>Current scope:</strong> New audio archives are iCloud Drive only. Other Files providers may appear in iOS, but BisonNotes leaves local audio untouched if the selected archive destination is not iCloud Drive.</div>
 
 <h3 id="bn-share-ext">Import via Share Extension</h3>
 
@@ -915,6 +926,7 @@ docker run -d -p 9000:9000 \
     <ul>
       <li><strong>Import/Export</strong> — M4A, MP3, WAV, CAF, AIFF, AIF</li>
       <li><strong>Audio Export</strong> (v1.8) — Share any recording as an audio file via the iOS share sheet</li>
+      <li><strong>Audio Archive</strong> — Offload selected or older audio files to iCloud Drive, keep an in-app restore pointer, and remove the archived cloud copy after restore</li>
       <li><strong>Video Import</strong> (v1.8) — Import video files; audio is automatically extracted to M4A</li>
       <li><strong>Audio Cleanup</strong> (v1.8) — Optional pre-transcription DSP: high-pass filter, noise gate, dynamic normalization, peak limiting</li>
       <li><strong>Share Extension</strong> — Import from Voice Memos, Files, etc.</li>
@@ -946,6 +958,7 @@ docker run -d -p 9000:9000 \
   <div class="dd">
     <ul>
       <li><strong>iCloud Backup</strong> — Full backup of all data to iCloud Drive</li>
+      <li><strong>Audio Archive to iCloud Drive</strong> — Space-saving audio offload with tracked restore locations. Third-party Files providers are paused for archive targets for now.</li>
       <li><strong>Auto-Backup</strong> (v1.7) — Automatically backs up when new recordings are created</li>
       <li><strong>CloudKit Sync</strong> — Optional summary synchronization across devices with paginated queries and schema-safe fallback for reliability</li>
       <li>Prompted after generating your first summary</li>
@@ -994,6 +1007,7 @@ docker run -d -p 9000:9000 \
     <ul>
       <li>Export important recordings as PDF</li>
       <li>Use iCloud Backup</li>
+      <li>Archive older audio to iCloud Drive before deleting local copies</li>
       <li>Clean up old recordings</li>
       <li>Use descriptive titles</li>
     </ul>
