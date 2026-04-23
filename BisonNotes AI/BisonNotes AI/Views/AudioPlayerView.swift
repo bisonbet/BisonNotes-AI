@@ -19,12 +19,14 @@ struct AudioPlayerView: View {
     @State private var currentSavedTitle: String = ""
     @State private var isUpdatingTitle = false
     @State private var titleUpdateError: String?
+    @State private var audioExportURL: URL?
+    @State private var audioExportError: String?
 
     var body: some View {
         VStack(spacing: 20) {
             HStack {
                 Spacer()
-                Button(action: { showingShareSheet = true }) {
+                Button(action: prepareAudioExport) {
                     Image(systemName: "square.and.arrow.up")
                         .font(.title3)
                         .foregroundColor(.accentColor)
@@ -121,8 +123,13 @@ struct AudioPlayerView: View {
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
-        .sheet(isPresented: $showingShareSheet) {
-            ShareSheet(activityItems: [recording.url])
+        .sheet(isPresented: $showingShareSheet, onDismiss: {
+            audioExportURL = nil
+            RecordingArchiveService.shared.cleanupAudioExportStaging()
+        }) {
+            if let audioExportURL {
+                ShareSheet(activityItems: [audioExportURL])
+            }
         }
         .onAppear {
             AppLog.shared.recording("AudioPlayerView appeared", level: .debug)
@@ -139,6 +146,16 @@ struct AudioPlayerView: View {
             }
         } message: {
             Text(titleUpdateError ?? "Unknown error")
+        }
+        .alert("Unable to Export Audio", isPresented: Binding(
+            get: { audioExportError != nil },
+            set: { if !$0 { audioExportError = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                audioExportError = nil
+            }
+        } message: {
+            Text(audioExportError ?? "Unknown error")
         }
         .onDisappear {
             AppLog.shared.recording("AudioPlayerView disappeared", level: .debug)
@@ -182,6 +199,21 @@ struct AudioPlayerView: View {
         let currentTime = recorderVM.getCurrentTime()
         let newTime = min(currentTime + 15.0, duration)
         recorderVM.seekToTime(newTime)
+    }
+
+    private func prepareAudioExport() {
+        let exportTitle = currentSavedTitle.isEmpty ? recording.name : currentSavedTitle
+        guard let stagedURL = RecordingArchiveService.shared.prepareAudioExportURL(
+            sourceURL: recording.url,
+            title: exportTitle,
+            recordingDate: recording.date
+        ) else {
+            audioExportError = "The audio file could not be prepared for export."
+            return
+        }
+
+        audioExportURL = stagedURL
+        showingShareSheet = true
     }
     
     private func formatTime(_ time: TimeInterval) -> String {

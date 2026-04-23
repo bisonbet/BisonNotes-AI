@@ -597,6 +597,93 @@ class RecordingArchiveService: ObservableObject {
 
     // MARK: - Export Staging
 
+    /// Stage audio files for a plain user export. Unlike archive staging, these
+    /// filenames do not include restore tokens because exporting should not
+    /// change archive state or create an import/restore marker.
+    func prepareAudioExportURLs(for recordings: [RecordingFile]) -> [URL] {
+        guard let stagingDir = Self.audioExportStagingDirectory else {
+            AppLog.shared.recording("Audio export: no Library dir available for staging", level: .error)
+            return recordings.map(\.url).filter { FileManager.default.fileExists(atPath: $0.path) }
+        }
+
+        try? FileManager.default.removeItem(at: stagingDir)
+        do {
+            try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+        } catch {
+            AppLog.shared.recording("Audio export: failed to create staging dir: \(error.localizedDescription)", level: .error)
+            return recordings.map(\.url).filter { FileManager.default.fileExists(atPath: $0.path) }
+        }
+
+        var stagedURLs: [URL] = []
+        var usedNames = Set<String>()
+        for recording in recordings {
+            guard let stagedURL = stageAudioExport(
+                sourceURL: recording.url,
+                title: recording.name,
+                recordingDate: recording.date,
+                stagingDir: stagingDir,
+                claimed: &usedNames
+            ) else { continue }
+            stagedURLs.append(stagedURL)
+        }
+
+        return stagedURLs
+    }
+
+    func prepareAudioExportURL(sourceURL: URL, title: String, recordingDate: Date?) -> URL? {
+        guard let stagingDir = Self.audioExportStagingDirectory else {
+            AppLog.shared.recording("Audio export: no Library dir available for staging", level: .error)
+            return FileManager.default.fileExists(atPath: sourceURL.path) ? sourceURL : nil
+        }
+
+        try? FileManager.default.removeItem(at: stagingDir)
+        do {
+            try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+        } catch {
+            AppLog.shared.recording("Audio export: failed to create staging dir: \(error.localizedDescription)", level: .error)
+            return FileManager.default.fileExists(atPath: sourceURL.path) ? sourceURL : nil
+        }
+
+        var usedNames = Set<String>()
+        return stageAudioExport(
+            sourceURL: sourceURL,
+            title: title,
+            recordingDate: recordingDate,
+            stagingDir: stagingDir,
+            claimed: &usedNames
+        )
+    }
+
+    func cleanupAudioExportStaging() {
+        guard let dir = Self.audioExportStagingDirectory else { return }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    private func stageAudioExport(sourceURL: URL,
+                                  title: String,
+                                  recordingDate: Date?,
+                                  stagingDir: URL,
+                                  claimed: inout Set<String>) -> URL? {
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return nil }
+
+        let stagedName = Self.uniqueAudioExportFilename(title: title, source: sourceURL, claimed: &claimed)
+        let destURL = stagingDir.appendingPathComponent(stagedName)
+
+        do {
+            try FileManager.default.copyItem(at: sourceURL, to: destURL)
+            if let recordingDate {
+                try? FileManager.default.setAttributes(
+                    [.modificationDate: recordingDate],
+                    ofItemAtPath: destURL.path
+                )
+            }
+            return destURL
+        } catch {
+            AppLog.shared.recording("Audio export: failed to stage \(sourceURL.lastPathComponent): \(error.localizedDescription)", level: .error)
+            return nil
+        }
+    }
+
     /// Stage audio files for export with recognizable filenames of the form
     /// `<SanitizedRecordingName>-<TOKEN>.<ext>`, where TOKEN is the first 8 hex
     /// characters of the recording's UUID. Re-imports use this token to match
@@ -674,6 +761,16 @@ class RecordingArchiveService: ObservableObject {
         return support.appendingPathComponent("ArchiveStaging", isDirectory: true)
     }
 
+    static var audioExportStagingDirectory: URL? {
+        guard let support = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ) else { return nil }
+        return support.appendingPathComponent("AudioExportStaging", isDirectory: true)
+    }
+
     /// First 8 hex chars of the recording's UUID, lowercased. Returns nil if the
     /// recording has no id (should not happen for persisted entries).
     static func archiveToken(for recording: RecordingEntry) -> String? {
@@ -724,6 +821,22 @@ class RecordingArchiveService: ObservableObject {
         var counter = 2
         while claimed.contains(candidate) {
             candidate = "\(base)-\(token)_\(counter).\(ext)"
+            counter += 1
+        }
+        claimed.insert(candidate)
+        return candidate
+    }
+
+    private static func uniqueAudioExportFilename(title: String,
+                                                  source: URL,
+                                                  claimed: inout Set<String>) -> String {
+        let ext = source.pathExtension.isEmpty ? "m4a" : source.pathExtension
+        let sanitizedTitle = sanitizeForFilename(title)
+        let base = sanitizedTitle.isEmpty ? "recording" : sanitizedTitle
+        var candidate = "\(base).\(ext)"
+        var counter = 2
+        while claimed.contains(candidate) {
+            candidate = "\(base) \(counter).\(ext)"
             counter += 1
         }
         claimed.insert(candidate)

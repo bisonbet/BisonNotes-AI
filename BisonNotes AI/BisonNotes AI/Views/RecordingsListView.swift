@@ -31,18 +31,20 @@ struct RecordingsListView: View {
     enum SelectionAction {
         case combine
         case archive
+        case export
 
         var instruction: String {
             switch self {
             case .combine: return "Select 2 recordings to combine"
             case .archive: return "Select recordings to archive"
+            case .export: return "Select recordings to export"
             }
         }
 
         var maxSelection: Int? {
             switch self {
             case .combine: return 2
-            case .archive: return nil
+            case .archive, .export: return nil
             }
         }
     }
@@ -61,6 +63,9 @@ struct RecordingsListView: View {
     @State private var removeLocalAfterArchive = false
     @State private var recordingsToArchive: [RecordingEntry] = []
     @State private var archiveExportURLs: [URL] = []
+    @State private var showingAudioExportPicker = false
+    @State private var audioExportURLs: [URL] = []
+    @State private var audioExportSkippedCount = 0
     @State private var archiveInfoRecording: AudioRecordingFile?
     @State private var archiveRestoreError: String?
     @State private var restoringArchiveRecordingId: UUID?
@@ -97,6 +102,14 @@ struct RecordingsListView: View {
                                 .foregroundColor(.orange)
                             }
 
+                            if selectionAction == .export && !selectedRecordings.isEmpty {
+                                Button("Export") {
+                                    prepareExportFromSelection()
+                                }
+                                .font(.headline)
+                                .foregroundColor(.accentColor)
+                            }
+
                             Button("Cancel") {
                                 isSelectionMode = false
                                 selectedRecordings.removeAll()
@@ -130,6 +143,15 @@ struct RecordingsListView: View {
                                     showSelectionWarning = false
                                 }) {
                                     Label("Archive Selected", systemImage: "archivebox")
+                                }
+
+                                Button(action: {
+                                    selectionAction = .export
+                                    isSelectionMode = true
+                                    selectedRecordings.removeAll()
+                                    showSelectionWarning = false
+                                }) {
+                                    Label("Export Selected", systemImage: "square.and.arrow.up")
                                 }
 
                                 Button(action: {
@@ -279,6 +301,22 @@ struct RecordingsListView: View {
                     recordingsToArchive = []
                     archiveExportURLs = []
                     RecordingArchiveService.shared.cleanupArchiveStaging()
+                }
+            }
+            .sheet(isPresented: $showingAudioExportPicker) {
+                DocumentExportPicker(urls: audioExportURLs) { success, _ in
+                    showingAudioExportPicker = false
+                    if success {
+                        if audioExportSkippedCount > 0 {
+                            let skippedText = audioExportSkippedCount == 1 ? "1 selected recording was" : "\(audioExportSkippedCount) selected recordings were"
+                            archiveRestoreError = "\(skippedText) not exported because the audio is not stored locally. Restore archived audio before exporting it."
+                        }
+                        isSelectionMode = false
+                        selectedRecordings.removeAll()
+                    }
+                    audioExportURLs = []
+                    audioExportSkippedCount = 0
+                    RecordingArchiveService.shared.cleanupAudioExportStaging()
                 }
             }
             .sheet(isPresented: $showingArchiveOlderThan) {
@@ -602,6 +640,18 @@ struct RecordingsListView: View {
             
             // Action buttons - separate from main clickable area
             HStack(spacing: 12) {
+                if recording.hasLocalAudio {
+                    Button(action: {
+                        prepareExport(for: recording)
+                    }) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.title2)
+                            .foregroundColor(.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .accessibilityLabel("Export Audio")
+                }
+
                 if recording.isArchived && !recording.hasLocalAudio {
                     Button(action: {
                         restoreArchivedAudio(recording)
@@ -1070,6 +1120,39 @@ struct RecordingsListView: View {
             removeLocalAfterArchive = false
             showingArchiveConfirmation = true
         }
+    }
+
+    private func prepareExportFromSelection() {
+        let selectedURLs = selectedRecordings
+        let selected = recordings.filter { selectedURLs.contains($0.url) }
+        let exportableRecordings = selected.filter { $0.hasLocalAudio }
+
+        audioExportSkippedCount = selected.count - exportableRecordings.count
+        audioExportURLs = RecordingArchiveService.shared.prepareAudioExportURLs(for: exportableRecordings)
+
+        guard !audioExportURLs.isEmpty else {
+            audioExportSkippedCount = 0
+            archiveRestoreError = "No local audio files are available to export. Restore archived audio before exporting it."
+            return
+        }
+
+        showingAudioExportPicker = true
+    }
+
+    private func prepareExport(for recording: AudioRecordingFile) {
+        guard recording.hasLocalAudio else {
+            archiveRestoreError = "This audio file is not stored locally. Restore archived audio before exporting it."
+            return
+        }
+
+        audioExportSkippedCount = 0
+        audioExportURLs = RecordingArchiveService.shared.prepareAudioExportURLs(for: [recording])
+        guard !audioExportURLs.isEmpty else {
+            archiveRestoreError = "The audio file could not be prepared for export."
+            return
+        }
+
+        showingAudioExportPicker = true
     }
 
     private var archiveOlderThanSheet: some View {
