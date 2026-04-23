@@ -713,9 +713,11 @@ struct TranscriptsView: View {
         // Delete the associated dummy audio file if it exists
         if let recordingURL = appCoordinator.getAbsoluteURL(for: importedTranscript.recording) {
             try? FileManager.default.removeItem(at: recordingURL)
-            // Delete associated location file if present
-            let locationURL = recordingURL.deletingPathExtension().appendingPathExtension("location")
-            try? FileManager.default.removeItem(at: locationURL)
+            // Delete associated sidecar files if present
+            for ext in ["location", "recordingmeta"] {
+                let sidecarURL = recordingURL.deletingPathExtension().appendingPathExtension(ext)
+                try? FileManager.default.removeItem(at: sidecarURL)
+            }
             AppLog.shared.transcription("Deleted dummy audio file: \(recordingURL.lastPathComponent)", level: .debug)
         }
 
