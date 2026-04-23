@@ -283,8 +283,8 @@ extension AudioRecorderViewModel {
 	}
 
 	func currentRecordingDate(for url: URL?) -> Date {
-		if let recordingStartedAt {
-			return recordingStartedAt
+		if let entry = recordingStartedAt, let url, entry.url == url {
+			return entry.date
 		}
 
 		if let url,
@@ -328,7 +328,7 @@ extension AudioRecorderViewModel {
 	func generateAppRecordingDisplayName() -> String {
 		let formatter = DateFormatter()
 		formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-		let timestamp = formatter.string(from: recordingStartedAt ?? Date())
+		let timestamp = formatter.string(from: recordingStartedAt?.date ?? Date())
 		return "apprecording-\(timestamp)"
 	}
 

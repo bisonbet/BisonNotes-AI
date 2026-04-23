@@ -82,7 +82,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	// Track last checkpoint time for periodic data flushing
 	var lastCheckpointTime: Date = Date.distantPast
-	var recordingStartedAt: Date?
+	var recordingStartedAt: (url: URL, date: Date)?
 	let checkpointInterval: TimeInterval = 30.0 // Try to checkpoint every 30 seconds
 	let forceCheckpointInterval: TimeInterval = 90.0 // Force checkpoint after 90 seconds even without silence
 
@@ -457,7 +457,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		let audioFilename = documentsPath.appendingPathComponent(generateAppRecordingFilename())
 		let recordingStartDate = Date()
 		recordingURL = audioFilename
-		recordingStartedAt = recordingStartDate
+		recordingStartedAt = (url: audioFilename, date: recordingStartDate)
 		persistRecordingCapturedAt(recordingStartDate, for: audioFilename)
 
 		// Initialize segment tracking for this new recording
