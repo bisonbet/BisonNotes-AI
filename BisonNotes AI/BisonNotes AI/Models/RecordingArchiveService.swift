@@ -122,6 +122,11 @@ class RecordingArchiveService: ObservableObject {
                     } catch {
                         AppLog.shared.recording("Archived: failed to remove local audio: \(error.localizedDescription)", level: .error)
                     }
+                    // Clean up sidecar files alongside the audio
+                    for ext in ["location", "recordingmeta"] {
+                        let sidecarURL = url.deletingPathExtension().appendingPathExtension(ext)
+                        try? FileManager.default.removeItem(at: sidecarURL)
+                    }
                 }
             }
         }

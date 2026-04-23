@@ -328,7 +328,7 @@ extension AudioRecorderViewModel {
 	func generateAppRecordingDisplayName() -> String {
 		let formatter = DateFormatter()
 		formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-		let timestamp = formatter.string(from: Date())
+		let timestamp = formatter.string(from: recordingStartedAt ?? Date())
 		return "apprecording-\(timestamp)"
 	}
 

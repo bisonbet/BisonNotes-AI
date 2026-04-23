@@ -363,18 +363,19 @@ class EnhancedFileManager: ObservableObject {
                 }
             }
             
-            // Delete associated location file if it exists
-            let locationURL = normalizedURL.deletingPathExtension().appendingPathExtension("location")
-            if FileManager.default.fileExists(atPath: locationURL.path) {
-                do {
-                    try FileManager.default.removeItem(at: locationURL)
-                    AppLog.shared.fileManagement("Deleted location file: \(locationURL.lastPathComponent)")
-                } catch {
-                    if error.isThumbnailGenerationError {
-                        AppLog.shared.fileManagement("Thumbnail generation warning during location file deletion: \(error.localizedDescription)", level: .debug)
-                        // Continue with deletion even if thumbnail generation fails
-                    } else {
-                        throw error
+            // Delete associated sidecar files if they exist
+            for ext in ["location", "recordingmeta"] {
+                let sidecarURL = normalizedURL.deletingPathExtension().appendingPathExtension(ext)
+                if FileManager.default.fileExists(atPath: sidecarURL.path) {
+                    do {
+                        try FileManager.default.removeItem(at: sidecarURL)
+                        AppLog.shared.fileManagement("Deleted \(ext) file: \(sidecarURL.lastPathComponent)")
+                    } catch {
+                        if error.isThumbnailGenerationError {
+                            AppLog.shared.fileManagement("Thumbnail generation warning during \(ext) file deletion: \(error.localizedDescription)", level: .debug)
+                        } else {
+                            throw error
+                        }
                     }
                 }
             }
@@ -669,6 +670,11 @@ class EnhancedFileManager: ObservableObject {
                 
                 if !dryRun {
                     try FileManager.default.removeItem(at: file)
+                    // Also remove sidecar files for the orphaned audio
+                    for ext in ["location", "recordingmeta"] {
+                        let sidecarURL = file.deletingPathExtension().appendingPathExtension(ext)
+                        try? FileManager.default.removeItem(at: sidecarURL)
+                    }
                     AppLog.shared.fileManagement("Deleted orphaned file: \(file.lastPathComponent) (\(fileSize) bytes)")
                     deletedCount += 1
                 } else {
