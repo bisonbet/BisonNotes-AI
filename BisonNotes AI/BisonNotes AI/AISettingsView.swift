@@ -92,6 +92,9 @@ final class AISettingsViewModel: ObservableObject {
         case .onDeviceLLM:
             UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             AppLog.shared.general("Auto-enabled On-Device AI engine")
+        case .mlxSwift:
+            UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+            AppLog.shared.general("Auto-enabled experimental MLX Swift engine")
         case .appleNative:
             AppLog.shared.general("Selected Apple Native engine")
         }
@@ -117,6 +120,7 @@ struct AISettingsView: View {
     @State private var showingMistralAISettings = false
     @State private var showingAWSBedrockSettings = false
     @State private var showingOnDeviceLLMSettings = false
+    @State private var showingMLXSwiftSettings = false
     @State private var showingMistralOnboarding = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
     @State private var isRefreshingStatus = false
@@ -205,6 +209,13 @@ struct AISettingsView: View {
             let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             let isModelReady = OnDeviceLLMDownloadManager.shared.isModelReady
             return isEnabled && isModelReady
+        case .mlxSwift:
+            let isEnabled = UserDefaults.standard.bool(forKey: MLXSwiftSettingsKeys.enabled)
+            #if targetEnvironment(simulator)
+            return isEnabled
+            #else
+            return isEnabled && DeviceCapabilities.supportsOnDeviceLLM
+            #endif
         case .appleNative:
             return AppleNativeEngine.modelAvailable
         }
@@ -236,6 +247,9 @@ struct AISettingsView: View {
             return "Claude 4.5 Haiku"
         case .onDeviceLLM:
             return OnDeviceLLMModelInfo.selectedModel.displayName
+        case .mlxSwift:
+            let model = UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId) ?? MLXSwiftSettingsKeys.defaultModelId
+            return model.components(separatedBy: "/").last ?? model
         case .appleNative:
             return "Foundation Models"
         }
@@ -322,6 +336,11 @@ struct AISettingsView: View {
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
                 OnDeviceLLMSettingsView()
+            }
+        }
+        .sheet(isPresented: $showingMLXSwiftSettings) {
+            NavigationStack {
+                MLXSwiftSettingsView()
             }
         }
         .fullScreenCover(isPresented: $showingMistralOnboarding) {
@@ -464,7 +483,7 @@ private extension AISettingsView {
         AIEngineType.availableCases.filter { engine in
             switch category {
             case .onDevice:
-                return [.onDeviceLLM, .appleNative].contains(engine)
+                return [.onDeviceLLM, .mlxSwift, .appleNative].contains(engine)
             case .cloud:
                 return [.openAI, .googleAIStudio, .mistralAI, .awsBedrock, .openAICompatible].contains(engine)
             case .selfHosted:
@@ -501,6 +520,7 @@ private extension AISettingsView {
     func shortDescription(for engine: AIEngineType) -> String {
         switch engine {
         case .onDeviceLLM: return "Private, no internet after download"
+        case .mlxSwift: return "Experimental MLX local summaries"
         case .appleNative: return "Apple Foundation Models, fully on-device"
         case .openAI: return "High quality summaries"
         case .googleAIStudio: return "Gemini model support"
@@ -533,6 +553,8 @@ private extension AISettingsView {
         case .onDeviceLLM:
             guard DeviceCapabilities.supportsOnDeviceLLM else { return }
             showingOnDeviceLLMSettings = true
+        case .mlxSwift:
+            showingMLXSwiftSettings = true
         case .appleNative:
             break // No separate settings sheet — configured via Apple Intelligence system settings
         }
@@ -541,6 +563,7 @@ private extension AISettingsView {
     func iconName(for engine: AIEngineType) -> String {
         switch engine {
         case .onDeviceLLM: return "iphone.gen3"
+        case .mlxSwift: return "cpu"
         case .appleNative:
             // apple.intelligence requires iOS 18.1+
             if #available(iOS 18.1, *) { return "apple.intelligence" }
@@ -560,6 +583,10 @@ private extension AISettingsView {
             Text("Not Supported")
                 .font(.caption2.weight(.medium))
                 .foregroundColor(.secondary)
+        } else if engine == .mlxSwift {
+            Text((status?.isAvailable ?? false) ? "Experimental" : "Setup")
+                .font(.caption2.weight(.medium))
+                .foregroundColor((status?.isAvailable ?? false) ? .orange : .secondary)
         } else if engine == .mistralAI && !(status?.isAvailable ?? false) {
             HStack(spacing: 4) {
                 Text("Free")
@@ -583,6 +610,7 @@ private extension AISettingsView {
     func engineColor(for engine: AIEngineType) -> Color {
         switch engine {
         case .onDeviceLLM: return .indigo
+        case .mlxSwift: return .orange
         case .appleNative: return .mint
         case .openAI: return .blue
         case .googleAIStudio: return .purple

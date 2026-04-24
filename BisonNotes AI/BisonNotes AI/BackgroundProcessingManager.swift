@@ -342,6 +342,9 @@ class BackgroundProcessingManager: ObservableObject {
     
     private init() {
         loadJobsFromCoreData()
+        if AppLog.shared.previousSessionCrashed {
+            failUnfinishedJobsAfterCrash()
+        }
         setupNotifications()
         setupAppLifecycleObservers()
         setupPerformanceOptimization()
@@ -349,6 +352,10 @@ class BackgroundProcessingManager: ObservableObject {
         
         // Resume interrupted jobs and start processing queued jobs on initialization
         Task {
+            guard !AppLog.shared.previousSessionCrashed else {
+                AppLog.shared.backgroundProcessing("Skipping automatic job resume because previous session crashed", level: .error)
+                return
+            }
             await resumeInterruptedJobs()
             if !activeJobs.filter({ $0.status == .queued }).isEmpty {
                 await processNextJob()
@@ -663,6 +670,35 @@ class BackgroundProcessingManager: ObservableObject {
 
                 coreDataManager.updateProcessingJob(jobEntry)
             }
+        }
+    }
+
+    private func failUnfinishedJobsAfterCrash() {
+        let message = "Not restarted because the previous app session crashed."
+        var failedCount = 0
+
+        activeJobs = activeJobs.map { job in
+            guard !job.status.isTerminal else { return job }
+
+            failedCount += 1
+            let failedJob = job.withStatus(.failed(message))
+
+            if let jobEntry = coreDataManager.getProcessingJob(id: failedJob.id) {
+                jobEntry.status = failedJob.status.displayName
+                jobEntry.progress = failedJob.progress
+                jobEntry.error = message
+                jobEntry.completionTime = failedJob.completionTime
+                jobEntry.lastModified = Date()
+                coreDataManager.updateProcessingJob(jobEntry)
+            }
+
+            return failedJob
+        }
+
+        if failedCount > 0 {
+            processingStatus = .ready
+            currentJob = nil
+            AppLog.shared.backgroundProcessing("Marked \(failedCount) unfinished job(s) failed after crash to prevent automatic restart", level: .error)
         }
     }
     
@@ -1856,6 +1892,11 @@ class BackgroundProcessingManager: ObservableObject {
         // Clear notification badge
         await clearNotificationBadge()
 
+        guard !AppLog.shared.previousSessionCrashed else {
+            AppLog.shared.backgroundProcessing("Skipping automatic foreground job recovery because previous session crashed", level: .error)
+            return
+        }
+
         // Check if any jobs completed while in background
         await checkForCompletedJobs()
 
@@ -1874,6 +1915,11 @@ class BackgroundProcessingManager: ObservableObject {
     
     /// Resume jobs that were interrupted due to background limitations
     private func resumeInterruptedJobs(notify: Bool = true) async {
+        guard !AppLog.shared.previousSessionCrashed else {
+            AppLog.shared.backgroundProcessing("Skipping interrupted job resume because previous session crashed", level: .error)
+            return
+        }
+
         // Find interrupted jobs (using the new .interrupted status)
         let interruptedJobs = activeJobs.filter { $0.status.isInterrupted }
 
@@ -2535,6 +2581,11 @@ class BackgroundProcessingManager: ObservableObject {
         if reconciledCount > 0 {
             AppLog.shared.backgroundProcessing("Reconciled \(reconciledCount) stale/orphaned processing job(s)")
             objectWillChange.send()
+
+            guard !AppLog.shared.previousSessionCrashed else {
+                AppLog.shared.backgroundProcessing("Leaving reconciled jobs stopped because previous session crashed", level: .error)
+                return
+            }
 
             // Re-queue interrupted jobs after reconciliation (suppress notifications from periodic monitor).
             await resumeInterruptedJobs(notify: false)

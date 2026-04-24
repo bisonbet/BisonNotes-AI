@@ -175,7 +175,7 @@ class CoreDataManager: ObservableObject {
             }
         }
         
-        AppLog.shared.coreData("File not found anywhere for recording ID: \(recording.id?.uuidString ?? "nil")", level: .error)
+        AppLog.shared.coreData("File not found anywhere for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
         return nil
     }
     
@@ -694,7 +694,7 @@ class CoreDataManager: ObservableObject {
         // recordings intentionally have no local audio). Fall back to the
         // stored URL so the transcript stays visible in the Transcripts list.
         guard let url = getAbsoluteURL(for: recordingEntry) ?? getStoredURL(for: recordingEntry) else {
-            AppLog.shared.coreData("Could not resolve any URL for recording ID: \(recordingEntry.id?.uuidString ?? "nil")", level: .error)
+            AppLog.shared.coreData("Could not resolve any URL for recording ID: \(recordingEntry.id?.uuidString ?? "nil")", level: .debug)
             return nil
         }
         

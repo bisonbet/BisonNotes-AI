@@ -595,12 +595,16 @@ struct SimpleSettingsView: View {
         if aiEngine == "Mistral AI" {
             selectedOption = .mistralAI
         }
+        // MLX Swift is an on-device summary engine, so show the main on-device setup option.
+        else if aiEngine == AIEngineType.mlxSwift.rawValue {
+            selectedOption = .onDeviceLLM
+        }
         // Check if On-Device AI is selected for AI and on-device transcription (FluidAudio/Parakeet)
-        else if transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue && aiEngine == "On-Device AI" {
+        else if transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue && aiEngine == AIEngineType.onDeviceLLM.rawValue {
             selectedOption = .onDeviceLLM
         }
         // Check if Apple Native (Foundation Models) is selected — also fully on-device
-        else if transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue && aiEngine == "Apple Native" {
+        else if transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue && aiEngine == AIEngineType.appleNative.rawValue {
             selectedOption = .onDeviceLLM
         }
         // Any other permutation should show Advanced & Other Options
@@ -672,8 +676,14 @@ struct SimpleSettingsView: View {
                     UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")
                     UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
                     
-                    // Set AI engine to On-Device AI for summaries
-                    UserDefaults.standard.set("On-Device AI", forKey: "SelectedAIEngine")
+                    // Set AI engine to On-Device AI for summaries unless the user already chose
+                    // another on-device summary engine from advanced settings.
+                    let currentAI = UserDefaults.standard.string(forKey: "SelectedAIEngine")
+                    if currentAI == AIEngineType.mlxSwift.rawValue {
+                        UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+                    } else if currentAI != AIEngineType.appleNative.rawValue {
+                        UserDefaults.standard.set(AIEngineType.onDeviceLLM.rawValue, forKey: "SelectedAIEngine")
+                    }
                     
                     // Enable On-Device LLM
                     UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)

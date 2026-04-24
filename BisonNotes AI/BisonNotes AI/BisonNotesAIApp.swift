@@ -359,13 +359,14 @@ struct BisonNotesAIApp: App {
                     _ = OnDeviceAIDownloadMonitor.shared
                 }
                 .onOpenURL(perform: handleOpenURL)
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
-                    AppLog.shared.markCleanShutdown()
-                }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
                     AppLog.shared.markCleanShutdown()
                 }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
+                    AppLog.shared.markCleanShutdown()
+                }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                    AppLog.shared.markSessionActive()
                     // Clear badge when the user actively opens the app. Using the
                     // scene-phase notification here (rather than AppDelegate
                     // applicationDidBecomeActive) ensures this fires reliably in
@@ -687,6 +688,12 @@ struct BisonNotesAIApp: App {
         // Check for pending transcription/summarization jobs
         Task {
             let backgroundManager = BackgroundProcessingManager.shared
+
+            guard !AppLog.shared.previousSessionCrashed else {
+                AppLog.shared.general("Skipping background job processing because previous session crashed", level: .error)
+                task.setTaskCompleted(success: true)
+                return
+            }
             
             // Process any queued jobs
             if !backgroundManager.activeJobs.filter({ $0.status == .queued }).isEmpty {

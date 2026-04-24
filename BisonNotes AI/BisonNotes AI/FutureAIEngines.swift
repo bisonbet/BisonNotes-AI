@@ -1739,6 +1739,8 @@ class AIEngineFactory {
             return GoogleAIStudioEngine()
         case .onDeviceLLM:
             return OnDeviceLLMEngine()
+        case .mlxSwift:
+            return MLXSwiftEngine()
         case .appleNative:
             return AppleNativeEngine()
         }
@@ -1764,13 +1766,14 @@ enum AIEngineType: String, CaseIterable {
     case localLLM = "Ollama"
     case googleAIStudio = "Google AI Studio"
     case onDeviceLLM = "On-Device AI"
+    case mlxSwift = "MLX Swift"
     case appleNative = "Apple Native"
 
     /// Returns all available engine types based on device capabilities
     static var availableCases: [AIEngineType] {
         return allCases.filter { engineType in
-            // Hide on-device LLM if device doesn't have sufficient RAM
-            if engineType == .onDeviceLLM {
+            // Hide on-device engines if device doesn't have sufficient RAM
+            if engineType == .onDeviceLLM || engineType == .mlxSwift {
                 return DeviceCapabilities.supportsOnDeviceLLM
             }
             return true
@@ -1793,6 +1796,8 @@ enum AIEngineType: String, CaseIterable {
             return "Advanced AI-powered summaries using Google's Gemini models"
         case .onDeviceLLM:
             return "Privacy-focused on-device AI processing using local AI models"
+        case .mlxSwift:
+            return "Experimental on-device AI processing using MLX Swift and Ternary Bonsai"
         case .appleNative:
             return "Uses Apple's on-device Foundation Models runtime for private summaries"
         }
@@ -1800,7 +1805,7 @@ enum AIEngineType: String, CaseIterable {
 
     var isComingSoon: Bool {
         switch self {
-        case .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM, .appleNative:
+        case .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM, .mlxSwift, .appleNative:
             return false
         }
     }
@@ -1821,6 +1826,8 @@ enum AIEngineType: String, CaseIterable {
             return ["Google AI Studio API Key", "Internet Connection", "Usage Credits"]
         case .onDeviceLLM:
             return ["Downloaded LLM Model (~2 GB)", "No Internet Required", "A16+ Chip Recommended"]
+        case .mlxSwift:
+            return ["Experimental Toggle Enabled", "First-use Model Download (~2.3 GB)", "Apple Silicon / 6GB+ RAM Recommended"]
         case .appleNative:
             return ["Apple Intelligence-supported device", "iOS/iPadOS/macOS/visionOS 26+", "No Internet Required"]
         }

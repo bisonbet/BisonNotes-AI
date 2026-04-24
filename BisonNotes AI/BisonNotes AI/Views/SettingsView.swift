@@ -90,6 +90,11 @@ struct SettingsView: View {
         .onChange(of: enableExperimentalModels) { oldValue, newValue in
             // Refresh model list when experimental models toggle changes
             OnDeviceLLMDownloadManager.shared.refreshModelStatus()
+
+            if !newValue && selectedAIEngine == AIEngineType.mlxSwift.rawValue {
+                selectedAIEngine = AIEngineType.onDeviceLLM.rawValue
+                SummaryManager.shared.setEngine(AIEngineType.onDeviceLLM.rawValue)
+            }
         }
         .sheet(isPresented: $showingAISettings) {
             AISettingsView()
@@ -800,10 +805,10 @@ struct SettingsView: View {
             VStack(spacing: 8) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Enable Experimental On-Device AI Models")
+                        Text("Enable experimental summary models and MLX AI engine")
                             .font(.body)
                             .foregroundColor(.primary)
-                        Text("Allow use of experimental models (LFM 2.5 for 4GB+, Qwen3.5 2B for 6GB+, Qwen3.5 4B for 8GB+). These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only LFM 2.5 available.")
+                        Text("Allow experimental local summary models and show the MLX Swift AI engine in AI settings. These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only LFM 2.5 available.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
