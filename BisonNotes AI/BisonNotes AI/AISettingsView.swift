@@ -111,6 +111,7 @@ struct AISettingsView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var errorHandler = ErrorHandler()
     @AppStorage(SummarizationTimeouts.storageKey) private var summarizationTimeout: Double = SummarizationTimeouts.defaultTimeout
+    @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels) private var enableExperimentalModels = false
 
     @Environment(\.dismiss) private var dismiss
     @State private var showingOllamaSettings = false
@@ -481,6 +482,7 @@ private extension AISettingsView {
 
     func engines(in category: EngineCategory) -> [AIEngineType] {
         AIEngineType.availableCases.filter { engine in
+            if engine == .mlxSwift && !enableExperimentalModels { return false }
             switch category {
             case .onDevice:
                 return [.onDeviceLLM, .mlxSwift, .appleNative].contains(engine)
@@ -554,6 +556,7 @@ private extension AISettingsView {
             guard DeviceCapabilities.supportsOnDeviceLLM else { return }
             showingOnDeviceLLMSettings = true
         case .mlxSwift:
+            guard enableExperimentalModels else { return }
             showingMLXSwiftSettings = true
         case .appleNative:
             break // No separate settings sheet — configured via Apple Intelligence system settings

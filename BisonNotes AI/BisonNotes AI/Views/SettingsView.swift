@@ -88,12 +88,45 @@ struct SettingsView: View {
             AppLog.shared.log("SettingsView: Updated AI engine to '\(newEngine)'", level: .debug, category: .general)
         }
         .onChange(of: enableExperimentalModels) { oldValue, newValue in
-            // Refresh model list when experimental models toggle changes
             OnDeviceLLMDownloadManager.shared.refreshModelStatus()
 
-            if !newValue && selectedAIEngine == AIEngineType.mlxSwift.rawValue {
-                selectedAIEngine = AIEngineType.onDeviceLLM.rawValue
-                SummaryManager.shared.setEngine(AIEngineType.onDeviceLLM.rawValue)
+            if !newValue {
+                // Disable the MLX engine itself so it no longer appears available
+                UserDefaults.standard.set(false, forKey: MLXSwiftSettingsKeys.enabled)
+
+                // Migrate away from any experimental on-device model that is no longer available
+                let currentModelId = UserDefaults.standard.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId) ?? ""
+                if !OnDeviceLLMModelInfo.availableModels.contains(where: { $0.id == currentModelId }) {
+                    if let firstAvailable = OnDeviceLLMModelInfo.availableModels.first {
+                        UserDefaults.standard.set(firstAvailable.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+                    }
+                    // If availableModels is empty (e.g. <6GB device), leave the stored ID as-is;
+                    // it will be re-used if experimental is re-enabled later.
+                }
+
+                // Determine the best fallback engine when on-device AI has no usable models.
+                // On <6GB devices, all on-device models are experimental, so both MLX and
+                // On-Device AI become unusable when experimental mode is disabled.
+                let onDeviceHasModels = !OnDeviceLLMModelInfo.availableModels.isEmpty
+                let fallbackEngine: String
+                if onDeviceHasModels {
+                    fallbackEngine = AIEngineType.onDeviceLLM.rawValue
+                } else {
+                    // <6GB device: no non-experimental on-device models remain; prefer Apple Native
+                    fallbackEngine = AIEngineType.appleNative.rawValue
+                }
+
+                // Switch away from MLX Swift
+                if selectedAIEngine == AIEngineType.mlxSwift.rawValue {
+                    selectedAIEngine = fallbackEngine
+                    SummaryManager.shared.setEngine(fallbackEngine)
+                }
+
+                // Switch away from On-Device AI if it no longer has any usable models
+                if selectedAIEngine == AIEngineType.onDeviceLLM.rawValue && !onDeviceHasModels {
+                    selectedAIEngine = fallbackEngine
+                    SummaryManager.shared.setEngine(fallbackEngine)
+                }
             }
         }
         .sheet(isPresented: $showingAISettings) {
