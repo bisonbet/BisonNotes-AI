@@ -38,7 +38,7 @@ struct MistralOnboardingView: View {
     private let totalSteps = 5
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 stepIndicator
                     .padding(.top, 12)
