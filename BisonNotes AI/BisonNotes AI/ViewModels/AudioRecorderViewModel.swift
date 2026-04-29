@@ -236,6 +236,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// MARK: - Notification Observers
 
 	func setupNotificationObservers() {
+		#if !targetEnvironment(macCatalyst)
+		// AVAudioSession interruption/route notifications use Mach ports that don't
+		// exist on Mac — registering for them floods the log with "cannot add handler".
+		// Phone-call interruptions and Bluetooth routing don't apply on Mac anyway.
 		interruptionObserver = NotificationCenter.default.addObserver(
 			forName: AVAudioSession.interruptionNotification,
 			object: nil,
@@ -276,6 +280,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				}
 			}
 		}
+		#endif
 
 		willEnterForegroundObserver = NotificationCenter.default.addObserver(
 			forName: UIApplication.willEnterForegroundNotification,
