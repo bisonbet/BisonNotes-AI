@@ -443,23 +443,27 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	#if targetEnvironment(macCatalyst)
 	@MainActor
 	private func requestMicPermissionAndRecord() {
-		let status = AVCaptureDevice.authorizationStatus(for: .audio)
-		AppLog.shared.recording("Mac mic auth status: \(status.rawValue)")
+		let status = AVAudioApplication.shared.recordPermission
+		AppLog.shared.recording("Mac mic permission status: \(status.rawValue)")
 		switch status {
-		case .authorized:
+		case .granted:
 			didReceiveMicrophonePermission(granted: true)
-		case .notDetermined:
-			AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+		case .undetermined:
+			AVAudioApplication.requestRecordPermission { [weak self] granted in
 				Task { @MainActor [weak self] in
 					AppLog.shared.recording("Mac mic permission result: \(granted)")
 					self?.didReceiveMicrophonePermission(granted: granted)
 				}
 			}
-		case .denied, .restricted:
-			AppLog.shared.recording("Mac mic permission denied/restricted", level: .error)
+		case .denied:
+			AppLog.shared.recording("Mac mic permission denied", level: .error)
 			errorMessage = "Microphone access is denied. Open System Settings → Privacy & Security → Microphone and enable BisonNotes AI, then try again."
 		@unknown default:
-			didReceiveMicrophonePermission(granted: false)
+			AVAudioApplication.requestRecordPermission { [weak self] granted in
+				Task { @MainActor [weak self] in
+					self?.didReceiveMicrophonePermission(granted: granted)
+				}
+			}
 		}
 	}
 
