@@ -49,7 +49,7 @@ struct WhisperSettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("Whisper Service")) {
                     VStack(alignment: .leading, spacing: 8) {

@@ -108,7 +108,7 @@ struct SummaryDetailView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             content
                 .navigationTitle("Summary")
                 .navigationBarTitleDisplayMode(.inline)
@@ -2149,7 +2149,7 @@ struct TitleSelectorView: View {
     @State private var showingCustomTitleField = false
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 // Header
                 VStack(alignment: .leading, spacing: 8) {
@@ -2341,7 +2341,7 @@ struct DateTimeEditorView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 // Header
                 VStack(alignment: .leading, spacing: 8) {
@@ -2532,7 +2532,7 @@ struct LocationPickerView: View {
     @State private var searchTask: Task<Void, Never>?
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 // Header
                 VStack(alignment: .leading, spacing: 8) {
@@ -3549,7 +3549,7 @@ private struct NoteEditorSheet: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 TextEditor(text: $draft)
                     .focused($isFocused)

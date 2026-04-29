@@ -30,7 +30,7 @@ struct GoogleAIStudioSettingsView: View {
     ]
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("API Configuration")) {
                     VStack(alignment: .leading, spacing: 8) {

@@ -923,7 +923,7 @@ struct PerformanceMonitorView: View {
     @Binding var isPresented: Bool
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     // Memory Usage Section

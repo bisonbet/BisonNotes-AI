@@ -13,7 +13,7 @@ struct PreferencesView: View {
     @State private var showingTimeFormatExample = false
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     headerSection

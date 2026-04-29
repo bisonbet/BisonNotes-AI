@@ -238,7 +238,7 @@ struct TranscriptsView: View {
     }
 
     private var dateFilterSheet: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section {
                     DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
@@ -1158,7 +1158,7 @@ struct EditableTranscriptView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 
                 // Transcript Content
@@ -1738,7 +1738,7 @@ struct SpeakerEditingView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("Rename Speakers"), footer: Text("Enter a name for each speaker. Changes apply to the entire transcript and are used in AI summaries.")) {
                     ForEach(speakerIds, id: \.self) { speakerId in
@@ -1822,7 +1822,7 @@ struct TranscriptDetailView: View {
     @State private var locationAddress: String?
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack {
                 if transcriptText.isEmpty {
                     VStack(spacing: 16) {

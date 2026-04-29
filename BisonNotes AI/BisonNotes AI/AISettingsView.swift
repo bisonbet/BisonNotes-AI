@@ -257,7 +257,7 @@ struct AISettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 selectedEngineConfigurationSection
                 engineSelectionSection

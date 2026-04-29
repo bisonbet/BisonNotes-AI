@@ -327,7 +327,7 @@ struct SummariesView: View {
     // MARK: - Date Filter Sheet
 
     private var dateFilterSheet: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section {
                     DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)

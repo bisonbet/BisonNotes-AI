@@ -58,7 +58,7 @@ struct DataMigrationView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 30) {
                     headerSection

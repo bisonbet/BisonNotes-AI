@@ -17,7 +17,7 @@ struct EnhancedDeleteDialog: View {
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
                 // Header
                 VStack(spacing: 8) {
