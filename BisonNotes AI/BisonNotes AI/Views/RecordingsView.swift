@@ -22,6 +22,8 @@ struct RecordingsView: View {
     @State private var showingRecordingsList = false
     @State private var showingBackgroundProcessing = false
     @State private var showingHelpDocumentation = false
+    @State private var showingRecorderError = false
+    @State private var recorderErrorMessage = ""
     
     var body: some View {
         GeometryReader { geometry in
@@ -310,6 +312,18 @@ struct RecordingsView: View {
                         }
                     }
                 }
+            }
+            .onChange(of: recorderVM.errorMessage) { _, message in
+                if let message, !message.isEmpty {
+                    recorderErrorMessage = message
+                    showingRecorderError = true
+                    recorderVM.errorMessage = nil
+                }
+            }
+            .alert("Recording Error", isPresented: $showingRecorderError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(recorderErrorMessage)
             }
         }
     }
