@@ -56,6 +56,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "OnDeviceLLMEngine")
     private var backgroundObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
+    private var terminateObserver: NSObjectProtocol?
 
     // MARK: - Initialization
 
@@ -67,6 +68,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     deinit {
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
         if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+        if let terminateObserver { NotificationCenter.default.removeObserver(terminateObserver) }
     }
 
     // MARK: - Background Safety
@@ -91,6 +93,21 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         ) { [weak self] _ in
             AppLog.shared.summarization("[OnDeviceLLMEngine] App entering foreground - resuming GPU inference")
             self?.service?.setAppBackgrounded(false)
+        }
+
+        // On Mac Catalyst, quitting via the menu calls NSApplication.terminate: → exit().
+        // Static C++ destructors for ggml_metal_device then run before Swift deinits, which
+        // triggers GGML_ASSERT([rsets->data count] == 0) if any Metal command buffers are
+        // still in flight. Explicitly unloading the model here forces llama_free /
+        // llama_model_free to run before exit(), releasing all Metal resources cleanly.
+        terminateObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            AppLog.shared.summarization("[OnDeviceLLMEngine] App will terminate - releasing llama.cpp Metal resources")
+            self?.service?.unloadModel()
+            self?.service = nil
         }
     }
 
