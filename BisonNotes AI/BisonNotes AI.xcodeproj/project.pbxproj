@@ -1279,7 +1279,7 @@
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				"INFOPLIST_FILE[sdk=iphone*]" = "BisonNotes AI/Info.plist";
+				INFOPLIST_FILE = "BisonNotes AI/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -1317,7 +1317,7 @@
 				DEVELOPMENT_TEAM = 4W55VW7UXX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				"INFOPLIST_FILE[sdk=iphone*]" = "BisonNotes AI/Info.plist";
+				INFOPLIST_FILE = "BisonNotes AI/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
