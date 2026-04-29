@@ -121,6 +121,52 @@ The app includes comprehensive AWS Bedrock integration (`AWS/AWSBedrockModels.sw
   - **Cross-Region Inference Profiles**: Claude and Llama models use `us.*`, `global.*`, `eu.*` prefixes for cross-region routing
   - Cross-region profiles provide ~10% cost savings and higher throughput by routing requests to available regions
 
+### Mac Catalyst Build Notes
+
+The `MacOS-Catalyst` branch adds Mac Catalyst support. Several manual steps were required for the vendored `llama.xcframework` and must be repeated any time the framework is rebuilt or updated:
+
+#### llama.xcframework Catalyst Slice
+
+The upstream llama.cpp xcframework does not ship a Mac Catalyst slice. The `ios-arm64-maccatalyst` slice in `Frameworks/llama.xcframework/` was created manually:
+
+```bash
+# 1. Extract the arm64 slice from the macOS fat binary
+lipo -thin arm64 \
+  Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/llama \
+  -output /tmp/llama-arm64
+
+# 2. Create flat iOS-style framework directory
+mkdir -p Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework
+
+# 3. Copy headers and modules from the macOS framework
+cp -r Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Headers \
+      Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/
+cp -r Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Modules \
+      Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/
+cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Resources/Info.plist \
+   Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/Info.plist
+
+# 4. Place the thin binary
+cp /tmp/llama-arm64 Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/llama
+
+# 5. Patch the Mach-O platform header from MACOS to MACCATALYST
+vtool -set-build-version maccatalyst 14.0 15.5 -replace \
+  -output Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/llama \
+          Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/llama
+```
+
+Then add the `ios-arm64-maccatalyst` entry to `Frameworks/llama.xcframework/Info.plist` (see existing entry in that file for the format).
+
+Step 5 is critical — without the `vtool` patch, the linker warns "built for macOS" and may fail codesigning.
+
+#### textual (MarkdownUI) Catalyst Fix
+
+The `bisonbet/textual` fork has Mac Catalyst guards applied (commit `0c2c3b5`). On Mac Catalyst `canImport(AppKit)` is true, which caused the package to take the AppKit path and fail. The fix adds `&& !targetEnvironment(macCatalyst)` to AppKit checks in:
+- `Sources/Textual/Internal/Font/PlatformFont.swift`
+- `Sources/Textual/Internal/Helpers/PlatformImage.swift`
+
+If textual is rebased from upstream, reapply these guards.
+
 ### Background Processing
 For long-running operations, use `BackgroundProcessingManager` to queue jobs and track progress.
 

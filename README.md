@@ -45,6 +45,7 @@ The project uses Swift Package Manager for dependency management. Major dependen
   - Supports GGUF model format with Q4_K_M quantization (optimal for mobile)
   - Available models: Gemma 3n E4B/E2B, Granite 4.0 H Tiny/Micro, Ministral 3B, LFM 2.5 1.2B, Qwen3.5 2B/4B
   - Models filtered by device RAM (6GB+ for most, 8GB+ for larger models)
+  - **Mac Catalyst note**: The upstream xcframework has no `maccatalyst` slice. The `ios-arm64-maccatalyst` slice in this repo was manually created from the macOS arm64 binary (`lipo -thin arm64`) and patched with `vtool -set-build-version maccatalyst 14.0 15.5`. If you rebuild or update the xcframework, repeat these steps and update `Frameworks/llama.xcframework/Info.plist` accordingly. Full instructions are in `CLAUDE.md` under "Mac Catalyst Build Notes".
 
 ### **UI & Formatting**
 - **MarkdownUI**: Professional markdown rendering for AI-generated summaries, headers, lists, and formatted text
