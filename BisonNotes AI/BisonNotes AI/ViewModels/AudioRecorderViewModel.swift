@@ -402,6 +402,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	func startRecording() {
 		AppLog.shared.recording("startRecording: requesting microphone permission")
+		#if targetEnvironment(macCatalyst)
+		requestMicPermissionAndRecord()
+		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
 			DispatchQueue.main.async {
 				guard let self = self else { return }
@@ -409,16 +412,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					AppLog.shared.recording("startRecording: microphone permission granted")
 					Task {
 						do {
-							#if targetEnvironment(macCatalyst)
-							// On Mac Catalyst background recording mode is not applicable;
-							// use mixed audio session which works across all Mac configurations.
-							try await self.enhancedAudioSessionManager.configureMixedAudioSession()
-							AppLog.shared.recording("Mac: mixed audio session configured")
-							#else
-							// Phase 4: Use background recording for perfect backgrounding support
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording()
 							AppLog.shared.recording("Background recording session configured")
-							#endif
 							await self.applySelectedInputToSession()
 						} catch {
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
@@ -427,25 +422,70 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 							}
 							return
 						}
-
 						await MainActor.run {
 							self.setupRecording()
 						}
 					}
 				} else {
 					AppLog.shared.recording("startRecording: microphone permission denied", level: .error)
-					#if targetEnvironment(macCatalyst)
-					self.errorMessage = "Microphone access denied. Go to System Settings → Privacy & Security → Microphone and enable BisonNotes AI."
-					#else
 					self.errorMessage = "Microphone permission denied"
-					#endif
 				}
 			}
 		}
+		#endif
 	}
+
+	#if targetEnvironment(macCatalyst)
+	private func requestMicPermissionAndRecord() {
+		let status = AVCaptureDevice.authorizationStatus(for: .audio)
+		AppLog.shared.recording("Mac mic auth status: \(status.rawValue)")
+		switch status {
+		case .authorized:
+			didReceiveMicrophonePermission(granted: true)
+		case .notDetermined:
+			AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+				DispatchQueue.main.async {
+					AppLog.shared.recording("Mac mic permission result: \(granted)")
+					self?.didReceiveMicrophonePermission(granted: granted)
+				}
+			}
+		case .denied, .restricted:
+			AppLog.shared.recording("Mac mic permission denied/restricted", level: .error)
+			DispatchQueue.main.async { [weak self] in
+				self?.errorMessage = "Microphone access is denied. Open System Settings → Privacy & Security → Microphone and enable BisonNotes AI, then try again."
+			}
+		@unknown default:
+			didReceiveMicrophonePermission(granted: false)
+		}
+	}
+
+	@MainActor
+	private func didReceiveMicrophonePermission(granted: Bool) {
+		guard granted else {
+			errorMessage = "Microphone permission denied"
+			return
+		}
+		AppLog.shared.recording("startRecording: microphone permission granted")
+		Task {
+			do {
+				try await enhancedAudioSessionManager.configureMixedAudioSession()
+				AppLog.shared.recording("Mac: mixed audio session configured")
+				await applySelectedInputToSession()
+			} catch {
+				AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
+				errorMessage = "Failed to set up audio: \(error.localizedDescription)"
+				return
+			}
+			setupRecording()
+		}
+	}
+	#endif
 
 	func startBackgroundRecording() {
 		AppLog.shared.recording("startBackgroundRecording: requesting microphone permission")
+		#if targetEnvironment(macCatalyst)
+		requestMicPermissionAndRecord()
+		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
 			DispatchQueue.main.async {
 				guard let self = self else { return }
@@ -453,32 +493,23 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					AppLog.shared.recording("startBackgroundRecording: microphone permission granted")
 					Task {
 						do {
-							#if targetEnvironment(macCatalyst)
-							try await self.enhancedAudioSessionManager.configureMixedAudioSession()
-							AppLog.shared.recording("Mac: mixed audio session configured for background recording")
-							#else
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording()
-							#endif
 							await self.applySelectedInputToSession()
 						} catch {
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
 							return
 						}
-
 						await MainActor.run {
 							self.setupRecording()
 						}
 					}
 				} else {
 					AppLog.shared.recording("startBackgroundRecording: microphone permission denied", level: .error)
-					#if targetEnvironment(macCatalyst)
-					self.errorMessage = "Microphone access denied. Go to System Settings → Privacy & Security → Microphone and enable BisonNotes AI."
-					#else
 					self.errorMessage = "Microphone permission denied"
-					#endif
 				}
 			}
 		}
+		#endif
 	}
 
 	func setupRecording() {
