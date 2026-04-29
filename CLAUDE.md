@@ -135,24 +135,34 @@ lipo -thin arm64 \
   Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/llama \
   -output /tmp/llama-arm64
 
-# 2. Create flat iOS-style framework directory
-mkdir -p Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework
+# 2. Create versioned macOS-style framework layout (required — Catalyst does not use shallow bundles)
+CATALYST=Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework
+mkdir -p $CATALYST/Versions/A/Resources
+mkdir -p $CATALYST/Versions/A/Headers
+mkdir -p $CATALYST/Versions/A/Modules
 
-# 3. Copy headers and modules from the macOS framework
-cp -r Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Headers \
-      Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/
-cp -r Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Modules \
-      Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/
+# 3. Copy headers, modules, and Info.plist from the macOS framework
+cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Headers/* \
+   $CATALYST/Versions/A/Headers/
+cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Modules/* \
+   $CATALYST/Versions/A/Modules/
 cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Resources/Info.plist \
-   Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/Info.plist
+   $CATALYST/Versions/A/Resources/Info.plist
 
 # 4. Place the thin binary
-cp /tmp/llama-arm64 Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/llama
+cp /tmp/llama-arm64 $CATALYST/Versions/A/llama
 
 # 5. Patch the Mach-O platform header from MACOS to MACCATALYST
 vtool -set-build-version maccatalyst 14.0 15.5 -replace \
-  -output Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/llama \
-          Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework/llama
+  -output $CATALYST/Versions/A/llama \
+          $CATALYST/Versions/A/llama
+
+# 6. Create Versions/Current symlink and top-level symlinks
+ln -s A                        $CATALYST/Versions/Current
+ln -s Versions/Current/llama    $CATALYST/llama
+ln -s Versions/Current/Headers  $CATALYST/Headers
+ln -s Versions/Current/Modules  $CATALYST/Modules
+ln -s Versions/Current/Resources $CATALYST/Resources
 ```
 
 Then add the `ios-arm64-maccatalyst` entry to `Frameworks/llama.xcframework/Info.plist` (see existing entry in that file for the format).
