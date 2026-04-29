@@ -128,7 +128,7 @@ struct ContentView: View {
             Text("Apple Intelligence has been removed from the app. Your settings have been automatically updated to use On-Device AI, which provides similar functionality. Please download an AI model to continue using on-device AI processing.")
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
-            NavigationView {
+            NavigationStack {
                 OnDeviceLLMSettingsView()
             }
         }

@@ -321,7 +321,7 @@ struct SummaryDetailView: View {
             handleAttachmentImport(result)
         }
         .sheet(isPresented: $showingTextAttachment) {
-            NavigationView {
+            NavigationStack {
                 ScrollView {
                     Text(selectedAttachmentText)
                         .font(.body.monospaced())
@@ -341,7 +341,7 @@ struct SummaryDetailView: View {
         }
         .sheet(isPresented: $showingPDFAttachment) {
             if let selectedAttachmentPDFURL {
-                NavigationView {
+                NavigationStack {
                     SummaryAttachmentPDFView(url: selectedAttachmentPDFURL)
                         .navigationTitle(selectedAttachmentName)
                         .navigationBarTitleDisplayMode(.inline)
