@@ -13,7 +13,7 @@ struct BackgroundProcessingView: View {
 
     var body: some View {
         let _ = AppLog.shared.backgroundProcessing("BackgroundProcessingView body: activeJobs.count = \(processingManager.activeJobs.count)", level: .debug)
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 // Header with overall status
                 headerSection
@@ -437,7 +437,7 @@ struct JobDetailView: View {
     @State private var timer: Timer?
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     // Job header

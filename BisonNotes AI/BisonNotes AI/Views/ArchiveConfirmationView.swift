@@ -17,7 +17,7 @@ struct ArchiveConfirmationView: View {
     let onCancel: () -> Void
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
                 // Header
                 VStack(spacing: 8) {

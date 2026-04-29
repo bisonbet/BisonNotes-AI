@@ -75,7 +75,7 @@ struct RecordingsListView: View {
     @State private var isDateFilterActive = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack {
                 // Custom header
                 HStack {
@@ -469,7 +469,7 @@ struct RecordingsListView: View {
     }
 
     private var dateFilterSheet: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section {
                     DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
@@ -1156,7 +1156,7 @@ struct RecordingsListView: View {
     }
 
     private var archiveOlderThanSheet: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
                 Image(systemName: "calendar.badge.clock")
                     .font(.system(size: 40))
