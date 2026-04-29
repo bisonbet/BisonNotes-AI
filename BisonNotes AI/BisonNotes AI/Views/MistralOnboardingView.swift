@@ -68,6 +68,14 @@ struct MistralOnboardingView: View {
                     #endif
                 }
             }
+            .onChange(of: showingSafari) { _, isShowing in
+                #if targetEnvironment(macCatalyst)
+                if isShowing, let url = safariURL {
+                    UIApplication.shared.open(url)
+                    showingSafari = false
+                }
+                #endif
+            }
         }
     }
 
