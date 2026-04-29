@@ -25,7 +25,7 @@ struct OpenAISettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {

@@ -52,7 +52,7 @@ struct OllamaSettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 headerSection
                 serverConfigurationSection

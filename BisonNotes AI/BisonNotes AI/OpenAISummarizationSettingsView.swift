@@ -29,7 +29,7 @@ struct OpenAISummarizationSettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 authenticationSection
                 apiConfigurationSection
@@ -392,7 +392,7 @@ struct OpenAICompatibleSettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 compatibilityGuideSection
                 authenticationSection

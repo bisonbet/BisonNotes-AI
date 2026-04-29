@@ -41,7 +41,7 @@ struct AWSBedrockSettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 headerSection
                 

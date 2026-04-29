@@ -10,7 +10,7 @@ struct AcknowledgementsView: View {
     @State private var showTransitiveDependencies = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     headerSection
