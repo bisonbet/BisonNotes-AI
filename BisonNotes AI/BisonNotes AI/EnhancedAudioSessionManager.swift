@@ -318,6 +318,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     }
     
     private func setupNotificationObservers() {
+        #if !targetEnvironment(macCatalyst)
+        // AVAudioSession Mach port handlers don't exist on Mac — skip to avoid
+        // flooding the log with "cannot add handler" messages.
         // Audio interruption observer
         interruptionObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification,
@@ -327,7 +330,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             // Capture the notification data we need before entering Task
             let userInfo = notification.userInfo
             let interruptionType = userInfo?[AVAudioSessionInterruptionTypeKey] as? AVAudioSession.InterruptionType
-            
+
             Task { @MainActor in
                 guard let self = self else { return }
                 // Create a new notification with only the data we need
@@ -338,7 +341,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                 }
             }
         }
-        
+
         // Route change observer
         routeChangeObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification,
@@ -348,7 +351,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             // Capture the notification data we need before entering Task
             let userInfo = notification.userInfo
             let routeChangeReason = userInfo?[AVAudioSessionRouteChangeReasonKey] as? AVAudioSession.RouteChangeReason
-            
+
             Task { @MainActor in
                 guard let self = self else { return }
                 // Create a new notification with only the data we need
@@ -363,6 +366,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                 }
             }
         }
+        #endif
     }
     
     private func removeNotificationObservers() {
