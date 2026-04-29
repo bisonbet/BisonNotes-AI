@@ -403,7 +403,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	func startRecording() {
 		AppLog.shared.recording("startRecording: requesting microphone permission")
 		#if targetEnvironment(macCatalyst)
-		requestMicPermissionAndRecord()
+		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
 			DispatchQueue.main.async {
@@ -483,7 +483,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	func startBackgroundRecording() {
 		AppLog.shared.recording("startBackgroundRecording: requesting microphone permission")
 		#if targetEnvironment(macCatalyst)
-		requestMicPermissionAndRecord()
+		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
 			DispatchQueue.main.async {
