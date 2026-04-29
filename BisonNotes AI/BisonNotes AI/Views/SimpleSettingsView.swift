@@ -122,7 +122,7 @@ struct SimpleSettingsView: View {
             }
         }
         .sheet(isPresented: $showingAdvancedSettings) {
-            NavigationView {
+            NavigationStack {
                 SettingsView()
                     .environmentObject(recorderVM)
                     .environmentObject(appCoordinator)

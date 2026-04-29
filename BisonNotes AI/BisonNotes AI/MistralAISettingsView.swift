@@ -33,7 +33,7 @@ struct MistralAISettingsView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 if apiKey.isEmpty {
                     Section {
