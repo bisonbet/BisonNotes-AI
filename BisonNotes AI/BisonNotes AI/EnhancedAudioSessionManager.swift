@@ -147,9 +147,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
         for attempt in 1...maxAttempts {
             do {
-                // First, try to deactivate the session to clear any lingering state from interruption
-                // Use best-effort deactivation (don't throw if it fails)
+                #if !targetEnvironment(macCatalyst)
                 try? session.setActive(false, options: .notifyOthersOnDeactivation)
+                #endif
 
                 // Wait with exponential backoff, capped at 2 seconds per attempt
                 // Attempt 1: 0.5s, 2: 1s, 3: 1.5s, 4: 2s, 5-10: 2s each
@@ -198,23 +198,21 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     
     /// Configure audio session for playback (with mixWithOthers to avoid interfering with music)
     func configurePlaybackSession() async throws {
+        #if !targetEnvironment(macCatalyst)
         do {
-            // Use .playback category with .mixWithOthers option to not interrupt other audio
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
-            
-            isMixedAudioEnabled = true // We're mixing with others
-            isBackgroundRecordingEnabled = false
-            currentConfiguration = nil // This is a lightweight playback config
-            isConfigured = true
-            
-            AppLog.shared.audioSession("Playback session configured successfully with mixWithOthers")
-            
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Playback configuration failed: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
         }
+        #endif
+        isMixedAudioEnabled = true
+        isBackgroundRecordingEnabled = false
+        currentConfiguration = nil
+        isConfigured = true
+        AppLog.shared.audioSession("Playback session configured successfully with mixWithOthers")
     }
     
     /// Set preferred audio input device
@@ -263,37 +261,40 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     
     /// Deactivate audio session
     func deactivateSession() async throws {
+        #if !targetEnvironment(macCatalyst)
         do {
             try session.setActive(false, options: .notifyOthersOnDeactivation)
-            isConfigured = false
-            isMixedAudioEnabled = false
-            isBackgroundRecordingEnabled = false
-            currentConfiguration = nil
-            AppLog.shared.audioSession("Audio session deactivated and reset")
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Failed to deactivate session: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
         }
+        #endif
+        isConfigured = false
+        isMixedAudioEnabled = false
+        isBackgroundRecordingEnabled = false
+        currentConfiguration = nil
+        AppLog.shared.audioSession("Audio session deactivated and reset")
     }
     
     // MARK: - Private Methods
     
     private func applyConfiguration(_ config: AudioSessionConfig) async throws {
+        #if !targetEnvironment(macCatalyst)
+        // On Mac Catalyst, setCategory/setActive talk to mediaserverd via Mach ports
+        // that don't exist on macOS, flooding the log with "cannot add handler" errors.
+        // CoreAudio handles input/output directly on Mac without AVAudioSession setup.
         try session.setCategory(config.category, mode: config.mode, options: config.options)
 
-        // Prefer telephony-friendly settings when recording with Bluetooth HFP
         if config.category == .playAndRecord {
-            // These are best-effort; if they fail it's okay to continue
             try? session.setPreferredSampleRate(16000)
             try? session.setPreferredIOBufferDuration(0.1)
         }
 
         try session.setActive(true, options: [])
-        
-        // Additional configuration for background recording
+        #endif
+
         if config.backgroundRecording {
-            // Request background audio capability
             try await requestBackgroundAudioCapability()
         }
     }

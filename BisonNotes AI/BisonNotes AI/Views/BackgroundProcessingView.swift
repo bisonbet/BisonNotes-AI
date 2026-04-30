@@ -10,6 +10,7 @@ import SwiftUI
 struct BackgroundProcessingView: View {
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var selectedJob: ProcessingJob?
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let _ = AppLog.shared.backgroundProcessing("BackgroundProcessingView body: activeJobs.count = \(processingManager.activeJobs.count)", level: .debug)
@@ -30,6 +31,9 @@ struct BackgroundProcessingView: View {
             .navigationTitle("Background Processing")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") { dismiss() }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button("Cleanup Completed Jobs") {

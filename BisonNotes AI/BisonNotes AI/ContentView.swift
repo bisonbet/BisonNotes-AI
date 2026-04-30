@@ -128,9 +128,22 @@ struct ContentView: View {
             Text("Apple Intelligence has been removed from the app. Your settings have been automatically updated to use On-Device AI, which provides similar functionality. Please download an AI model to continue using on-device AI processing.")
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
+            #if targetEnvironment(macCatalyst)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("On-Device AI").font(.headline)
+                    Spacer()
+                    Button("Done") { showingOnDeviceLLMSettings = false }.buttonStyle(.bordered)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                Divider()
+                OnDeviceLLMSettingsView()
+            }
+            #else
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
+            #endif
         }
         .alert("Switched to Parakeet", isPresented: $showingWhisperKitSwitchedAlert) {
             Button("OK") { }
@@ -154,9 +167,22 @@ struct ContentView: View {
             Text("Your transcription engine has been upgraded to Parakeet, a fast and accurate on-device engine. Please download the Parakeet model (~250MB) to continue transcribing audio.")
         }
         .sheet(isPresented: $showingFluidAudioSettings) {
+            #if targetEnvironment(macCatalyst)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("On Device Transcription").font(.headline)
+                    Spacer()
+                    Button("Done") { showingFluidAudioSettings = false }.buttonStyle(.bordered)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                Divider()
+                FluidAudioSettingsView()
+            }
+            #else
             NavigationStack {
                 FluidAudioSettingsView()
             }
+            #endif
         }
         .alert("Download Complete", isPresented: $downloadMonitor.showingCompletionAlert) {
             Button("OK") {

@@ -13,8 +13,8 @@
 		1433F5462F7C9E44002AB9D6 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428E2E7F5ECA0059271B /* SwiftUI.framework */; };
 		1433F5572F7C9E45002AB9D6 /* BisonNotes Watch WidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1433F5442F7C9E44002AB9D6 /* BisonNotes Watch WidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		1435711D2F2137E1000BFF00 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 1435711C2F2137E1000BFF00 /* Textual */; };
-		1435735C2F2E92A500E93954 /* BisonNotes Share.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 143573522F2E92A500E93954 /* BisonNotes Share.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		1485FEC52E526FB30044121F /* BisonNotes AI Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		1435735C2F2E92A500E93954 /* BisonNotes Share.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 143573522F2E92A500E93954 /* BisonNotes Share.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		1485FEC52E526FB30044121F /* BisonNotes AI Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED42E5271970044121F /* WatchConnectivity.framework */; };
 		1485FED72E5271AF0044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED62E5271AF0044121F /* WatchConnectivity.framework */; };
 		1485FEDC2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */; };
@@ -23,9 +23,11 @@
 		1485FEDF2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */; };
 		1485FEE02E5272FA0044121F /* WatchAudioChunk.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED82E5272FA0044121F /* WatchAudioChunk.swift */; };
 		1485FEE12E5272FA0044121F /* WatchRecordingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */; };
+		14B0A0012F80000000BBD2FA /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 14B0A0042F80000000BBD2FA /* MLXLLM */; };
+		14B0A0022F80000000BBD2FA /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 14B0A0052F80000000BBD2FA /* MLXLMCommon */; };
 		14EA428D2E7F5ECA0059271B /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428C2E7F5ECA0059271B /* WidgetKit.framework */; };
 		14EA428F2E7F5ECA0059271B /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428E2E7F5ECA0059271B /* SwiftUI.framework */; };
-		14EA42A92E7F66370059271B /* BisonNotes AI ControlsExtension.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 14EA428B2E7F5ECA0059271B /* BisonNotes AI ControlsExtension.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		14EA42A92E7F66370059271B /* BisonNotes AI ControlsExtension.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 14EA428B2E7F5ECA0059271B /* BisonNotes AI ControlsExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		14FA00012F30000000BBD2FA /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 14FA00022F30000000BBD2FA /* FluidAudio */; };
 		14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9072E3F8D5600BBD2FA /* AWSBedrock */; };
 		14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */; };
@@ -33,8 +35,6 @@
 		14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */; };
 		14FDF9102E3F8D5600BBD2FA /* AWSTranscribeStreaming in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */; };
 		14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */; };
-		14B0A0012F80000000BBD2FA /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 14B0A0042F80000000BBD2FA /* MLXLLM */; };
-		14B0A0022F80000000BBD2FA /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 14B0A0052F80000000BBD2FA /* MLXLMCommon */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1270,6 +1270,7 @@
 		14DBC8642E34F7B600DAD442 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALLOW_TARGET_PLATFORM_SPECIALIZATION = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
@@ -1294,7 +1295,6 @@
 				MARKETING_VERSION = 1.10;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI";
 				PRODUCT_NAME = "BisonNotes AI";
-				ALLOW_TARGET_PLATFORM_SPECIALIZATION = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -1308,6 +1308,7 @@
 		14DBC8652E34F7B600DAD442 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALLOW_TARGET_PLATFORM_SPECIALIZATION = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
@@ -1332,7 +1333,6 @@
 				MARKETING_VERSION = 1.10;
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI";
 				PRODUCT_NAME = "BisonNotes AI";
-				ALLOW_TARGET_PLATFORM_SPECIALIZATION = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -1611,6 +1611,14 @@
 				kind = branch;
 			};
 		};
+		14B0A0032F80000000BBD2FA /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm/";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 2.31.3;
+			};
+		};
 		14FA00032F30000000BBD2FA /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/FluidInference/FluidAudio";
@@ -1627,17 +1635,14 @@
 				minimumVersion = 1.5.12;
 			};
 		};
-		14B0A0032F80000000BBD2FA /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm/";
-			requirement = {
-				kind = upToNextMinorVersion;
-				minimumVersion = 2.31.3;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		1435711C2F2137E1000BFF00 /* Textual */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1435711B2F2137E1000BFF00 /* XCRemoteSwiftPackageReference "textual" */;
+			productName = Textual;
+		};
 		14B0A0042F80000000BBD2FA /* MLXLLM */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 14B0A0032F80000000BBD2FA /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
@@ -1647,11 +1652,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 14B0A0032F80000000BBD2FA /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
 			productName = MLXLMCommon;
-		};
-		1435711C2F2137E1000BFF00 /* Textual */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 1435711B2F2137E1000BFF00 /* XCRemoteSwiftPackageReference "textual" */;
-			productName = Textual;
 		};
 		14FA00022F30000000BBD2FA /* FluidAudio */ = {
 			isa = XCSwiftPackageProductDependency;
