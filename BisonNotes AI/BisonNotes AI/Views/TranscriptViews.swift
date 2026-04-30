@@ -238,6 +238,41 @@ struct TranscriptsView: View {
     }
 
     private var dateFilterSheet: some View {
+        #if targetEnvironment(macCatalyst)
+        VStack(spacing: 0) {
+            HStack {
+                Button("Cancel") { showDateFilter = false }
+                Spacer()
+                Text("Filter by Date").font(.headline)
+                Spacer()
+                Button("Apply") {
+                    isDateFilterActive = true
+                    showDateFilter = false
+                    refreshTrigger.toggle()
+                }
+                .fontWeight(.semibold)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            Divider()
+            Form {
+                Section {
+                    DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
+                    DatePicker("To", selection: $dateFilterEnd, in: dateFilterStart...Date(), displayedComponents: .date)
+                }
+                if isDateFilterActive {
+                    Section {
+                        Button(role: .destructive) {
+                            isDateFilterActive = false
+                            showDateFilter = false
+                            refreshTrigger.toggle()
+                        } label: {
+                            HStack { Spacer(); Text("Clear Filter"); Spacer() }
+                        }
+                    }
+                }
+            }
+        }
+        #else
         NavigationStack {
             Form {
                 Section {
@@ -278,6 +313,7 @@ struct TranscriptsView: View {
                 }
             }
         }
+        #endif
     }
 
     private func transcriptsListView(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?)], _ filteredImported: [(recording: RecordingEntry, transcript: TranscriptData?)]) -> some View {
@@ -1158,101 +1194,85 @@ struct EditableTranscriptView: View {
     }
     
     var body: some View {
+        // NavigationStack { Form } is the only sheet pattern that scrolls reliably
+        // on Mac Catalyst. See feedback_mac_catalyst_scrollview.md.
         NavigationStack {
-            VStack(spacing: 0) {
-                
-                // Transcript Content
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        recordingTitleEditor
+            Form {
+                Section {
+                    recordingTitleEditor
+                }
 
-                        if editedSegments.isEmpty {
-                            VStack(spacing: 16) {
-                                Image(systemName: "doc.text")
-                                    .font(.system(size: 48))
-                                    .foregroundColor(.gray)
-                                Text("No transcript content available")
-                                    .font(.title2)
-                                    .foregroundColor(.secondary)
-                                Text("Transcript segments: \(editedSegments.count)")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .padding()
-                        } else {
-                            LazyVStack(alignment: .leading, spacing: 16) {
-                                if !uniqueSpeakers.isEmpty {
-                                    Button(action: { showingSpeakerEditor = true }) {
-                                        HStack {
-                                            Image(systemName: "person.2.fill")
-                                            Text("Edit Speakers (\(uniqueSpeakers.count))")
-                                            Spacer()
-                                            Image(systemName: "chevron.right")
-                                                .font(.caption)
-                                        }
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 10)
-                                        .background(Color.purple.opacity(0.1))
+                if editedSegments.isEmpty {
+                    Section {
+                        VStack(spacing: 16) {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: 48))
+                                .foregroundColor(.gray)
+                            Text("No transcript content available")
+                                .font(.title3)
+                                .foregroundColor(.secondary)
+                            Text("Transcript segments: \(editedSegments.count)")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                    }
+                } else {
+                    if !uniqueSpeakers.isEmpty {
+                        Section {
+                            Button {
+                                showingSpeakerEditor = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "person.2.fill")
                                         .foregroundColor(.purple)
-                                        .cornerRadius(10)
-                                    }
+                                    Text("Edit Speakers (\(uniqueSpeakers.count))")
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
                                 }
-
-                                ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, segment in
-                                    TranscriptSegmentView(segment: $editedSegments[index], speakerMappings: speakerMappings)
-                                }
+                                .contentShape(Rectangle())
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .id("transcript-\(editedSegments.count)-\(editedSegments.first?.text.prefix(10).hashValue ?? 0)")
+                            .buttonStyle(.plain)
                         }
                     }
+
+                    Section("Segments") {
+                        ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, segment in
+                            TranscriptSegmentView(segment: $editedSegments[index], speakerMappings: speakerMappings)
+                        }
+                    }
+                    .id("transcript-\(editedSegments.count)-\(editedSegments.first?.text.prefix(10).hashValue ?? 0)")
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                
-                // Rerun Transcription Button
-                VStack(spacing: 12) {
-                    Divider()
-                        .padding(.horizontal, 16)
-                    
-                    Button(action: {
+
+                Section {
+                    Button {
                         showingRerunAlert = true
-                    }) {
+                    } label: {
                         HStack {
                             if isRerunningTranscription {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                    .tint(.white)
+                                ProgressView().scaleEffect(0.8)
                                 Text("Rerunning Transcription...")
                             } else {
                                 Image(systemName: "arrow.clockwise")
                                 Text("Rerun Transcription")
                             }
+                            Spacer()
                         }
-                        .font(.body)
-                        .fontWeight(.medium)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(isRerunningTranscription ? Color.orange : Color.blue)
-                        .cornerRadius(10)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                     .disabled(isRerunningTranscription)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("Edit Transcript")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
+                    Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
@@ -1265,76 +1285,66 @@ struct EditableTranscriptView: View {
                     .fontWeight(.semibold)
                 }
             }
-            .alert("Rerun Transcription", isPresented: $showingRerunAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Rerun", role: .destructive) {
-                    rerunTranscription()
-                }
-            } message: {
-                Text("This will replace the current transcript with a new transcription using the currently configured transcription service. This action cannot be undone.")
+        }
+        .alert("Rerun Transcription", isPresented: $showingRerunAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Rerun", role: .destructive) {
+                rerunTranscription()
             }
-            .alert("Transcript Saved", isPresented: $showingSaveSuccessAlert) {
-                Button("OK") {
-                    showingSaveSuccessAlert = false
-                    dismiss()
-                }
-            } message: {
-                Text("Your transcript changes have been saved.")
+        } message: {
+            Text("This will replace the current transcript with a new transcription using the currently configured transcription service. This action cannot be undone.")
+        }
+        .alert("Transcript Saved", isPresented: $showingSaveSuccessAlert) {
+            Button("OK") {
+                showingSaveSuccessAlert = false
+                dismiss()
             }
-            .alert("Save Failed", isPresented: $showingSaveErrorAlert) {
-                Button("OK", role: .cancel) {
-                    showingSaveErrorAlert = false
-                }
-            } message: {
-                Text(saveErrorMessage)
+        } message: {
+            Text("Your transcript changes have been saved.")
+        }
+        .alert("Save Failed", isPresented: $showingSaveErrorAlert) {
+            Button("OK", role: .cancel) {
+                showingSaveErrorAlert = false
             }
-            .alert("Rename Failed", isPresented: Binding(
-                get: { recordingRenameError != nil },
-                set: { if !$0 { recordingRenameError = nil } }
-            )) {
-                Button("OK", role: .cancel) {
-                    recordingRenameError = nil
-                }
-            } message: {
-                Text(recordingRenameError ?? "Unknown error")
+        } message: {
+            Text(saveErrorMessage)
+        }
+        .alert("Rename Failed", isPresented: Binding(
+            get: { recordingRenameError != nil },
+            set: { if !$0 { recordingRenameError = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                recordingRenameError = nil
             }
-            .sheet(isPresented: $showingSpeakerEditor) {
-                SpeakerEditingView(
-                    speakerIds: uniqueSpeakers,
-                    speakerMappings: $speakerMappings
-                )
-            }
-            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionRerunCompleted"))) { notification in
-                // Handle transcription rerun completion
-                if let userInfo = notification.userInfo,
-                   let notificationURL = userInfo["recordingURL"] as? URL,
-                   let segments = userInfo["segments"] as? [TranscriptSegment],
-                   let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
-                   notificationURL == recordingURL {
-                    
-                    AppLog.shared.transcription("Received transcription rerun completion notification", level: .debug)
+        } message: {
+            Text(recordingRenameError ?? "Unknown error")
+        }
+        .sheet(isPresented: $showingSpeakerEditor) {
+            SpeakerEditingView(
+                speakerIds: uniqueSpeakers,
+                speakerMappings: $speakerMappings
+            )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionRerunCompleted"))) { notification in
+            if let userInfo = notification.userInfo,
+               let notificationURL = userInfo["recordingURL"] as? URL,
+               let segments = userInfo["segments"] as? [TranscriptSegment],
+               let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
+               notificationURL == recordingURL {
 
-                    // Save the new transcript to Core Data first (this will replace the existing transcript)
-                    saveNewTranscriptToCoreData(segments: segments)
-
-                    isRerunningTranscription = false
-
-                    AppLog.shared.transcription("Transcript UI updated with rerun results from notification")
-                    
-                    // Force the parent view to refresh by posting a notification
-                    NotificationCenter.default.post(name: NSNotification.Name("TranscriptReplacementCompleted"), object: nil)
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionCompleted"))) { _ in
-                // Refresh transcript data from Core Data when transcription is completed
-                refreshTranscriptFromCoreData()
-            }
-            .onAppear {
-                // Always refresh transcript data when the view appears to ensure we have the latest content
-                refreshTranscriptFromCoreData()
+                AppLog.shared.transcription("Received transcription rerun completion notification", level: .debug)
+                saveNewTranscriptToCoreData(segments: segments)
+                isRerunningTranscription = false
+                AppLog.shared.transcription("Transcript UI updated with rerun results from notification")
+                NotificationCenter.default.post(name: NSNotification.Name("TranscriptReplacementCompleted"), object: nil)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionCompleted"))) { _ in
+            refreshTranscriptFromCoreData()
+        }
+        .onAppear {
+            refreshTranscriptFromCoreData()
+        }
     }
 
     private var recordingTitleEditor: some View {
@@ -1344,7 +1354,6 @@ struct EditableTranscriptView: View {
             isSaving: isUpdatingRecordingName,
             onSave: renameRecordingFromTranscript
         )
-        .padding(.horizontal, 16)
     }
 
     private func saveTranscript() -> Bool {
@@ -1738,64 +1747,87 @@ struct SpeakerEditingView: View {
     }
 
     var body: some View {
+        #if targetEnvironment(macCatalyst)
+        VStack(spacing: 0) {
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Text("Edit Speakers").font(.headline)
+                Spacer()
+                Button("Apply") {
+                    applyNames()
+                }
+                .fontWeight(.semibold)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            Divider()
+            speakerForm
+        }
+        #else
         NavigationStack {
-            Form {
-                Section(header: Text("Rename Speakers"), footer: Text("Enter a name for each speaker. Changes apply to the entire transcript and are used in AI summaries.")) {
-                    ForEach(speakerIds, id: \.self) { speakerId in
-                        HStack(spacing: 12) {
-                            let hash = abs(speakerId.hashValue)
-                            let color = Self.speakerColors[hash % Self.speakerColors.count]
-
-                            Circle()
-                                .fill(color)
-                                .frame(width: 10, height: 10)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(defaultName(for: speakerId))
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-
-                                TextField(defaultName(for: speakerId), text: binding(for: speakerId))
-                                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                                    .autocapitalization(.words)
-                            }
-                        }
+            speakerForm
+                .navigationTitle("Edit Speakers")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("Cancel") { dismiss() }
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Apply") { applyNames() }
+                            .fontWeight(.semibold)
                     }
                 }
+        }
+        #endif
+    }
 
-                if speakerMappings.values.contains(where: { !$0.isEmpty }) {
-                    Section {
-                        Button("Clear All Names", role: .destructive) {
-                            for id in speakerIds {
-                                editingNames[id] = ""
-                            }
+    private var speakerForm: some View {
+        Form {
+            Section(header: Text("Rename Speakers"), footer: Text("Enter a name for each speaker. Changes apply to the entire transcript and are used in AI summaries.")) {
+                ForEach(speakerIds, id: \.self) { speakerId in
+                    HStack(spacing: 12) {
+                        let hash = abs(speakerId.hashValue)
+                        let color = Self.speakerColors[hash % Self.speakerColors.count]
+
+                        Circle()
+                            .fill(color)
+                            .frame(width: 10, height: 10)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(defaultName(for: speakerId))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+
+                            TextField(defaultName(for: speakerId), text: binding(for: speakerId))
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .autocapitalization(.words)
                         }
                     }
                 }
             }
-            .navigationTitle("Edit Speakers")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Apply") {
-                        // Write non-empty names to speakerMappings
-                        var newMappings: [String: String] = [:]
-                        for (id, name) in editingNames {
-                            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !trimmed.isEmpty {
-                                newMappings[id] = trimmed
-                            }
+
+            if speakerMappings.values.contains(where: { !$0.isEmpty }) {
+                Section {
+                    Button("Clear All Names", role: .destructive) {
+                        for id in speakerIds {
+                            editingNames[id] = ""
                         }
-                        speakerMappings = newMappings
-                        dismiss()
                     }
-                    .fontWeight(.semibold)
                 }
             }
         }
+    }
+
+    private func applyNames() {
+        var newMappings: [String: String] = [:]
+        for (id, name) in editingNames {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                newMappings[id] = trimmed
+            }
+        }
+        speakerMappings = newMappings
+        dismiss()
     }
 
     private func defaultName(for speakerId: String) -> String {
@@ -1822,32 +1854,35 @@ struct TranscriptDetailView: View {
     @State private var locationAddress: String?
     
     var body: some View {
+        // NavigationStack { Form } is the only sheet pattern that scrolls reliably
+        // on Mac Catalyst. See feedback_mac_catalyst_scrollview.md.
         NavigationStack {
-            VStack {
+            Form {
                 if transcriptText.isEmpty {
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                        Text("Generating transcript...")
-                            .font(.headline)
-                            .foregroundColor(.primary)
+                    Section {
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 16) {
+                                ProgressView().scaleEffect(1.5)
+                                Text("Generating transcript...")
+                                    .font(.headline)
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 40)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
+                    Section {
+                        VStack(alignment: .leading, spacing: 6) {
                             Text(recording.recordingName ?? "Unknown Recording")
-                                .font(.title2)
+                                .font(.title3)
                                 .fontWeight(.bold)
-                                .foregroundColor(.primary)
-                            
                             Text(UserPreferences.shared.formatMediumDateTime(recording.recordingDate ?? Date()))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                            
                             if let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
                                let locationData = TranscriptsView.loadLocationDataForRecording(url: recordingURL) {
-                                HStack {
+                                HStack(spacing: 4) {
                                     Image(systemName: "location.fill")
                                         .font(.caption)
                                         .foregroundColor(.accentColor)
@@ -1856,15 +1891,15 @@ struct TranscriptDetailView: View {
                                         .foregroundColor(.accentColor)
                                 }
                             }
-                            
-                            Divider()
-                            
-                            Text(transcriptText)
-                                .font(.body)
-                                .foregroundColor(.primary)
-                                .lineSpacing(4)
                         }
-                        .padding()
+                        .padding(.vertical, 4)
+                    }
+
+                    Section {
+                        Text(transcriptText)
+                            .font(.body)
+                            .lineSpacing(4)
+                            .textSelection(.enabled)
                     }
                 }
             }
@@ -1872,9 +1907,7 @@ struct TranscriptDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
+                    Button("Done") { dismiss() }
                 }
             }
             .onAppear {

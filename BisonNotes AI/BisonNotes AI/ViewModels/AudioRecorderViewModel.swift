@@ -474,18 +474,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			return
 		}
 		AppLog.shared.recording("startRecording: microphone permission granted")
-		Task {
-			do {
-				try await enhancedAudioSessionManager.configureMixedAudioSession()
-				AppLog.shared.recording("Mac: mixed audio session configured")
-				await applySelectedInputToSession()
-			} catch {
-				AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
-				errorMessage = "Failed to set up audio: \(error.localizedDescription)"
-				return
-			}
-			setupRecording()
-		}
+		// Skip AVAudioSession.setCategory/setActive on Mac — those calls communicate
+		// with mediaserverd via Mach ports that don't exist on macOS, flooding the
+		// log. AVAudioRecorder uses the default CoreAudio input directly on Mac.
+		setupRecording()
 	}
 	#endif
 

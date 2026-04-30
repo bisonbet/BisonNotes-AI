@@ -335,14 +335,40 @@ struct AISettingsView: View {
             AWSBedrockSettingsView()
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
+            #if targetEnvironment(macCatalyst)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("On-Device AI").font(.headline)
+                    Spacer()
+                    Button("Done") { showingOnDeviceLLMSettings = false }.buttonStyle(.bordered)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                Divider()
+                OnDeviceLLMSettingsView()
+            }
+            #else
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
+            #endif
         }
         .sheet(isPresented: $showingMLXSwiftSettings) {
+            #if targetEnvironment(macCatalyst)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("MLX Swift").font(.headline)
+                    Spacer()
+                    Button("Done") { showingMLXSwiftSettings = false }.buttonStyle(.bordered)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                Divider()
+                MLXSwiftSettingsView()
+            }
+            #else
             NavigationStack {
                 MLXSwiftSettingsView()
             }
+            #endif
         }
         .fullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {

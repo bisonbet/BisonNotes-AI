@@ -60,6 +60,9 @@ struct SimpleSettingsView: View {
     @State private var showingHelpDocumentation = false
     @State private var showingOnDeviceAIDownload = false
     @State private var showingMistralOnboarding = false
+    #if targetEnvironment(macCatalyst)
+    @State private var showingMacScrollDiagnostic = false
+    #endif
     
     var body: some View {
         AdaptiveNavigationWrapper {
@@ -122,24 +125,31 @@ struct SimpleSettingsView: View {
             }
         }
         .sheet(isPresented: $showingAdvancedSettings) {
-            NavigationStack {
-                SettingsView()
-                    .environmentObject(recorderVM)
-                    .environmentObject(appCoordinator)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button("Done") {
-                                showingAdvancedSettings = false
-                            }
-                        }
-                    }
-            }
+            // SettingsView provides its own NavigationStack and Done toolbar.
+            SettingsView()
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
+            #if targetEnvironment(macCatalyst)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("On-Device AI Settings")
+                        .font(.headline)
+                    Spacer()
+                    Button("Done") { showingOnDeviceLLMSettings = false }
+                        .buttonStyle(.bordered)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                Divider()
+                OnDeviceLLMSettingsView()
+            }
+            #else
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
+            #endif
         }
         .sheet(isPresented: $showingHelpDocumentation) {
             #if !targetEnvironment(macCatalyst)
@@ -165,6 +175,11 @@ struct SimpleSettingsView: View {
                 }
             )
         }
+        #if targetEnvironment(macCatalyst)
+        .sheet(isPresented: $showingMacScrollDiagnostic) {
+            MacScrollDiagnosticView()
+        }
+        #endif
         .fullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
                 // Mistral onboarding completed — mark first setup done and navigate
@@ -200,6 +215,20 @@ struct SimpleSettingsView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color.blue.opacity(0.1))
                 )
+
+                #if targetEnvironment(macCatalyst)
+                Button("Scroll Tests") {
+                    showingMacScrollDiagnostic = true
+                }
+                .font(.caption)
+                .foregroundColor(.orange)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.orange.opacity(0.1))
+                )
+                #endif
             }
             .padding(.top, 20)
             

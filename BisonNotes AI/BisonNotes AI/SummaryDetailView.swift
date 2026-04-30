@@ -33,7 +33,6 @@ struct SummaryDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
-    @State private var expandedSections: Set<String> = ["summary"]
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var isRegenerating = false
     @State private var regeneratingJobId: UUID?
@@ -108,92 +107,51 @@ struct SummaryDetailView: View {
     }
     
     var body: some View {
+        // NavigationStack { Form } is the only sheet pattern that scrolls reliably
+        // on Mac Catalyst. See feedback_mac_catalyst_scrollview.md.
         NavigationStack {
-            content
-                .navigationTitle("Summary")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button {
-                            showingExportFormatPicker = true
-                        } label: {
-                            HStack(spacing: 4) {
-                                if isExporting {
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                    if let activeExportFormat {
-                                        Text("Exporting \(activeExportFormat.displayName)...")
-                                            .font(.caption)
-                                    } else {
-                                        Text("Exporting...")
-                                            .font(.caption)
-                                    }
-                                } else {
-                                    Image(systemName: "square.and.arrow.up")
-                                    Text("Export")
-                                        .font(.caption)
-                                }
+            Form {
+                Section { locationSection }
+                Section { headerSection }
+                Section { summarySection }
+                Section { tasksSection }
+                Section { remindersSection }
+                Section { titlesSection }
+                Section { attachmentsSection }
+                Section { dateTimeEditorSection }
+                Section { metadataSection }
+                Section { regenerateSection }
+            }
+            .navigationTitle("Summary")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        showingExportFormatPicker = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            if isExporting {
+                                ProgressView().scaleEffect(0.8)
+                                Text(activeExportFormat.map { "Exporting \($0.displayName)..." } ?? "Exporting...")
+                                    .font(.caption)
+                            } else {
+                                Image(systemName: "square.and.arrow.up")
+                                Text("Export").font(.caption)
                             }
                         }
-                        .disabled(isExporting)
                     }
-
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Done") {
-                            dismiss()
-                        }
-                    }
+                    .disabled(isExporting)
                 }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
         .configurationWarnings(
             showingTranscriptionWarning: .constant(false),
             showingAIWarning: $showingAIWarning,
-            onSettingsRequested: {
-                // Navigate to settings - you might want to implement navigation to AI settings
-                // For now, just dismiss the alert
-            }
+            onSettingsRequested: {}
         )
-    }
-    
-    private var content: some View {
-        VStack(spacing: 0) {
-            // Location Section - Shows map or add location option
-            locationSection
-            
-            // Enhanced Summary Content
-            ScrollView([.vertical], showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Header Section
-                    headerSection
-                    
-                    // Summary Section (Expandable)
-                    summarySection
-                    
-                    // Tasks Section (Expandable)
-                    tasksSection
-                    
-                    // Reminders Section (Expandable)
-                    remindersSection
-                    
-                    // Titles Section (Expandable)
-                    titlesSection
-
-                    // Attachments + Note Section
-                    attachmentsSection
-                    
-                    // Date/Time Editor Section
-                    dateTimeEditorSection
-                    
-                    // Metadata Section (Expandable, moved to bottom)
-                    metadataSection
-                    
-                    // Regenerate Button Section
-                    regenerateSection
-                }
-                .padding(.vertical)
-                .padding(.horizontal, 16) // Apple's recommended margin for text readability
-            }
-        }
         .onAppear {
             // Debug summary data being displayed
             AppLog.shared.summarization("SummaryDetailView opened: summary=\(summaryData.summary.count) chars, tasks=\(summaryData.tasks.count), reminders=\(summaryData.reminders.count), titles=\(summaryData.titles.count)", level: .debug)
@@ -322,34 +280,33 @@ struct SummaryDetailView: View {
         }
         .sheet(isPresented: $showingTextAttachment) {
             NavigationStack {
-                ScrollView {
-                    Text(selectedAttachmentText)
-                        .font(.body.monospaced())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
+                Form {
+                    Section {
+                        Text(selectedAttachmentText)
+                            .font(.body.monospaced())
+                            .textSelection(.enabled)
+                    }
                 }
                 .navigationTitle(selectedAttachmentName)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Done") {
-                            showingTextAttachment = false
-                        }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") { showingTextAttachment = false }
                     }
                 }
             }
         }
         .sheet(isPresented: $showingPDFAttachment) {
             if let selectedAttachmentPDFURL {
+                // SummaryAttachmentPDFView wraps PDFKit which handles its own
+                // scrolling natively, so a NavigationStack toolbar is enough.
                 NavigationStack {
                     SummaryAttachmentPDFView(url: selectedAttachmentPDFURL)
                         .navigationTitle(selectedAttachmentName)
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbar {
-                            ToolbarItem(placement: .topBarTrailing) {
-                                Button("Done") {
-                                    showingPDFAttachment = false
-                                }
+                            ToolbarItem(placement: .navigationBarTrailing) {
+                                Button("Done") { showingPDFAttachment = false }
                             }
                         }
                 }
@@ -667,11 +624,8 @@ struct SummaryDetailView: View {
                 metadataRow(title: "Processing Time", value: formattedProcessingTime(summaryData.processingTime), icon: "timer")
             }
         }
-        .onTapGesture {
-            toggleSection("metadata")
-        }
     }
-    
+
     private func metadataRow(title: String, value: String, icon: String, valueColor: Color = .primary) -> some View {
         HStack {
             Image(systemName: icon)
@@ -711,9 +665,6 @@ struct SummaryDetailView: View {
                 .padding(.top, 4)
                 .textSelection(.enabled)
         }
-        .onTapGesture {
-            toggleSection("summary")
-        }
     }
     
     // MARK: - Tasks Section
@@ -745,11 +696,8 @@ struct SummaryDetailView: View {
                 .padding(.top, 4)
             }
         }
-        .onTapGesture {
-            toggleSection("tasks")
-        }
     }
-    
+
     // MARK: - Reminders Section
     
     private var remindersSection: some View {
@@ -779,11 +727,8 @@ struct SummaryDetailView: View {
                 .padding(.top, 4)
             }
         }
-        .onTapGesture {
-            toggleSection("reminders")
-        }
     }
-    
+
     // MARK: - Titles Section
     
     private var titlesSection: some View {
@@ -867,9 +812,6 @@ struct SummaryDetailView: View {
                     .padding(.top, 4)
                 }
             }
-        }
-        .onTapGesture {
-            toggleSection("titles")
         }
         .sheet(isPresented: $showingTitleSelector) {
             TitleSelectorView(
@@ -1340,14 +1282,6 @@ struct SummaryDetailView: View {
                 .italic()
         }
         .padding(.top, 4)
-    }
-    
-    private func toggleSection(_ section: String) {
-        if expandedSections.contains(section) {
-            expandedSections.remove(section)
-        } else {
-            expandedSections.insert(section)
-        }
     }
     
     private func formatDate(_ date: Date) -> String {
