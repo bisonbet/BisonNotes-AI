@@ -10,6 +10,7 @@ import AVFoundation
 import CoreLocation
 
 struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var regenerationManager: SummaryRegenerationManager
@@ -52,38 +53,44 @@ struct SettingsView: View {
     }
     
     var body: some View {
-        ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    headerSection
-                    preferencesSection
-                    aiEngineSection
-                    transcriptionSection
-                    microphoneSection
-                    advancedSection
-                    debugSection
-
-
-                    Spacer(minLength: 40)
-                }
-                .frame(maxWidth: 700)
-                .frame(maxWidth: .infinity)
+        // NavigationStack { Form } is the only sheet pattern that scrolls reliably
+        // on Mac Catalyst — Form is UITableView-backed, ScrollView is not. See
+        // feedback_mac_catalyst_scrollview.md for the diagnostic that confirmed this.
+        NavigationStack {
+            Form {
+                preferencesSection
+                aiEngineSection
+                transcriptionSection
+                microphoneSection
+                locationSection
+                iCloudSyncSection
+                comedyModeSection
+                experimentalSection
+                debugTroubleshootingSection
+                aboutSection
             }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
         .alert("Regeneration Complete", isPresented: $regenerationManager.showingRegenerationAlert) {
             Button("OK") {
                 regenerationManager.showingRegenerationAlert = false
             }
         } message: {
-            Text("Regeneration completed successfully") // Use default message since regenerationAlertMessage doesn't exist
+            Text("Regeneration completed successfully")
         }
         .onAppear {
             refreshEngineStatuses()
-            // Fetch available microphone inputs
             Task {
                 await recorderVM.fetchInputs()
             }
         }
         .onChange(of: selectedAIEngine) { _, newEngine in
-            // Immediately update the SummaryManager when user changes AI engine selection
             SummaryManager.shared.setEngine(newEngine)
             AppLog.shared.log("SettingsView: Updated AI engine to '\(newEngine)'", level: .debug, category: .general)
         }
@@ -91,38 +98,28 @@ struct SettingsView: View {
             OnDeviceLLMDownloadManager.shared.refreshModelStatus()
 
             if !newValue {
-                // Disable the MLX engine itself so it no longer appears available
                 UserDefaults.standard.set(false, forKey: MLXSwiftSettingsKeys.enabled)
 
-                // Migrate away from any experimental on-device model that is no longer available
                 let currentModelId = UserDefaults.standard.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId) ?? ""
                 if !OnDeviceLLMModelInfo.availableModels.contains(where: { $0.id == currentModelId }) {
                     if let firstAvailable = OnDeviceLLMModelInfo.availableModels.first {
                         UserDefaults.standard.set(firstAvailable.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
                     }
-                    // If availableModels is empty (e.g. <6GB device), leave the stored ID as-is;
-                    // it will be re-used if experimental is re-enabled later.
                 }
 
-                // Determine the best fallback engine when on-device AI has no usable models.
-                // On <6GB devices, all on-device models are experimental, so both MLX and
-                // On-Device AI become unusable when experimental mode is disabled.
                 let onDeviceHasModels = !OnDeviceLLMModelInfo.availableModels.isEmpty
                 let fallbackEngine: String
                 if onDeviceHasModels {
                     fallbackEngine = AIEngineType.onDeviceLLM.rawValue
                 } else {
-                    // <6GB device: no non-experimental on-device models remain; prefer Apple Native
                     fallbackEngine = AIEngineType.appleNative.rawValue
                 }
 
-                // Switch away from MLX Swift
                 if selectedAIEngine == AIEngineType.mlxSwift.rawValue {
                     selectedAIEngine = fallbackEngine
                     SummaryManager.shared.setEngine(fallbackEngine)
                 }
 
-                // Switch away from On-Device AI if it no longer has any usable models
                 if selectedAIEngine == AIEngineType.onDeviceLLM.rawValue && !onDeviceHasModels {
                     selectedAIEngine = fallbackEngine
                     SummaryManager.shared.setEngine(fallbackEngine)
@@ -175,85 +172,35 @@ struct SettingsView: View {
         }
     }
     
-    private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Settings")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-
-                Spacer()
-            }
-            .padding(.top, 20)
-            .padding(.horizontal, 24)
-        }
-    }
-    
     private var preferencesSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Preferences")
-                .font(.headline)
-                .foregroundColor(.primary)
-                .padding(.horizontal, 24)
-            
-            Button(action: {
+        Section("Preferences") {
+            Button {
                 showingPreferences = true
-            }) {
+            } label: {
                 HStack {
                     Image(systemName: "slider.horizontal.3")
-                        .font(.title2)
                         .foregroundColor(.indigo)
-                        .frame(width: 32)
-                    
-                    VStack(alignment: .leading, spacing: 4) {
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("Display Preferences")
-                            .font(.body)
-                            .fontWeight(.medium)
                             .foregroundColor(.primary)
-                        
                         Text("Time format and display options")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    
                     Spacer()
-                    
                     Image(systemName: "chevron.right")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.indigo.opacity(0.1))
-                )
+                .contentShape(Rectangle())
             }
-            .buttonStyle(PlainButtonStyle())
-            .padding(.horizontal, 24)
+            .buttonStyle(.plain)
         }
     }
     
     private var microphoneSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Microphone Selection")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                Spacer()
-                Button(action: {
-                    Task {
-                        await recorderVM.fetchInputs()
-                    }
-                }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.title3)
-                        .foregroundColor(.accentColor)
-                }
-            }
-            .padding(.horizontal, 24)
-            
+        Section {
             if recorderVM.availableInputs.isEmpty {
                 HStack {
                     Image(systemName: "exclamationmark.triangle")
@@ -261,767 +208,404 @@ struct SettingsView: View {
                     Text("No microphones found.")
                         .foregroundColor(.secondary)
                 }
-                .padding(.horizontal, 24)
             } else {
-                microphonePicker
-            }
-        }
-    }
-    
-    private var microphonePicker: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(recorderVM.availableInputs, id: \.uid) { input in
-                HStack {
-                    Button(action: {
+                ForEach(recorderVM.availableInputs, id: \.uid) { input in
+                    Button {
                         recorderVM.selectedInput = input
                         recorderVM.setPreferredInput()
-                    }) {
+                    } label: {
                         HStack {
                             Image(systemName: recorderVM.selectedInput?.uid == input.uid ? "largecircle.fill.circle" : "circle")
                                 .foregroundColor(recorderVM.selectedInput?.uid == input.uid ? .blue : .gray)
-                                .font(.title2)
-                            
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(input.portName)
-                                    .font(.body)
-                                    .fontWeight(.medium)
                                     .foregroundColor(.primary)
-                                
                                 Text(input.portType.rawValue)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
-                            
                             Spacer()
                         }
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(recorderVM.selectedInput?.uid == input.uid ? Color.blue.opacity(0.1) : Color.clear)
-                )
+            }
+        } header: {
+            HStack {
+                Text("Microphone Selection")
+                Spacer()
+                Button {
+                    Task { await recorderVM.fetchInputs() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
             }
         }
     }
     
 
     private var aiEngineSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("AI Processing")
-                .font(.headline)
-                .foregroundColor(.primary)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Current Engine:")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                    Text(selectedAIEngine)
-                        .font(.body)
-                        .fontWeight(.medium)
-                        .foregroundColor(.primary)
-                }
-                
-                // Engine status indicator
-                HStack {
-                    Text("Status:")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                    
-                    // TODO: Update to use new Core Data system
-                    // let engineStatus = appCoordinator.registryManager.getEngineAvailabilityStatus()[selectedAIEngine]
-                    let statusColor: Color = .green // Temporary: assume available
-                    let statusText = "Available" // Temporary: assume available
-                    
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(statusColor)
-                            .frame(width: 8, height: 8)
-                        Text(statusText)
-                            .font(.body)
-                            .fontWeight(.medium)
-                            .foregroundColor(statusColor)
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-            
+        Section("AI Processing") {
             HStack {
-                Button(action: {
-                    showingAISettings = true
-                }) {
-                    HStack {
-                        Text("Configure AI Engines")
-                        Spacer()
-                        Image(systemName: "arrow.right")
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.blue.opacity(0.1))
-                    )
-                    .foregroundColor(.blue)
-                }
-                
-                Button(action: {
-                    // TODO: Update to use new Core Data system
-                    // Task {
-                    //     await appCoordinator.registryManager.refreshEngineAvailability()
-                    // }
-                }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                }
-                .padding(.horizontal, 8)
+                Text("Current Engine")
+                Spacer()
+                Text(selectedAIEngine)
+                    .foregroundColor(.secondary)
             }
-            .padding(.horizontal, 24)
-            
+            HStack {
+                Text("Status")
+                Spacer()
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(.green)
+                        .frame(width: 8, height: 8)
+                    Text("Available")
+                        .foregroundColor(.secondary)
+                }
+            }
+            Button {
+                showingAISettings = true
+            } label: {
+                HStack {
+                    Text("Configure AI Engines")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
-    
+
     private var transcriptionSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Transcription Engine")
-                .font(.headline)
-                .foregroundColor(.primary)
-                .padding(.horizontal, 24)
-            
+        Section("Transcription Engine") {
             HStack {
-                Text("Current Engine:")
-                    .font(.body)
-                    .foregroundColor(.secondary)
+                Text("Current Engine")
+                Spacer()
                 Text(TranscriptionEngine(rawValue: selectedTranscriptionEngine)?.rawValue ?? "On Device")
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
+                    .foregroundColor(.secondary)
             }
-            .padding(.horizontal, 24)
-            
-            Button(action: {
+            Button {
                 showingTranscriptionSettings = true
-            }) {
+            } label: {
                 HStack {
                     Text("Configure Transcription")
                     Spacer()
-                    Image(systemName: "arrow.right")
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.purple.opacity(0.1))
-                )
-                .foregroundColor(.purple)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 24)
+            .buttonStyle(.plain)
         }
     }
     
     
     
-    private var advancedSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Advanced Settings")
-                .font(.headline)
-                .foregroundColor(.primary)
-                .padding(.horizontal, 24)
-            
-            VStack(alignment: .leading, spacing: 8) {
-                // Location Services
-                VStack(spacing: 8) {
+    private var locationSection: some View {
+        Section {
+            Toggle("Location Services", isOn: Binding(
+                get: { recorderVM.isLocationTrackingEnabled },
+                set: { recorderVM.toggleLocationTracking($0) }
+            ))
+            if recorderVM.isLocationTrackingEnabled {
+                HStack {
+                    Image(systemName: locationStatusIcon)
+                        .foregroundColor(locationStatusColor)
+                    Text(locationStatusText)
+                        .font(.caption)
+                        .foregroundColor(locationStatusColor)
+                }
+            }
+        } footer: {
+            Text("Capture location data with recordings")
+        }
+    }
+
+    private var iCloudSyncSection: some View {
+        Section {
+            Toggle("Enable iCloud Sync", isOn: $iCloudManager.isEnabled)
+
+            if iCloudManager.isEnabled {
+                Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
+                Toggle("Include app settings", isOn: $iCloudBackupIncludeSettings)
+                Toggle("Include API keys (encrypted)", isOn: $iCloudBackupIncludeSensitiveSettings)
+                    .disabled(!iCloudBackupIncludeSettings)
+
+                Button {
+                    Task { await backupAllDataToiCloud() }
+                } label: {
+                    Label("Backup Now", systemImage: "icloud.and.arrow.up")
+                }
+                .disabled(isRunningCloudBackupAction)
+
+                Button {
+                    Task { await restoreAllDataFromiCloud() }
+                } label: {
+                    Label("Restore From iCloud", systemImage: "arrow.down.doc")
+                        .foregroundColor(.green)
+                }
+                .disabled(isRunningCloudBackupAction)
+
+                if isRunningCloudBackupAction {
                     HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Location Services")
-                                .font(.body)
-                                .foregroundColor(.primary)
-                            Text("Capture location data with recordings")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: Binding(
-                            get: { recorderVM.isLocationTrackingEnabled },
-                            set: { newValue in
-                                recorderVM.toggleLocationTracking(newValue)
-                            }
-                        ))
-                        .labelsHidden()
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .scaleEffect(0.8)
+                        Text("Working…")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                    
-                    // Location status indicator
-                    if recorderVM.isLocationTrackingEnabled {
+                }
+
+                if !cloudBackupActionMessage.isEmpty {
+                    Text(cloudBackupActionMessage)
+                        .font(.caption)
+                        .foregroundColor(cloudBackupActionIsError ? .red : .secondary)
+                }
+            }
+
+            if !iCloudManager.pendingConflicts.isEmpty {
+                ForEach(iCloudManager.pendingConflicts, id: \.summaryId) { conflict in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(conflict.localSummary.recordingName)
+                            .font(.caption)
+                        Text("Modified on different devices")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                         HStack {
-                            Image(systemName: locationStatusIcon)
-                                .font(.caption)
-                                .foregroundColor(locationStatusColor)
-                            Text(locationStatusText)
-                                .font(.caption)
-                                .foregroundColor(locationStatusColor)
-                            Spacer()
+                            Button("Use Local") {
+                                Task { try? await iCloudManager.resolveConflict(conflict, useLocal: true) }
+                            }
+                            .buttonStyle(.bordered)
+                            Button("Use Cloud") {
+                                Task { try? await iCloudManager.resolveConflict(conflict, useLocal: false) }
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.green)
                         }
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    Rectangle()
-                        .fill(Color(.systemGray6))
-                        .opacity(0.3)
-                )
-                
-                // iCloud Sync
-                VStack(spacing: 8) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("iCloud Sync")
-                                .font(.body)
-                                .foregroundColor(.primary)
-                            Text("Sync summaries, transcripts, and settings across your devices")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Toggle("", isOn: $iCloudManager.isEnabled)
-                            .labelsHidden()
-                    }
-
-                    // Show sync status
-                    HStack {
-                        Text("Status:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(iCloudManager.isEnabled ? Color.green : Color.gray)
-                                .frame(width: 8, height: 8)
-                            Text(iCloudManager.isEnabled ? "Enabled" : "Disabled")
-                                .font(.caption)
-                                .foregroundColor(iCloudManager.isEnabled ? .green : .gray)
-                        }
-                    }
-                    .padding(.top, 4)
-
-                    if iCloudManager.isEnabled {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
-                                .font(.caption)
-
-                            Toggle("Include app settings", isOn: $iCloudBackupIncludeSettings)
-                                .font(.caption)
-
-                            Toggle("Include API keys and credentials (iCloud encrypted)", isOn: $iCloudBackupIncludeSensitiveSettings)
-                                .font(.caption)
-                                .disabled(!iCloudBackupIncludeSettings)
-
-                            if isRunningCloudBackupAction {
-                                ProgressView()
-                                    .progressViewStyle(.circular)
-                                    .scaleEffect(0.8)
-                            }
-
-                            HStack(spacing: 8) {
-                                Button(action: {
-                                    Task {
-                                        await backupAllDataToiCloud()
-                                    }
-                                }) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "icloud.and.arrow.up")
-                                        Text("Backup Now")
-                                    }
-                                    .font(.caption)
-                                    .foregroundColor(.blue)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.blue.opacity(0.1))
-                                    )
-                                }
-                                .disabled(isRunningCloudBackupAction)
-
-                                Button(action: {
-                                    Task {
-                                        await restoreAllDataFromiCloud()
-                                    }
-                                }) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "arrow.down.doc")
-                                        Text("Restore")
-                                    }
-                                    .font(.caption)
-                                    .foregroundColor(.green)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.green.opacity(0.1))
-                                    )
-                                }
-                                .disabled(isRunningCloudBackupAction)
-                            }
-
-                            if !cloudBackupActionMessage.isEmpty {
-                                Text(cloudBackupActionMessage)
-                                    .font(.caption2)
-                                    .foregroundColor(cloudBackupActionIsError ? .red : .secondary)
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
-
-                    // Show conflicts if any exist
-                    if !iCloudManager.pendingConflicts.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Sync Conflicts (\(iCloudManager.pendingConflicts.count))")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundColor(.orange)
-
-                            ForEach(iCloudManager.pendingConflicts, id: \.summaryId) { conflict in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(conflict.localSummary.recordingName)
-                                            .font(.caption)
-                                            .foregroundColor(.primary)
-                                        Text("Modified on different devices")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-
-                                    Spacer()
-
-                                    HStack(spacing: 8) {
-                                        Button("Use Local") {
-                                            Task {
-                                                try? await iCloudManager.resolveConflict(conflict, useLocal: true)
-                                            }
-                                        }
-                                        .font(.caption2)
-                                        .foregroundColor(.blue)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 4)
-                                                .fill(Color.blue.opacity(0.1))
-                                        )
-
-                                        Button("Use Cloud") {
-                                            Task {
-                                                try? await iCloudManager.resolveConflict(conflict, useLocal: false)
-                                            }
-                                        }
-                                        .font(.caption2)
-                                        .foregroundColor(.green)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 4)
-                                                .fill(Color.green.opacity(0.1))
-                                        )
-                                    }
-                                }
-                                .padding(.vertical, 4)
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
-
-                    // Show errors if any exist
-                    if let error = iCloudManager.lastError {
-                        Text("Error: \(error)")
-                            .font(.caption)
-                            .foregroundColor(.red)
-                            .padding(.top, 4)
-                    }
-
-                    if !iCloudManager.isEnabled {
-                        Button(action: {
-                            Task {
-                                do {
-                                    // Check for iCloud data using recovery flag that works even when sync is disabled
-                                    let cloudSummaries = try await iCloudManager.fetchSummariesFromiCloud(forRecovery: true)
-
-                                    let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
-                                    let localSummaryIds = Set(localSummaries.compactMap { $0.id })
-                                    let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
-
-                                    if !cloudOnlySummaries.isEmpty {
-                                        // Show alert asking user if they want to download
-                                        await MainActor.run {
-                                            let alert = UIAlertController(
-                                                title: "iCloud Data Found",
-                                                message: "We found \(cloudOnlySummaries.count) summaries in your iCloud that aren't on this device. Would you like to download them?",
-                                                preferredStyle: .alert
-                                            )
-
-                                            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-                                            alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
-                                                Task {
-                                                    do {
-                                                        let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
-                                                        AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
-                                                    } catch {
-                                                        AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
-                                                    }
-                                                }
-                                            })
-
-                                            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                               let rootViewController = windowScene.windows.first?.rootViewController {
-                                                rootViewController.present(alert, animated: true)
-                                            }
-                                        }
-                                    } else {
-                                        // Show message that no cloud data was found
-                                        await MainActor.run {
-                                            let alert = UIAlertController(
-                                                title: "No iCloud Data",
-                                                message: "No summaries were found in your iCloud account.",
-                                                preferredStyle: .alert
-                                            )
-
-                                            alert.addAction(UIAlertAction(title: "OK", style: .default))
-
-                                            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                               let rootViewController = windowScene.windows.first?.rootViewController {
-                                                rootViewController.present(alert, animated: true)
-                                            }
-                                        }
-                                    }
-                                } catch {
-                                    AppLog.shared.log("Failed to check for iCloud data: \(error)", level: .error, category: .general)
-                                    await MainActor.run {
-                                        let alert = UIAlertController(
-                                            title: "Check Failed",
-                                            message: "Could not check for iCloud data: \(error.localizedDescription)",
-                                            preferredStyle: .alert
-                                        )
-
-                                        alert.addAction(UIAlertAction(title: "OK", style: .default))
-
-                                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                           let rootViewController = windowScene.windows.first?.rootViewController {
-                                            rootViewController.present(alert, animated: true)
-                                        }
-                                    }
-                                }
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: "icloud.and.arrow.down")
-                                Text("Check for iCloud Data")
-                            }
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.blue.opacity(0.1))
-                            )
-                        }
-                        .padding(.top, 8)
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    Rectangle()
-                        .fill(Color(.systemGray6))
-                        .opacity(0.3)
-                )
             }
+
+            if let error = iCloudManager.lastError {
+                Text("Error: \(error)")
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+
+            if !iCloudManager.isEnabled {
+                Button {
+                    Task {
+                        do {
+                            let cloudSummaries = try await iCloudManager.fetchSummariesFromiCloud(forRecovery: true)
+
+                            let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+                            let localSummaryIds = Set(localSummaries.compactMap { $0.id })
+                            let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
+
+                            if !cloudOnlySummaries.isEmpty {
+                                await MainActor.run {
+                                    let alert = UIAlertController(
+                                        title: "iCloud Data Found",
+                                        message: "We found \(cloudOnlySummaries.count) summaries in your iCloud that aren't on this device. Would you like to download them?",
+                                        preferredStyle: .alert
+                                    )
+                                    alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+                                    alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
+                                        Task {
+                                            do {
+                                                let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
+                                                AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
+                                            } catch {
+                                                AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                                            }
+                                        }
+                                    })
+                                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                                       let rootViewController = windowScene.windows.first?.rootViewController {
+                                        rootViewController.present(alert, animated: true)
+                                    }
+                                }
+                            } else {
+                                await MainActor.run {
+                                    let alert = UIAlertController(
+                                        title: "No iCloud Data",
+                                        message: "No summaries were found in your iCloud account.",
+                                        preferredStyle: .alert
+                                    )
+                                    alert.addAction(UIAlertAction(title: "OK", style: .default))
+                                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                                       let rootViewController = windowScene.windows.first?.rootViewController {
+                                        rootViewController.present(alert, animated: true)
+                                    }
+                                }
+                            }
+                        } catch {
+                            AppLog.shared.log("Failed to check for iCloud data: \(error)", level: .error, category: .general)
+                            await MainActor.run {
+                                let alert = UIAlertController(
+                                    title: "Check Failed",
+                                    message: "Could not check for iCloud data: \(error.localizedDescription)",
+                                    preferredStyle: .alert
+                                )
+                                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                                   let rootViewController = windowScene.windows.first?.rootViewController {
+                                    rootViewController.present(alert, animated: true)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Check for iCloud Data", systemImage: "icloud.and.arrow.down")
+                }
+            }
+        } header: {
+            HStack {
+                Text("iCloud Sync")
+                Spacer()
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(iCloudManager.isEnabled ? Color.green : Color.gray)
+                        .frame(width: 8, height: 8)
+                    Text(iCloudManager.isEnabled ? "Enabled" : "Disabled")
+                        .font(.caption)
+                }
+            }
+        } footer: {
+            Text("Sync summaries, transcripts, and settings across your devices")
         }
     }
     
-    private var debugSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Comedy Mode
-            VStack(spacing: 8) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Comedy Mode")
-                            .font(.body)
-                            .foregroundColor(.primary)
-                        Text("Make AI summaries entertaining with a comedic twist. All information is preserved — just delivered with flair.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: $comedyModeEnabled)
-                        .labelsHidden()
-                }
-
-                if comedyModeEnabled {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Comedy Style")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.secondary)
-
-                        HStack(spacing: 12) {
-                            Button(action: { comedyModeStyle = "snarky" }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: comedyModeStyle == "snarky" ? "checkmark.circle.fill" : "circle")
-                                        .foregroundColor(comedyModeStyle == "snarky" ? .orange : .secondary)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Snarky")
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-                                        Text("Dry wit & sarcasm")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(comedyModeStyle == "snarky" ? Color.orange.opacity(0.15) : Color(.systemGray5).opacity(0.5))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(comedyModeStyle == "snarky" ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 1)
-                                )
-                            }
-                            .buttonStyle(PlainButtonStyle())
-
-                            Button(action: { comedyModeStyle = "funny" }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: comedyModeStyle == "funny" ? "checkmark.circle.fill" : "circle")
-                                        .foregroundColor(comedyModeStyle == "funny" ? .purple : .secondary)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Funny")
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-                                        Text("Goofy & absurd")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(comedyModeStyle == "funny" ? Color.purple.opacity(0.15) : Color(.systemGray5).opacity(0.5))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(comedyModeStyle == "funny" ? Color.purple.opacity(0.5) : Color.clear, lineWidth: 1)
-                                )
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
-                    .padding(.top, 4)
+    private var comedyModeSection: some View {
+        Section {
+            Toggle("Comedy Mode", isOn: $comedyModeEnabled)
+            if comedyModeEnabled {
+                Picker("Style", selection: $comedyModeStyle) {
+                    Text("Snarky — dry wit & sarcasm").tag("snarky")
+                    Text("Funny — goofy & absurd").tag("funny")
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
-            .background(
-                Rectangle()
-                    .fill(Color(.systemGray6))
-                    .opacity(0.3)
-            )
+        } footer: {
+            Text("Make AI summaries entertaining with a comedic twist. All information is preserved — just delivered with flair.")
+        }
+    }
 
-            // Experimental On-Device AI Models
-            VStack(spacing: 8) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Enable experimental summary models and MLX AI engine")
-                            .font(.body)
-                            .foregroundColor(.primary)
-                        Text("Allow experimental local summary models and show the MLX Swift AI engine in AI settings. These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only LFM 2.5 available.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: $enableExperimentalModels)
-                        .labelsHidden()
+    private var experimentalSection: some View {
+        Section {
+            Toggle("Experimental summary models & MLX AI engine", isOn: $enableExperimentalModels)
+        } footer: {
+            Text("Allow experimental local summary models and show the MLX Swift AI engine in AI settings. These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only LFM 2.5 available.")
+        }
+    }
+
+    private var debugTroubleshootingSection: some View {
+        Section("Debug & Troubleshooting") {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Total Recordings Storage")
+                    Text("Space used by audio recordings")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
+                Spacer()
+                Text(totalRecordingsStorageString)
+                    .foregroundColor(.secondary)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
-            .background(
-                Rectangle()
-                    .fill(Color(.systemGray6))
-                    .opacity(0.3)
-            )
 
-            // Debug & Troubleshooting
-            Text("Debug & Troubleshooting")
-                .font(.headline)
-                .foregroundColor(.primary)
-                .padding(.horizontal, 24)
-
-            VStack(alignment: .leading, spacing: 8) {
-                // Storage Information
+            Button {
+                showingBackgroundProcessing = true
+            } label: {
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Total Recordings Storage")
-                            .font(.body)
-                            .foregroundColor(.primary)
-                        Text("Space used by audio recordings")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Text(totalRecordingsStorageString)
-                        .font(.body)
-                        .fontWeight(.medium)
-                        .foregroundColor(.primary)
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    Rectangle()
-                        .fill(Color(.systemGray6))
-                        .opacity(0.3)
-                )
-
-                // Background Processing
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("Background Processing")
-                            .font(.body)
                             .foregroundColor(.primary)
                         Text("Manage transcription and summarization jobs")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
-                    Button(action: {
-                        showingBackgroundProcessing = true
-                    }) {
-                        HStack {
-                            Text("Manage Jobs")
-                            Image(systemName: "arrow.right")
-                        }
+                    Image(systemName: "chevron.right")
                         .font(.caption)
-                        .foregroundColor(.blue)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.blue.opacity(0.1))
-                        )
-                    }
+                        .foregroundColor(.secondary)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    Rectangle()
-                        .fill(Color(.systemGray6))
-                        .opacity(0.3)
-                )
-
-                // Export Diagnostic Logs
-                VStack(spacing: 8) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Export Diagnostic Logs")
-                                .font(.body)
-                                .foregroundColor(.primary)
-                            Text("Email logs to developer for troubleshooting")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Button(action: {
-                            logExportError = nil
-                            withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = true }
-
-                            Task {
-                                do {
-                                    let url = try await Task.detached(priority: .userInitiated) {
-                                        try await LogExporter.exportLogs()
-                                    }.value
-
-                                    await MainActor.run {
-                                        LogEmailPresenter.shared.presentLogEmail(
-                                            logFileURL: url,
-                                            onPresented: {
-                                                withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
-                                            }
-                                        ) {
-                                            // Overlay is already gone; called on mail-sheet dismiss
-                                            withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
-                                        }
-                                    }
-                                } catch {
-                                    await MainActor.run {
-                                        withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
-                                        logExportError = error.localizedDescription
-                                    }
-                                }
-                            }
-                        }) {
-                            HStack {
-                                Text("Send Logs")
-                                Image(systemName: "envelope")
-                            }
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.blue.opacity(0.1))
-                            )
-                        }
-                        .disabled(isPreparingLogs)
-                        .opacity(isPreparingLogs ? 0.5 : 1.0)
-                    }
-                    if let logExportError {
-                        Text("Error: \(logExportError)")
-                            .font(.caption)
-                            .foregroundColor(.red)
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    Rectangle()
-                        .fill(Color(.systemGray6))
-                        .opacity(0.3)
-                )
+                .contentShape(Rectangle())
             }
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemBackground))
-                    .shadow(color: Color.black.opacity(0.05), radius: 1, x: 0, y: 1)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color(.systemGray5), lineWidth: 0.5)
-                    )
-                    .opacity(0.3)
-            )
+            .buttonStyle(.plain)
 
-            // About
-            Text("About")
-                .font(.headline)
-                .foregroundColor(.primary)
-                .padding(.horizontal, 24)
+            Button {
+                logExportError = nil
+                withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = true }
 
-            Button(action: {
+                Task {
+                    do {
+                        let url = try await Task.detached(priority: .userInitiated) {
+                            try await LogExporter.exportLogs()
+                        }.value
+
+                        await MainActor.run {
+                            LogEmailPresenter.shared.presentLogEmail(
+                                logFileURL: url,
+                                onPresented: {
+                                    withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
+                                }
+                            ) {
+                                withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
+                            }
+                        }
+                    } catch {
+                        await MainActor.run {
+                            withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
+                            logExportError = error.localizedDescription
+                        }
+                    }
+                }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Export Diagnostic Logs")
+                            .foregroundColor(.primary)
+                        Text("Email logs to developer for troubleshooting")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if isPreparingLogs {
+                        ProgressView().scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "envelope")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isPreparingLogs)
+
+            if let logExportError {
+                Text("Error: \(logExportError)")
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+        }
+    }
+
+    private var aboutSection: some View {
+        Section("About") {
+            Button {
                 showingAcknowledgements = true
-            }) {
+            } label: {
                 HStack {
                     Image(systemName: "hand.raised.fill")
                         .foregroundColor(.indigo)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Acknowledgements")
-                            .font(.body)
                             .foregroundColor(.primary)
                         Text("Open-source projects and licenses")
                             .font(.caption)
@@ -1032,34 +616,15 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.indigo.opacity(0.1))
-                )
+                .contentShape(Rectangle())
             }
-            .buttonStyle(PlainButtonStyle())
-            .padding(.horizontal, 24)
+            .buttonStyle(.plain)
 
-            // Advanced Troubleshooting
-            Button(action: {
+            Button(role: .destructive) {
                 showingTroubleshootingWarning = true
-            }) {
-                HStack {
-                    Image(systemName: "wrench.and.screwdriver")
-                    Text("Advanced Troubleshooting")
-                }
-                .font(.caption)
-                .foregroundColor(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.orange)
-                )
+            } label: {
+                Label("Advanced Troubleshooting", systemImage: "wrench.and.screwdriver")
             }
-            .padding(.horizontal, 24)
             .alert("Warning", isPresented: $showingTroubleshootingWarning) {
                 Button("Cancel", role: .cancel) { }
                 Button("OK") {

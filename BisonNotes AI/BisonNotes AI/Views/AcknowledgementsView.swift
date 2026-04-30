@@ -11,144 +11,76 @@ struct AcknowledgementsView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    headerSection
-                    directDependenciesSection
-                    forksSection
-                    transitiveDependenciesSection
-                    footerSection
-                }
-                .padding()
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                    .fontWeight(.medium)
-                }
-            }
-        }
-    }
-
-    private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Acknowledgements")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-                .foregroundColor(.primary)
-
-            Text("BisonNotes AI is built on the shoulders of outstanding open-source projects.")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-        }
-    }
-
-    private var directDependenciesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Direct Dependencies")
-                .font(.headline)
-                .foregroundColor(.primary)
-
-            ForEach(directDependencies) { dependency in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text(dependency.name)
-                            .font(.body)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                        Spacer()
-                        Text(dependency.license)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.secondary)
-                    }
-
-                    Text(dependency.description)
-                        .font(.caption)
+            Form {
+                Section {
+                    Text("BisonNotes AI is built on the shoulders of outstanding open-source projects.")
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Link(dependency.linkText, destination: dependency.url)
-                        .font(.caption)
                 }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color(.systemGray6))
-                )
-            }
-        }
-    }
 
-    private var forksSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Forked Repositories")
-                .font(.headline)
-                .foregroundColor(.primary)
-
-            Link("github.com/bisonbet", destination: URL(string: "https://github.com/bisonbet")!)
-                .font(.caption)
-
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(forkedRepositories) { repository in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Link(repository.name, destination: repository.url)
-                            .font(.body)
-                        Text(repository.description)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(.systemGray6))
-                    )
-                }
-            }
-        }
-    }
-
-    private var transitiveDependenciesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            DisclosureGroup("Transitive Dependencies", isExpanded: $showTransitiveDependencies) {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(transitiveDependencyGroups) { group in
+                Section("Direct Dependencies") {
+                    ForEach(directDependencies) { dependency in
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(group.title)
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.primary)
-
-                            ForEach(group.projects) { project in
-                                Link(project.name, destination: project.url)
+                            HStack {
+                                Text(dependency.name)
+                                    .fontWeight(.semibold)
+                                Spacer()
+                                Text(dependency.license)
                                     .font(.caption)
+                                    .foregroundColor(.secondary)
                             }
+                            Text(dependency.description)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Link(dependency.linkText, destination: dependency.url)
+                                .font(.caption)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+
+                Section("Forked Repositories") {
+                    Link("github.com/bisonbet", destination: URL(string: "https://github.com/bisonbet")!)
+                        .font(.caption)
+                    ForEach(forkedRepositories) { repository in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Link(repository.name, destination: repository.url)
+                            Text(repository.description)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+
+                Section {
+                    DisclosureGroup("Transitive Dependencies", isExpanded: $showTransitiveDependencies) {
+                        ForEach(transitiveDependencyGroups) { group in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(group.title)
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                ForEach(group.projects) { project in
+                                    Link(project.name, destination: project.url)
+                                        .font(.caption)
+                                }
+                            }
+                            .padding(.vertical, 4)
                         }
                     }
+                } footer: {
+                    Text("These are brought in through AWS SDK and other direct dependencies. All dependencies are MIT or Apache 2.0 licensed. See each project repository for full terms.")
                 }
-                .padding(.top, 6)
             }
-            .font(.headline)
-
-            Text("These are brought in through AWS SDK and other direct dependencies.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            .navigationTitle("Acknowledgements")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(.systemGray6))
-        )
-    }
-
-    private var footerSection: some View {
-        Text("All dependencies are MIT or Apache 2.0 licensed. See each project repository for full terms.")
-            .font(.caption)
-            .foregroundColor(.secondary)
-            .textSelection(.enabled)
     }
 }
 

@@ -327,6 +327,41 @@ struct SummariesView: View {
     // MARK: - Date Filter Sheet
 
     private var dateFilterSheet: some View {
+        #if targetEnvironment(macCatalyst)
+        VStack(spacing: 0) {
+            HStack {
+                Button("Cancel") { showDateFilter = false }
+                Spacer()
+                Text("Filter by Date").font(.headline)
+                Spacer()
+                Button("Apply") {
+                    isDateFilterActive = true
+                    showDateFilter = false
+                    refreshTrigger.toggle()
+                }
+                .fontWeight(.semibold)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            Divider()
+            Form {
+                Section {
+                    DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
+                    DatePicker("To", selection: $dateFilterEnd, in: dateFilterStart...Date(), displayedComponents: .date)
+                }
+                if isDateFilterActive {
+                    Section {
+                        Button(role: .destructive) {
+                            isDateFilterActive = false
+                            showDateFilter = false
+                            refreshTrigger.toggle()
+                        } label: {
+                            HStack { Spacer(); Text("Clear Filter"); Spacer() }
+                        }
+                    }
+                }
+            }
+        }
+        #else
         NavigationStack {
             Form {
                 Section {
@@ -367,6 +402,7 @@ struct SummariesView: View {
                 }
             }
         }
+        #endif
     }
 
     // MARK: - Recordings List View

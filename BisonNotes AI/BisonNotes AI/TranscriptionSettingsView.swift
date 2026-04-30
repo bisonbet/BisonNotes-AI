@@ -48,9 +48,22 @@ struct TranscriptionSettingsView: View {
                 WhisperSettingsView()
             }
             .sheet(isPresented: $showingFluidAudioSettings) {
+                #if targetEnvironment(macCatalyst)
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("On Device Transcription").font(.headline)
+                        Spacer()
+                        Button("Done") { showingFluidAudioSettings = false }.buttonStyle(.bordered)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    Divider()
+                    FluidAudioSettingsView()
+                }
+                #else
                 NavigationStack {
                     FluidAudioSettingsView()
                 }
+                #endif
             }
             .sheet(isPresented: $showingOpenAISettings) {
                 OpenAISettingsView()
