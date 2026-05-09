@@ -39,7 +39,9 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          # Always post the review summary to the PR, even when no inline comments are needed.
+          # Post (and update) a single sticky comment on the PR with the review summary.
+          use_sticky_comment: true
+          # Also write the report to the GitHub Actions step summary as a backup.
           display_report: true
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
