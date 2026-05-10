@@ -1617,34 +1617,10 @@ struct SummaryDetailView: View {
     private func rebuildSummaryData(userNotes: String?, attachments: [SummaryAttachment]) -> EnhancedSummaryData {
         let normalizedNotes = userNotes?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : userNotes
 
-        if let recordingId = summaryData.recordingId {
-            return EnhancedSummaryData(
-                id: summaryData.id,
-                recordingId: recordingId,
-                transcriptId: summaryData.transcriptId,
-                recordingURL: summaryData.recordingURL,
-                recordingName: summaryData.recordingName,
-                recordingDate: summaryData.recordingDate,
-                summary: summaryData.summary,
-                tasks: summaryData.tasks,
-                reminders: summaryData.reminders,
-                titles: summaryData.titles,
-                attachments: attachments,
-                userNotes: normalizedNotes,
-                contentType: summaryData.contentType,
-                aiEngine: summaryData.aiEngine,
-                aiModel: summaryData.aiModel,
-                originalLength: summaryData.originalLength,
-                processingTime: summaryData.processingTime,
-                generatedAt: summaryData.generatedAt,
-                version: summaryData.version,
-                wordCount: summaryData.wordCount,
-                compressionRatio: summaryData.compressionRatio,
-                confidence: summaryData.confidence
-            )
-        }
-
         return EnhancedSummaryData(
+            id: summaryData.id,
+            recordingId: summaryData.recordingId,
+            transcriptId: summaryData.transcriptId,
             recordingURL: summaryData.recordingURL,
             recordingName: summaryData.recordingName,
             recordingDate: summaryData.recordingDate,
@@ -1658,7 +1634,12 @@ struct SummaryDetailView: View {
             aiEngine: summaryData.aiEngine,
             aiModel: summaryData.aiModel,
             originalLength: summaryData.originalLength,
-            processingTime: summaryData.processingTime
+            processingTime: summaryData.processingTime,
+            generatedAt: summaryData.generatedAt,
+            version: summaryData.version,
+            wordCount: summaryData.wordCount,
+            compressionRatio: summaryData.compressionRatio,
+            confidence: summaryData.confidence
         )
     }
 
