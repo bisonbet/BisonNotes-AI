@@ -60,10 +60,7 @@ struct SimpleSettingsView: View {
     @State private var showingHelpDocumentation = false
     @State private var showingOnDeviceAIDownload = false
     @State private var showingMistralOnboarding = false
-    #if targetEnvironment(macCatalyst)
-    @State private var showingMacScrollDiagnostic = false
-    #endif
-    
+
     var body: some View {
         AdaptiveNavigationWrapper {
             ScrollView {
@@ -175,11 +172,6 @@ struct SimpleSettingsView: View {
                 }
             )
         }
-        #if targetEnvironment(macCatalyst)
-        .sheet(isPresented: $showingMacScrollDiagnostic) {
-            MacScrollDiagnosticView()
-        }
-        #endif
         .fullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
                 // Mistral onboarding completed — mark first setup done and navigate
@@ -215,20 +207,6 @@ struct SimpleSettingsView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color.blue.opacity(0.1))
                 )
-
-                #if targetEnvironment(macCatalyst)
-                Button("Scroll Tests") {
-                    showingMacScrollDiagnostic = true
-                }
-                .font(.caption)
-                .foregroundColor(.orange)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.orange.opacity(0.1))
-                )
-                #endif
             }
             .padding(.top, 20)
             
@@ -705,25 +683,32 @@ struct SimpleSettingsView: View {
                     UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")
                     UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
                     
-                    // Set AI engine to On-Device AI for summaries unless the user already chose
-                    // another on-device summary engine from advanced settings.
+                    // Honor any local AI engine the user has already chosen (On-Device LLM,
+                    // MLX, or Apple Intelligence) along with its selected model. Only fall
+                    // back to the On-Device LLM + Granite default if no local engine is set.
                     let currentAI = UserDefaults.standard.string(forKey: "SelectedAIEngine")
-                    if currentAI == AIEngineType.mlxSwift.rawValue {
-                        UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
-                    } else if currentAI != AIEngineType.appleNative.rawValue {
+                    let localEngines: Set<String> = [
+                        AIEngineType.onDeviceLLM.rawValue,
+                        AIEngineType.mlxSwift.rawValue,
+                        AIEngineType.appleNative.rawValue,
+                    ]
+
+                    if let currentAI, localEngines.contains(currentAI) {
+                        if currentAI == AIEngineType.mlxSwift.rawValue {
+                            UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+                        } else if currentAI == AIEngineType.onDeviceLLM.rawValue {
+                            UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+                        }
+                    } else {
                         UserDefaults.standard.set(AIEngineType.onDeviceLLM.rawValue, forKey: "SelectedAIEngine")
-                    }
-                    
-                    // Enable On-Device LLM
-                    UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
-                    
-                    // Set On-Device LLM to use Granite Micro (recommended for 6GB+ devices)
-                    // This prevents migration warnings when selectedModel is accessed
-                    let deviceRAM = DeviceCapabilities.totalRAMInGB
-                    if deviceRAM >= 6.0 {
-                        UserDefaults.standard.set(OnDeviceLLMModelInfo.granite4Micro.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
-                    } else if deviceRAM >= 8.0 {
-                        UserDefaults.standard.set(OnDeviceLLMModelInfo.granite4H.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+                        UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+
+                        let deviceRAM = DeviceCapabilities.totalRAMInGB
+                        if deviceRAM >= 6.0 {
+                            UserDefaults.standard.set(OnDeviceLLMModelInfo.granite4Micro.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+                        } else if deviceRAM >= 8.0 {
+                            UserDefaults.standard.set(OnDeviceLLMModelInfo.granite4H.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+                        }
                     }
                 }
                 
