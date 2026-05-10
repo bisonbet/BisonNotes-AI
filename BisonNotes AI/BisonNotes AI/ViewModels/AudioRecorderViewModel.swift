@@ -83,6 +83,16 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// Track last checkpoint time for periodic data flushing
 	var lastCheckpointTime: Date = Date.distantPast
 	var recordingStartedAt: (url: URL, date: Date)?
+
+	#if targetEnvironment(macCatalyst)
+	// On Mac Catalyst, AVAudioRecorder cannot reliably encode without an
+	// AVAudioSession. We use AVAudioEngine + AVAudioFile instead — input node
+	// taps deliver PCM buffers we can write directly to a single file with
+	// pause/resume implemented by removing/re-installing the tap.
+	var catalystAudioEngine: AVAudioEngine?
+	var catalystAudioFile: AVAudioFile?
+	var catalystEngineFormat: AVAudioFormat?
+	#endif
 	let checkpointInterval: TimeInterval = 30.0 // Try to checkpoint every 30 seconds
 	let forceCheckpointInterval: TimeInterval = 90.0 // Force checkpoint after 90 seconds even without silence
 
@@ -537,11 +547,17 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			return
 		}
 
-		// Use Whisper-optimized quality for all recordings
-		let selectedQuality = AudioQuality.whisperOptimized
-		let settings = selectedQuality.settings
-
 		do {
+			#if targetEnvironment(macCatalyst)
+			// Catalyst: drive recording with AVAudioEngine + AVAudioFile so we
+			// bypass AVAudioRecorder's broken converter setup. The file is AAC
+			// from the start — no post-stop transcode needed.
+			try startCatalystEngineRecording(at: audioFilename)
+			#else
+			// Use Whisper-optimized quality for all recordings
+			let selectedQuality = AudioQuality.whisperOptimized
+			let settings = selectedQuality.settings
+
 			audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
 			audioRecorder?.delegate = self
 
@@ -554,8 +570,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 			// No background task needed here - audio background mode keeps recording alive
 			audioRecorder?.record()
+			#endif
 
 			isRecording = true
+			recordingState = .recording
 			recordingTime = 0
 			lastCheckpointTime = Date() // Initialize checkpoint time to now
 
@@ -583,6 +601,67 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 	}
 
+	/// True when an active recording has been paused via `pauseRecording()`.
+	var isPaused: Bool {
+		if case .paused = recordingState { return true }
+		return false
+	}
+
+	/// Pause an active recording. On iOS the AVAudioRecorder is paused
+	/// (file stays open). On Mac Catalyst the AVAudioEngine input tap is
+	/// removed so no more samples reach the file. In both cases
+	/// `resumeRecording()` continues writing to the same file.
+	/// No-op if not recording, already paused, or in live transcription mode.
+	func pauseRecording() {
+		guard isRecording, !isPaused else { return }
+		guard !isUsingLiveTranscription else {
+			AppLog.shared.recording("Pause requested in live transcription mode — ignoring (use stop instead)", level: .debug)
+			return
+		}
+
+		#if targetEnvironment(macCatalyst)
+		guard catalystAudioEngine != nil else { return }
+		pauseCatalystEngineRecording()
+		#else
+		guard let recorder = audioRecorder else { return }
+		recorder.pause()
+		#endif
+
+		stopRecordingTimer()
+		recordingState = .paused
+		AppLog.shared.recording("Recording paused at \(Int(recordingTime))s")
+		notifyWatchOfRecordingStateChange()
+	}
+
+	/// Resume a paused recording. Continues writing to the same file on both
+	/// iOS (AVAudioRecorder.record()) and Mac Catalyst (re-installing the
+	/// AVAudioEngine tap).
+	func resumeRecording() {
+		guard isPaused else { return }
+
+		#if targetEnvironment(macCatalyst)
+		do {
+			try resumeCatalystEngineRecording()
+		} catch {
+			AppLog.shared.recording("Catalyst resume failed: \(error.localizedDescription)", level: .error)
+			errorMessage = "Could not resume recording: \(error.localizedDescription)"
+			return
+		}
+		#else
+		guard let recorder = audioRecorder else { return }
+		guard recorder.record() else {
+			AppLog.shared.recording("Failed to resume paused recording — recorder.record() returned false", level: .error)
+			errorMessage = "Could not resume recording. Please stop and start a new recording."
+			return
+		}
+		#endif
+
+		recordingState = .recording
+		startRecordingTimer()
+		AppLog.shared.recording("Recording resumed at \(Int(recordingTime))s")
+		notifyWatchOfRecordingStateChange()
+	}
+
 	func stopRecording() {
 		// Handle live transcription path
 		if isUsingLiveTranscription, let service = liveTranscriptionService {
@@ -607,8 +686,17 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			return
 		}
 
+		#if targetEnvironment(macCatalyst)
+		// On Catalyst, recording is driven by AVAudioEngine + AVAudioFile.
+		// Tear it down here, then run the save flow manually since there's
+		// no AVAudioRecorder delegate to fire it.
+		let catalystFinalURL = recordingURL
+		stopCatalystEngineRecording()
+		#endif
+
 		audioRecorder?.stop()
 		isRecording = false
+		recordingState = .idle
 		stopRecordingTimer()
 		audioRecorder = nil
 
@@ -630,7 +718,18 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				await mergeRecordingSegments()
 			}
 		} else {
+			#if targetEnvironment(macCatalyst)
+			if let url = catalystFinalURL {
+				AppLog.shared.recording("Recording finished successfully (Catalyst engine)")
+				Task { @MainActor in
+					await self.finalizeCatalystRecording(at: url)
+				}
+			} else {
+				AppLog.shared.recording("Catalyst stop: no recording URL — nothing to save", level: .error)
+			}
+			#else
 			AppLog.shared.recording("Recording has single segment, no merge needed", level: .debug)
+			#endif
 		}
 
 		// Deactivate audio session to restore high-quality music playback
@@ -749,6 +848,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				// while the app is in the background, and we need to detect that.
 				// NOTE: In live transcription mode, audioRecorder is nil so this block is
 				// safely skipped — LiveTranscriptionService manages its own AVAudioEngine.
+				#if targetEnvironment(macCatalyst)
+				// On Mac Catalyst there is no AVAudioSession interruption model and
+				// AVAudioRecorder.isRecording is unreliable; the recovery flow that
+				// reactivates the session and rebuilds the recorder is a no-op here
+				// and surfaces a misleading "Microphone became unavailable" error.
+				// Trust that record() succeeded and only stop on explicit user action.
+				self.performSmartCheckpoint()
+				#else
 				if self.isRecording, let recorder = self.audioRecorder, !recorder.isRecording {
 					if self.isInInterruption {
 						// We're in an interruption - wait for it to end rather than trying to resume now
@@ -778,6 +885,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					// Perform smart checkpoint that waits for silence
 					self.performSmartCheckpoint()
 				}
+				#endif
 				self.recordingTime += 1
 
 				// Sync live transcript text when live transcription is active

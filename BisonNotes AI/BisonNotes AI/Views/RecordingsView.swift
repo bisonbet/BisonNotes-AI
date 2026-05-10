@@ -24,7 +24,100 @@ struct RecordingsView: View {
     @State private var showingHelpDocumentation = false
     @State private var showingRecorderError = false
     @State private var recorderErrorMessage = ""
-    
+
+    // MARK: - Recording Controls
+
+    @ViewBuilder
+    private var recordingTimerView: some View {
+        HStack(spacing: 8) {
+            Text(recorderVM.formatTime(recorderVM.recordingTime))
+                .font(.title)
+                .fontWeight(.bold)
+                .foregroundColor(recorderVM.isPaused ? .secondary : .accentColor)
+                .monospacedDigit()
+            if recorderVM.isPaused {
+                Text("Paused")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.secondary.opacity(0.15)))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var recordingControls: some View {
+        HStack(spacing: 12) {
+            recordingActionButton(
+                title: recorderVM.isPaused ? "Resume" : "Pause",
+                systemImage: recorderVM.isPaused ? "play.circle.fill" : "pause.circle.fill",
+                tint: .accentColor
+            ) {
+                if recorderVM.isPaused {
+                    recorderVM.resumeRecording()
+                } else {
+                    recorderVM.pauseRecording()
+                }
+            }
+
+            recordingActionButton(
+                title: "Stop",
+                systemImage: "stop.circle.fill",
+                tint: .red
+            ) {
+                recorderVM.stopRecording()
+            }
+        }
+        .padding(.horizontal, 40)
+    }
+
+    @ViewBuilder
+    private var startRecordingButton: some View {
+        Button(action: { recorderVM.startRecording() }) {
+            HStack {
+                Image(systemName: "mic.circle.fill").font(.title)
+                Text("Start Recording")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+            }
+            .foregroundColor(.white)
+            .padding()
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.accentColor)
+                    .shadow(color: .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
+            )
+            .padding(.horizontal, 40)
+        }
+    }
+
+    private func recordingActionButton(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack {
+                Image(systemName: systemImage).font(.title)
+                Text(title)
+                    .font(.title2)
+                    .fontWeight(.semibold)
+            }
+            .foregroundColor(.white)
+            .padding()
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(tint)
+                    .shadow(color: tint.opacity(0.3), radius: 8, x: 0, y: 4)
+            )
+        }
+    }
+
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
@@ -71,39 +164,11 @@ struct RecordingsView: View {
                     
                     VStack(spacing: 16) {
                         if recorderVM.isRecording {
-                            Text(recorderVM.formatTime(recorderVM.recordingTime))
-                                .font(.title)
-                                .fontWeight(.bold)
-                                .foregroundColor(.accentColor)
-                                .monospacedDigit()
+                            recordingTimerView
+                            recordingControls
+                        } else {
+                            startRecordingButton
                         }
-                        
-                        Button(action: {
-                            if recorderVM.isRecording {
-                                recorderVM.stopRecording()
-                            } else {
-                                recorderVM.startRecording()
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: recorderVM.isRecording ? "stop.circle.fill" : "mic.circle.fill")
-                                    .font(.title)
-                                Text(recorderVM.isRecording ? "Stop Recording" : "Start Recording")
-                                    .font(.title2)
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.white)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .fill(recorderVM.isRecording ? Color.red : Color.accentColor)
-                                    .shadow(color: recorderVM.isRecording ? .red.opacity(0.3) : .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
-                            )
-                            .padding(.horizontal, 40)
-                        }
-                        .scaleEffect(recorderVM.isRecording ? 1.05 : 1.0)
-                        .animation(.easeInOut(duration: 0.2), value: recorderVM.isRecording)
                         
                         Button(action: {
                             showingRecordingsList = true

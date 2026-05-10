@@ -13,24 +13,39 @@ import UIKit
 extension AudioRecorderViewModel {
 
 	func beginBackgroundTask() {
+		#if targetEnvironment(macCatalyst)
+		// Mac apps don't get suspended like iOS — recording stays alive while the
+		// app process is running. Skip the iOS background-task lifecycle to avoid
+		// the "Background Task ... was created over 30 seconds ago" warning.
+		return
+		#else
 		guard backgroundTask == .invalid else { return }
 		AppLog.shared.backgroundProcessing("Starting background task for recording")
 		backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Recording") { [weak self] in
 			AppLog.shared.backgroundProcessing("Recording background task expiring", level: .error)
 			self?.endBackgroundTask()
 		}
+		#endif
 	}
 
 	func endBackgroundTask() {
+		#if targetEnvironment(macCatalyst)
+		return
+		#else
 		guard backgroundTask != .invalid else { return }
 		AppLog.shared.backgroundProcessing("Ending recording background task")
 		UIApplication.shared.endBackgroundTask(backgroundTask)
 		backgroundTask = .invalid
+		#endif
 	}
 
 	// MARK: - Background Time Monitoring
 
 	func startBackgroundTimeMonitoring() {
+		#if targetEnvironment(macCatalyst)
+		// No iOS-style background time limit on Mac — skip polling.
+		return
+		#else
 		backgroundTimeMonitor?.invalidate()
 
 		// Check remaining background time every 30 seconds
@@ -53,6 +68,7 @@ extension AudioRecorderViewModel {
 				}
 			}
 		}
+		#endif
 	}
 
 	func stopBackgroundTimeMonitoring() {
