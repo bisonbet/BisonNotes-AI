@@ -92,6 +92,9 @@ extension AudioRecorderViewModel {
 		}
 
 		// 4. BATTERY CHECK
+		// Mac Catalyst has no battery API — UIDevice.batteryLevel returns -1 and
+		// enabling monitoring spams "Error retrieving battery status" to the log.
+		#if !targetEnvironment(macCatalyst)
 		UIDevice.current.isBatteryMonitoringEnabled = true
 		let batteryLevel = UIDevice.current.batteryLevel
 
@@ -114,6 +117,7 @@ extension AudioRecorderViewModel {
 				isCritical: false
 			)
 		}
+		#endif
 	}
 
 	/// Get available storage on device
