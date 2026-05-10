@@ -327,7 +327,6 @@ class GoogleAIStudioService: ObservableObject {
         }
         
         logger.info("GoogleAIStudioService: Raw response length: \(textPart.text.count) characters")
-        logger.info("GoogleAIStudioService: Raw response preview: \(textPart.text.prefix(200))...")
         
         // Try to parse as JSON first
         if let jsonData = textPart.text.data(using: .utf8) {
@@ -337,7 +336,7 @@ class GoogleAIStudioService: ObservableObject {
                 return formatStructuredResponse(summaryResponse)
             } catch {
                 logger.warning("GoogleAIStudioService: Failed to parse JSON response: \(error)")
-                logger.warning("GoogleAIStudioService: Raw response: \(textPart.text)")
+                logger.warning("GoogleAIStudioService: Raw response length: \(textPart.text.count) chars, starts with valid JSON: \(textPart.text.hasPrefix("{"))")
                 
                 // Check if the response is truncated
                 if textPart.text.contains("\"summary\"") && !textPart.text.hasSuffix("}") {

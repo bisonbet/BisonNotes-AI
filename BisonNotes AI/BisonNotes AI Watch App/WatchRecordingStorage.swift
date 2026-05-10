@@ -8,6 +8,7 @@
 import Foundation
 import CryptoKit
 import Combine
+import os.log
 
 #if canImport(WatchKit)
 import WatchKit
@@ -22,6 +23,9 @@ class WatchRecordingStorage: ObservableObject {
     @Published var storageUsed: Int64 = 0
     @Published var availableStorage: Int64 = 0
     
+    // MARK: - Logging
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.watchapp", category: "RecordingStorage")
+
     // MARK: - Private Properties
     private let fileManager = FileManager.default
     private let recordingsDirectoryName = "WatchRecordings"
@@ -64,9 +68,9 @@ class WatchRecordingStorage: ObservableObject {
             try fileManager.createDirectory(at: recordingsSubdirectoryURL, 
                                           withIntermediateDirectories: true, 
                                           attributes: nil)
-            print("⌚ Storage directories created successfully")
+            logger.debug("Storage directories created successfully")
         } catch {
-            print("❌ Failed to create storage directories: \(error)")
+            logger.error("Failed to create storage directories: \(error.localizedDescription, privacy: .public)")
         }
     }
     
@@ -109,11 +113,11 @@ class WatchRecordingStorage: ObservableObject {
             // Clean up old recordings if needed
             performStorageCleanup()
             
-            print("✅ Saved recording: \(filename) (\(fileSize) bytes)")
+            logger.debug("Saved recording (\(fileSize, privacy: .public) bytes)")
             return metadata
             
         } catch {
-            print("❌ Failed to save recording: \(error)")
+            logger.error("Failed to save recording: \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }
@@ -137,10 +141,10 @@ class WatchRecordingStorage: ObservableObject {
             saveRecordingsMetadata()
             updateStorageInfo()
             
-            print("🗑 Deleted recording: \(recording.filename)")
+            logger.debug("Deleted recording")
             
         } catch {
-            print("❌ Failed to delete recording: \(error)")
+            logger.error("Failed to delete recording: \(error.localizedDescription, privacy: .public)")
         }
     }
     
@@ -157,7 +161,7 @@ class WatchRecordingStorage: ObservableObject {
             localRecordings[index] = metadata
             saveRecordingsMetadata()
             
-            print("📊 Updated sync status for \(metadata.filename): \(status.rawValue)")
+            logger.debug("Updated sync status: \(status.rawValue, privacy: .public)")
         }
     }
     
@@ -190,10 +194,10 @@ class WatchRecordingStorage: ObservableObject {
             // Verify files still exist and clean up orphaned metadata
             cleanupOrphanedMetadata()
             
-            print("📱 Loaded \(localRecordings.count) recordings from metadata")
-            
+            logger.debug("Loaded \(self.localRecordings.count, privacy: .public) recordings from metadata")
+
         } catch {
-            print("❌ Failed to load recordings metadata: \(error)")
+            logger.error("Failed to load recordings metadata: \(error.localizedDescription, privacy: .public)")
             localRecordings = []
         }
     }
@@ -202,9 +206,9 @@ class WatchRecordingStorage: ObservableObject {
         do {
             let data = try JSONEncoder().encode(localRecordings)
             try data.write(to: metadataFileURL)
-            print("💾 Saved recordings metadata")
+            logger.debug("Saved recordings metadata")
         } catch {
-            print("❌ Failed to save recordings metadata: \(error)")
+            logger.error("Failed to save recordings metadata: \(error.localizedDescription, privacy: .public)")
         }
     }
     
@@ -215,14 +219,14 @@ class WatchRecordingStorage: ObservableObject {
             let fileURL = recordingsSubdirectoryURL.appendingPathComponent(metadata.filename)
             let exists = fileManager.fileExists(atPath: fileURL.path)
             if !exists {
-                print("🧹 Removing orphaned metadata for: \(metadata.filename)")
+                logger.debug("Removing orphaned recording metadata")
             }
             return exists
         }
         
         if localRecordings.count != originalCount {
             saveRecordingsMetadata()
-            print("🧹 Cleaned up \(originalCount - localRecordings.count) orphaned metadata entries")
+            logger.debug("Cleaned up \(originalCount - self.localRecordings.count, privacy: .public) orphaned metadata entries")
         }
     }
     
@@ -242,7 +246,7 @@ class WatchRecordingStorage: ObservableObject {
             availableStorage = min(freeSpace, maxStorageUsage - storageUsed)
             
         } catch {
-            print("❌ Failed to get storage info: \(error)")
+            logger.error("Failed to get storage info: \(error.localizedDescription, privacy: .public)")
             availableStorage = max(0, maxStorageUsage - storageUsed)
         }
     }
@@ -266,7 +270,7 @@ class WatchRecordingStorage: ObservableObject {
     }
     
     private func performAutomaticCleanup() {
-        print("🧹 Performing automatic storage cleanup...")
+        logger.debug("Performing automatic storage cleanup")
         
         // First, remove synced recordings (oldest first)
         let syncedRecordings = getSyncedRecordings()
@@ -299,7 +303,7 @@ class WatchRecordingStorage: ObservableObject {
             }
         }
         
-        print("🧹 Cleanup complete. Storage: \(storageUsed) bytes, Recordings: \(localRecordings.count)")
+        logger.debug("Cleanup complete. Storage: \(self.storageUsed, privacy: .public) bytes, Recordings: \(self.localRecordings.count, privacy: .public)")
     }
     
     // MARK: - Utilities
@@ -313,7 +317,7 @@ class WatchRecordingStorage: ObservableObject {
             let digest = Insecure.MD5.hash(data: data)
             return digest.map { String(format: "%02hhx", $0) }.joined()
         } catch {
-            print("❌ Failed to calculate checksum: \(error)")
+            logger.error("Failed to calculate checksum: \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }

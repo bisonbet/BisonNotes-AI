@@ -41,7 +41,7 @@ enum AIService {
             return .ollama
         } else if engineLower.contains("whisper") {
             return .whisper
-        } else if engineLower.contains("device") || engineLower.contains("apple") || modelLower.contains("intelligence") || modelLower.contains("gemma") || modelLower.contains("phi") || modelLower.contains("qwen") || modelLower.contains("llama") || modelLower.contains("mistral") || modelLower.contains("olmo") || modelLower.contains("alpaca") {
+        } else if engineLower.contains("device") || engineLower.contains("apple") || engineLower.contains("mlx") || modelLower.contains("intelligence") || modelLower.contains("gemma") || modelLower.contains("phi") || modelLower.contains("qwen") || modelLower.contains("llama") || modelLower.contains("mistral") || modelLower.contains("olmo") || modelLower.contains("alpaca") || modelLower.contains("bonsai") || modelLower.contains("ternary") {
             return .onDevice
         } else {
             // Default to bedrock for unknown services

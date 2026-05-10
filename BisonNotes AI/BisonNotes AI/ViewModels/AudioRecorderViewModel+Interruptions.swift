@@ -424,18 +424,7 @@ extension AudioRecorderViewModel {
 					let originalFilename = currentURL.deletingPathExtension().lastPathComponent
 					let duration = getRecordingDuration(url: currentURL)
 
-					// Get file creation date, or use current date as fallback
-					let recordingDate: Date
-					do {
-						let attributes = try FileManager.default.attributesOfItem(atPath: currentURL.path)
-						if let creationDate = attributes[.creationDate] as? Date {
-							recordingDate = creationDate
-						} else {
-							recordingDate = Date()
-						}
-					} catch {
-						recordingDate = Date()
-					}
+					let recordingDate = currentRecordingDate(for: currentURL)
 
 					_ = workflowManager.createRecording(
 						url: currentURL,
@@ -446,6 +435,7 @@ extension AudioRecorderViewModel {
 						quality: quality,
 						locationData: recordingStartLocationData
 					)
+					recordingStartedAt = nil
 				}
 			}
 		}
@@ -583,7 +573,7 @@ extension AudioRecorderViewModel {
 					let recordingId = workflowManager.createRecording(
 						url: url,
 						name: displayName,
-						date: Date(),
+						date: currentRecordingDate(for: url),
 						fileSize: fileSize,
 						duration: duration,
 						quality: quality,
@@ -598,6 +588,7 @@ extension AudioRecorderViewModel {
 					// Reset processing flag
 					recordingBeingProcessed = false
 					resetRecordingLocation()
+					recordingStartedAt = nil
 
 					// End background task after successful recovery and save
 					endBackgroundTask()
@@ -708,7 +699,7 @@ extension AudioRecorderViewModel {
 				let recordingId = workflowManager.createRecording(
 					url: url,
 					name: displayName,
-					date: Date(),
+					date: currentRecordingDate(for: url),
 					fileSize: fileSize,
 					duration: duration,
 					quality: quality,
@@ -724,6 +715,7 @@ extension AudioRecorderViewModel {
 					self.recordingURL = nil
 					self.recordingBeingProcessed = false
 					self.resetRecordingLocation()
+					self.recordingStartedAt = nil
 				}
 
 			// Send notification to user about recovery (with slight delay to improve visibility)

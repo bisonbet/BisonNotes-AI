@@ -133,6 +133,21 @@ class PDFExportService {
                 exportDate: exportDate
             )
 
+            if let notes = summaryData.userNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !notes.isEmpty {
+                currentY = drawUserNotesSection(
+                    notes,
+                    at: currentY,
+                    contentWidth: contentWidth,
+                    margins: margins,
+                    context: context,
+                    pageSize: pageSize,
+                    contentBottom: contentBottom,
+                    pageNumber: &pageNumber,
+                    exportDate: exportDate
+                )
+            }
+
             // Tasks
             if !summaryData.tasks.isEmpty {
                 currentY = drawTasksSection(
@@ -573,6 +588,53 @@ class PDFExportService {
         }
 
         return currentY + 10
+    }
+
+    private func drawUserNotesSection(
+        _ notes: String,
+        at y: CGFloat,
+        contentWidth: CGFloat,
+        margins: UIEdgeInsets,
+        context: UIGraphicsPDFRendererContext,
+        pageSize: CGSize,
+        contentBottom: CGFloat,
+        pageNumber: inout Int,
+        exportDate: Date
+    ) -> CGFloat {
+        var currentY = y
+
+        currentY = checkAndStartNewPageWithBranding(
+            currentY: currentY,
+            requiredHeight: 80,
+            pageSize: pageSize,
+            margins: margins,
+            context: context,
+            contentBottom: contentBottom,
+            pageNumber: &pageNumber,
+            exportDate: exportDate
+        )
+
+        currentY = drawSectionTitle("User Notes", at: currentY, contentWidth: contentWidth, margins: margins, context: context)
+
+        let attributed = SummaryExportFormatter.attributedSummary(
+            for: notes,
+            baseFontSize: 12,
+            textColor: .black
+        )
+
+        currentY = drawAttributedSummary(
+            attributed,
+            at: currentY,
+            contentWidth: contentWidth,
+            margins: margins,
+            context: context,
+            pageSize: pageSize,
+            contentBottom: contentBottom,
+            pageNumber: &pageNumber,
+            exportDate: exportDate
+        )
+
+        return currentY + 12
     }
 
     private func drawRemindersSection(

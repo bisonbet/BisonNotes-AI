@@ -175,10 +175,21 @@ class CoreDataManager: ObservableObject {
             }
         }
         
-        AppLog.shared.coreData("File not found anywhere for recording ID: \(recording.id?.uuidString ?? "nil")", level: .error)
+        AppLog.shared.coreData("File not found anywhere for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
         return nil
     }
     
+    /// Returns a URL derived from the stored recordingURL string without checking file existence.
+    /// Used for archived recordings where the local file may have been intentionally removed.
+    func getStoredURL(for recording: RecordingEntry) -> URL? {
+        guard let urlString = recording.recordingURL else { return nil }
+
+        if let url = URL(string: urlString), url.scheme != nil {
+            return url
+        }
+        return relativePathToURL(urlString)
+    }
+
     // MARK: - Location Data Helpers
     
     func getLocationData(for recording: RecordingEntry) -> LocationData? {
@@ -649,10 +660,15 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Recording not found for deletion: \(id)", level: .error)
             return
         }
-        
+
+        // Clean up supplemental data (notes + attachment files) before the cascade delete removes the summary entry.
+        if let summaryId = recording.summaryId {
+            try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
+        }
+
         // Core Data will handle cascade deletion of related transcript and summary
         context.delete(recording)
-        
+
         do {
             try context.save()
             AppLog.shared.coreData("Recording deleted: \(id)")
@@ -669,9 +685,16 @@ class CoreDataManager: ObservableObject {
     
     private func convertToTranscriptData(transcriptEntry: TranscriptEntry, recordingEntry: RecordingEntry) -> TranscriptData? {
         guard let _ = transcriptEntry.id,
-              let recordingId = recordingEntry.id,
-              let url = getAbsoluteURL(for: recordingEntry) else {
-            AppLog.shared.coreData("Could not get absolute URL for recording ID: \(recordingEntry.id?.uuidString ?? "nil")", level: .error)
+              let recordingId = recordingEntry.id else {
+            AppLog.shared.coreData("Transcript missing id for recording: \(recordingEntry.id?.uuidString ?? "nil")", level: .error)
+            return nil
+        }
+
+        // The transcript is valid even when the audio file is gone (archived
+        // recordings intentionally have no local audio). Fall back to the
+        // stored URL so the transcript stays visible in the Transcripts list.
+        guard let url = getAbsoluteURL(for: recordingEntry) ?? getStoredURL(for: recordingEntry) else {
+            AppLog.shared.coreData("Could not resolve any URL for recording ID: \(recordingEntry.id?.uuidString ?? "nil")", level: .debug)
             return nil
         }
         
@@ -937,10 +960,15 @@ class CoreDataManager: ObservableObject {
     func cleanupRecordingsWithMissingFiles() -> Int {
         let allRecordings = getAllRecordings()
         var cleanedCount = 0
-        
+
         for recording in allRecordings {
+            // Never touch archived recordings — their audio was intentionally offloaded
+            if recording.isArchived {
+                continue
+            }
+
             guard let urlString = recording.recordingURL else { continue }
-            
+
             // Skip if this is a summary-only recording (no URL expected)
             if recording.summary != nil && urlString.isEmpty {
                 continue

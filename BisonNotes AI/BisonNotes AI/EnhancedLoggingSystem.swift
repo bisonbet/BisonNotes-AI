@@ -76,7 +76,13 @@ class AppLog {
         UserDefaults.standard.set(false, forKey: Self.cleanShutdownKey)
     }
 
-    /// Call when app enters background or resigns active — marks this session as clean.
+    /// Call when app becomes active. A later foreground crash should not inherit a
+    /// previous clean background transition from the same launch.
+    func markSessionActive() {
+        UserDefaults.standard.set(false, forKey: Self.cleanShutdownKey)
+    }
+
+    /// Call when app enters background or terminates — marks this session as clean.
     func markCleanShutdown() {
         UserDefaults.standard.set(true, forKey: Self.cleanShutdownKey)
     }

@@ -46,8 +46,8 @@ struct AdaptiveNavigationWrapper<Content: View>: View {
 
 enum SidebarItem: String, CaseIterable, Identifiable {
     case record = "Record"
-    case summaries = "Summaries"
     case transcripts = "Transcripts"
+    case summaries = "Summaries"
     case settings = "Setup"
 
     var id: String { rawValue }

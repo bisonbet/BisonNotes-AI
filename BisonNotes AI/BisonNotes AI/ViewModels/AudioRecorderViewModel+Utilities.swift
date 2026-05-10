@@ -9,6 +9,10 @@ import Foundation
 @preconcurrency import AVFoundation
 import UserNotifications
 
+private struct RecordingTimestampMetadata: Codable {
+	let recordedAt: Date
+}
+
 // MARK: - AVAudioRecorderDelegate
 
 extension AudioRecorderViewModel: AVAudioRecorderDelegate {
@@ -77,7 +81,7 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 							let recordingId = workflowManager.createRecording(
 								url: recordingURL,
 								name: displayName,
-								date: Date(),
+								date: currentRecordingDate(for: recordingURL),
 								fileSize: fileSize,
 								duration: duration,
 								quality: quality,
@@ -88,6 +92,7 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 
 							// Watch audio integration removed
 							self.resetRecordingLocation()
+							self.recordingStartedAt = nil
 						} else {
 							AppLog.shared.recording("WorkflowManager not set - recording not saved to database", level: .error)
 						}
@@ -276,6 +281,37 @@ extension AudioRecorderViewModel {
 		// Final fallback to the timer value we tracked during recording
 		return recordingTime
 	}
+
+	func currentRecordingDate(for url: URL?) -> Date {
+		if let entry = recordingStartedAt, let url, entry.url == url {
+			return entry.date
+		}
+
+		if let url,
+		   let data = try? Data(contentsOf: recordingTimestampMetadataURL(for: url)),
+		   let metadata = try? JSONDecoder().decode(RecordingTimestampMetadata.self, from: data) {
+			return metadata.recordedAt
+		}
+
+		return Date()
+	}
+
+	func persistRecordingCapturedAt(_ date: Date, for url: URL) {
+		let metadata = RecordingTimestampMetadata(recordedAt: date)
+		guard let data = try? JSONEncoder().encode(metadata) else {
+			return
+		}
+
+		do {
+			try data.write(to: recordingTimestampMetadataURL(for: url), options: .atomic)
+		} catch {
+			AppLog.shared.recording("Failed to write recording timestamp metadata: \(error.localizedDescription)", level: .error)
+		}
+	}
+
+	private func recordingTimestampMetadataURL(for recordingURL: URL) -> URL {
+		recordingURL.deletingPathExtension().appendingPathExtension("recordingmeta")
+	}
 }
 
 // MARK: - Naming Convention
@@ -292,7 +328,7 @@ extension AudioRecorderViewModel {
 	func generateAppRecordingDisplayName() -> String {
 		let formatter = DateFormatter()
 		formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-		let timestamp = formatter.string(from: Date())
+		let timestamp = formatter.string(from: recordingStartedAt?.date ?? Date())
 		return "apprecording-\(timestamp)"
 	}
 

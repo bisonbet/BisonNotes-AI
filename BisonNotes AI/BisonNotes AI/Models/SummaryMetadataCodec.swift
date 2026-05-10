@@ -16,6 +16,7 @@ struct AIEngineTypeConstants {
     static let ollama = "Ollama"
     static let appleIntelligence = "Apple Intelligence" // Kept for legacy metadata parsing
     static let onDeviceAI = "On-Device AI"
+    static let mlxSwift = "MLX Swift"
     static let aiAssistant = "AI Assistant"
 }
 
@@ -58,6 +59,8 @@ enum SummaryMetadataCodec {
             return AIEngineTypeConstants.ollama
         } else if methodLower.contains("apple") || methodLower.contains("intelligence") {
             return AIEngineTypeConstants.appleIntelligence
+        } else if methodLower.contains("mlx") || methodLower.contains("bonsai") || methodLower.contains("ternary") {
+            return AIEngineTypeConstants.mlxSwift
         } else if methodLower.contains("device") || methodLower.contains("gemma") || methodLower.contains("phi") ||
                     methodLower.contains("qwen") || methodLower.contains("llama") || methodLower.contains("mistral") ||
                     methodLower.contains("olmo") || methodLower.contains("alpaca") {

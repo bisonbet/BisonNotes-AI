@@ -108,6 +108,11 @@ class AppDataCoordinator: ObservableObject {
     func getAbsoluteURL(for recording: RecordingEntry) -> URL? {
         return coreDataManager.getAbsoluteURL(for: recording)
     }
+
+    /// Gets the stored URL for a recording without checking file existence (for archived recordings)
+    func getStoredURL(for recording: RecordingEntry) -> URL? {
+        return coreDataManager.getStoredURL(for: recording)
+    }
     
     /// Gets transcript entry for a recording
     func getTranscript(for recordingId: UUID) -> TranscriptEntry? {
@@ -151,6 +156,9 @@ class AppDataCoordinator: ObservableObject {
     }
 
     func deleteSummary(id: UUID) async throws {
+        // Clean up supplemental data (notes + attachment files) before removing the Core Data entry.
+        try? SummaryAttachmentStore.shared.deleteAll(for: id)
+
         try coreDataManager.deleteSummary(id: id)
         do {
             try await SummaryManager.shared.getiCloudManager().deleteSummaryFromiCloud(id)

@@ -55,6 +55,7 @@ final class RTFExportService {
             }
 
             appendSummarySection(for: summaryData, to: document)
+            appendNotesSection(for: summaryData, to: document)
 
             // Always include sections even if empty to match PDF export quality
             if !summaryData.tasks.isEmpty {
@@ -316,6 +317,23 @@ final class RTFExportService {
         document.append(withSpacing)
     }
 
+    private func appendNotesSection(for summaryData: EnhancedSummaryData, to document: NSMutableAttributedString) {
+        guard let notes = summaryData.userNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !notes.isEmpty else {
+            return
+        }
+
+        appendSectionTitle("User Notes", to: document)
+        let attributed = SummaryExportFormatter.attributedSummary(
+            for: notes,
+            baseFontSize: 12,
+            textColor: .black
+        )
+        let withSpacing = NSMutableAttributedString(attributedString: attributed)
+        withSpacing.append(NSAttributedString(string: "\n\n"))
+        document.append(withSpacing)
+    }
+
     private func appendTasksSection(tasks: [TaskItem], to document: NSMutableAttributedString) {
         appendSectionTitle("Tasks (\(tasks.count))", to: document)
 
@@ -541,4 +559,3 @@ final class RTFExportService {
         document.append(list)
     }
 }
-

@@ -127,7 +127,7 @@ extension AudioRecorderViewModel {
 				let recordingId = workflowManager.createRecording(
 					url: mainURL,
 					name: displayName,
-					date: Date(),
+					date: currentRecordingDate(for: mainURL),
 					fileSize: fileSize,
 					duration: duration,
 					quality: quality,
@@ -137,6 +137,7 @@ extension AudioRecorderViewModel {
 				AppLog.shared.recording("Merged recording created with workflow manager, ID: \(recordingId)")
 
 				self.resetRecordingLocation()
+				self.recordingStartedAt = nil
 			} else {
 				AppLog.shared.recording("WorkflowManager not set - merged recording not saved to database", level: .error)
 			}

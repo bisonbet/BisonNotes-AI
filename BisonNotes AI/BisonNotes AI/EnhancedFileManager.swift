@@ -53,8 +53,9 @@ enum FileAvailabilityStatus: String, CaseIterable {
     case recordingOnly = "Recording Only"
     case summaryOnly = "Summary Only"
     case transcriptOnly = "Transcript Only"
+    case archived = "Archived"
     case none = "None"
-    
+
     var icon: String {
         switch self {
         case .complete:
@@ -65,11 +66,13 @@ enum FileAvailabilityStatus: String, CaseIterable {
             return "doc.text"
         case .transcriptOnly:
             return "text.quote"
+        case .archived:
+            return "archivebox.fill"
         case .none:
             return "questionmark.circle"
         }
     }
-    
+
     var color: String {
         switch self {
         case .complete:
@@ -80,11 +83,13 @@ enum FileAvailabilityStatus: String, CaseIterable {
             return "orange"
         case .transcriptOnly:
             return "purple"
+        case .archived:
+            return "orange"
         case .none:
             return "gray"
         }
     }
-    
+
     var description: String {
         switch self {
         case .complete:
@@ -95,6 +100,8 @@ enum FileAvailabilityStatus: String, CaseIterable {
             return "Only summary available (recording deleted)"
         case .transcriptOnly:
             return "Only transcript available (recording deleted)"
+        case .archived:
+            return "Audio exported to external storage"
         case .none:
             return "No files available"
         }
@@ -356,18 +363,19 @@ class EnhancedFileManager: ObservableObject {
                 }
             }
             
-            // Delete associated location file if it exists
-            let locationURL = normalizedURL.deletingPathExtension().appendingPathExtension("location")
-            if FileManager.default.fileExists(atPath: locationURL.path) {
-                do {
-                    try FileManager.default.removeItem(at: locationURL)
-                    AppLog.shared.fileManagement("Deleted location file: \(locationURL.lastPathComponent)")
-                } catch {
-                    if error.isThumbnailGenerationError {
-                        AppLog.shared.fileManagement("Thumbnail generation warning during location file deletion: \(error.localizedDescription)", level: .debug)
-                        // Continue with deletion even if thumbnail generation fails
-                    } else {
-                        throw error
+            // Delete associated sidecar files if they exist
+            for ext in ["location", "recordingmeta"] {
+                let sidecarURL = normalizedURL.deletingPathExtension().appendingPathExtension(ext)
+                if FileManager.default.fileExists(atPath: sidecarURL.path) {
+                    do {
+                        try FileManager.default.removeItem(at: sidecarURL)
+                        AppLog.shared.fileManagement("Deleted \(ext) file: \(sidecarURL.lastPathComponent)")
+                    } catch {
+                        if error.isThumbnailGenerationError {
+                            AppLog.shared.fileManagement("Thumbnail generation warning during \(ext) file deletion: \(error.localizedDescription)", level: .debug)
+                        } else {
+                            throw error
+                        }
                     }
                 }
             }
@@ -380,7 +388,7 @@ class EnhancedFileManager: ObservableObject {
             // Delete transcript if present
             if let transcript = await appCoordinator.coreDataManager.getTranscript(for: recordingId) {
                 await appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
-                AppLog.shared.fileManagement("Deleted transcript for: \(relationships.recordingName)")
+                AppLog.shared.fileManagement("Deleted transcript for recording")
             }
 
             // Keep summary linked to the recording; ensure IDs/relationships are consistent
@@ -398,7 +406,7 @@ class EnhancedFileManager: ObservableObject {
             // Persist changes
             do {
                 try await appCoordinator.coreDataManager.saveContext()
-                AppLog.shared.fileManagement("Preserved summary (kept recording entry, removed transcript) for: \(relationships.recordingName)")
+                AppLog.shared.fileManagement("Preserved summary (kept recording entry, removed transcript)")
             } catch {
                 AppLog.shared.fileManagement("Error saving preservation changes: \(error)", level: .error)
             }
@@ -416,7 +424,7 @@ class EnhancedFileManager: ObservableObject {
         } else {
             // Delete everything (recording, transcript, and summary)
             await appCoordinator.deleteRecording(id: recordingId)
-            AppLog.shared.fileManagement("Deleted recording, transcript, and summary for: \(relationships.recordingName)")
+            AppLog.shared.fileManagement("Deleted recording, transcript, and summary")
             
             // Remove the relationship entirely
             await MainActor.run {
@@ -425,7 +433,7 @@ class EnhancedFileManager: ObservableObject {
             }
         }
         
-        AppLog.shared.fileManagement("Recording deletion completed: \(relationships.recordingName)")
+        AppLog.shared.fileManagement("Recording deletion completed")
     }
     
     func deleteSummary(for url: URL) async throws {
@@ -438,7 +446,7 @@ class EnhancedFileManager: ObservableObject {
             // This will now be handled by the coordinator
             // let manager = await summaryManager
             // await MainActor.run { manager.deleteSummary(for: url) }
-            AppLog.shared.fileManagement("Deleted summary for: \(relationships.recordingName)")
+            AppLog.shared.fileManagement("Deleted summary for recording")
         }
         
         // Update relationships
@@ -470,7 +478,7 @@ class EnhancedFileManager: ObservableObject {
         if relationships.transcriptExists {
             // This will now be handled by the coordinator
             // transcriptManager.deleteTranscript(for: url)
-            AppLog.shared.fileManagement("Deleted transcript for: \(relationships.recordingName)")
+            AppLog.shared.fileManagement("Deleted transcript for recording")
         }
 
         // Update relationships
@@ -662,6 +670,11 @@ class EnhancedFileManager: ObservableObject {
                 
                 if !dryRun {
                     try FileManager.default.removeItem(at: file)
+                    // Also remove sidecar files for the orphaned audio
+                    for ext in ["location", "recordingmeta"] {
+                        let sidecarURL = file.deletingPathExtension().appendingPathExtension(ext)
+                        try? FileManager.default.removeItem(at: sidecarURL)
+                    }
                     AppLog.shared.fileManagement("Deleted orphaned file: \(file.lastPathComponent) (\(fileSize) bytes)")
                     deletedCount += 1
                 } else {
