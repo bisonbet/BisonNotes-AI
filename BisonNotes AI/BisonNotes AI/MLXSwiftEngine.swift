@@ -575,6 +575,30 @@ private actor MLXSwiftService {
     /// the model weights room to load with buffer for inference overhead.
     private static let minimumAvailableMemory: UInt64 = 2_500_000_000
 
+    /// Returns the amount of memory the process can safely use before loading.
+    /// On iOS this is the jetsam-limit headroom; on Mac Catalyst that API returns 0
+    /// (no jetsam limits on macOS), so we read host VM stats for actual free RAM.
+    private static func availableMemoryForModelLoad() -> UInt64 {
+        #if targetEnvironment(macCatalyst)
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &stats) { ptr -> kern_return_t in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return 0 }
+        let pageSize = UInt64(vm_kernel_page_size)
+        let free = UInt64(stats.free_count) * pageSize
+        let inactive = UInt64(stats.inactive_count) * pageSize
+        let speculative = UInt64(stats.speculative_count) * pageSize
+        let purgeable = UInt64(stats.purgeable_count) * pageSize
+        return free + inactive + speculative + purgeable
+        #else
+        return UInt64(os_proc_available_memory())
+        #endif
+    }
+
     private func loadContainer() async throws -> ModelContainer {
         let modelId = UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
             ?? MLXSwiftSettingsKeys.defaultModelId
@@ -590,7 +614,7 @@ private actor MLXSwiftService {
         Memory.clearCache()
 
         // Check available memory before loading to avoid jetsam (OOM) kills
-        let available = os_proc_available_memory()
+        let available = Self.availableMemoryForModelLoad()
         AppLog.shared.summarization("[MLXSwift] Available memory before load: \(available / 1_000_000) MB")
         guard available >= Self.minimumAvailableMemory else {
             let availableMB = available / 1_000_000
