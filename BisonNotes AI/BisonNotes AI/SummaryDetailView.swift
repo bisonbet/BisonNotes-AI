@@ -1033,6 +1033,7 @@ struct SummaryDetailView: View {
                     .background(isRegenerating ? Color.gray : Color.orange)
                     .cornerRadius(10)
                 }
+                .buttonStyle(.borderless)
                 .disabled(isRegenerating)
             }
             
@@ -1101,6 +1102,7 @@ struct SummaryDetailView: View {
                             .background(isUpdatingLocation ? Color.gray : Color.green)
                             .cornerRadius(10)
                         }
+                        .buttonStyle(.borderless)
                         .disabled(isUpdatingLocation)
                     }
                 } else {
@@ -1110,7 +1112,7 @@ struct SummaryDetailView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
-                        
+
                         Button(action: {
                             showingLocationPicker = true
                         }) {
@@ -1131,6 +1133,7 @@ struct SummaryDetailView: View {
                             .background(isUpdatingLocation ? Color.gray : Color.green)
                             .cornerRadius(10)
                         }
+                        .buttonStyle(.borderless)
                         .disabled(isUpdatingLocation)
                     }
                 }
@@ -1170,6 +1173,7 @@ struct SummaryDetailView: View {
                     .background(Color.red)
                     .cornerRadius(10)
                 }
+                .buttonStyle(.borderless)
             }
         }
     }
