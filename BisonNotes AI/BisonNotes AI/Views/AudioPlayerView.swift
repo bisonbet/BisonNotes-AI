@@ -22,6 +22,14 @@ struct AudioPlayerView: View {
     @State private var audioExportURL: URL?
     @State private var audioExportError: String?
 
+    // Transcript-from-recording flow
+    @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
+    @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
+    @State private var showingAudioCleanupPrompt = false
+    @State private var recordingPendingTranscription: RecordingEntry?
+    @State private var selectedRecordingForTranscript: RecordingEntry?
+    @State private var transcriptStateRefresh = false
+
     var body: some View {
         VStack(spacing: 20) {
             HStack {
@@ -50,7 +58,9 @@ struct AudioPlayerView: View {
             Text("Date: \(recording.dateString)")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-            
+
+            transcriptActionRow
+
             Spacer()
             
             // Audio scrubber with progress and seek functionality
@@ -131,6 +141,42 @@ struct AudioPlayerView: View {
                 ShareSheet(activityItems: [audioExportURL])
             }
         }
+        .sheet(item: $selectedRecordingForTranscript) { entry in
+            if let recordingId = entry.id,
+               let transcript = appCoordinator.getTranscriptData(for: recordingId) {
+                EditableTranscriptView(recording: entry, transcript: transcript, transcriptManager: TranscriptManager.shared)
+                    .environmentObject(appCoordinator)
+            } else {
+                TranscriptDetailView(recording: entry, transcriptText: "")
+                    .environmentObject(appCoordinator)
+            }
+        }
+        .confirmationDialog(
+            "Clean Audio Before Transcribing?",
+            isPresented: $showingAudioCleanupPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Clean & Transcribe") {
+                if let pending = recordingPendingTranscription {
+                    recordingPendingTranscription = nil
+                    transcriptionStarter.startTranscription(for: pending, cleanFirst: true, appCoordinator: appCoordinator)
+                }
+            }
+            Button("Transcribe As-Is") {
+                if let pending = recordingPendingTranscription {
+                    recordingPendingTranscription = nil
+                    transcriptionStarter.startTranscription(for: pending, cleanFirst: false, appCoordinator: appCoordinator)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                recordingPendingTranscription = nil
+            }
+        } message: {
+            Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionCompleted"))) { _ in
+            transcriptStateRefresh.toggle()
+        }
         .onAppear {
             AppLog.shared.recording("AudioPlayerView appeared", level: .debug)
             editableTitle = recording.name
@@ -165,6 +211,48 @@ struct AudioPlayerView: View {
         }
     }
     
+    /// "Generate Transcript" action shown in the player. Disappears once a transcript exists —
+    /// users edit transcripts from the Transcripts tab. Resolves the RecordingEntry on demand
+    /// so state reflects the latest Core Data state (post-transcription, post-rename).
+    @ViewBuilder
+    private var transcriptActionRow: some View {
+        if let entry = appCoordinator.getRecording(url: recording.url),
+           entry.transcript == nil {
+            let recordingId = entry.id ?? UUID()
+            let isProcessing = transcriptionStarter.isCleaning(recordingId)
+                || transcriptionStarter.isQueuedForCleanup(recordingId)
+                || transcriptionStarter.hasActiveTranscriptionJob(for: entry, appCoordinator: appCoordinator)
+
+            Button(action: {
+                if !isProcessing {
+                    recordingPendingTranscription = entry
+                    showingAudioCleanupPrompt = true
+                }
+            }) {
+                HStack(spacing: 8) {
+                    if isProcessing {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .tint(.white)
+                        Text("Transcribing…")
+                    } else {
+                        Image(systemName: "text.bubble")
+                        Text("Generate Transcript")
+                    }
+                }
+                .font(.subheadline)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(isProcessing ? Color.orange : Color.accentColor)
+                .foregroundColor(.white)
+                .cornerRadius(10)
+            }
+            .buttonStyle(.plain)
+            .disabled(isProcessing)
+            .id("transcript-action-\(recordingId)-\(isProcessing)-\(transcriptStateRefresh)")
+        }
+    }
+
     private func setupAudio() {
         AppLog.shared.recording("AudioPlayerView setupAudio called", level: .debug)
 
