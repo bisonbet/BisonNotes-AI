@@ -193,8 +193,7 @@ final class FluidAudioManager: ObservableObject {
         downloadProgress = 0.95
         currentStatus = "Initializing model..."
 
-        let manager = AsrManager(config: .default)
-        try await manager.initialize(models: models)
+        let manager = AsrManager(config: .default, models: models)
 
         asrManager = manager
         loadedModelVersion = selectedVersion
@@ -288,7 +287,8 @@ final class FluidAudioManager: ObservableObject {
 
         currentStatus = "Transcribing with Parakeet..."
         let start = Date()
-        let result = try await asrManager.transcribe(audioURL, source: .system)
+        var decoderState = TdtDecoderState.make(decoderLayers: await asrManager.decoderLayerCount)
+        let result = try await asrManager.transcribe(audioURL, decoderState: &decoderState)
 
         // Determine audio duration for accurate segment end time
         let asset = AVURLAsset(url: audioURL)
