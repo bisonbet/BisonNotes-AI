@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/awslabs/aws-sdk-swift",
       "state" : {
-        "revision" : "da733cb971277283e85090a8387ee38444e53da5",
-        "version" : "1.7.8"
+        "revision" : "ac5780c80677dbfc4f976863c5abdac76e710c17",
+        "version" : "1.7.9"
       }
     },
     {
@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/FluidInference/FluidAudio",
       "state" : {
-        "revision" : "8048812869b0c7c6fa393e564a4fb6f95126ba23",
-        "version" : "0.14.7"
+        "revision" : "56607d90b97de7d95a731200563bf49aa5beef20",
+        "version" : "0.14.8"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/smithy-lang/smithy-swift",
       "state" : {
-        "revision" : "e68da8decdd14077097d497194e717ee2058b501",
-        "version" : "0.213.0"
+        "revision" : "7192e229498190e40b1168219809888dd282f778",
+        "version" : "0.214.0"
       }
     },
     {
@@ -322,7 +322,7 @@
       "location" : "https://github.com/bisonbet/textual",
       "state" : {
         "branch" : "main",
-        "revision" : "0c2c3b54127e9c4cf19081f5c3a7c5c6bb302899"
+        "revision" : "ad589638b23e80557aaf2fa959760feac643a1e1"
       }
     },
     {
