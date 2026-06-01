@@ -35,17 +35,26 @@ class AWSBedrockService: ObservableObject {
         
         // Use shared AWS credentials for all services
         let sharedCredentials = AWSCredentialsManager.shared.credentials
-        
-        // Ensure environment variables are set from shared credentials
-        AWSCredentialsManager.shared.initializeEnvironment()
+        guard config.useProfile || sharedCredentials.isValid else {
+            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock credentials are not configured")
+        }
         
         do {
-            let clientConfig = try await BedrockRuntimeClient.BedrockRuntimeClientConfig(
-                region: sharedCredentials.region
-            )
-            
-            // AWS SDK for Swift will automatically use environment variables
-            // set by AWSCredentialsManager.initializeEnvironment()
+            let clientConfig: BedrockRuntimeClient.BedrockRuntimeClientConfig
+            if config.useProfile {
+                clientConfig = try await BedrockRuntimeClient.BedrockRuntimeClientConfig(
+                    region: config.region
+                )
+            } else {
+                clientConfig = try await BedrockRuntimeClient.BedrockRuntimeClientConfig(
+                    awsCredentialIdentityResolver: AWSClientCredentialResolver.staticResolver(
+                        accessKeyId: config.accessKeyId,
+                        secretAccessKey: config.secretAccessKey,
+                        sessionToken: config.sessionToken
+                    ),
+                    region: config.region
+                )
+            }
             
             let client = BedrockRuntimeClient(config: clientConfig)
             self.bedrockClient = client
@@ -339,6 +348,12 @@ class AWSBedrockService: ObservableObject {
             
             // Convert response body to Data
             let responseData = Data(responseBody)
+            let responseLimit = config.model.maxResponseLength
+
+            guard responseData.count <= responseLimit else {
+                AppLog.shared.networking("AWS Bedrock response rejected: \(responseData.count) bytes exceeds \(responseLimit) byte limit", level: .error)
+                throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock response exceeded the maximum allowed size")
+            }
             
             // Log the raw response only when verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
@@ -346,7 +361,8 @@ class AWSBedrockService: ObservableObject {
             }
             
             // Parse the model-specific response
-            let modelResponse = try AWSBedrockModelFactory.parseResponse(for: config.model, data: responseData)
+            let sanitizedResponseData = sanitizeResponseData(responseData)
+            let modelResponse = try AWSBedrockModelFactory.parseResponse(for: config.model, data: sanitizedResponseData)
             
             AppLog.shared.networking("AWS Bedrock API Success - Model: \(config.model.rawValue), response: \(modelResponse.content.count) chars")
             
@@ -356,6 +372,25 @@ class AWSBedrockService: ObservableObject {
             AppLog.shared.networking("AWS Bedrock API request failed: \(error)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock API request failed: \(error.localizedDescription)")
         }
+    }
+
+    private func sanitizeResponseData(_ data: Data) -> Data {
+        guard let responseString = String(data: data, encoding: .utf8) else {
+            return data
+        }
+
+        let sanitized = String(responseString.unicodeScalars.filter { scalar in
+            switch scalar.value {
+            case 0x09, 0x0A, 0x0D:
+                return true
+            case 0x00...0x1F, 0x7F:
+                return false
+            default:
+                return true
+            }
+        })
+
+        return sanitized.data(using: .utf8) ?? data
     }
     
     private func processCompleteStructured(text: String, contentType: ContentType) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {

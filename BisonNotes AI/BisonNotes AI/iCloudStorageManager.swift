@@ -1686,7 +1686,7 @@ class iCloudStorageManager: ObservableObject {
             : true   // default: on
         let includeSensitive = defaults.object(forKey: "iCloudBackupIncludeSensitiveSettings") != nil
             ? defaults.bool(forKey: "iCloudBackupIncludeSensitiveSettings")
-            : true   // default: on
+            : false  // default: off for sensitive values
 
         let options = CloudBackupOptions(
             includeAudioFiles: includeAudio,
@@ -2525,7 +2525,6 @@ extension iCloudStorageManager {
         "WatchAutoSync",
         "WatchBatteryAware",
         "isLocationTrackingEnabled",
-        "openAIAPIKey",
         "openAIModel",
         "openAIBaseURL",
         "openAISummarizationModel",
@@ -2533,7 +2532,6 @@ extension iCloudStorageManager {
         "openAISummarizationTemperature",
         "openAISummarizationMaxTokens",
         "enableOpenAI",
-        "openAICompatibleAPIKey",
         "openAICompatibleModel",
         "openAICompatibleBaseURL",
         "openAICompatibleTemperature",
@@ -2541,12 +2539,10 @@ extension iCloudStorageManager {
         "enableOpenAICompatible",
         "openAICompatibleManualFormatOverride",
         "openAICompatibleManualFormat",
-        "googleAIStudioAPIKey",
         "googleAIStudioModel",
         "googleAIStudioTemperature",
         "googleAIStudioMaxTokens",
         "enableGoogleAIStudio",
-        "mistralAPIKey",
         "mistralBaseURL",
         "mistralModel",
         "mistralTemperature",
@@ -2558,8 +2554,6 @@ extension iCloudStorageManager {
         "mistralTranscribeLanguage",
         "awsBucketName",
         "enableAWSTranscribe",
-        "AWSCredentials",
-        "awsBedrockSessionToken",
         "awsBedrockModel",
         "awsBedrockTemperature",
         "awsBedrockMaxTokens",
@@ -3253,7 +3247,7 @@ extension iCloudStorageManager {
             }
 
             try context.save()
-            AWSCredentialsManager.shared.initializeEnvironment()
+            AWSCredentialsManager.shared.clearCredentialEnvironment()
 
             await MainActor.run {
                 self.lastSyncDate = Date()
@@ -4186,10 +4180,39 @@ extension iCloudStorageManager {
                 continue
             }
 
+            if applyLegacySensitiveSetting(rawValue, forKey: key) {
+                defaults.removeObject(forKey: key)
+                continue
+            }
+
             defaults.set(rawValue, forKey: key)
         }
 
         defaults.synchronize()
+    }
+
+    private func applyLegacySensitiveSetting(_ rawValue: Any, forKey key: String) -> Bool {
+        switch key {
+        case KeychainSecretStore.openAIAPIKey,
+             KeychainSecretStore.openAICompatibleAPIKey,
+             KeychainSecretStore.googleAIStudioAPIKey,
+             KeychainSecretStore.mistralAPIKey,
+             KeychainSecretStore.awsBedrockSessionToken:
+            guard let value = rawValue as? String else { return true }
+            KeychainSecretStore.shared.setString(value, forKey: key)
+            return true
+        case KeychainSecretStore.awsCredentials:
+            guard let data = rawValue as? Data else { return true }
+            if let credentials = try? JSONDecoder().decode(AWSCredentials.self, from: data) {
+                AWSCredentialsManager.shared.updateCredentials(credentials)
+            } else {
+                KeychainSecretStore.shared.setData(data, forKey: key)
+                AWSCredentialsManager.shared.clearCredentialEnvironment()
+            }
+            return true
+        default:
+            return false
+        }
     }
 
     private func isSensitiveSettingKey(_ key: String) -> Bool {

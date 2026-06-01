@@ -8,9 +8,10 @@
 import SwiftUI
 
 struct OpenAISettingsView: View {
-    @AppStorage("openAIAPIKey") private var apiKey: String = ""
+    @SecureStorage(KeychainSecretStore.openAIAPIKey) private var apiKey: String = ""
     @AppStorage("openAIModel") private var selectedModel: String = OpenAITranscribeModel.whisper1.rawValue
     @AppStorage("openAIBaseURL") private var baseURL: String = "https://api.openai.com/v1"
+    @AppStorage(EndpointSecurityPolicy.allowInsecurePublicEndpointsKey) private var allowInsecurePublicEndpoints: Bool = false
     
     @State private var isTestingConnection = false
     @State private var connectionTestResult: String = ""
@@ -105,6 +106,8 @@ struct OpenAISettingsView: View {
                         Text("Use default OpenAI URL or a compatible API endpoint")
                             .font(.caption)
                             .foregroundColor(.secondary)
+
+                        endpointSecurityWarning(for: baseURL)
                     }
                 } header: {
                     Text("API Configuration")
@@ -234,6 +237,20 @@ struct OpenAISettingsView: View {
         selectedModel = OpenAITranscribeModel.whisper1.rawValue
         baseURL = "https://api.openai.com/v1"
         showingConnectionResult = false
+    }
+
+    @ViewBuilder
+    private func endpointSecurityWarning(for endpoint: String) -> some View {
+        if let warning = EndpointSecurityPolicy.warningMessage(for: endpoint) {
+            Label(warning, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundColor(.orange)
+        }
+
+        if EndpointSecurityPolicy.validationMessage(for: endpoint, allowInsecurePublicEndpoints: false) != nil {
+            Toggle("Development Mode: Allow Public HTTP", isOn: $allowInsecurePublicEndpoints)
+                .font(.caption)
+        }
     }
 }
 

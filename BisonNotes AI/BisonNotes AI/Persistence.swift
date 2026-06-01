@@ -57,6 +57,12 @@ struct PersistenceController {
                  */
                 fatalError("Unresolved error \(error), \(error.userInfo)")
             }
+
+            if let storeURL = storeDescription.url, !inMemory {
+                AppFileProtection.apply(to: storeURL)
+                AppFileProtection.apply(to: URL(fileURLWithPath: storeURL.path + "-wal"))
+                AppFileProtection.apply(to: URL(fileURLWithPath: storeURL.path + "-shm"))
+            }
         })
         container.viewContext.automaticallyMergesChangesFromParent = true
     }

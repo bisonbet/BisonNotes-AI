@@ -623,7 +623,7 @@ struct SimpleSettingsView: View {
     private func saveConfiguration() {
         // For Mistral, launch the onboarding wizard only if no API key exists yet
         if selectedOption == .mistralAI {
-            let existingKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+            let existingKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.mistralAPIKey) ?? ""
             if existingKey.isEmpty {
                 showingMistralOnboarding = true
                 return

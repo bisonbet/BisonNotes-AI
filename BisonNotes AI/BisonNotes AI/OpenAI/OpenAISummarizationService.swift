@@ -200,6 +200,10 @@ class OpenAISummarizationService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "API key is empty")
         }
 
+        if let message = EndpointSecurityPolicy.validationMessage(for: baseURL) {
+            throw SummarizationError.aiServiceUnavailable(service: message)
+        }
+
         guard let url = URL(string: "\(baseURL)/models") else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid base URL")
         }
@@ -236,6 +240,10 @@ class OpenAISummarizationService: ObservableObject {
         var normalizedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if normalizedBaseURL.hasSuffix("/") {
             normalizedBaseURL.removeLast()
+        }
+
+        if let message = EndpointSecurityPolicy.validationMessage(for: normalizedBaseURL) {
+            throw SummarizationError.aiServiceUnavailable(service: message)
         }
 
         guard let url = URL(string: "\(normalizedBaseURL)/models") else {
@@ -335,6 +343,11 @@ class OpenAISummarizationService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI API key format is invalid")
         }
 
+        if let message = EndpointSecurityPolicy.validationMessage(for: config.baseURL) {
+            AppLog.shared.networking("Blocked insecure OpenAI endpoint: \(config.baseURL)", level: .error)
+            throw SummarizationError.aiServiceUnavailable(service: message)
+        }
+
         AppLog.shared.networking("OpenAI API Configuration - Model: \(config.effectiveModelId), BaseURL: \(config.baseURL)", level: .debug)
         
         guard let url = URL(string: "\(config.baseURL)/chat/completions") else {
@@ -394,4 +407,4 @@ class OpenAISummarizationService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "OpenAI API request failed: \(error.localizedDescription)")
         }
     }
-} 
+}

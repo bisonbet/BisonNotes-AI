@@ -15,6 +15,7 @@ struct OllamaSettingsView: View {
     @AppStorage("ollamaTemperature") private var temperature: Double = 0.1
     /// Maximum context window the selected model supports
     @AppStorage("ollamaContextTokens") private var maxContextTokens: Int = 4096
+    @AppStorage(EndpointSecurityPolicy.allowInsecurePublicEndpointsKey) private var allowInsecurePublicEndpoints: Bool = false
     
     var onConfigurationChanged: (() -> Void)?
     
@@ -162,6 +163,8 @@ struct OllamaSettingsView: View {
             Text("Enter the URL of your Ollama server (e.g., http://localhost)")
                 .font(.caption)
                 .foregroundColor(.secondary)
+
+            endpointSecurityWarning(for: "\(serverURL):\(port)")
         }
     }
     
@@ -418,6 +421,20 @@ struct OllamaSettingsView: View {
         formatter.allowedUnits = [.useGB, .useMB]
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
+    }
+
+    @ViewBuilder
+    private func endpointSecurityWarning(for endpoint: String) -> some View {
+        if let warning = EndpointSecurityPolicy.warningMessage(for: endpoint) {
+            Label(warning, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundColor(.orange)
+        }
+
+        if EndpointSecurityPolicy.validationMessage(for: endpoint, allowInsecurePublicEndpoints: false) != nil {
+            Toggle("Development Mode: Allow Public HTTP", isOn: $allowInsecurePublicEndpoints)
+                .font(.caption)
+        }
     }
 }
 

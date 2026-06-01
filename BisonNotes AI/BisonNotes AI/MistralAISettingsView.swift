@@ -11,7 +11,7 @@ import os.log
 struct MistralAISettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @AppStorage("mistralAPIKey") private var apiKey: String = ""
+    @SecureStorage(KeychainSecretStore.mistralAPIKey) private var apiKey: String = ""
     @AppStorage("mistralBaseURL") private var baseURL: String = "https://api.mistral.ai/v1"
     @AppStorage("mistralModel") private var selectedModel: String = MistralAIModel.mistralMedium2508.rawValue
     @AppStorage("mistralTemperature") private var temperature: Double = 0.1

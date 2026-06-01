@@ -51,6 +51,7 @@ extension AudioRecorderViewModel {
 			AVEncoderBitRateKey: 64000
 		]
 		let audioFile = try AVAudioFile(forWriting: url, settings: outputSettings)
+		AppFileProtection.apply(to: url)
 
 		catalystAudioEngine = engine
 		catalystAudioFile = audioFile

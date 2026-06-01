@@ -22,6 +22,7 @@ struct TestHelpers {
         channels: Int = 2
     ) -> AudioFileInfo {
         return AudioFileInfo(
+            url: URL(fileURLWithPath: "/test/audio.\(format)"),
             duration: duration,
             fileSize: fileSize,
             format: format,
@@ -279,7 +280,7 @@ class MockBackgroundProcessingManager: BackgroundProcessingManager {
     var mockJobExecutionSuccess = true
     var mockJobError: Error?
     
-    override func startTranscription(_ job: ProcessingJob) async throws {
+    func startTranscription(_ job: ProcessingJob) async throws {
         if !mockJobExecutionSuccess {
             throw mockJobError ?? AudioProcessingError.backgroundProcessingFailed("Mock failure")
         }
@@ -309,9 +310,12 @@ class MockiCloudStorageManager: iCloudStorageManager {
         set { mockIsEnabled = newValue }
     }
     
-    override func enableiCloudSync() async throws {
+    override func enableiCloudSync() async {
         if !mockSyncSuccess {
-            throw mockSyncError ?? AudioProcessingError.iCloudSyncFailed("Mock failure")
+            let message = mockSyncError?.localizedDescription ?? "Mock failure"
+            self.lastError = message
+            self.syncStatus = .failed(message)
+            return
         }
         
         await MainActor.run {
@@ -320,7 +324,7 @@ class MockiCloudStorageManager: iCloudStorageManager {
         }
     }
     
-    override func disableiCloudSync() async throws {
+    override func disableiCloudSync() async {
         await MainActor.run {
             self.isEnabled = false
             self.syncStatus = .idle
@@ -333,7 +337,7 @@ class MockiCloudStorageManager: iCloudStorageManager {
 extension TestHelpers {
     
     /// Asserts that a job has the expected status
-    static func assertJobStatus(_ job: ProcessingJob, expected: ProcessingStatus) {
+    static func assertJobStatus(_ job: ProcessingJob, expected: JobProcessingStatus) {
         assert(job.status == expected, "Expected job status \(expected), but got \(job.status)")
     }
     
@@ -412,4 +416,4 @@ extension TestHelpers {
     static func simulateNetworkRecovery() -> NetworkStatus {
         return .available
     }
-} 
+}

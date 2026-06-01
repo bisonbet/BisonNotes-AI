@@ -118,6 +118,7 @@ class FileImportManager: NSObject, ObservableObject {
         // Copy file to documents directory with comprehensive error handling for thumbnail issues
         do {
             try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            AppFileProtection.apply(to: destinationURL)
 
         } catch {
             // Check if this is a thumbnail-related error that we can ignore
@@ -129,6 +130,7 @@ class FileImportManager: NSObject, ObservableObject {
                 throw ImportError.copyFailed(error.localizedDescription)
             }
         }
+        AppFileProtection.apply(to: destinationURL)
 
         // Validate the copied file
         try validateAudioFile(at: destinationURL)
@@ -228,6 +230,7 @@ class FileImportManager: NSObject, ObservableObject {
 
             do {
                 try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+                AppFileProtection.apply(to: destinationURL)
             } catch {
                 if error.isThumbnailGenerationError {
                     AppLog.shared.fileManagement("Thumbnail generation warning: \(error.localizedDescription)", level: .debug)
@@ -235,6 +238,7 @@ class FileImportManager: NSObject, ObservableObject {
                     throw ImportError.copyFailed(error.localizedDescription)
                 }
             }
+            AppFileProtection.apply(to: destinationURL)
 
             try validateAudioFile(at: destinationURL)
 
@@ -269,6 +273,7 @@ class FileImportManager: NSObject, ObservableObject {
         exportSession.outputFileType = .m4a
 
         try await exportSession.export(to: destinationURL, as: .m4a)
+        AppFileProtection.apply(to: destinationURL)
 
         // Validate the extracted audio
         try validateAudioFile(at: destinationURL)
@@ -505,4 +510,4 @@ struct ImportResults {
             return "Imported \(successful) of \(total) files successfully"
         }
     }
-} 
+}

@@ -160,7 +160,7 @@ struct AudioFileInfo {
     let format: String
     let sampleRate: Double
     let channels: Int
-    
+
     static func create(from url: URL) async throws -> AudioFileInfo {
         AppLog.shared.chunking("AudioFileInfo.create - Analyzing file: \(url.lastPathComponent)", level: .debug)
         AppLog.shared.chunking("AudioFileInfo.create - Full path: \(url.path)", level: .debug)
@@ -229,7 +229,7 @@ struct AudioFileInfo {
         return audioFileInfo
     }
     
-    private init(url: URL, duration: TimeInterval, fileSize: Int64, format: String, sampleRate: Double, channels: Int) {
+    init(url: URL, duration: TimeInterval, fileSize: Int64, format: String, sampleRate: Double, channels: Int) {
         self.url = url
         self.duration = duration
         self.fileSize = fileSize

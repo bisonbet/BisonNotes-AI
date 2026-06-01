@@ -32,22 +32,27 @@ class AWSCredentialsManager: ObservableObject {
     @Published var credentials: AWSCredentials
     
     private let userDefaults = UserDefaults.standard
-    private let credentialsKey = "AWSCredentials"
+    private let keychain = KeychainSecretStore.shared
+    private let credentialsKey = KeychainSecretStore.awsCredentials
     
     init() {
+        self.credentials = .default
+        migrateLegacyCredentials()
+
         // Load saved credentials or use default
-        if let data = userDefaults.data(forKey: credentialsKey),
+        if let data = keychain.data(forKey: credentialsKey),
            let savedCredentials = try? JSONDecoder().decode(AWSCredentials.self, from: data) {
             self.credentials = savedCredentials
         } else {
             self.credentials = .default
         }
+        clearCredentialEnvironment()
     }
     
     func updateCredentials(_ newCredentials: AWSCredentials) {
         self.credentials = newCredentials
         saveCredentials()
-        configureEnvironmentVariables()
+        clearCredentialEnvironment()
     }
     
     func updateAccessKey(_ accessKey: String) {
@@ -79,26 +84,46 @@ class AWSCredentialsManager: ObservableObject {
     
     private func saveCredentials() {
         if let data = try? JSONEncoder().encode(credentials) {
-            userDefaults.set(data, forKey: credentialsKey)
+            keychain.setData(data, forKey: credentialsKey)
         }
+        userDefaults.removeObject(forKey: credentialsKey)
+        userDefaults.removeObject(forKey: "awsAccessKey")
+        userDefaults.removeObject(forKey: "awsSecretKey")
+        userDefaults.removeObject(forKey: "awsRegion")
+    }
+
+    private func migrateLegacyCredentials() {
+        if keychain.data(forKey: credentialsKey) == nil,
+           let data = userDefaults.data(forKey: credentialsKey) {
+            keychain.setData(data, forKey: credentialsKey)
+        } else if keychain.data(forKey: credentialsKey) == nil {
+            let accessKey = userDefaults.string(forKey: "awsAccessKey") ?? ""
+            let secretKey = userDefaults.string(forKey: "awsSecretKey") ?? ""
+            let region = userDefaults.string(forKey: "awsRegion") ?? AWSCredentials.default.region
+
+            if !accessKey.isEmpty || !secretKey.isEmpty {
+                let legacyCredentials = AWSCredentials(
+                    accessKeyId: accessKey,
+                    secretAccessKey: secretKey,
+                    region: region.isEmpty ? AWSCredentials.default.region : region
+                )
+                if let data = try? JSONEncoder().encode(legacyCredentials) {
+                    keychain.setData(data, forKey: credentialsKey)
+                }
+            }
+        }
+
+        userDefaults.removeObject(forKey: credentialsKey)
+        userDefaults.removeObject(forKey: "awsAccessKey")
+        userDefaults.removeObject(forKey: "awsSecretKey")
+        userDefaults.removeObject(forKey: "awsRegion")
     }
     
-    private func configureEnvironmentVariables() {
-        // Set environment variables for AWS SDK
-        if credentials.isValid {
-            setenv("AWS_ACCESS_KEY_ID", credentials.accessKeyId, 1)
-            setenv("AWS_SECRET_ACCESS_KEY", credentials.secretAccessKey, 1)
-            setenv("AWS_DEFAULT_REGION", credentials.region, 1)
-            AppLog.shared.networking("AWS credentials configured globally")
-        } else {
-            AppLog.shared.networking("AWS credentials incomplete - not setting environment variables", level: .error)
-        }
-    }
-    
-    
-    // Call this when app starts to ensure environment variables are set
-    func initializeEnvironment() {
-        configureEnvironmentVariables()
+    func clearCredentialEnvironment() {
+        unsetenv("AWS_ACCESS_KEY_ID")
+        unsetenv("AWS_SECRET_ACCESS_KEY")
+        unsetenv("AWS_SESSION_TOKEN")
+        unsetenv("AWS_DEFAULT_REGION")
     }
     
 }

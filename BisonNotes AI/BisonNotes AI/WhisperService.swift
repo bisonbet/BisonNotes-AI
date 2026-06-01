@@ -184,6 +184,9 @@ class WhisperService: ObservableObject {
         do {
             // For REST API, always use HTTP regardless of what user entered
             let restBaseURL = config.restAPIBaseURL
+            if let message = EndpointSecurityPolicy.validationMessage(for: restBaseURL) {
+                throw WhisperError.serverError(message)
+            }
             let testURL = URL(string: "\(restBaseURL)/asr")!
             AppLog.shared.transcription("Testing REST API connection to: \(testURL)", level: .debug)
 
@@ -497,6 +500,9 @@ class WhisperService: ObservableObject {
         // Create multipart form data request
         let boundary = UUID().uuidString
         let restBaseURL = config.restAPIBaseURL
+        if let message = EndpointSecurityPolicy.validationMessage(for: restBaseURL) {
+            throw WhisperError.serverError(message)
+        }
         var request = URLRequest(url: URL(string: "\(restBaseURL)/asr")!)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -757,6 +763,9 @@ class WhisperService: ObservableObject {
         // Create multipart form data request for language detection
         let boundary = UUID().uuidString
         let restBaseURL = config.restAPIBaseURL
+        if let message = EndpointSecurityPolicy.validationMessage(for: restBaseURL) {
+            throw WhisperError.serverError(message)
+        }
         var request = URLRequest(url: URL(string: "\(restBaseURL)/detect-language")!)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")

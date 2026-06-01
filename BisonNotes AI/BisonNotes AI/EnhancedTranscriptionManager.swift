@@ -147,7 +147,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     
     // OpenAI Configuration
     private var openAIConfig: OpenAITranscribeConfig? {
-        let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAITranscribeModel.gpt4oMiniTranscribe.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
         
@@ -170,7 +170,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
     // Mistral Transcribe Configuration
     private var mistralTranscribeConfig: MistralTranscribeConfig? {
-        let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.mistralAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "mistralTranscribeModel") ?? MistralTranscribeModel.voxtralMiniLatest.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "mistralBaseURL") ?? "https://api.mistral.ai/v1"
         let diarize = UserDefaults.standard.bool(forKey: "mistralTranscribeDiarize")

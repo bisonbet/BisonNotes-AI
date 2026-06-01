@@ -34,6 +34,7 @@ final class SummaryAttachmentStore {
         let id = UUID()
         let destinationFolder = attachmentsDirectory(for: summaryId)
         try fileManager.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
+        AppFileProtection.applyRecursively(to: storageDirectory(for: summaryId))
 
         let sanitizedName = sanitizeFileName(fileName)
         let storedFileName = "\(id.uuidString)_\(sanitizedName)"
@@ -44,6 +45,7 @@ final class SummaryAttachmentStore {
         }
 
         try fileManager.copyItem(at: sourceURL, to: destinationURL)
+        AppFileProtection.apply(to: destinationURL)
 
         let attributes = try? fileManager.attributesOfItem(atPath: destinationURL.path)
         let fileSize = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
@@ -102,6 +104,7 @@ final class SummaryAttachmentStore {
             try fileManager.removeItem(at: newDir)
         }
         try fileManager.moveItem(at: oldDir, to: newDir)
+        AppFileProtection.applyRecursively(to: newDir)
     }
 
     func fileURL(for attachment: SummaryAttachment, summaryId: UUID) -> URL {
@@ -111,9 +114,11 @@ final class SummaryAttachmentStore {
     private func save(_ supplemental: SummarySupplementalData, summaryId: UUID) throws {
         let directory = storageDirectory(for: summaryId)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        AppFileProtection.apply(to: directory)
         let metadataURL = metadataFileURL(for: summaryId)
         let data = try encoder.encode(supplemental)
         try data.write(to: metadataURL, options: .atomic)
+        AppFileProtection.apply(to: metadataURL)
     }
 
     private func rootDirectory() -> URL {

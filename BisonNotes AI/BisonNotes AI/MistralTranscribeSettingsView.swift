@@ -9,7 +9,7 @@ import SwiftUI
 
 struct MistralTranscribeSettingsView: View {
     // Reuse existing Mistral API key from summarization settings
-    @AppStorage("mistralAPIKey") private var apiKey: String = ""
+    @SecureStorage(KeychainSecretStore.mistralAPIKey) private var apiKey: String = ""
     @AppStorage("mistralBaseURL") private var baseURL: String = "https://api.mistral.ai/v1"
 
     // Transcription-specific settings

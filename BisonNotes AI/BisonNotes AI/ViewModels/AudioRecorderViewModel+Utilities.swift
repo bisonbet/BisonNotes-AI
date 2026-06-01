@@ -301,7 +301,9 @@ extension AudioRecorderViewModel {
 		}
 
 		do {
-			try data.write(to: recordingTimestampMetadataURL(for: url), options: .atomic)
+			let metadataURL = recordingTimestampMetadataURL(for: url)
+			try data.write(to: metadataURL, options: .atomic)
+			AppFileProtection.apply(to: metadataURL)
 		} catch {
 			AppLog.shared.recording("Failed to write recording timestamp metadata: \(error.localizedDescription)", level: .error)
 		}

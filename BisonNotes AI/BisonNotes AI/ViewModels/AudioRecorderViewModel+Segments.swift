@@ -87,6 +87,7 @@ extension AudioRecorderViewModel {
 
 			// Use the modern export API (iOS 18+)
 			try await exportSession.export(to: tempURL, as: .m4a)
+			AppFileProtection.apply(to: tempURL)
 
 			AppLog.shared.recording("Successfully merged all segments to temporary file", level: .debug)
 
@@ -103,6 +104,7 @@ extension AudioRecorderViewModel {
 
 			// Move temp file to final location
 			try fileManager.moveItem(at: tempURL, to: mainURL)
+			AppFileProtection.apply(to: mainURL)
 
 			AppLog.shared.recording("Successfully merged all segments")
 

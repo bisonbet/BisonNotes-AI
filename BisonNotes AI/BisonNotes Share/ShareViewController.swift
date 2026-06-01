@@ -96,8 +96,19 @@ class ShareViewController: UIViewController {
 
         group.notify(queue: .main) { [weak self] in
             NSLog("📎 Share Extension: done, saved \(processedCount) file(s)")
+            guard processedCount > 0 else {
+                self?.completeRequest()
+                return
+            }
+
+            guard let importToken = self?.createImportToken() else {
+                NSLog("❌ Share Extension: could not create import token")
+                self?.completeRequest()
+                return
+            }
+
             // Open the main app so it imports immediately instead of waiting for user to switch.
-            self?.openMainApp {
+            self?.openMainApp(importToken: importToken) {
                 self?.completeRequest()
             }
         }
@@ -172,12 +183,42 @@ class ShareViewController: UIViewController {
 
         do {
             try FileManager.default.copyItem(at: url, to: destination)
+            applyFileProtection(to: destination)
             NSLog("✅ Share Extension: saved file with extension: \(url.pathExtension)")
             return true
         } catch {
             NSLog("❌ Share Extension: copy failed: \(error.localizedDescription)")
             return false
         }
+    }
+
+    private func createImportToken() -> String? {
+        guard let containerURL = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID) else {
+            return nil
+        }
+
+        let inboxURL = containerURL.appendingPathComponent(shareInboxFolder)
+
+        do {
+            try FileManager.default.createDirectory(at: inboxURL, withIntermediateDirectories: true)
+            let token = UUID().uuidString
+            let tokenURL = inboxURL.appendingPathComponent(".share-import-token")
+            guard let tokenData = token.data(using: .utf8) else { return nil }
+            try tokenData.write(to: tokenURL, options: .atomic)
+            applyFileProtection(to: tokenURL)
+            return token
+        } catch {
+            NSLog("❌ Share Extension: cannot create import token: \(error)")
+            return nil
+        }
+    }
+
+    private func applyFileProtection(to url: URL) {
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: url.path
+        )
     }
 
     // MARK: - Open Main App
@@ -191,8 +232,8 @@ class ShareViewController: UIViewController {
     /// 2. Fall back to the responder chain (in case direct access fails).
     /// 3. Post a Darwin notification (works when app is already backgrounded).
     /// 4. (Implicit) The main app scans the shared container on `didBecomeActive`.
-    private func openMainApp(completion: @escaping () -> Void) {
-        guard let url = URL(string: "bisonnotes://share-import") else {
+    private func openMainApp(importToken: String, completion: @escaping () -> Void) {
+        guard let url = URL(string: "bisonnotes://share-import?token=\(importToken)") else {
             completion()
             return
         }

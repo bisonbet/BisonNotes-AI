@@ -12,6 +12,7 @@ struct WhisperSettingsView: View {
     @AppStorage("whisperPort") private var port: Int = 9000
     @AppStorage("whisperProtocol") private var protocolString: String = WhisperProtocol.rest.rawValue
     @AppStorage("enableWhisper") private var enableWhisper: Bool = false
+    @AppStorage(EndpointSecurityPolicy.allowInsecurePublicEndpointsKey) private var allowInsecurePublicEndpoints: Bool = false
     
     private var selectedProtocol: WhisperProtocol {
         get { WhisperProtocol(rawValue: protocolString) ?? .rest }
@@ -174,6 +175,8 @@ struct WhisperSettingsView: View {
                                  "The URL of your Whisper server (e.g., http://localhost, http://192.168.1.100)")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+
+                            endpointSecurityWarning(for: endpointForSecurityWarning)
                         }
                         
                         VStack(alignment: .leading, spacing: 8) {
@@ -348,6 +351,18 @@ struct WhisperSettingsView: View {
     private var isConfigurationValid: Bool {
         !serverURL.isEmpty && port > 0 && port <= 65535
     }
+
+    private var endpointForSecurityWarning: String {
+        if selectedProtocol == .rest {
+            return WhisperConfig(serverURL: serverURL, port: port, whisperProtocol: .rest).restAPIBaseURL
+        }
+
+        if serverURL.hasPrefix("ws://") || serverURL.hasPrefix("wss://") || serverURL.hasPrefix("http://") || serverURL.hasPrefix("https://") {
+            return "\(serverURL):\(port)"
+        }
+
+        return "ws://\(serverURL):\(port)"
+    }
     
     private func updateWhisperService() {
         AppLog.shared.general("WhisperSettingsView: Updating service with protocol: \(selectedProtocol.rawValue)")
@@ -374,6 +389,20 @@ struct WhisperSettingsView: View {
                 }
                 isTesting = false
             }
+        }
+    }
+
+    @ViewBuilder
+    private func endpointSecurityWarning(for endpoint: String) -> some View {
+        if let warning = EndpointSecurityPolicy.warningMessage(for: endpoint) {
+            Label(warning, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundColor(.orange)
+        }
+
+        if EndpointSecurityPolicy.validationMessage(for: endpoint, allowInsecurePublicEndpoints: false) != nil {
+            Toggle("Development Mode: Allow Public HTTP", isOn: $allowInsecurePublicEndpoints)
+                .font(.caption)
         }
     }
 }
@@ -412,4 +441,4 @@ struct WhisperSettingsView_Previews: PreviewProvider {
     static var previews: some View {
         WhisperSettingsView()
     }
-} 
+}

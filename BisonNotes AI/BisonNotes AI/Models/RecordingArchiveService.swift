@@ -277,6 +277,7 @@ class RecordingArchiveService: ObservableObject {
         coordinator.coordinate(readingItemAt: sourceURL, options: [], error: &coordinatorError) { coordinatedURL in
             do {
                 try FileManager.default.copyItem(at: coordinatedURL, to: destinationURL)
+                AppFileProtection.apply(to: destinationURL)
                 didCopy = true
             } catch {
                 operationError = error

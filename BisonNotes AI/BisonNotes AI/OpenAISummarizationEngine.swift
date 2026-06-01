@@ -22,7 +22,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
     
     var isAvailable: Bool {
         // Check if API key is configured (unified with transcription)
-        let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
         guard !apiKey.isEmpty else {
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
@@ -184,7 +184,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
     // MARK: - Configuration Management
     
     private func updateConfiguration() {
-        let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAISummarizationBaseURL") ?? "https://api.openai.com/v1"
         let temperature = UserDefaults.standard.double(forKey: "openAISummarizationTemperature")
@@ -409,7 +409,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
     
     var isAvailable: Bool {
         // Check if API key is configured
-        let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAICompatibleAPIKey) ?? ""
         guard !apiKey.isEmpty else {
             // Only log if verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
@@ -559,7 +559,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
     // MARK: - Configuration Management
     
     private func updateConfiguration() {
-        let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAICompatibleAPIKey) ?? ""
         let modelId = UserDefaults.standard.string(forKey: "openAICompatibleModel") ?? "gpt-3.5-turbo"
         let baseURL = UserDefaults.standard.string(forKey: "openAICompatibleBaseURL") ?? "https://api.openai.com/v1"
         let temperature = UserDefaults.standard.double(forKey: "openAICompatibleTemperature")

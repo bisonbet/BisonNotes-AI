@@ -560,6 +560,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 			audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
 			audioRecorder?.delegate = self
+			AppFileProtection.apply(to: audioFilename)
 
 			// Enable metering for silence detection (used for smart checkpoints)
 			audioRecorder?.isMeteringEnabled = true
@@ -570,6 +571,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 			// No background task needed here - audio background mode keeps recording alive
 			audioRecorder?.record()
+			AppFileProtection.apply(to: audioFilename)
 			#endif
 
 			isRecording = true

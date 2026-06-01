@@ -1084,6 +1084,7 @@ class CoreDataManager: ObservableObject {
                     let matchingFiles = fileURLs.filter { $0.lastPathComponent == filename }
                     
                     if let newURL = matchingFiles.first {
+                        AppFileProtection.apply(to: newURL)
                         // Update the Core Data entry with the correct relative path
                         recording.recordingURL = urlToRelativePath(newURL)
                         recording.lastModified = Date()
@@ -1105,6 +1106,7 @@ class CoreDataManager: ObservableObject {
                             }
                             
                             if let newURL = matchingFilesByName.first {
+                                AppFileProtection.apply(to: newURL)
                                 // Update the Core Data entry with the correct relative path
                                 recording.recordingURL = urlToRelativePath(newURL)
                                 recording.lastModified = Date()

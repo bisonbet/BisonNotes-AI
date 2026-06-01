@@ -1205,7 +1205,7 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - Configuration Helpers
     
     private func getOpenAIConfig() -> OpenAITranscribeConfig {
-        let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAITranscribeModel.gpt4oMiniTranscribe.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
         
@@ -1219,7 +1219,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func getMistralTranscribeConfig() -> MistralTranscribeConfig {
-        let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.mistralAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "mistralTranscribeModel") ?? MistralTranscribeModel.voxtralMiniLatest.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "mistralBaseURL") ?? "https://api.mistral.ai/v1"
         let diarize = UserDefaults.standard.bool(forKey: "mistralTranscribeDiarize")
@@ -1261,15 +1261,13 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func getAWSConfig() -> AWSTranscribeConfig {
-        let accessKey = UserDefaults.standard.string(forKey: "awsAccessKey") ?? ""
-        let secretKey = UserDefaults.standard.string(forKey: "awsSecretKey") ?? ""
-        let region = UserDefaults.standard.string(forKey: "awsRegion") ?? "us-east-1"
+        let credentials = AWSCredentialsManager.shared.credentials
         let bucketName = UserDefaults.standard.string(forKey: "awsBucketName") ?? ""
         
         return AWSTranscribeConfig(
-            region: region,
-            accessKey: accessKey,
-            secretKey: secretKey,
+            region: credentials.region,
+            accessKey: credentials.accessKeyId,
+            secretKey: credentials.secretAccessKey,
             bucketName: bucketName
         )
     }
@@ -1591,7 +1589,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func getOpenAISummarizationConfig() -> OpenAISummarizationConfig {
-        let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
         

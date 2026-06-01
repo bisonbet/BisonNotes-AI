@@ -35,7 +35,7 @@ struct SettingsView: View {
     @AppStorage("WatchBatteryAware") private var watchBatteryAware: Bool = true
     @AppStorage("iCloudBackupIncludeAudioFiles") private var iCloudBackupIncludeAudioFiles: Bool = false
     @AppStorage("iCloudBackupIncludeSettings") private var iCloudBackupIncludeSettings: Bool = true
-    @AppStorage("iCloudBackupIncludeSensitiveSettings") private var iCloudBackupIncludeSensitiveSettings: Bool = true
+    @AppStorage("iCloudBackupIncludeSensitiveSettings") private var iCloudBackupIncludeSensitiveSettings: Bool = false
     @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels) private var enableExperimentalModels = false
     @AppStorage(ComedyMode.SettingsKeys.enabled) private var comedyModeEnabled = false
     @AppStorage(ComedyMode.SettingsKeys.style) private var comedyModeStyle = "snarky"
@@ -333,8 +333,11 @@ struct SettingsView: View {
             if iCloudManager.isEnabled {
                 Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
                 Toggle("Include app settings", isOn: $iCloudBackupIncludeSettings)
-                Toggle("Include API keys (encrypted)", isOn: $iCloudBackupIncludeSensitiveSettings)
+                Toggle("Include sensitive settings", isOn: $iCloudBackupIncludeSensitiveSettings)
                     .disabled(!iCloudBackupIncludeSettings)
+                Text("API keys and AWS credentials stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
 
                 Button {
                     Task { await backupAllDataToiCloud() }
@@ -754,7 +757,7 @@ struct SettingsView: View {
 
             let settingsText: String
             if result.settingsBackedUp {
-                settingsText = result.includedSensitiveSettings ? "settings + encrypted keys" : "settings"
+                settingsText = result.includedSensitiveSettings ? "settings + sensitive settings" : "settings"
             } else {
                 settingsText = "no settings"
             }
@@ -794,7 +797,7 @@ struct SettingsView: View {
 
             let settingsText: String
             if result.settingsRestored {
-                settingsText = result.includedSensitiveSettings ? "settings + encrypted keys" : "settings"
+                settingsText = result.includedSensitiveSettings ? "settings + sensitive settings" : "settings"
             } else {
                 settingsText = "no settings"
             }

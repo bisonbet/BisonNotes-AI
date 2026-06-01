@@ -75,6 +75,7 @@ extension AudioRecorderViewModel {
 				let permanentURL = documentsURL.appendingPathComponent(iPhoneStyleFilename)
 
 				try audioData.write(to: permanentURL)
+				AppFileProtection.apply(to: permanentURL)
 
 				// Create Core Data entry
 				guard let appCoordinator = appCoordinator else {
@@ -296,6 +297,7 @@ extension AudioRecorderViewModel {
 			let backupURL = documentsURL.appendingPathComponent("watch_backup_\(recordingId).pcm")
 
 			try watchAudioData.write(to: backupURL)
+			AppFileProtection.apply(to: backupURL)
 			AppLog.shared.watchConnectivity("Stored watch audio backup")
 
 			// Optionally store metadata about the backup
@@ -312,6 +314,7 @@ extension AudioRecorderViewModel {
 
 			let metadataData = try JSONSerialization.data(withJSONObject: metadata)
 			try metadataData.write(to: metadataURL)
+			AppFileProtection.apply(to: metadataURL)
 
 		} catch {
 			AppLog.shared.watchConnectivity("Failed to store watch audio backup: \(error)", level: .error)
@@ -325,6 +328,7 @@ extension AudioRecorderViewModel {
 			let backupURL = documentsURL.appendingPathComponent("phone_backup_\(recordingId).m4a")
 
 			try FileManager.default.copyItem(at: phoneAudioURL, to: backupURL)
+			AppFileProtection.apply(to: backupURL)
 			AppLog.shared.watchConnectivity("Stored phone audio backup")
 
 		} catch {

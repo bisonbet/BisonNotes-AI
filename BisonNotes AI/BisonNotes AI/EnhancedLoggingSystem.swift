@@ -102,6 +102,7 @@ class AppLog {
                 lines = Array(lines.suffix(Self.maxBufferLines))
             }
             try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+            AppFileProtection.apply(to: url)
         }
     }
 
