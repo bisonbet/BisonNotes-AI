@@ -35,4 +35,23 @@ final class EndpointSecurityPolicyTests: XCTestCase {
             )
         )
     }
+
+    func testBlocksPublicHostnamesThatLookLikeIPv6Literals() {
+        XCTAssertNotNil(EndpointSecurityPolicy.validationMessage(for: "http://fd-example.com/v1"))
+        XCTAssertNotNil(EndpointSecurityPolicy.validationMessage(for: "http://fc00.example.com/v1"))
+        XCTAssertNotNil(EndpointSecurityPolicy.validationMessage(for: "http://fe80.example.com/v1"))
+    }
+
+    func testAllowsPrivateAndLoopbackIPv6Literals() {
+        XCTAssertNil(EndpointSecurityPolicy.validationMessage(for: "http://[::1]:8080"))
+        XCTAssertNil(EndpointSecurityPolicy.validationMessage(for: "http://[fd00::1]:8080"))
+        XCTAssertNil(EndpointSecurityPolicy.validationMessage(for: "http://[fc00::1]"))
+        XCTAssertNil(EndpointSecurityPolicy.validationMessage(for: "http://[fe80::1]"))
+    }
+
+    func testBlocksPublicIPv6Literals() {
+        let message = EndpointSecurityPolicy.validationMessage(for: "http://[2001:db8::1]/v1")
+        XCTAssertNotNil(message)
+        XCTAssertTrue(message?.contains("Public HTTP endpoints are blocked") == true)
+    }
 }

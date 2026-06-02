@@ -1,7 +1,11 @@
 import Foundation
 
 enum AppFileProtection {
-    static let sensitiveFileProtection: FileProtectionType = .complete
+    // .completeUntilFirstUserAuthentication keeps files encrypted at rest but
+    // available once the user has unlocked the device after boot. Background
+    // recording, transcription, and Core Data writes can fire while the device
+    // is locked again later, and .complete would make those reads/writes fail.
+    static let sensitiveFileProtection: FileProtectionType = .completeUntilFirstUserAuthentication
 
     static func apply(to url: URL) {
         try? FileManager.default.setAttributes(

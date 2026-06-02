@@ -41,6 +41,10 @@ struct PersistenceController {
         container.persistentStoreDescriptions.forEach { description in
             description.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
             description.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
+            description.setOption(
+                AppFileProtection.sensitiveFileProtection as NSObject,
+                forKey: NSPersistentStoreFileProtectionKey
+            )
         }
         container.loadPersistentStores(completionHandler: { (storeDescription, error) in
             if let error = error as NSError? {
