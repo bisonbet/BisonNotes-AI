@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Darwin
 
 enum EndpointSecurityPolicy {
     static let allowInsecurePublicEndpointsKey = "allowInsecurePublicAIEndpoints"
@@ -68,7 +69,7 @@ enum EndpointSecurityPolicy {
     private static func isLocalOrPrivateHost(_ host: String) -> Bool {
         let normalized = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
 
-        if normalized == "localhost" || normalized.hasSuffix(".localhost") || normalized == "::1" {
+        if normalized == "localhost" || normalized.hasSuffix(".localhost") {
             return true
         }
 
@@ -76,7 +77,14 @@ enum EndpointSecurityPolicy {
             return isPrivateIPv4(ipv4)
         }
 
-        return normalized.hasPrefix("fc") || normalized.hasPrefix("fd") || normalized.hasPrefix("fe80:")
+        // Only treat the host as an IPv6 literal if it actually parses as one —
+        // a DNS name like "fd-example.com" must not be accepted just because it
+        // starts with "fd".
+        if normalized.contains(":") {
+            return isPrivateIPv6Literal(normalized)
+        }
+
+        return false
     }
 
     private static func parseIPv4(_ host: String) -> [Int]? {
@@ -100,5 +108,40 @@ enum EndpointSecurityPolicy {
             || (first == 172 && (16...31).contains(second))
             || (first == 192 && second == 168)
             || (first == 169 && second == 254)
+    }
+
+    private static func isPrivateIPv6Literal(_ host: String) -> Bool {
+        // Strip any RFC 6874 zone identifier (e.g. "fe80::1%en0") before parsing.
+        var address = host
+        if let percent = address.firstIndex(of: "%") {
+            address = String(address[..<percent])
+        }
+
+        var parsed = in6_addr()
+        let result = address.withCString { inet_pton(AF_INET6, $0, &parsed) }
+        guard result == 1 else { return false }
+
+        return withUnsafeBytes(of: &parsed) { raw -> Bool in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            let first = bytes[0]
+            let second = bytes[1]
+
+            // Loopback ::1
+            if bytes[15] == 1, (0..<15).allSatisfy({ bytes[$0] == 0 }) {
+                return true
+            }
+
+            // Unique local addresses: fc00::/7
+            if first == 0xfc || first == 0xfd {
+                return true
+            }
+
+            // Link-local: fe80::/10
+            if first == 0xfe, (second & 0xC0) == 0x80 {
+                return true
+            }
+
+            return false
+        }
     }
 }
