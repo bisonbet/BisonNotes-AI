@@ -76,12 +76,7 @@ struct BisonNotesAIApp: App {
             } else {
                 // Set OpenAI as default for devices with less than 6GB RAM
                 UserDefaults.standard.set("OpenAI", forKey: aiEngineKey)
-                // Set dummy API key if none exists
-                if UserDefaults.standard.string(forKey: "openAIAPIKey") == nil {
-                    UserDefaults.standard.set("sk-000000000000", forKey: "openAIAPIKey")
-                    NSLog("✅ Set dummy OpenAI API key for older device")
-                }
-                UserDefaults.standard.set(true, forKey: "enableOpenAI")
+                UserDefaults.standard.set(false, forKey: "enableOpenAI")
                 NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'OpenAI' (device has <6GB RAM)")
             }
         }
@@ -96,12 +91,7 @@ struct BisonNotesAIApp: App {
             } else {
                 // Set OpenAI as default for devices with less than 6GB RAM
                 UserDefaults.standard.set("OpenAI", forKey: transcriptionEngineKey)
-                // Set dummy API key if none exists
-                if UserDefaults.standard.string(forKey: "openAIAPIKey") == nil {
-                    UserDefaults.standard.set("sk-000000000000", forKey: "openAIAPIKey")
-                    NSLog("✅ Set dummy OpenAI API key for older device")
-                }
-                UserDefaults.standard.set(true, forKey: "enableOpenAI")
+                UserDefaults.standard.set(false, forKey: "enableOpenAI")
                 NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'OpenAI' (device has <6GB RAM)")
             }
         }
@@ -295,10 +285,23 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
+    private func migrateiCloudSensitiveBackupDefault() {
+        let migrationKey = "iCloudSensitiveBackupDefaultMigrated_v1.4"
+
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+
+        UserDefaults.standard.set(false, forKey: "iCloudBackupIncludeSensitiveSettings")
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
     init() {
 #if DEBUG
         Self.configureCoverageOutputIfNeeded()
 #endif
+        KeychainSecretStore.shared.migrateLegacySecretsFromUserDefaults()
+
         // Log device capabilities on startup
         logDeviceCapabilities()
 
@@ -310,6 +313,7 @@ struct BisonNotesAIApp: App {
         migrateWhisperKitToParakeet()
         migrateOnDeviceLLMNameToOnDeviceAI()
         migrateRemovedModels()
+        migrateiCloudSensitiveBackupDefault()
         setupDarwinNotificationObserver()
     }
 
@@ -374,13 +378,13 @@ struct BisonNotesAIApp: App {
                     // may be skipped.
                     appDelegate.clearAppBadge(reason: "activation")
                     // Scan for files placed by the Share Extension (Voice Memos, etc.)
-                    scanSharedContainerForImports()
+                    scanSharedContainerForImports(trigger: .pendingToken)
                     // Also scan Documents/Inbox/ for files from "Open In" / document interaction.
                     scanInboxForImportableFiles()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShareExtensionDidSaveFile"))) { _ in
                     NSLog("📎 Darwin notification received from Share Extension")
-                    scanSharedContainerForImports()
+                    scanSharedContainerForImports(trigger: .pendingToken)
                 }
         }
         .commands {
@@ -434,12 +438,15 @@ struct BisonNotesAIApp: App {
     /// Handles files opened from the share sheet (e.g. Voice Memos, Files). Imports audio as recordings, text as transcripts.
     /// Also handles the `bisonnotes://share-import` URL scheme from the Share Extension.
     private func handleOpenURL(_ url: URL) {
-        NSLog("📎 handleOpenURL called with: \(url.absoluteString) (scheme: \(url.scheme ?? "nil"))")
+        NSLog("📎 handleOpenURL called (scheme: \(url.scheme ?? "nil"), host: \(url.host ?? "nil"), file: \(url.isFileURL ? url.lastPathComponent : "none"))")
 
-        // Handle custom URL scheme from Share Extension → scan shared container
-        if url.scheme == "bisonnotes" {
+        // Handle authenticated custom URL scheme from Share Extension.
+        if ShareImportAuthorization.isShareImportURL(url) {
             NSLog("📎 handleOpenURL: Share Extension triggered import via URL scheme")
-            scanSharedContainerForImports()
+            scanSharedContainerForImports(trigger: .url(url))
+            return
+        } else if url.scheme == "bisonnotes" {
+            NSLog("📎 handleOpenURL: rejected unsupported bisonnotes URL")
             return
         }
 
@@ -486,18 +493,38 @@ struct BisonNotesAIApp: App {
     private let appGroupID = "group.bisonnotesai.shared"
     private let shareInboxFolder = "ShareInbox"
 
+    private enum SharedContainerImportTrigger {
+        case url(URL)
+        case pendingToken
+    }
+
     /// Scans the App Group shared container for files placed by the Share Extension
     /// (e.g. from Voice Memos share sheet). Imports them and cleans up.
-    private func scanSharedContainerForImports() {
+    private func scanSharedContainerForImports(trigger: SharedContainerImportTrigger) {
         guard let containerURL = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
             .appendingPathComponent(shareInboxFolder) else { return }
 
         guard FileManager.default.fileExists(atPath: containerURL.path) else { return }
 
+        let authorized: Bool
+        switch trigger {
+        case .url(let url):
+            authorized = ShareImportAuthorization.consumeURLToken(from: url, in: containerURL)
+        case .pendingToken:
+            authorized = ShareImportAuthorization.consumePendingToken(in: containerURL)
+        }
+
+        guard authorized else {
+            NSLog("📎 Shared container scan skipped: missing or invalid Share Extension import token")
+            return
+        }
+
         let files: [URL]
         do {
-            files = try FileManager.default.contentsOfDirectory(at: containerURL, includingPropertiesForKeys: nil)
+            files = try FileManager.default
+                .contentsOfDirectory(at: containerURL, includingPropertiesForKeys: nil)
+                .filter { $0.lastPathComponent != ShareImportAuthorization.tokenFileName }
         } catch {
             return
         }

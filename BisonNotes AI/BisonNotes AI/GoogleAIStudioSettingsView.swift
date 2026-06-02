@@ -10,7 +10,7 @@ import os.log
 
 struct GoogleAIStudioSettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("googleAIStudioAPIKey") private var apiKey: String = ""
+    @SecureStorage(KeychainSecretStore.googleAIStudioAPIKey) private var apiKey: String = ""
     @AppStorage("googleAIStudioModel") private var selectedModel: String = "gemini-3-flash-preview"
     @AppStorage("googleAIStudioTemperature") private var temperature: Double = 0.1
     @AppStorage("googleAIStudioMaxTokens") private var maxTokens: Int = 4096
@@ -30,7 +30,7 @@ struct GoogleAIStudioSettingsView: View {
     ]
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("API Configuration")) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -178,4 +178,4 @@ struct GoogleAIStudioSettingsView: View {
     GoogleAIStudioSettingsView {
         // Preview callback
     }
-} 
+}

@@ -121,6 +121,62 @@ The app includes comprehensive AWS Bedrock integration (`AWS/AWSBedrockModels.sw
   - **Cross-Region Inference Profiles**: Claude and Llama models use `us.*`, `global.*`, `eu.*` prefixes for cross-region routing
   - Cross-region profiles provide ~10% cost savings and higher throughput by routing requests to available regions
 
+### Mac Catalyst Build Notes
+
+The `MacOS-Catalyst` branch adds Mac Catalyst support. Several manual steps were required for the vendored `llama.xcframework` and must be repeated any time the framework is rebuilt or updated:
+
+#### llama.xcframework Catalyst Slice
+
+The upstream llama.cpp xcframework does not ship a Mac Catalyst slice. The `ios-arm64-maccatalyst` slice in `Frameworks/llama.xcframework/` was created manually:
+
+```bash
+# 1. Extract the arm64 slice from the macOS fat binary
+lipo -thin arm64 \
+  Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/llama \
+  -output /tmp/llama-arm64
+
+# 2. Create versioned macOS-style framework layout (required — Catalyst does not use shallow bundles)
+CATALYST=Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework
+mkdir -p $CATALYST/Versions/A/Resources
+mkdir -p $CATALYST/Versions/A/Headers
+mkdir -p $CATALYST/Versions/A/Modules
+
+# 3. Copy headers, modules, and Info.plist from the macOS framework
+cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Headers/* \
+   $CATALYST/Versions/A/Headers/
+cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Modules/* \
+   $CATALYST/Versions/A/Modules/
+cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Resources/Info.plist \
+   $CATALYST/Versions/A/Resources/Info.plist
+
+# 4. Place the thin binary
+cp /tmp/llama-arm64 $CATALYST/Versions/A/llama
+
+# 5. Patch the Mach-O platform header from MACOS to MACCATALYST
+vtool -set-build-version maccatalyst 14.0 15.5 -replace \
+  -output $CATALYST/Versions/A/llama \
+          $CATALYST/Versions/A/llama
+
+# 6. Create Versions/Current symlink and top-level symlinks
+ln -s A                        $CATALYST/Versions/Current
+ln -s Versions/Current/llama    $CATALYST/llama
+ln -s Versions/Current/Headers  $CATALYST/Headers
+ln -s Versions/Current/Modules  $CATALYST/Modules
+ln -s Versions/Current/Resources $CATALYST/Resources
+```
+
+Then add the `ios-arm64-maccatalyst` entry to `Frameworks/llama.xcframework/Info.plist` (see existing entry in that file for the format).
+
+Step 5 is critical — without the `vtool` patch, the linker warns "built for macOS" and may fail codesigning.
+
+#### textual (MarkdownUI) Catalyst Fix
+
+The `bisonbet/textual` fork has Mac Catalyst guards applied (commit `0c2c3b5`). On Mac Catalyst `canImport(AppKit)` is true, which caused the package to take the AppKit path and fail. The fix adds `&& !targetEnvironment(macCatalyst)` to AppKit checks in:
+- `Sources/Textual/Internal/Font/PlatformFont.swift`
+- `Sources/Textual/Internal/Helpers/PlatformImage.swift`
+
+If textual is rebased from upstream, reapply these guards.
+
 ### Background Processing
 For long-running operations, use `BackgroundProcessingManager` to queue jobs and track progress.
 

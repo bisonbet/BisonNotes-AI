@@ -82,7 +82,9 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
             do {
                 _ = try await center.requestAuthorization(options: [.alert, .badge, .sound])
             } catch {
-                AppLog.shared.summarization("[OnDeviceAIDownloadMonitor] Error requesting notification permission: \(error)", level: .error)
+                // On Mac Catalyst the request often fails until the user explicitly
+                // approves notifications in System Settings; that's not an error.
+                AppLog.shared.summarization("[OnDeviceAIDownloadMonitor] Notification permission request failed: \(error.localizedDescription)", level: .debug)
                 return
             }
         } else if settings.authorizationStatus != .authorized {

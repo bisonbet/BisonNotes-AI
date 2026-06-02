@@ -83,6 +83,16 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// Track last checkpoint time for periodic data flushing
 	var lastCheckpointTime: Date = Date.distantPast
 	var recordingStartedAt: (url: URL, date: Date)?
+
+	#if targetEnvironment(macCatalyst)
+	// On Mac Catalyst, AVAudioRecorder cannot reliably encode without an
+	// AVAudioSession. We use AVAudioEngine + AVAudioFile instead — input node
+	// taps deliver PCM buffers we can write directly to a single file with
+	// pause/resume implemented by removing/re-installing the tap.
+	var catalystAudioEngine: AVAudioEngine?
+	var catalystAudioFile: AVAudioFile?
+	var catalystEngineFormat: AVAudioFormat?
+	#endif
 	let checkpointInterval: TimeInterval = 30.0 // Try to checkpoint every 30 seconds
 	let forceCheckpointInterval: TimeInterval = 90.0 // Force checkpoint after 90 seconds even without silence
 
@@ -236,6 +246,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// MARK: - Notification Observers
 
 	func setupNotificationObservers() {
+		#if !targetEnvironment(macCatalyst)
+		// AVAudioSession interruption/route notifications use Mach ports that don't
+		// exist on Mac — registering for them floods the log with "cannot add handler".
+		// Phone-call interruptions and Bluetooth routing don't apply on Mac anyway.
 		interruptionObserver = NotificationCenter.default.addObserver(
 			forName: AVAudioSession.interruptionNotification,
 			object: nil,
@@ -276,6 +290,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				}
 			}
 		}
+		#endif
 
 		willEnterForegroundObserver = NotificationCenter.default.addObserver(
 			forName: UIApplication.willEnterForegroundNotification,
@@ -401,55 +416,110 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// MARK: - Core Recording
 
 	func startRecording() {
+		AppLog.shared.recording("startRecording: requesting microphone permission")
+		#if targetEnvironment(macCatalyst)
+		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
+		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
 			DispatchQueue.main.async {
 				guard let self = self else { return }
 				if granted {
+					AppLog.shared.recording("startRecording: microphone permission granted")
 					Task {
 						do {
-							// Phase 4: Use background recording for perfect backgrounding support
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording()
 							AppLog.shared.recording("Background recording session configured")
 							await self.applySelectedInputToSession()
 						} catch {
-							AppLog.shared.recording("Failed to configure background recording session: \(error)", level: .error)
+							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
+							await MainActor.run {
+								self.errorMessage = "Failed to set up audio: \(error.localizedDescription)"
+							}
 							return
 						}
-
 						await MainActor.run {
 							self.setupRecording()
 						}
 					}
 				} else {
+					AppLog.shared.recording("startRecording: microphone permission denied", level: .error)
 					self.errorMessage = "Microphone permission denied"
+				}
+			}
+		}
+		#endif
+	}
+
+	#if targetEnvironment(macCatalyst)
+	@MainActor
+	private func requestMicPermissionAndRecord() {
+		let status = AVAudioApplication.shared.recordPermission
+		AppLog.shared.recording("Mac mic permission status: \(status.rawValue)")
+		switch status {
+		case .granted:
+			didReceiveMicrophonePermission(granted: true)
+		case .undetermined:
+			AVAudioApplication.requestRecordPermission { [weak self] granted in
+				Task { @MainActor [weak self] in
+					AppLog.shared.recording("Mac mic permission result: \(granted)")
+					self?.didReceiveMicrophonePermission(granted: granted)
+				}
+			}
+		case .denied:
+			AppLog.shared.recording("Mac mic permission denied", level: .error)
+			errorMessage = "Microphone access is denied. Open System Settings → Privacy & Security → Microphone and enable BisonNotes AI, then try again."
+		@unknown default:
+			AVAudioApplication.requestRecordPermission { [weak self] granted in
+				Task { @MainActor [weak self] in
+					self?.didReceiveMicrophonePermission(granted: granted)
 				}
 			}
 		}
 	}
 
+	@MainActor
+	private func didReceiveMicrophonePermission(granted: Bool) {
+		guard granted else {
+			errorMessage = "Microphone permission denied"
+			return
+		}
+		AppLog.shared.recording("startRecording: microphone permission granted")
+		// Skip AVAudioSession.setCategory/setActive on Mac — those calls communicate
+		// with mediaserverd via Mach ports that don't exist on macOS, flooding the
+		// log. AVAudioRecorder uses the default CoreAudio input directly on Mac.
+		setupRecording()
+	}
+	#endif
+
 	func startBackgroundRecording() {
+		AppLog.shared.recording("startBackgroundRecording: requesting microphone permission")
+		#if targetEnvironment(macCatalyst)
+		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
+		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
 			DispatchQueue.main.async {
 				guard let self = self else { return }
 				if granted {
+					AppLog.shared.recording("startBackgroundRecording: microphone permission granted")
 					Task {
 						do {
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording()
 							await self.applySelectedInputToSession()
 						} catch {
-							AppLog.shared.recording("Failed to configure background recording session: \(error)", level: .error)
+							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
 							return
 						}
-
 						await MainActor.run {
 							self.setupRecording()
 						}
 					}
 				} else {
+					AppLog.shared.recording("startBackgroundRecording: microphone permission denied", level: .error)
 					self.errorMessage = "Microphone permission denied"
 				}
 			}
 		}
+		#endif
 	}
 
 	func setupRecording() {
@@ -477,13 +547,20 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			return
 		}
 
-		// Use Whisper-optimized quality for all recordings
-		let selectedQuality = AudioQuality.whisperOptimized
-		let settings = selectedQuality.settings
-
 		do {
+			#if targetEnvironment(macCatalyst)
+			// Catalyst: drive recording with AVAudioEngine + AVAudioFile so we
+			// bypass AVAudioRecorder's broken converter setup. The file is AAC
+			// from the start — no post-stop transcode needed.
+			try startCatalystEngineRecording(at: audioFilename)
+			#else
+			// Use Whisper-optimized quality for all recordings
+			let selectedQuality = AudioQuality.whisperOptimized
+			let settings = selectedQuality.settings
+
 			audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
 			audioRecorder?.delegate = self
+			AppFileProtection.apply(to: audioFilename)
 
 			// Enable metering for silence detection (used for smart checkpoints)
 			audioRecorder?.isMeteringEnabled = true
@@ -494,8 +571,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 			// No background task needed here - audio background mode keeps recording alive
 			audioRecorder?.record()
+			AppFileProtection.apply(to: audioFilename)
+			#endif
 
 			isRecording = true
+			recordingState = .recording
 			recordingTime = 0
 			lastCheckpointTime = Date() // Initialize checkpoint time to now
 
@@ -523,6 +603,67 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 	}
 
+	/// True when an active recording has been paused via `pauseRecording()`.
+	var isPaused: Bool {
+		if case .paused = recordingState { return true }
+		return false
+	}
+
+	/// Pause an active recording. On iOS the AVAudioRecorder is paused
+	/// (file stays open). On Mac Catalyst the AVAudioEngine input tap is
+	/// removed so no more samples reach the file. In both cases
+	/// `resumeRecording()` continues writing to the same file.
+	/// No-op if not recording, already paused, or in live transcription mode.
+	func pauseRecording() {
+		guard isRecording, !isPaused else { return }
+		guard !isUsingLiveTranscription else {
+			AppLog.shared.recording("Pause requested in live transcription mode — ignoring (use stop instead)", level: .debug)
+			return
+		}
+
+		#if targetEnvironment(macCatalyst)
+		guard catalystAudioEngine != nil else { return }
+		pauseCatalystEngineRecording()
+		#else
+		guard let recorder = audioRecorder else { return }
+		recorder.pause()
+		#endif
+
+		stopRecordingTimer()
+		recordingState = .paused
+		AppLog.shared.recording("Recording paused at \(Int(recordingTime))s")
+		notifyWatchOfRecordingStateChange()
+	}
+
+	/// Resume a paused recording. Continues writing to the same file on both
+	/// iOS (AVAudioRecorder.record()) and Mac Catalyst (re-installing the
+	/// AVAudioEngine tap).
+	func resumeRecording() {
+		guard isPaused else { return }
+
+		#if targetEnvironment(macCatalyst)
+		do {
+			try resumeCatalystEngineRecording()
+		} catch {
+			AppLog.shared.recording("Catalyst resume failed: \(error.localizedDescription)", level: .error)
+			errorMessage = "Could not resume recording: \(error.localizedDescription)"
+			return
+		}
+		#else
+		guard let recorder = audioRecorder else { return }
+		guard recorder.record() else {
+			AppLog.shared.recording("Failed to resume paused recording — recorder.record() returned false", level: .error)
+			errorMessage = "Could not resume recording. Please stop and start a new recording."
+			return
+		}
+		#endif
+
+		recordingState = .recording
+		startRecordingTimer()
+		AppLog.shared.recording("Recording resumed at \(Int(recordingTime))s")
+		notifyWatchOfRecordingStateChange()
+	}
+
 	func stopRecording() {
 		// Handle live transcription path
 		if isUsingLiveTranscription, let service = liveTranscriptionService {
@@ -547,8 +688,17 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			return
 		}
 
+		#if targetEnvironment(macCatalyst)
+		// On Catalyst, recording is driven by AVAudioEngine + AVAudioFile.
+		// Tear it down here, then run the save flow manually since there's
+		// no AVAudioRecorder delegate to fire it.
+		let catalystFinalURL = recordingURL
+		stopCatalystEngineRecording()
+		#endif
+
 		audioRecorder?.stop()
 		isRecording = false
+		recordingState = .idle
 		stopRecordingTimer()
 		audioRecorder = nil
 
@@ -570,7 +720,18 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				await mergeRecordingSegments()
 			}
 		} else {
+			#if targetEnvironment(macCatalyst)
+			if let url = catalystFinalURL {
+				AppLog.shared.recording("Recording finished successfully (Catalyst engine)")
+				Task { @MainActor in
+					await self.finalizeCatalystRecording(at: url)
+				}
+			} else {
+				AppLog.shared.recording("Catalyst stop: no recording URL — nothing to save", level: .error)
+			}
+			#else
 			AppLog.shared.recording("Recording has single segment, no merge needed", level: .debug)
+			#endif
 		}
 
 		// Deactivate audio session to restore high-quality music playback
@@ -689,6 +850,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				// while the app is in the background, and we need to detect that.
 				// NOTE: In live transcription mode, audioRecorder is nil so this block is
 				// safely skipped — LiveTranscriptionService manages its own AVAudioEngine.
+				#if targetEnvironment(macCatalyst)
+				// On Mac Catalyst there is no AVAudioSession interruption model and
+				// AVAudioRecorder.isRecording is unreliable; the recovery flow that
+				// reactivates the session and rebuilds the recorder is a no-op here
+				// and surfaces a misleading "Microphone became unavailable" error.
+				// Trust that record() succeeded and only stop on explicit user action.
+				self.performSmartCheckpoint()
+				#else
 				if self.isRecording, let recorder = self.audioRecorder, !recorder.isRecording {
 					if self.isInInterruption {
 						// We're in an interruption - wait for it to end rather than trying to resume now
@@ -718,6 +887,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					// Perform smart checkpoint that waits for silence
 					self.performSmartCheckpoint()
 				}
+				#endif
 				self.recordingTime += 1
 
 				// Sync live transcript text when live transcription is active

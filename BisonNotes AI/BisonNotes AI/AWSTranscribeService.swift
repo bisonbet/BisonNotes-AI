@@ -93,14 +93,6 @@ class AWSTranscribeService: NSObject, ObservableObject {
     
     private func setupAWSServices() {
         // Clients will be initialized lazily when first needed
-        // IMPORTANT: For iOS apps, you need to configure AWS credentials through:
-        // 1. AWS Cognito (recommended for mobile apps)
-        // 2. Environment variables (for development)  
-        // 3. Custom credential provider
-        //
-        // The new AWS SDK will look for credentials in this order:
-        // - Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
-        // - AWS credential files (if available)
         transcribeClient = nil
         s3Client = nil
     }
@@ -115,18 +107,16 @@ class AWSTranscribeService: NSObject, ObservableObject {
         
         // Use shared AWS credentials for all services
         let sharedCredentials = AWSCredentialsManager.shared.credentials
-        
-        // Ensure environment variables are set from shared credentials
-        AWSCredentialsManager.shared.initializeEnvironment()
+        guard sharedCredentials.isValid else {
+            throw AWSTranscribeError.configurationMissing
+        }
         
         do {
             let clientConfig = try await TranscribeClient.TranscribeClientConfig(
+                awsCredentialIdentityResolver: AWSClientCredentialResolver.staticResolver(credentials: sharedCredentials),
                 region: sharedCredentials.region
             )
-            
-            // AWS SDK for Swift will automatically use environment variables
-            // set by AWSCredentialsManager.initializeEnvironment()
-            
+
             let client = TranscribeClient(config: clientConfig)
             self.transcribeClient = client
             return client
@@ -142,18 +132,16 @@ class AWSTranscribeService: NSObject, ObservableObject {
         
         // Use shared AWS credentials for all services
         let sharedCredentials = AWSCredentialsManager.shared.credentials
-        
-        // Ensure environment variables are set from shared credentials
-        AWSCredentialsManager.shared.initializeEnvironment()
+        guard sharedCredentials.isValid else {
+            throw AWSTranscribeError.configurationMissing
+        }
         
         do {
             let clientConfig = try await S3Client.S3ClientConfig(
+                awsCredentialIdentityResolver: AWSClientCredentialResolver.staticResolver(credentials: sharedCredentials),
                 region: sharedCredentials.region
             )
-            
-            // AWS SDK for Swift will automatically use environment variables
-            // set by AWSCredentialsManager.initializeEnvironment()
-            
+
             let client = S3Client(config: clientConfig)
             self.s3Client = client
             return client
@@ -723,4 +711,4 @@ enum AWSTranscribeError: LocalizedError {
             return "Invalid transcript format"
         }
     }
-} 
+}

@@ -154,7 +154,7 @@ class SummaryManager: ObservableObject {
     func getEnhancedSummary(for recordingURL: URL) -> EnhancedSummaryData? {
         // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLog.shared.summarization("Looking for enhanced summary with URL: \(recordingURL)", level: .debug)
+            AppLog.shared.summarization("Looking for enhanced summary with file: \(recordingURL.lastPathComponent)", level: .debug)
             AppLog.shared.summarization("Total enhanced summaries: \(enhancedSummaries.count)", level: .debug)
         }
         
@@ -1987,7 +1987,7 @@ class SummaryManager: ObservableObject {
         // Get the recording from Core Data using the coordinator
         guard let recordingEntry = coordinator.getRecording(url: recordingURL),
               let recordingId = recordingEntry.id else {
-            AppLog.shared.summarization("Could not find recording in Core Data for URL: \(recordingURL)", level: .error)
+            AppLog.shared.summarization("Could not find recording in Core Data for file: \(recordingURL.lastPathComponent)", level: .error)
             return
         }
         

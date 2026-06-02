@@ -186,9 +186,11 @@ extension AudioRecorderViewModel {
 
 			audioRecorder = try AVAudioRecorder(url: newSegmentURL, settings: settings)
 			audioRecorder?.delegate = self
+			AppFileProtection.apply(to: newSegmentURL)
 			audioRecorder?.isMeteringEnabled = true
 
 			if audioRecorder?.record() == true {
+				AppFileProtection.apply(to: newSegmentURL)
 				recordingSegments.append(newSegmentURL)
 				recordingURL = newSegmentURL
 				isRecording = true

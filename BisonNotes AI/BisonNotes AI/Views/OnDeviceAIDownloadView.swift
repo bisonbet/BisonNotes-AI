@@ -26,18 +26,21 @@ struct OnDeviceAIDownloadView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
                     confirmationView
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 24)
-                .padding(.bottom, 40) // Extra bottom padding for safe scrolling
+                .padding(.bottom, 40)
             }
             .navigationTitle("Download Models")
             .navigationBarTitleDisplayMode(.inline)
         }
+        #if targetEnvironment(macCatalyst)
+        .frame(minWidth: 520, minHeight: 640)
+        #endif
         .onAppear {
             // Set On-Device LLM to use Granite Micro (recommended for 6GB+ devices)
             // Do this BEFORE any access to selectedModel to prevent migration loops

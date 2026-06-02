@@ -578,6 +578,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
         // Create silent audio file programmatically (no microphone needed)
         try await createSilentAudioFile(at: fileURL)
+        AppFileProtection.apply(to: fileURL)
 
         // Verify file was created
         guard FileManager.default.fileExists(atPath: fileURL.path) else {

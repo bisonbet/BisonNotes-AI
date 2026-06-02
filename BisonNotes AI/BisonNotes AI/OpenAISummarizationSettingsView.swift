@@ -8,12 +8,13 @@
 import SwiftUI
 
 struct OpenAISummarizationSettingsView: View {
-    @AppStorage("openAIAPIKey") private var apiKey: String = ""
+    @SecureStorage(KeychainSecretStore.openAIAPIKey) private var apiKey: String = ""
     @AppStorage("openAISummarizationModel") private var selectedModel: String = OpenAISummarizationModel.gpt41Mini.rawValue
     @AppStorage("openAISummarizationBaseURL") private var baseURL: String = "https://api.openai.com/v1"
     @AppStorage("openAISummarizationTemperature") private var temperature: Double = 0.1
     @AppStorage("openAISummarizationMaxTokens") private var maxTokens: Int = 0
     @AppStorage("enableOpenAI") private var enableOpenAI: Bool = true
+    @AppStorage(EndpointSecurityPolicy.allowInsecurePublicEndpointsKey) private var allowInsecurePublicEndpoints: Bool = false
     
     @State private var isTestingConnection = false
     @State private var connectionTestResult: String = ""
@@ -29,7 +30,7 @@ struct OpenAISummarizationSettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 authenticationSection
                 apiConfigurationSection
@@ -114,6 +115,8 @@ struct OpenAISummarizationSettingsView: View {
                 Text("Default: https://api.openai.com/v1")
                     .font(.caption)
                     .foregroundColor(.secondary)
+
+                endpointSecurityWarning(for: baseURL)
             }
         } header: {
             Text("API Configuration")
@@ -240,12 +243,26 @@ struct OpenAISummarizationSettingsView: View {
         maxTokens = 0
         showingConnectionResult = false
     }
+
+    @ViewBuilder
+    private func endpointSecurityWarning(for endpoint: String) -> some View {
+        if let warning = EndpointSecurityPolicy.warningMessage(for: endpoint) {
+            Label(warning, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundColor(.orange)
+        }
+
+        if EndpointSecurityPolicy.validationMessage(for: endpoint, allowInsecurePublicEndpoints: false) != nil {
+            Toggle("Development Mode: Allow Public HTTP", isOn: $allowInsecurePublicEndpoints)
+                .font(.caption)
+        }
+    }
 }
 
 // MARK: - OpenAI API Compatible Settings View
 
 struct OpenAICompatibleSettingsView: View {
-    @AppStorage("openAICompatibleAPIKey") private var apiKey: String = ""
+    @SecureStorage(KeychainSecretStore.openAICompatibleAPIKey) private var apiKey: String = ""
     @AppStorage("openAICompatibleModel") private var selectedModel: String = "gpt-4o"
     @AppStorage("openAICompatibleBaseURL") private var baseURL: String = ""
     @AppStorage("openAICompatibleTemperature") private var temperature: Double = 0.1
@@ -253,6 +270,7 @@ struct OpenAICompatibleSettingsView: View {
     @AppStorage("enableOpenAICompatible") private var enableOpenAICompatible: Bool = false
     @AppStorage("openAICompatibleManualFormatOverride") private var manualFormatOverride: Bool = false
     @AppStorage("openAICompatibleManualFormat") private var manualFormat: String = "string"
+    @AppStorage(EndpointSecurityPolicy.allowInsecurePublicEndpointsKey) private var allowInsecurePublicEndpoints: Bool = false
 
     @State private var isTestingConnection = false
     @State private var connectionTestResult: String = ""
@@ -392,7 +410,7 @@ struct OpenAICompatibleSettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 compatibilityGuideSection
                 authenticationSection
@@ -647,6 +665,8 @@ struct OpenAICompatibleSettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+
+                endpointSecurityWarning(for: baseURL)
             }
         } header: {
             Text("API Configuration")
@@ -1024,6 +1044,20 @@ struct OpenAICompatibleSettingsView: View {
             )
         } header: {
             Text("Features & Capabilities")
+        }
+    }
+
+    @ViewBuilder
+    private func endpointSecurityWarning(for endpoint: String) -> some View {
+        if let warning = EndpointSecurityPolicy.warningMessage(for: endpoint) {
+            Label(warning, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundColor(.orange)
+        }
+
+        if EndpointSecurityPolicy.validationMessage(for: endpoint, allowInsecurePublicEndpoints: false) != nil {
+            Toggle("Development Mode: Allow Public HTTP", isOn: $allowInsecurePublicEndpoints)
+                .font(.caption)
         }
     }
     

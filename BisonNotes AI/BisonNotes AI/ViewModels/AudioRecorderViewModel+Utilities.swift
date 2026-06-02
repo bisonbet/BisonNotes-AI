@@ -28,96 +28,94 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 	}
 
 	nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-		Task {
-			await MainActor.run {
-				// Check if we're still in recording mode - if so, this was an interruption, not a user stop
-				// In this case, don't save as a finished recording - let the interruption handler deal with it
-				if isRecording {
-					AppLog.shared.recording("Recorder finished but still in recording mode - ignoring (interruption will be handled)", level: .debug)
-					return
-				}
-
-				// Check if recording is already being processed by interruption handler
-				// But allow processing if app is backgrounding (normal completion scenario)
-				if recordingBeingProcessed && !appIsBackgrounding {
-					AppLog.shared.recording("Recording already processed by interruption handler, skipping normal completion", level: .debug)
-					recordingBeingProcessed = false // Reset flag
-					return
-				}
-
-				// Check if we have multiple segments - if so, the merge will handle saving
-				if recordingSegments.count > 1 {
-					AppLog.shared.recording("Multiple segments detected - merge process will handle saving", level: .debug)
-					return
-				}
-
-				// Start background task to protect Core Data save operations
-				beginBackgroundTask()
-
-				if flag {
-					if appIsBackgrounding {
-						AppLog.shared.recording("Recording finished successfully during backgrounding - processing normally")
-					} else {
-						AppLog.shared.recording("Recording finished successfully")
-					}
-					recordingBeingProcessed = true // Set flag to prevent duplicate processing
-
-					if let recordingURL = recordingURL {
-						saveLocationData(for: recordingURL)
-
-						// New recordings are already in Whisper-optimized format (16kHz, 64kbps AAC)
-						AppLog.shared.recording("Recording saved in Whisper-optimized format")
-
-						// Add recording using workflow manager for proper UUID consistency
-						if let workflowManager = workflowManager {
-							let fileSize = getFileSize(url: recordingURL)
-							let duration = getRecordingDuration(url: recordingURL)
-							let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-
-							// Create display name for phone recording
-							let displayName = generateAppRecordingDisplayName()
-
-							// Create recording
-							let recordingId = workflowManager.createRecording(
-								url: recordingURL,
-								name: displayName,
-								date: currentRecordingDate(for: recordingURL),
-								fileSize: fileSize,
-								duration: duration,
-								quality: quality,
-								locationData: recordingLocationSnapshot()
-							)
-
-							AppLog.shared.recording("Recording created with workflow manager, ID: \(recordingId)")
-
-							// Watch audio integration removed
-							self.resetRecordingLocation()
-							self.recordingStartedAt = nil
-						} else {
-							AppLog.shared.recording("WorkflowManager not set - recording not saved to database", level: .error)
-						}
-					}
-
-					// Reset processing flag after successful completion
-					recordingBeingProcessed = false
-
-					// Deactivate audio session to restore high-quality music playback
-					Task {
-						try? await enhancedAudioSessionManager.deactivateSession()
-					}
-				} else {
-					errorMessage = "Recording failed"
-					recordingBeingProcessed = false // Reset flag on failure too
-
-					// Also deactivate session on failure
-					Task {
-						try? await enhancedAudioSessionManager.deactivateSession()
-					}
-				}
-
-				// End background task that protected the Core Data save operation
-				self.endBackgroundTask()
+		Task { @MainActor in
+			// Check if we're still in recording mode - if so, this was an interruption, not a user stop
+			// In this case, don't save as a finished recording - let the interruption handler deal with it
+			if isRecording {
+				AppLog.shared.recording("Recorder finished but still in recording mode - ignoring (interruption will be handled)", level: .debug)
+				return
 			}
+
+			// Check if recording is already being processed by interruption handler
+			// But allow processing if app is backgrounding (normal completion scenario)
+			if recordingBeingProcessed && !appIsBackgrounding {
+				AppLog.shared.recording("Recording already processed by interruption handler, skipping normal completion", level: .debug)
+				recordingBeingProcessed = false // Reset flag
+				return
+			}
+
+			// Check if we have multiple segments - if so, the merge will handle saving
+			if recordingSegments.count > 1 {
+				AppLog.shared.recording("Multiple segments detected - merge process will handle saving", level: .debug)
+				return
+			}
+
+			// Start background task to protect Core Data save operations
+			beginBackgroundTask()
+
+			if flag {
+				if appIsBackgrounding {
+					AppLog.shared.recording("Recording finished successfully during backgrounding - processing normally")
+				} else {
+					AppLog.shared.recording("Recording finished successfully")
+				}
+				recordingBeingProcessed = true // Set flag to prevent duplicate processing
+
+				if let resolvedRecordingURL = recordingURL {
+					saveLocationData(for: resolvedRecordingURL)
+
+					// New recordings are already in Whisper-optimized format (16kHz, 64kbps AAC)
+					AppLog.shared.recording("Recording saved in Whisper-optimized format")
+
+					// Add recording using workflow manager for proper UUID consistency
+					if let workflowManager = workflowManager {
+						let fileSize = getFileSize(url: resolvedRecordingURL)
+						let duration = getRecordingDuration(url: resolvedRecordingURL)
+						let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+
+						// Create display name for phone recording
+						let displayName = generateAppRecordingDisplayName()
+
+						// Create recording
+						let recordingId = workflowManager.createRecording(
+							url: resolvedRecordingURL,
+							name: displayName,
+							date: currentRecordingDate(for: resolvedRecordingURL),
+							fileSize: fileSize,
+							duration: duration,
+							quality: quality,
+							locationData: recordingLocationSnapshot()
+						)
+
+						AppLog.shared.recording("Recording created with workflow manager, ID: \(recordingId)")
+
+						// Watch audio integration removed
+						self.resetRecordingLocation()
+						self.recordingStartedAt = nil
+					} else {
+						AppLog.shared.recording("WorkflowManager not set - recording not saved to database", level: .error)
+					}
+				}
+
+				// Reset processing flag after successful completion
+				recordingBeingProcessed = false
+
+				// Deactivate audio session to restore high-quality music playback
+				Task {
+					try? await enhancedAudioSessionManager.deactivateSession()
+				}
+			} else {
+				errorMessage = "Recording failed"
+				recordingBeingProcessed = false // Reset flag on failure too
+
+				// Also deactivate session on failure
+				Task {
+					try? await enhancedAudioSessionManager.deactivateSession()
+				}
+			}
+
+			// End background task that protected the Core Data save operation
+			self.endBackgroundTask()
 		}
 	}
 }
@@ -303,7 +301,9 @@ extension AudioRecorderViewModel {
 		}
 
 		do {
-			try data.write(to: recordingTimestampMetadataURL(for: url), options: .atomic)
+			let metadataURL = recordingTimestampMetadataURL(for: url)
+			try data.write(to: metadataURL, options: .atomic)
+			AppFileProtection.apply(to: metadataURL)
 		} catch {
 			AppLog.shared.recording("Failed to write recording timestamp metadata: \(error.localizedDescription)", level: .error)
 		}

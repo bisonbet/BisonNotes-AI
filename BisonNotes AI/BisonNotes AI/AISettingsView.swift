@@ -178,20 +178,20 @@ struct AISettingsView: View {
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
         case .openAI:
-            let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
+            let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
             return !apiKey.isEmpty
         case .openAICompatible:
-            let apiKey = UserDefaults.standard.string(forKey: "openAICompatibleAPIKey") ?? ""
+            let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAICompatibleAPIKey) ?? ""
             return !apiKey.isEmpty
         case .mistralAI:
-            let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+            let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.mistralAPIKey) ?? ""
             let isEnabled = UserDefaults.standard.bool(forKey: "enableMistralAI")
             return !apiKey.isEmpty && isEnabled
         case .localLLM:
             let isEnabled = UserDefaults.standard.bool(forKey: AppSettingsKeys.enableOllama)
             return isEnabled
         case .googleAIStudio:
-            let apiKey = UserDefaults.standard.string(forKey: "googleAIStudioAPIKey") ?? ""
+            let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.googleAIStudioAPIKey) ?? ""
             let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
             return !apiKey.isEmpty && isEnabled
         case .awsBedrock:
@@ -257,7 +257,7 @@ struct AISettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 selectedEngineConfigurationSection
                 engineSelectionSection
@@ -335,14 +335,40 @@ struct AISettingsView: View {
             AWSBedrockSettingsView()
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
+            #if targetEnvironment(macCatalyst)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("On-Device AI").font(.headline)
+                    Spacer()
+                    Button("Done") { showingOnDeviceLLMSettings = false }.buttonStyle(.bordered)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                Divider()
+                OnDeviceLLMSettingsView()
+            }
+            #else
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
+            #endif
         }
         .sheet(isPresented: $showingMLXSwiftSettings) {
+            #if targetEnvironment(macCatalyst)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("MLX Swift").font(.headline)
+                    Spacer()
+                    Button("Done") { showingMLXSwiftSettings = false }.buttonStyle(.bordered)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                Divider()
+                MLXSwiftSettingsView()
+            }
+            #else
             NavigationStack {
                 MLXSwiftSettingsView()
             }
+            #endif
         }
         .fullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
@@ -544,7 +570,7 @@ private extension AISettingsView {
         case .googleAIStudio:
             showingGoogleAIStudioSettings = true
         case .mistralAI:
-            let mistralKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+            let mistralKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.mistralAPIKey) ?? ""
             if mistralKey.isEmpty {
                 showingMistralOnboarding = true
             } else {

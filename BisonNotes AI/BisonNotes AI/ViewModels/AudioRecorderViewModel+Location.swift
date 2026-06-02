@@ -70,6 +70,7 @@ extension AudioRecorderViewModel {
 		do {
 			let data = try JSONEncoder().encode(locationData)
 			try data.write(to: locationURL)
+			AppFileProtection.apply(to: locationURL)
 			AppLog.shared.recording("Location data saved for recording")
 		} catch {
 			AppLog.shared.recording("Failed to save location data: \(error)", level: .error)

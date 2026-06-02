@@ -74,8 +74,16 @@ struct RecordingsListView: View {
     @State private var dateFilterEnd: Date = Date()
     @State private var isDateFilterActive = false
 
+    // Transcript-from-recording flow
+    @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
+    @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
+    @State private var showingAudioCleanupPrompt = false
+    @State private var recordingPendingTranscription: RecordingEntry?
+    @State private var selectedRecordingForTranscript: RecordingEntry?
+    @State private var transcriptStateRefresh = false
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack {
                 // Custom header
                 HStack {
@@ -344,6 +352,39 @@ struct RecordingsListView: View {
             } message: {
                 Text(archiveRestoreError ?? "Unknown error")
             }
+            .sheet(item: $selectedRecordingForTranscript) { entry in
+                if let recordingId = entry.id,
+                   let transcript = appCoordinator.getTranscriptData(for: recordingId) {
+                    EditableTranscriptView(recording: entry, transcript: transcript, transcriptManager: TranscriptManager.shared)
+                        .environmentObject(appCoordinator)
+                } else {
+                    TranscriptDetailView(recording: entry, transcriptText: "")
+                        .environmentObject(appCoordinator)
+                }
+            }
+            .confirmationDialog(
+                "Clean Audio Before Transcribing?",
+                isPresented: $showingAudioCleanupPrompt,
+                titleVisibility: .visible
+            ) {
+                Button("Clean & Transcribe") {
+                    if let recording = recordingPendingTranscription {
+                        recordingPendingTranscription = nil
+                        transcriptionStarter.startTranscription(for: recording, cleanFirst: true, appCoordinator: appCoordinator)
+                    }
+                }
+                Button("Transcribe As-Is") {
+                    if let recording = recordingPendingTranscription {
+                        recordingPendingTranscription = nil
+                        transcriptionStarter.startTranscription(for: recording, cleanFirst: false, appCoordinator: appCoordinator)
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    recordingPendingTranscription = nil
+                }
+            } message: {
+                Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
+            }
         }
         .onAppear {
             refreshFileRelationships()
@@ -364,6 +405,10 @@ struct RecordingsListView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingAdded"))) { _ in
             loadRecordings()
             refreshFileRelationships()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionCompleted"))) { _ in
+            transcriptStateRefresh.toggle()
+            loadRecordings()
         }
     }
     
@@ -469,7 +514,40 @@ struct RecordingsListView: View {
     }
 
     private var dateFilterSheet: some View {
-        NavigationView {
+        #if targetEnvironment(macCatalyst)
+        VStack(spacing: 0) {
+            HStack {
+                Button("Cancel") { showDateFilter = false }
+                Spacer()
+                Text("Filter by Date").font(.headline)
+                Spacer()
+                Button("Apply") {
+                    isDateFilterActive = true
+                    showDateFilter = false
+                }
+                .fontWeight(.semibold)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            Divider()
+            Form {
+                Section {
+                    DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
+                    DatePicker("To", selection: $dateFilterEnd, in: dateFilterStart...Date(), displayedComponents: .date)
+                }
+                if isDateFilterActive {
+                    Section {
+                        Button(role: .destructive) {
+                            isDateFilterActive = false
+                            showDateFilter = false
+                        } label: {
+                            HStack { Spacer(); Text("Clear Filter"); Spacer() }
+                        }
+                    }
+                }
+            }
+        }
+        #else
+        NavigationStack {
             Form {
                 Section {
                     DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
@@ -507,6 +585,7 @@ struct RecordingsListView: View {
                 }
             }
         }
+        #endif
     }
 
     private func recordingsListView(_ filtered: [AudioRecordingFile]) -> some View {
@@ -525,6 +604,7 @@ struct RecordingsListView: View {
     }
     
     private func recordingRow(for recording: AudioRecordingFile) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
         HStack {
             // Selection checkbox (if in selection mode)
             if isSelectionMode {
@@ -686,7 +766,7 @@ struct RecordingsListView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
-                
+
                 Button(action: {
                     deletionData.recordingToDelete = recording
                     deleteRecording(recording)
@@ -698,7 +778,72 @@ struct RecordingsListView: View {
                 .buttonStyle(PlainButtonStyle())
             }
         }
+
+        transcriptActionButton(for: recording)
+        }
         .padding(.vertical, 4)
+    }
+
+    /// Labeled "Generate Transcript" action shown beneath each recording row.
+    /// Hidden for archived recordings with no local audio. Hidden once a transcript exists —
+    /// users edit the transcript from the Transcripts tab.
+    /// - In progress → orange pill with spinner + phase label.
+    /// - Otherwise → accent "Generate Transcript" pill that opens the cleanup confirmation dialog.
+    @ViewBuilder
+    private func transcriptActionButton(for recording: AudioRecordingFile) -> some View {
+        if recording.hasLocalAudio,
+           let entry = appCoordinator.getRecording(url: recording.url),
+           entry.transcript == nil {
+            let recordingId = entry.id ?? UUID()
+            let isCleaning = transcriptionStarter.isCleaning(recordingId)
+            let isQueuedForCleanup = transcriptionStarter.isQueuedForCleanup(recordingId)
+            let jobStatus = transcriptionStarter.activeTranscriptionJobStatus(for: entry, appCoordinator: appCoordinator)
+            let hasActiveJob = jobStatus != nil
+            let isProcessing = isCleaning || isQueuedForCleanup || hasActiveJob
+
+            Button(action: {
+                if !isProcessing {
+                    recordingPendingTranscription = entry
+                    showingAudioCleanupPrompt = true
+                }
+            }) {
+                HStack(spacing: 8) {
+                    if isProcessing {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .tint(.white)
+                        Text(transcriptProcessingLabel(isCleaning: isCleaning,
+                                                      isQueuedForCleanup: isQueuedForCleanup,
+                                                      jobStatus: jobStatus))
+                    } else {
+                        Image(systemName: "text.bubble")
+                        Text("Generate Transcript")
+                    }
+                }
+                .font(.subheadline)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(isProcessing ? Color.orange : Color.accentColor)
+                .foregroundColor(.white)
+                .cornerRadius(10)
+            }
+            .buttonStyle(.plain)
+            .disabled(isProcessing)
+            .accessibilityLabel("Generate Transcript")
+            .id("transcript-\(recordingId)-\(isProcessing)-\(transcriptStateRefresh)")
+        }
+    }
+
+    private func transcriptProcessingLabel(isCleaning: Bool,
+                                           isQueuedForCleanup: Bool,
+                                           jobStatus: JobProcessingStatus?) -> String {
+        if isCleaning { return "Cleaning Audio…" }
+        if isQueuedForCleanup { return "Queued…" }
+        switch jobStatus {
+        case .queued: return "Queued…"
+        case .processing: return "Transcribing…"
+        default: return "Processing…"
+        }
     }
     
     // MARK: - Search and Date Filtering
@@ -1156,7 +1301,7 @@ struct RecordingsListView: View {
     }
 
     private var archiveOlderThanSheet: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
                 Image(systemName: "calendar.badge.clock")
                     .font(.system(size: 40))

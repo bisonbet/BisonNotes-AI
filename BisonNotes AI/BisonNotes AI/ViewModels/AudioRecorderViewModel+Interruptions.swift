@@ -174,10 +174,12 @@ extension AudioRecorderViewModel {
 
 			audioRecorder = try AVAudioRecorder(url: newSegmentURL, settings: settings)
 			audioRecorder?.delegate = self
+			AppFileProtection.apply(to: newSegmentURL)
 			audioRecorder?.isMeteringEnabled = true // Enable metering for silence detection
 
 			// Start recording
 			audioRecorder?.record()
+			AppFileProtection.apply(to: newSegmentURL)
 
 			// Brief delay to let the session stabilize before verifying
 			try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
@@ -279,10 +281,12 @@ extension AudioRecorderViewModel {
 
 			audioRecorder = try AVAudioRecorder(url: newSegmentURL, settings: settings)
 			audioRecorder?.delegate = self
+			AppFileProtection.apply(to: newSegmentURL)
 			audioRecorder?.isMeteringEnabled = true // Enable metering for silence detection
 
 			// Start recording
 			audioRecorder?.record()
+			AppFileProtection.apply(to: newSegmentURL)
 
 			// Brief delay to let the session stabilize before verifying
 			try? await Task.sleep(nanoseconds: 150_000_000) // 150ms

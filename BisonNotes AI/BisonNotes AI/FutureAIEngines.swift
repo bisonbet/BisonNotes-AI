@@ -199,7 +199,7 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
     private func updateConfiguration() {
         // Use unified credentials manager instead of separate UserDefaults keys
         let credentials = AWSCredentialsManager.shared.credentials
-        let sessionToken = UserDefaults.standard.string(forKey: "awsBedrockSessionToken")
+        let sessionToken = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.awsBedrockSessionToken)
         let storedModelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
         // Migrate legacy model identifiers
         let modelString = AWSBedrockModel.migrate(rawValue: storedModelString)
@@ -1151,7 +1151,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
     
     init() {
         // Check if Google AI Studio is enabled and configured
-        let apiKey = UserDefaults.standard.string(forKey: "googleAIStudioAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.googleAIStudioAPIKey) ?? ""
         let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
         self.isAvailable = !apiKey.isEmpty && isEnabled
     }

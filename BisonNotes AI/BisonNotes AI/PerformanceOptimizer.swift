@@ -130,33 +130,49 @@ class PerformanceOptimizer: ObservableObject, Sendable {
     // MARK: - Battery Monitoring
     
     private func startBatteryMonitoring() {
+        #if targetEnvironment(macCatalyst)
+        // No battery API on Mac — leave default battery info (treated as full/charged)
+        // and skip the polling timer to avoid "Error retrieving battery status" logs.
+        return
+        #else
         UIDevice.current.isBatteryMonitoringEnabled = true
-        
+
         batteryMonitorTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.updateBatteryInfo()
             }
         }
-        
+
         // Initial battery info update
         Task { @MainActor in
             await updateBatteryInfo()
         }
+        #endif
     }
-    
+
     private func updateBatteryInfo() async {
+        #if targetEnvironment(macCatalyst)
+        // Battery state is not available on Mac; only respect Low Power Mode.
+        let batteryInfo = BatteryInfo(
+            level: 1.0,
+            state: .unknown,
+            isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+        )
+        self.batteryInfo = batteryInfo
+        await adjustOptimizationLevel()
+        #else
         let device = UIDevice.current
         let batteryInfo = BatteryInfo(
             level: device.batteryLevel,
             state: device.batteryState,
             isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
         )
-        
+
         self.batteryInfo = batteryInfo
-        
+
         // Adjust optimization level based on battery state
         await adjustOptimizationLevel()
-        
+        #endif
     }
     
     private func adjustOptimizationLevel() async {
@@ -462,12 +478,14 @@ class PerformanceOptimizer: ObservableObject, Sendable {
         memoryMonitorTimer?.invalidate()
         batteryMonitorTimer?.invalidate()
         optimizationTimer?.invalidate()
-        
+
         memoryMonitorTimer = nil
         batteryMonitorTimer = nil
         optimizationTimer = nil
-        
+
+        #if !targetEnvironment(macCatalyst)
         UIDevice.current.isBatteryMonitoringEnabled = false
+        #endif
     }
     
     // MARK: - Chunked Processing
@@ -923,7 +941,7 @@ struct PerformanceMonitorView: View {
     @Binding var isPresented: Bool
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     // Memory Usage Section

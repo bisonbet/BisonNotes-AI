@@ -13,7 +13,7 @@ import UIKit
 struct MistralOnboardingView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @AppStorage("mistralAPIKey") private var mistralAPIKey: String = ""
+    @SecureStorage(KeychainSecretStore.mistralAPIKey) private var mistralAPIKey: String = ""
     @AppStorage("mistralModel") private var mistralModel: String = MistralAIModel.mistralMedium2508.rawValue
     @AppStorage("mistralBaseURL") private var mistralBaseURL: String = "https://api.mistral.ai/v1"
     @AppStorage("mistralTemperature") private var mistralTemperature: Double = 0.1
@@ -38,7 +38,7 @@ struct MistralOnboardingView: View {
     private let totalSteps = 5
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 stepIndicator
                     .padding(.top, 12)
@@ -67,6 +67,14 @@ struct MistralOnboardingView: View {
                     SafariView(url: url)
                     #endif
                 }
+            }
+            .onChange(of: showingSafari) { _, isShowing in
+                #if targetEnvironment(macCatalyst)
+                if isShowing, let url = safariURL {
+                    UIApplication.shared.open(url)
+                    showingSafari = false
+                }
+                #endif
             }
         }
     }

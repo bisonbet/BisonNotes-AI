@@ -332,11 +332,18 @@ class OllamaService: ObservableObject {
         sessionConfig.timeoutIntervalForResource = config.timeoutInterval * 2
         self.session = URLSession(configuration: sessionConfig)
     }
+
+    private func validateEndpoint() throws {
+        if let message = EndpointSecurityPolicy.validationMessage(for: config.baseURL) {
+            throw OllamaError.serverError(message)
+        }
+    }
     
     // MARK: - Connection Management
     
     func testConnection() async -> Bool {
         do {
+            try validateEndpoint()
             let url = URL(string: "\(config.baseURL)/api/tags")!
             AppLog.shared.networking("OllamaService: Testing connection to \(url)", level: .debug)
             
@@ -382,6 +389,8 @@ class OllamaService: ObservableObject {
         guard isConnected else {
             throw OllamaError.notConnected
         }
+
+        try validateEndpoint()
         
         let url = URL(string: "\(config.baseURL)/api/tags")!
         let (data, response) = try await session.data(from: url)
@@ -2414,6 +2423,8 @@ class OllamaService: ObservableObject {
         guard isConnected else {
             throw OllamaError.notConnected
         }
+
+        try validateEndpoint()
         
         let url = URL(string: "\(config.baseURL)/api/generate")!
         var request = URLRequest(url: url)
@@ -2489,6 +2500,8 @@ class OllamaService: ObservableObject {
         guard isConnected else {
             throw OllamaError.notConnected
         }
+
+        try validateEndpoint()
         
         let url = URL(string: "\(config.baseURL)/api/generate")!
         var request = URLRequest(url: url)
@@ -2580,6 +2593,8 @@ class OllamaService: ObservableObject {
         guard isConnected else {
             throw OllamaError.notConnected
         }
+
+        try validateEndpoint()
         
         let url = URL(string: "\(config.baseURL)/api/generate")!
         var request = URLRequest(url: url)

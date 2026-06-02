@@ -231,6 +231,7 @@ class AppDataCoordinator: ObservableObject {
             let tempURL = tempDirectory.appendingPathComponent(syncRequest.filename)
             
             try audioData.write(to: tempURL)
+            AppFileProtection.apply(to: tempURL)
             
             // Convert watch location data if available
             let locationData: LocationData? = syncRequest.locationData?.toLocationData()

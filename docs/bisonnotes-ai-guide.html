@@ -131,8 +131,8 @@ body.page .entry-header {
 <!-- ===== HERO ===== -->
 <div class="bn-hero">
   <h1>BisonNotes AI</h1>
-  <p>Complete User Guide</p>
-  <span class="bn-ver">v1.8</span>
+  <p>Complete User Guide &mdash; iPhone, iPad, Apple Watch, and Mac</p>
+  <span class="bn-ver">v1.11</span>
 </div>
 
 <!-- ===== TOC ===== -->
@@ -147,6 +147,8 @@ body.page .entry-header {
     </li>
     <li><a href="#bn-recording">Recording Features</a>
       <ul>
+        <li><a href="#bn-mac">Mac Catalyst</a></li>
+        <li><a href="#bn-pause">Pause &amp; Resume</a></li>
         <li><a href="#bn-action-btn">Action Button</a></li>
         <li><a href="#bn-share-ext">Share Extension</a></li>
         <li><a href="#bn-combine">Combining Recordings</a></li>
@@ -157,11 +159,26 @@ body.page .entry-header {
     <li><a href="#bn-summaries">Working with Summaries</a></li>
     <li><a href="#bn-playback">Audio Playback</a></li>
     <li><a href="#bn-settings">Setup &amp; Configuration</a></li>
+    <li><a href="#bn-privacy">Privacy &amp; Security</a></li>
     <li><a href="#bn-trouble">Troubleshooting</a></li>
     <li><a href="#bn-advanced">Advanced Features</a></li>
     <li><a href="#bn-best">Best Practices</a></li>
     <li><a href="#bn-resources">External Resources</a></li>
   </ol>
+</div>
+
+<!-- ============================================================ -->
+<!-- WHAT'S NEW IN V1.11                                            -->
+<!-- ============================================================ -->
+<div class="bn-ok">
+  <strong>What&rsquo;s new in v1.11:</strong>
+  <ul>
+    <li><strong>Now on Mac.</strong> BisonNotes AI runs on macOS via Mac Catalyst &mdash; record, transcribe, and summarize on your Mac with the same data as iPhone and iPad.</li>
+    <li><strong>Pause &amp; Resume recording.</strong> Step away from a meeting without losing your spot.</li>
+    <li><strong>Major security hardening.</strong> API keys, AWS credentials, and tokens live in the iOS Keychain. Recordings, transcripts, notes, and attachments get explicit file protection, and user-configured AI endpoints are validated to block insecure cleartext destinations.</li>
+    <li><strong>Cleaner workflow.</strong> &ldquo;Generate Transcript&rdquo; lives on the recording, &ldquo;Generate Summary&rdquo; lives on the transcript &mdash; the right action shows up in the right place.</li>
+    <li><strong>Refreshed local AI engine.</strong> Updated llama.cpp build with a dedicated Mac Catalyst slice; experimental MLX Swift summarization engine for Apple Silicon.</li>
+  </ul>
 </div>
 
 <!-- ============================================================ -->
@@ -196,23 +213,26 @@ body.page .entry-header {
 <h3 id="bn-first-recording">Your First Recording</h3>
 
 <ol class="bn-sl">
-  <li><strong>Start Recording</strong> — Tap the large microphone button on the main screen.</li>
-  <li><strong>Microphone Permission</strong> — On your first recording, iOS will ask for microphone access. Tap "OK". If denied, re-enable in Settings &rarr; Privacy &amp; Security &rarr; Microphone.</li>
-  <li><strong>Recording Status</strong> — You'll see a red recording indicator, live timer, and location indicator (if enabled).</li>
-  <li><strong>Stop Recording</strong> — Tap the stop button to end.</li>
-  <li><strong>Background Recording</strong> — The app continues recording when minimized or the phone is locked.</li>
+  <li><strong>Start Recording</strong> &mdash; Tap the large microphone button on the main screen.</li>
+  <li><strong>Microphone Permission</strong> &mdash; On your first recording, the system will ask for microphone access. Tap &ldquo;OK&rdquo;. If denied, re-enable in Settings &rarr; Privacy &amp; Security &rarr; Microphone (or System Settings &rarr; Privacy &amp; Security &rarr; Microphone on Mac).</li>
+  <li><strong>Recording Status</strong> &mdash; You&rsquo;ll see a red recording indicator, live timer, and location indicator (if enabled).</li>
+  <li><strong>Pause &amp; Resume</strong> (v1.11) &mdash; Tap the Pause button to pause without ending the file; tap Resume to continue. Works on iPhone, iPad, and Mac.</li>
+  <li><strong>Stop Recording</strong> &mdash; Tap the stop button to end.</li>
+  <li><strong>Background Recording</strong> &mdash; The app continues recording when minimized or the phone is locked. On Mac, the app keeps recording when in the background or behind other windows.</li>
 </ol>
 
 <h3 id="bn-first-transcript">First Transcript &amp; Summary</h3>
+
+<div class="bn-info"><strong>v1.11 workflow:</strong> The &ldquo;Generate Transcript&rdquo; action lives on the <em>recording</em>; the &ldquo;Generate Summary&rdquo; action lives on the <em>transcript</em>. Each button only appears where it makes sense and disappears once the artifact exists &mdash; if you want to redo something, open the existing transcript or summary and regenerate from there.</div>
 
 <details>
   <summary>Generate Your First Transcript</summary>
   <div class="dd">
     <ol class="bn-sl">
-      <li><strong>Access Recording</strong> — After stopping, you'll see it in the recordings list.</li>
-      <li><strong>Start Transcription</strong> — Tap the recording, then tap "Generate Transcript". The app processes your audio using your selected engine.</li>
-      <li><strong>Progress</strong> — You'll see processing status and time remaining. You can continue using the app while it processes.</li>
-      <li><strong>View Results</strong> — Full transcript with editable text, timestamps (if supported), and confidence indicators.</li>
+      <li><strong>Access Recording</strong> &mdash; After stopping, you&rsquo;ll see it in the Recordings list.</li>
+      <li><strong>Start Transcription</strong> &mdash; Tap &ldquo;Generate Transcript&rdquo; on the recording row, or open the audio player and tap it there. The app processes your audio using your selected transcription engine.</li>
+      <li><strong>Progress</strong> &mdash; You&rsquo;ll see processing status and an estimate. You can continue using the app while it processes.</li>
+      <li><strong>View Results</strong> &mdash; Open the Transcripts tab to read the full transcript with editable text and confidence indicators.</li>
     </ol>
   </div>
 </details>
@@ -221,9 +241,9 @@ body.page .entry-header {
   <summary>Generate Your First Summary</summary>
   <div class="dd">
     <ol class="bn-sl">
-      <li><strong>Prerequisites</strong> — You need a transcript first.</li>
-      <li><strong>Start Summary</strong> — In the recording detail view, tap "Generate Summary".</li>
-      <li><strong>AI Processing</strong> — The app analyzes your transcript and creates:
+      <li><strong>Prerequisites</strong> &mdash; You need a transcript first.</li>
+      <li><strong>Start Summary</strong> &mdash; Open the transcript (Transcripts tab) and tap &ldquo;Generate Summary&rdquo;. A second &ldquo;Generate Summary&rdquo; button is also available directly on the transcript row.</li>
+      <li><strong>AI Processing</strong> &mdash; The app analyzes your transcript and creates:
         <ul>
           <li><strong>Enhanced Summary</strong>: Main content overview</li>
           <li><strong>Action Items</strong>: Tasks with priority levels</li>
@@ -231,7 +251,7 @@ body.page .entry-header {
           <li><strong>Alternative Titles</strong>: AI-generated recording names</li>
         </ul>
       </li>
-      <li><strong>Review Results</strong> — Expandable sections, priority indicators, interactive maps, and integration options.</li>
+      <li><strong>Review Results</strong> &mdash; Expandable sections, priority indicators, interactive maps, attachments, and integration options (Apple Reminders, Apple Calendar, Google Calendar).</li>
     </ol>
   </div>
 </details>
@@ -266,6 +286,24 @@ body.page .entry-header {
 <!-- RECORDING FEATURES                                            -->
 <!-- ============================================================ -->
 <h2 id="bn-recording">Recording Features</h2>
+
+<h3 id="bn-mac">Mac Catalyst (v1.11)</h3>
+<p>BisonNotes AI runs natively on macOS as a Mac Catalyst app. The Mac build uses an <code>AVAudioEngine</code>-based recording pipeline that is tuned for desktop audio sessions:</p>
+<ul>
+  <li><strong>Same Core Data store</strong> &mdash; Recordings, transcripts, and summaries sync with iPhone/iPad through iCloud (if enabled).</li>
+  <li><strong>Pause &amp; Resume</strong> &mdash; Full pause/resume support, the same as on iOS.</li>
+  <li><strong>Microphone selection</strong> &mdash; Choose your built-in mic, USB interface, or Bluetooth device from Transcription Settings.</li>
+  <li><strong>Local AI</strong> &mdash; The on-device llama.cpp engine ships with a dedicated Mac Catalyst slice; experimental MLX Swift summarization is available on Apple Silicon Macs.</li>
+  <li><strong>Settings sheets</strong> &mdash; Settings forms use a Mac-friendly layout for reliable scrolling and button hit targets.</li>
+</ul>
+
+<h3 id="bn-pause">Pause &amp; Resume Recording (v1.11)</h3>
+<p>Pause and resume the current recording without stopping the file:</p>
+<ul>
+  <li>Tap the <strong>Pause</strong> button while recording. The timer freezes; audio capture stops; the file stays open.</li>
+  <li>Tap <strong>Resume</strong> to keep adding to the same audio file from where you left off.</li>
+  <li>Works on iPhone, iPad, and Mac. On Mac the underlying pipeline uses <code>AVAudioEngine</code> for a clean pause boundary.</li>
+</ul>
 
 <h3 id="bn-action-btn">iPhone Action Button Integration</h3>
 
@@ -632,6 +670,28 @@ ollama pull mistral-small3.2</code></pre>
   </div>
 </details>
 
+<!-- MLX Swift (Experimental) -->
+<details>
+  <summary>9. MLX Swift &mdash; Experimental On-Device Summarization</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-local">On-Device</span>
+    <span class="bn-badge bn-b-free">Free</span>
+    <p><strong>Type:</strong> On-device, Apple Silicon &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Only for initial model download</p>
+
+    <div class="bn-warn"><strong>Experimental:</strong> The MLX Swift engine is gated behind the experimental toggle in Settings. It runs on Apple&rsquo;s MLX framework and is best treated as a preview while we tune memory pressure on lower-RAM devices.</div>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li>Go to Setup &rarr; Additional Settings.</li>
+      <li>Turn on <strong>&ldquo;Experimental summary models &amp; MLX AI engine&rdquo;</strong>.</li>
+      <li>Return to AI Settings and pick <strong>MLX Swift</strong> from the engine library.</li>
+      <li>Download an MLX model from the MLX Swift settings screen.</li>
+    </ol>
+
+    <p><strong>Best for:</strong> Apple Silicon devices (especially Mac and iPad with M-series chips) where you want fully local summarization with a different model lineup than llama.cpp.</p>
+  </div>
+</details>
+
 <!-- ============================================================ -->
 <!-- TRANSCRIPTION CONFIGURATION                                   -->
 <!-- ============================================================ -->
@@ -742,11 +802,13 @@ docker run -d -p 9000:9000 \
 
 <h3>Summary Features</h3>
 <ul>
-  <li><strong>Expandable Sections</strong> — Tap to expand/collapse</li>
-  <li><strong>Task Extraction</strong> — AI-identified actionable items</li>
-  <li><strong>Reminder Detection</strong> — Time-sensitive reminders</li>
-  <li><strong>Priority Indicators</strong> — Color-coded priorities</li>
-  <li><strong>Location Maps</strong> — Interactive maps showing recording location</li>
+  <li><strong>Expandable Sections</strong> &mdash; Tap to expand/collapse</li>
+  <li><strong>Task Extraction</strong> &mdash; AI-identified actionable items</li>
+  <li><strong>Reminder Detection</strong> &mdash; Time-sensitive reminders</li>
+  <li><strong>Priority Indicators</strong> &mdash; Color-coded priorities</li>
+  <li><strong>Location Maps</strong> &mdash; Interactive maps showing recording location</li>
+  <li><strong>Attachments</strong> &mdash; Attach text, PDF, or other documents to a summary. Inline previews are available for text and PDF; other formats open with Quick Look. Note exports save your notes for sharing.</li>
+  <li><strong>Send to Reminders / Calendar</strong> &mdash; Push extracted tasks and reminders into Apple Reminders, Apple Calendar, or <strong>Google Calendar</strong> (uses the Google Calendar app if installed, falls back to the web).</li>
 </ul>
 
 <h3>Search &amp; Filtering</h3>
@@ -766,13 +828,18 @@ docker run -d -p 9000:9000 \
   <summary>Change Title, Date, or Location</summary>
   <div class="dd">
     <h4>Recording Title</h4>
-    <p>Open summary &rarr; "Titles" section &rarr; "Edit" &rarr; enter new title or select from AI alternatives &rarr; "Use This Title".</p>
+    <p>You can rename a recording from three places:</p>
+    <ul>
+      <li>The audio player view (tap the title to edit)</li>
+      <li>The transcript editor (tap the title at the top)</li>
+      <li>The summary view &mdash; &ldquo;Titles&rdquo; section &rarr; &ldquo;Edit&rdquo; &rarr; enter a new title or pick one of the AI-generated alternatives &rarr; &ldquo;Use This Title&rdquo;.</li>
+    </ul>
 
     <h4>Custom Date &amp; Time</h4>
-    <p>Open summary &rarr; "Recording Date &amp; Time" &rarr; "Set Custom Date &amp; Time" &rarr; use pickers &rarr; "Save".</p>
+    <p>Open summary &rarr; &ldquo;Recording Date &amp; Time&rdquo; &rarr; &ldquo;Set Custom Date &amp; Time&rdquo; &rarr; use pickers &rarr; &ldquo;Save&rdquo;. BisonNotes AI also persists the explicit recording start timestamp so date sorting matches when the audio was captured, not when it was imported.</p>
 
     <h4>Location</h4>
-    <p>Open summary &rarr; location section &rarr; "Add Location" or "Edit Location". Choose: Current Location (GPS), Map Selection, or Manual Entry &rarr; "Save".</p>
+    <p>Open summary &rarr; location section &rarr; &ldquo;Add Location&rdquo; or &ldquo;Edit Location&rdquo;. Choose: Current Location (GPS), Map Selection, or Manual Entry &rarr; &ldquo;Save&rdquo;.</p>
   </div>
 </details>
 
@@ -816,10 +883,10 @@ docker run -d -p 9000:9000 \
     <h4>Additional Settings</h4>
     <p>Full control over all options.</p>
     <ul>
-      <li>All 8 AI engines</li>
+      <li>All 8 AI engines plus the experimental MLX Swift engine</li>
       <li>All transcription engines</li>
       <li>Microphone selection</li>
-      <li>Preferences, iCloud, background processing</li>
+      <li>Preferences, iCloud, background processing, experimental toggles</li>
     </ul>
   </div>
 </div>
@@ -828,19 +895,60 @@ docker run -d -p 9000:9000 \
 
 <h3>Audio Settings</h3>
 <ul>
-  <li><strong>Quality:</strong> Whisper Optimized (22 kHz, 64 kbps AAC) — optimized for voice</li>
-  <li><strong>Microphone Selection:</strong> Choose from available mics (built-in, Bluetooth, USB). Saved across recordings. Auto-fallback if unavailable.</li>
-  <li><strong>Mixed Audio:</strong> Record without interrupting system audio</li>
-  <li><strong>Background Recording:</strong> Continue when app is minimized</li>
+  <li><strong>Quality:</strong> Whisper Optimized (22 kHz, 64 kbps AAC) &mdash; optimized for voice</li>
+  <li><strong>Microphone Selection:</strong> Choose from available mics (built-in, Bluetooth, USB, audio interface). Saved across recordings. Auto-fallback if unavailable. Available on iPhone, iPad, and Mac.</li>
+  <li><strong>Mixed Audio:</strong> Record without interrupting system audio (iOS / iPadOS)</li>
+  <li><strong>Background Recording:</strong> Continue when the app is minimized (iOS / iPadOS) or behind other windows (Mac)</li>
+  <li><strong>Pause &amp; Resume</strong> (v1.11): Pause without ending the file; resume to keep adding to the same recording</li>
 </ul>
 
 <h3>AI Settings</h3>
 <ul>
-  <li><strong>Engine Selection</strong> — Choose from all 7 AI engines</li>
-  <li><strong>Model Configuration</strong> — Temperature, max tokens, etc.</li>
-  <li><strong>Connection Testing</strong> — Verify API connectivity</li>
-  <li><strong>Batch Regeneration</strong> — Update all summaries with new engine</li>
+  <li><strong>Engine Selection</strong> &mdash; Choose from all 8 AI engines (plus MLX Swift if experimental engines are enabled)</li>
+  <li><strong>Model Configuration</strong> &mdash; Temperature, max tokens, comedy mode tone, etc.</li>
+  <li><strong>Connection Testing</strong> &mdash; Verify API connectivity</li>
+  <li><strong>Batch Regeneration</strong> &mdash; Update all summaries with new engine</li>
 </ul>
+
+<h3>Comedy Mode</h3>
+<p>Comedy Mode adds an optional tone to AI-generated summaries. Turn it on in Settings, pick a style (e.g.&nbsp;<em>snarky</em>), and supported engines will rewrite summaries in that voice. Disable it to return to the standard, neutral summary style.</p>
+
+<!-- ============================================================ -->
+<!-- PRIVACY & SECURITY                                            -->
+<!-- ============================================================ -->
+<h2 id="bn-privacy">Privacy &amp; Security</h2>
+
+<div class="bn-ok"><strong>v1.11 security hardening:</strong> BisonNotes AI now stores all sensitive credentials in the iOS Keychain, applies file protection to recordings and notes, and validates user-configurable AI endpoints to block insecure cleartext destinations.</div>
+
+<h3>How credentials are stored</h3>
+<ul>
+  <li><strong>Keychain-backed storage</strong> &mdash; OpenAI keys, Mistral keys, Google AI keys, AWS access keys/secret keys/session tokens, OpenAI-Compatible keys, and Whisper auth tokens all live in the iOS Keychain.</li>
+  <li><strong>Automatic migration</strong> &mdash; Existing values stored in legacy locations are migrated into the Keychain on first launch of v1.11 and then removed from their old locations.</li>
+  <li><strong>Process environment is cleared</strong> &mdash; Any inherited <code>AWS_*</code> environment variables are scrubbed at launch so AWS SDKs only use the credentials you configured in-app.</li>
+  <li><strong>iCloud settings backup</strong> &mdash; Sensitive settings (API keys, AWS credentials) are excluded from iCloud settings backups by default. If a previous backup contained sensitive values, they are restored into the Keychain rather than re-saved to settings storage.</li>
+</ul>
+
+<h3>File protection</h3>
+<p>BisonNotes AI applies explicit iOS file protection to:</p>
+<ul>
+  <li>Audio recordings, imported audio, restored archives, and watch backups</li>
+  <li>Live transcription placeholder audio</li>
+  <li>Summary attachments and their metadata</li>
+  <li>Persistent error logs</li>
+  <li>The Core Data SQLite store and related files</li>
+</ul>
+
+<h3>Endpoint safety</h3>
+<p>User-configurable AI services (OpenAI, OpenAI-Compatible, Ollama, Whisper) are checked against an endpoint policy:</p>
+<ul>
+  <li><strong>Local/private endpoints</strong> (loopback, link-local, RFC1918 networks) are allowed by default.</li>
+  <li><strong>Public cleartext endpoints</strong> (plain HTTP or WS pointing at the open internet) are blocked unless you explicitly enable <strong>Development Mode</strong> for that service.</li>
+  <li>HTTPS / WSS public endpoints (Groq, Nebius, OpenAI, etc.) work as expected.</li>
+</ul>
+<div class="bn-warn"><strong>Development Mode:</strong> Enable it only on networks you control. It exists so you can connect to a self-hosted server on a public address while you set it up &mdash; it does not weaken transport security for any other engine.</div>
+
+<h3>Share Extension hardening</h3>
+<p>Imports from the Share Extension are now authorized with one-time tokens before the main app scans the shared container, and the imported files themselves are file-protected. Full file paths are no longer written to logs.</p>
 
 <!-- ============================================================ -->
 <!-- TROUBLESHOOTING                                               -->
@@ -908,14 +1016,15 @@ docker run -d -p 9000:9000 \
   <summary>Background Processing</summary>
   <div class="dd">
     <ul>
-      <li><strong>Job Queue</strong> — Multiple operations queued and processed in order</li>
-      <li><strong>Progress Tracking</strong> — Real-time updates with accurate status display</li>
-      <li><strong>Error Recovery</strong> — Automatic retry for failures</li>
-      <li><strong>Stale Job Detection</strong> (v1.7) — Intelligent detection and recovery of stuck jobs, with timeouts based on actual processing start time</li>
-      <li><strong>Job Cancellation</strong> (v1.7) — Properly cancel and interrupt running jobs when the app is backgrounded or closed</li>
-      <li><strong>On-Device AI Handling</strong> — On-device AI jobs are gracefully interrupted when the app is backgrounded, since GPU processing requires the app to stay open</li>
-      <li><strong>Live Transcription</strong> (v1.8) — On-device speech-to-text streamed in real time during recording via SFSpeechRecognizer; transcript auto-saved when recording stops</li>
-      <li><strong>Duplicate Summary Cleanup</strong> (v1.8) — Automatically detects and removes duplicate summaries; manual cleanup available in Database Tools</li>
+      <li><strong>Job Queue</strong> &mdash; Multiple operations queued and processed in order</li>
+      <li><strong>Progress Tracking</strong> &mdash; Real-time updates with accurate status display</li>
+      <li><strong>Error Recovery</strong> &mdash; Automatic retry for failures</li>
+      <li><strong>Stale Job Detection</strong> (v1.7) &mdash; Intelligent detection and recovery of stuck jobs, with timeouts based on actual processing start time</li>
+      <li><strong>Job Cancellation</strong> (v1.7) &mdash; Properly cancel and interrupt running jobs when the app is backgrounded or closed</li>
+      <li><strong>On-Device AI Handling</strong> &mdash; On-device AI jobs are gracefully interrupted when the app is backgrounded, since GPU processing requires the app to stay open</li>
+      <li><strong>Live Transcription</strong> (v1.8) &mdash; On-device speech-to-text streamed in real time during recording via SFSpeechRecognizer; transcript auto-saved when recording stops</li>
+      <li><strong>Duplicate Summary Cleanup</strong> (v1.8) &mdash; Automatically detects and removes duplicate summaries; manual cleanup available in Database Tools</li>
+      <li><strong>Explicit credential resolvers</strong> (v1.11) &mdash; Background AWS jobs always pull fresh credentials from the Keychain so stale process-environment values can&rsquo;t leak in</li>
     </ul>
   </div>
 </details>
@@ -924,17 +1033,30 @@ docker run -d -p 9000:9000 \
   <summary>File Management</summary>
   <div class="dd">
     <ul>
-      <li><strong>Import/Export</strong> — M4A, MP3, WAV, CAF, AIFF, AIF</li>
-      <li><strong>Audio Export</strong> (v1.8) — Share any recording as an audio file via the iOS share sheet</li>
-      <li><strong>Audio Archive</strong> — Offload selected or older audio files to iCloud Drive, keep an in-app restore pointer, and remove the archived cloud copy after restore</li>
-      <li><strong>Video Import</strong> (v1.8) — Import video files; audio is automatically extracted to M4A</li>
-      <li><strong>Audio Cleanup</strong> (v1.8) — Optional pre-transcription DSP: high-pass filter, noise gate, dynamic normalization, peak limiting</li>
-      <li><strong>Share Extension</strong> — Import from Voice Memos, Files, etc.</li>
-      <li><strong>Combining Recordings</strong> — Merge two into one</li>
-      <li><strong>PDF Export</strong> — Professional reports with metadata, maps, page numbers</li>
-      <li><strong>File Relationships</strong> — Audio/transcript/summary links maintained</li>
-      <li><strong>Orphaned File Detection</strong> — Find and clean disconnected files</li>
-      <li><strong>Selective Deletion</strong> — Choose what to keep</li>
+      <li><strong>Import/Export</strong> &mdash; M4A, MP3, WAV, CAF, AIFF, AIF</li>
+      <li><strong>Audio Export</strong> (v1.8) &mdash; Share any recording as an audio file via the iOS share sheet</li>
+      <li><strong>Clean Audio Export</strong> (v1.10) &mdash; Exports use a clean, user-friendly filename derived from the recording title</li>
+      <li><strong>Audio Archive</strong> &mdash; Offload selected or older audio files to iCloud Drive, keep an in-app restore pointer, and remove the archived cloud copy after restore</li>
+      <li><strong>Video Import</strong> (v1.8) &mdash; Import video files; audio is automatically extracted to M4A</li>
+      <li><strong>Audio Cleanup</strong> (v1.8) &mdash; Optional pre-transcription DSP: high-pass filter, noise gate, dynamic normalization, peak limiting</li>
+      <li><strong>Share Extension</strong> &mdash; Import from Voice Memos, Files, etc., with one-time token authorization (v1.11)</li>
+      <li><strong>Combining Recordings</strong> &mdash; Merge two into one</li>
+      <li><strong>PDF Export</strong> &mdash; Professional reports with metadata, maps, page numbers</li>
+      <li><strong>File Relationships</strong> &mdash; Audio/transcript/summary links maintained</li>
+      <li><strong>Orphaned File Detection</strong> &mdash; Find and clean disconnected files</li>
+      <li><strong>Selective Deletion</strong> &mdash; Choose what to keep</li>
+      <li><strong>File Protection</strong> (v1.11) &mdash; Recordings, attachments, notes, and the Core Data store are stored with explicit iOS file protection</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Watch Complications &amp; Control Center Widget</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Apple Watch Complications</strong> (v1.9) &mdash; Surface live recording state on watch faces. Tap the complication to open the watch app.</li>
+      <li><strong>Control Center Recording Widget</strong> (iOS 18+) &mdash; Add the BisonNotes recording control to Control Center to start/stop recordings without opening the app.</li>
+      <li><strong>Watch App</strong> &mdash; Full standalone recording on Apple Watch with automatic sync back to iPhone via WatchConnectivity.</li>
     </ul>
   </div>
 </details>
@@ -957,10 +1079,11 @@ docker run -d -p 9000:9000 \
   <summary>iCloud Backup &amp; Sync</summary>
   <div class="dd">
     <ul>
-      <li><strong>iCloud Backup</strong> — Full backup of all data to iCloud Drive</li>
-      <li><strong>Audio Archive to iCloud Drive</strong> — Space-saving audio offload with tracked restore locations. Third-party Files providers are paused for archive targets for now.</li>
-      <li><strong>Auto-Backup</strong> (v1.7) — Automatically backs up when new recordings are created</li>
-      <li><strong>CloudKit Sync</strong> — Optional summary synchronization across devices with paginated queries and schema-safe fallback for reliability</li>
+      <li><strong>iCloud Backup</strong> &mdash; Full backup of all data to iCloud Drive</li>
+      <li><strong>Audio Archive to iCloud Drive</strong> &mdash; Space-saving audio offload with tracked restore locations. Third-party Files providers are paused for archive targets for now.</li>
+      <li><strong>Auto-Backup</strong> (v1.7) &mdash; Automatically backs up when new recordings are created</li>
+      <li><strong>CloudKit Sync</strong> &mdash; Optional summary synchronization across devices with paginated queries and schema-safe fallback for reliability</li>
+      <li><strong>Sensitive data excluded</strong> (v1.11) &mdash; API keys and AWS credentials are never written into iCloud settings backups; if a previous backup contained them, they are restored into the Keychain instead.</li>
       <li>Prompted after generating your first summary</li>
     </ul>
   </div>

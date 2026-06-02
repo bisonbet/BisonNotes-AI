@@ -46,7 +46,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     private let deduplicationSimilarityThreshold = 0.8
 
     var isAvailable: Bool {
-        let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.mistralAPIKey) ?? ""
         guard !apiKey.isEmpty else {
             if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
                 AppLogger.shared.verbose("Mistral AI API key not configured", category: "MistralAIEngine")
@@ -246,7 +246,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     /// The configuration is only recreated if settings have actually changed (via equality check),
     /// preventing unnecessary service recreation and ensuring thread-safe access to latest settings.
     private func updateConfiguration() {
-        let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.mistralAPIKey) ?? ""
         let modelId = UserDefaults.standard.string(forKey: "mistralModel") ?? MistralAIModel.mistralMedium2508.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "mistralBaseURL") ?? "https://api.mistral.ai/v1"
         let temperature = UserDefaults.standard.double(forKey: "mistralTemperature")

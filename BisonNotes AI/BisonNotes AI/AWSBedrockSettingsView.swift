@@ -9,7 +9,7 @@ import SwiftUI
 
 struct AWSBedrockSettingsView: View {
     @ObservedObject private var credentialsManager = AWSCredentialsManager.shared
-    @AppStorage("awsBedrockSessionToken") private var sessionToken: String = ""
+    @SecureStorage(KeychainSecretStore.awsBedrockSessionToken) private var sessionToken: String = ""
     @AppStorage("awsBedrockModel") private var selectedModel: String = AWSBedrockModel.llama4Maverick.rawValue
     @AppStorage("awsBedrockTemperature") private var temperature: Double = 0.1
     @AppStorage("awsBedrockMaxTokens") private var maxTokens: Int = 4096
@@ -41,7 +41,7 @@ struct AWSBedrockSettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 headerSection
                 

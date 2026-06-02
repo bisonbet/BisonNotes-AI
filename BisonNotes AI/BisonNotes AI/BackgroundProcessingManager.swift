@@ -305,9 +305,27 @@ enum JobProcessingStatus: Codable, Equatable {
 
 @MainActor
 class BackgroundProcessingManager: ObservableObject {
-    
+
+    // Mac Catalyst doesn't expose battery state — UIDevice.batteryLevel returns -1
+    // and accessing .batteryState spams "Error retrieving battery status" to the log.
+    fileprivate static var batteryLevelString: String {
+        #if targetEnvironment(macCatalyst)
+        return "n/a (Mac)"
+        #else
+        return "\(UIDevice.current.batteryLevel)"
+        #endif
+    }
+
+    fileprivate static var batteryStateString: String {
+        #if targetEnvironment(macCatalyst)
+        return "n/a (Mac)"
+        #else
+        return "\(UIDevice.current.batteryState.rawValue)"
+        #endif
+    }
+
     // MARK: - Published Properties
-    
+
     @Published var activeJobs: [ProcessingJob] = []
     @Published var processingStatus: JobProcessingStatus = .ready
     @Published var currentJob: ProcessingJob?
@@ -1187,7 +1205,7 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - Configuration Helpers
     
     private func getOpenAIConfig() -> OpenAITranscribeConfig {
-        let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAITranscribeModel.gpt4oMiniTranscribe.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
         
@@ -1201,7 +1219,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func getMistralTranscribeConfig() -> MistralTranscribeConfig {
-        let apiKey = UserDefaults.standard.string(forKey: "mistralAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.mistralAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "mistralTranscribeModel") ?? MistralTranscribeModel.voxtralMiniLatest.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "mistralBaseURL") ?? "https://api.mistral.ai/v1"
         let diarize = UserDefaults.standard.bool(forKey: "mistralTranscribeDiarize")
@@ -1243,15 +1261,13 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func getAWSConfig() -> AWSTranscribeConfig {
-        let accessKey = UserDefaults.standard.string(forKey: "awsAccessKey") ?? ""
-        let secretKey = UserDefaults.standard.string(forKey: "awsSecretKey") ?? ""
-        let region = UserDefaults.standard.string(forKey: "awsRegion") ?? "us-east-1"
+        let credentials = AWSCredentialsManager.shared.credentials
         let bucketName = UserDefaults.standard.string(forKey: "awsBucketName") ?? ""
         
         return AWSTranscribeConfig(
-            region: region,
-            accessKey: accessKey,
-            secretKey: secretKey,
+            region: credentials.region,
+            accessKey: credentials.accessKeyId,
+            secretKey: credentials.secretAccessKey,
             bucketName: bucketName
         )
     }
@@ -1573,7 +1589,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
     
     private func getOpenAISummarizationConfig() -> OpenAISummarizationConfig {
-        let apiKey = UserDefaults.standard.string(forKey: "openAIAPIKey") ?? ""
+        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
         
@@ -1751,8 +1767,8 @@ class BackgroundProcessingManager: ObservableObject {
         - Full Error: \(error)
         
         SYSTEM INFO:
-        - Battery Level: \(UIDevice.current.batteryLevel)
-        - Battery State: \(UIDevice.current.batteryState.rawValue)
+        - Battery Level: \(Self.batteryLevelString)
+        - Battery State: \(Self.batteryStateString)
         - Available Memory: \(ProcessInfo.processInfo.physicalMemory)
         
         =================
@@ -2247,12 +2263,19 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - Background Task Management
     
     private func beginBackgroundTask() async {
+        #if targetEnvironment(macCatalyst)
+        // Mac apps don't get suspended by the OS, so the iOS background-task
+        // machinery (UIApplication.beginBackgroundTask, AVAudioSession-backed
+        // keep-alive audio) is unnecessary here and just spams the log with
+        // Mach port errors and "task created over 30 seconds ago" warnings.
+        return
+        #else
         // Don't start a new background task if one is already running
         guard backgroundTaskID == .invalid else {
             AppLog.shared.backgroundProcessing("Background task already running: \(backgroundTaskID.rawValue)", level: .debug)
             return
         }
-        
+
         // Configure audio session for background processing to get extended time
         // This is CRITICAL for getting more than 30 seconds of background time
         do {
@@ -2314,17 +2337,22 @@ class BackgroundProcessingManager: ObservableObject {
 
             // Start monitoring background time for long operations
             startBackgroundTimeMonitoring()
-            
+
             // Start keep-alive audio to prevent app suspension during long tasks (like On-Device LLM)
             startKeepAliveAudio()
         }
+        #endif
     }
     
     
     private func endBackgroundTask() async {
+        #if targetEnvironment(macCatalyst)
+        // beginBackgroundTask is a no-op on Catalyst; nothing to tear down.
+        return
+        #else
         // Stop keep-alive audio
         stopKeepAliveAudio()
-        
+
         // Cancel background time monitor first
         backgroundTimeMonitor?.cancel()
         backgroundTimeMonitor = nil
@@ -2334,7 +2362,7 @@ class BackgroundProcessingManager: ObservableObject {
             UIApplication.shared.endBackgroundTask(backgroundTaskID)
             backgroundTaskID = .invalid
             backgroundTaskStartTime = nil
-            
+
             // Clean up audio session when background task ends
             Task {
                 do {
@@ -2345,6 +2373,7 @@ class BackgroundProcessingManager: ObservableObject {
                 }
             }
         }
+        #endif
     }
     
     private func handleBackgroundTaskExpiration() async {
@@ -2451,7 +2480,9 @@ class BackgroundProcessingManager: ObservableObject {
                     return
                 }
             } catch {
-                AppLog.shared.backgroundProcessing("Error requesting notification permission: \(error.localizedDescription)", level: .error)
+                // On Mac Catalyst this commonly fails until the user enables
+                // notifications in System Settings — not a real error.
+                AppLog.shared.backgroundProcessing("Notification permission request failed: \(error.localizedDescription)", level: .debug)
                 return
             }
         } else if settings.authorizationStatus != .authorized {

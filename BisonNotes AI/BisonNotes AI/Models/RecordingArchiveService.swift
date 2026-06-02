@@ -277,6 +277,7 @@ class RecordingArchiveService: ObservableObject {
         coordinator.coordinate(readingItemAt: sourceURL, options: [], error: &coordinatorError) { coordinatedURL in
             do {
                 try FileManager.default.copyItem(at: coordinatedURL, to: destinationURL)
+                AppFileProtection.apply(to: destinationURL)
                 didCopy = true
             } catch {
                 operationError = error
@@ -385,8 +386,18 @@ class RecordingArchiveService: ObservableObject {
             locationObject.setValue(exportedAt, forKey: "lastVerifiedAt")
             locationObject.setValue(Self.statusAvailable, forKey: "status")
 
+            // Persist a security-scoped bookmark so sandbox access survives
+            // app launches. Mac Catalyst requires the explicit option; on iOS
+            // the default already retains the picker-granted scope.
+            let bookmarkOptions: URL.BookmarkCreationOptions = {
+                #if targetEnvironment(macCatalyst)
+                return [.withSecurityScope]
+                #else
+                return []
+                #endif
+            }()
             let bookmarkData = try? url.bookmarkData(
-                options: [.minimalBookmark],
+                options: bookmarkOptions,
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
@@ -474,10 +485,20 @@ class RecordingArchiveService: ObservableObject {
     private func resolvedArchiveURL(from locationObject: NSManagedObject) throws -> URL {
         if let bookmarkData = locationObject.value(forKey: "bookmarkData") as? Data {
             var isStale = false
+            // Mac Catalyst stores security-scoped bookmarks; resolution must
+            // pass the matching option for startAccessingSecurityScopedResource()
+            // to grant access on a subsequent launch.
+            let resolutionOptions: URL.BookmarkResolutionOptions = {
+                #if targetEnvironment(macCatalyst)
+                return [.withoutUI, .withSecurityScope]
+                #else
+                return [.withoutUI]
+                #endif
+            }()
             do {
                 let url = try URL(
                     resolvingBookmarkData: bookmarkData,
-                    options: [.withoutUI],
+                    options: resolutionOptions,
                     relativeTo: nil,
                     bookmarkDataIsStale: &isStale
                 )

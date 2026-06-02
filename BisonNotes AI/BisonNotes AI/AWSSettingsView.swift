@@ -30,7 +30,7 @@ struct AWSSettingsView: View {
     ]
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section(header: Text("AWS Transcribe")) {
                     VStack(alignment: .leading, spacing: 8) {

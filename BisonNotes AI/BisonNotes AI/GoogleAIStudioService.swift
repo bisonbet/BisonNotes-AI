@@ -14,13 +14,15 @@ import SwiftUI
 class GoogleAIStudioService: ObservableObject {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "GoogleAIStudio")
     
-    @AppStorage("googleAIStudioAPIKey") private var apiKey: String = ""
     @AppStorage("googleAIStudioModel") private var selectedModel: String = "gemini-3-flash-preview"
     @AppStorage("googleAIStudioTemperature") private var temperature: Double = 0.1
     @AppStorage("googleAIStudioMaxTokens") private var maxTokens: Int = 8192
     @AppStorage("enableGoogleAIStudio") private var enableGoogleAIStudio: Bool = false
     
     private let baseURL = "https://generativelanguage.googleapis.com/v1beta"
+    private var apiKey: String {
+        KeychainSecretStore.shared.string(forKey: KeychainSecretStore.googleAIStudioAPIKey) ?? ""
+    }
     
     // MARK: - API Response Models
     

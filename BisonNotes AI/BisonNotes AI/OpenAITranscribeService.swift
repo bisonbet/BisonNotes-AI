@@ -171,6 +171,10 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         guard !config.apiKey.isEmpty else {
             throw OpenAITranscribeError.configurationMissing
         }
+
+        if let message = EndpointSecurityPolicy.validationMessage(for: config.baseURL) {
+            throw OpenAITranscribeError.invalidResponse(message)
+        }
         
         // Test the API key by making a simple request to the models endpoint
         let testURL = URL(string: "\(config.baseURL)/models")!
@@ -303,6 +307,10 @@ class OpenAITranscribeService: NSObject, ObservableObject {
     
     private func performTranscription(audioData: Data, fileName: String) async throws -> OpenAITranscribeResult {
         let startTime = Date()
+
+        if let message = EndpointSecurityPolicy.validationMessage(for: config.baseURL) {
+            throw OpenAITranscribeError.invalidResponse(message)
+        }
         
         // Create multipart form data
         let boundary = UUID().uuidString
