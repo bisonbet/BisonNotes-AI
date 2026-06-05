@@ -13,8 +13,8 @@
 		1433F5462F7C9E44002AB9D6 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428E2E7F5ECA0059271B /* SwiftUI.framework */; };
 		1433F5572F7C9E45002AB9D6 /* BisonNotes Watch WidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1433F5442F7C9E44002AB9D6 /* BisonNotes Watch WidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		1435711D2F2137E1000BFF00 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = 1435711C2F2137E1000BFF00 /* Textual */; };
-		1435735C2F2E92A500E93954 /* BisonNotes Share.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 143573522F2E92A500E93954 /* BisonNotes Share.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		1485FEC52E526FB30044121F /* BisonNotes AI Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		1435735C2F2E92A500E93954 /* BisonNotes Share.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 143573522F2E92A500E93954 /* BisonNotes Share.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		1485FEC52E526FB30044121F /* BisonNotes AI Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1485FEA52E526FB10044121F /* BisonNotes AI Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED42E5271970044121F /* WatchConnectivity.framework */; };
 		1485FED72E5271AF0044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED62E5271AF0044121F /* WatchConnectivity.framework */; };
 		1485FEDC2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */; };
@@ -27,7 +27,7 @@
 		14B0A0022F80000000BBD2FA /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 14B0A0052F80000000BBD2FA /* MLXLMCommon */; };
 		14EA428D2E7F5ECA0059271B /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428C2E7F5ECA0059271B /* WidgetKit.framework */; };
 		14EA428F2E7F5ECA0059271B /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428E2E7F5ECA0059271B /* SwiftUI.framework */; };
-		14EA42A92E7F66370059271B /* BisonNotes AI ControlsExtension.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 14EA428B2E7F5ECA0059271B /* BisonNotes AI ControlsExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		14EA42A92E7F66370059271B /* BisonNotes AI ControlsExtension.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 14EA428B2E7F5ECA0059271B /* BisonNotes AI ControlsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		14FA00012F30000000BBD2FA /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 14FA00022F30000000BBD2FA /* FluidAudio */; };
 		14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9072E3F8D5600BBD2FA /* AWSBedrock */; };
 		14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */; };
@@ -1297,8 +1297,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI";
 				PRODUCT_NAME = "BisonNotes AI";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = YES;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -1336,8 +1336,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI";
 				PRODUCT_NAME = "BisonNotes AI";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = YES;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
