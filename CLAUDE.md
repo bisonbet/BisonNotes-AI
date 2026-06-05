@@ -169,6 +169,12 @@ Then add the `ios-arm64-maccatalyst` entry to `Frameworks/llama.xcframework/Info
 
 Step 5 is critical — without the `vtool` patch, the linker warns "built for macOS" and may fail codesigning.
 
+#### Remove `link "c++"` from llama modulemaps
+
+Each slice's `Modules/module.modulemap` (e.g. `ios-arm64/llama.framework/Modules/module.modulemap`) ships with a `link "c++"` directive. Another SPM dependency (MLX-Swift) already links libc++, so leaving this in causes a `Ignoring duplicate libraries: '-lc++'` warning at link time. Delete the `link "c++"` line from every slice's modulemap. The framework binary itself records libc++ as a load dependency, so dyld still resolves it at runtime.
+
+If the xcframework is rebuilt or updated from upstream, reapply this removal across all slices.
+
 #### textual (MarkdownUI) Catalyst Fix
 
 The `bisonbet/textual` fork has Mac Catalyst guards applied (commit `0c2c3b5`). On Mac Catalyst `canImport(AppKit)` is true, which caused the package to take the AppKit path and fail. The fix adds `&& !targetEnvironment(macCatalyst)` to AppKit checks in:

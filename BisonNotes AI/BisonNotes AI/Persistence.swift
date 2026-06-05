@@ -42,7 +42,7 @@ struct PersistenceController {
             description.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
             description.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
             description.setOption(
-                AppFileProtection.sensitiveFileProtection as NSObject,
+                AppFileProtection.sensitiveFileProtection.rawValue as NSString,
                 forKey: NSPersistentStoreFileProtectionKey
             )
         }
