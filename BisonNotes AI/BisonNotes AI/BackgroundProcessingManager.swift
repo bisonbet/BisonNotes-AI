@@ -306,22 +306,21 @@ enum JobProcessingStatus: Codable, Equatable {
 @MainActor
 class BackgroundProcessingManager: ObservableObject {
 
-    // Mac Catalyst doesn't expose battery state — UIDevice.batteryLevel returns -1
+    // Mac doesn't expose battery state — UIDevice.batteryLevel returns -1
     // and accessing .batteryState spams "Error retrieving battery status" to the log.
+    // Applies to both Mac Catalyst and "Designed for iPad" on Apple Silicon.
     fileprivate static var batteryLevelString: String {
-        #if targetEnvironment(macCatalyst)
-        return "n/a (Mac)"
-        #else
+        if UIDevice.isRunningOnMac {
+            return "n/a (Mac)"
+        }
         return "\(UIDevice.current.batteryLevel)"
-        #endif
     }
 
     fileprivate static var batteryStateString: String {
-        #if targetEnvironment(macCatalyst)
-        return "n/a (Mac)"
-        #else
+        if UIDevice.isRunningOnMac {
+            return "n/a (Mac)"
+        }
         return "\(UIDevice.current.batteryState.rawValue)"
-        #endif
     }
 
     // MARK: - Published Properties

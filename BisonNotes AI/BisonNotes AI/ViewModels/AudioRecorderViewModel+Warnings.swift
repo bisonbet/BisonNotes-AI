@@ -92,32 +92,33 @@ extension AudioRecorderViewModel {
 		}
 
 		// 4. BATTERY CHECK
-		// Mac Catalyst has no battery API — UIDevice.batteryLevel returns -1 and
-		// enabling monitoring spams "Error retrieving battery status" to the log.
-		#if !targetEnvironment(macCatalyst)
-		UIDevice.current.isBatteryMonitoringEnabled = true
-		let batteryLevel = UIDevice.current.batteryLevel
+		// Skip on Mac — UIDevice.batteryLevel returns -1 / unreliable values under
+		// both Mac Catalyst and "Designed for iPad" on Apple Silicon, and enabling
+		// monitoring spams "Error retrieving battery status" to the log.
+		if !UIDevice.isRunningOnMac {
+			UIDevice.current.isBatteryMonitoringEnabled = true
+			let batteryLevel = UIDevice.current.batteryLevel
 
-		if batteryLevel >= 0 && batteryLevel < MIN_BATTERY_LEVEL {
-			AppLog.shared.recording("Critical battery: \(Int(batteryLevel * 100))%", level: .error)
-			await sendWarningNotification(
-				title: "Critical Battery",
-				body: "Battery at \(Int(batteryLevel * 100))%. Stopping recording to preserve battery.",
-				isCritical: true
-			)
-			stopRecording()
-			return
-		}
+			if batteryLevel >= 0 && batteryLevel < MIN_BATTERY_LEVEL {
+				AppLog.shared.recording("Critical battery: \(Int(batteryLevel * 100))%", level: .error)
+				await sendWarningNotification(
+					title: "Critical Battery",
+					body: "Battery at \(Int(batteryLevel * 100))%. Stopping recording to preserve battery.",
+					isCritical: true
+				)
+				stopRecording()
+				return
+			}
 
-		if batteryLevel >= 0 && batteryLevel < BATTERY_WARNING_THRESHOLD && !hasShownBatteryWarning {
-			hasShownBatteryWarning = true
-			await sendWarningNotification(
-				title: "Low Battery Warning",
-				body: "Battery at \(Int(batteryLevel * 100))%. Consider stopping recording soon.",
-				isCritical: false
-			)
+			if batteryLevel >= 0 && batteryLevel < BATTERY_WARNING_THRESHOLD && !hasShownBatteryWarning {
+				hasShownBatteryWarning = true
+				await sendWarningNotification(
+					title: "Low Battery Warning",
+					body: "Battery at \(Int(batteryLevel * 100))%. Consider stopping recording soon.",
+					isCritical: false
+				)
+			}
 		}
-		#endif
 	}
 
 	/// Get available storage on device
