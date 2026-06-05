@@ -48,8 +48,9 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
-    /// Migrates legacy "None" and "Not Configured" AI engine selections to intelligent defaults
-    /// Defaults to MLX Swift on 6GB+ devices, OpenAI on older devices
+    /// Migrates legacy "None" and "Not Configured" AI engine selections to intelligent defaults.
+    /// MLX is the on-device default for any device with 4GB+ RAM; the 1.7B model is used
+    /// on 4-6GB devices and the 4B model on 6GB+ devices. Below 4GB falls back to Mistral AI.
     private func migrateAIEngineSelection() {
         let aiEngineKey = "SelectedAIEngine"
         let transcriptionEngineKey = "selectedTranscriptionEngine"
@@ -62,38 +63,38 @@ struct BisonNotesAIApp: App {
 
         let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
         let currentTranscriptionEngine = UserDefaults.standard.string(forKey: transcriptionEngineKey)
-
-        // Determine the appropriate default based on device capabilities.
-        // MLX is the on-device default and requires 6GB+ RAM strictly.
         let hasOnDeviceAISupport = DeviceCapabilities.supportsMLX
+        let deviceRAM = DeviceCapabilities.totalRAMInGB
 
         // Migrate AI engine if not configured
         if currentAIEngine == "None" || currentAIEngine == "Not Configured" || currentAIEngine == nil {
             if hasOnDeviceAISupport {
+                // 4-6GB devices get the small 1.7B model; 6GB+ get the 4B default.
+                let defaultModelId = deviceRAM < 6.0
+                    ? MLXModelOption.smallModelId
+                    : MLXSwiftSettingsKeys.defaultModelId
                 UserDefaults.standard.set(AIEngineType.mlxSwift.rawValue, forKey: aiEngineKey)
                 UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
-                UserDefaults.standard.set(MLXSwiftSettingsKeys.defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
-                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'MLX Swift' (device has 6GB+ RAM)")
+                UserDefaults.standard.set(defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
+                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'MLX Swift' (model: \(defaultModelId), RAM: \(deviceRAM)GB)")
             } else {
-                // Set OpenAI as default for devices with less than 6GB RAM
-                UserDefaults.standard.set("OpenAI", forKey: aiEngineKey)
-                UserDefaults.standard.set(false, forKey: "enableOpenAI")
-                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'OpenAI' (device has <6GB RAM)")
+                // Mistral AI is the recommended cloud default for devices below the MLX threshold (4GB)
+                UserDefaults.standard.set(AIEngineType.mistralAI.rawValue, forKey: aiEngineKey)
+                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'Mistral AI' (device has <4GB RAM)")
             }
         }
 
         // Migrate transcription engine if not configured
         if currentTranscriptionEngine == "Not Configured" || currentTranscriptionEngine == nil {
             if hasOnDeviceAISupport {
-                // Use FluidAudio (On Device) as the default for devices with 4GB+ RAM
                 UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: transcriptionEngineKey)
                 UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
-                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to '\(TranscriptionEngine.fluidAudio.rawValue)' (device has 6GB+ RAM)")
+                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to '\(TranscriptionEngine.fluidAudio.rawValue)'")
             } else {
-                // Set OpenAI as default for devices with less than 6GB RAM
-                UserDefaults.standard.set("OpenAI", forKey: transcriptionEngineKey)
-                UserDefaults.standard.set(false, forKey: "enableOpenAI")
-                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'OpenAI' (device has <6GB RAM)")
+                // Mistral AI is the recommended cloud transcription on devices below 4GB
+                // (matches the AI summarization default).
+                UserDefaults.standard.set(TranscriptionEngine.mistralAI.rawValue, forKey: transcriptionEngineKey)
+                NSLog("✅ Transcription engine migrated from '\(currentTranscriptionEngine ?? "nil")' to 'Mistral AI' (device has <4GB RAM)")
             }
         }
 
@@ -286,6 +287,72 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
+    /// On v2.0, the legacy On-Device AI (llama) engine became 6GB+ only and
+    /// the LFM 2.5 1.2B model was removed entirely. This one-shot migration:
+    ///   1. Deletes any downloaded LFM model file from disk to reclaim ~731MB.
+    ///   2. Moves anyone who had LFM selected (any device) to MLX 1.7B.
+    ///   3. Moves anyone on legacy llama on a <6GB device to MLX 1.7B
+    ///      (since legacy llama no longer supports their device).
+    ///   4. If the device is <4GB (MLX unavailable), falls through to Mistral
+    ///      AI — our recommended cloud engine.
+    private func migrateLegacyOnDeviceUsersOffSubSixGB() {
+        let migrationKey = "legacyOnDeviceSubSixGBMigration_v2.0"
+
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+
+        defer { UserDefaults.standard.set(true, forKey: migrationKey) }
+
+        // (1) Reclaim disk space — unconditional regardless of selection state.
+        deleteLFMModelFileIfPresent()
+
+        let aiEngineKey = "SelectedAIEngine"
+        let onDeviceModelKey = OnDeviceLLMModelInfo.SettingsKeys.selectedModelId
+        let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
+        let currentModelId = UserDefaults.standard.string(forKey: onDeviceModelKey)
+        let deviceRAM = DeviceCapabilities.totalRAMInGB
+
+        let isOnLegacy = currentAIEngine == AIEngineType.onDeviceLLM.rawValue
+        let wasUsingLFM = isOnLegacy && currentModelId == "lfm-2.5-1.2b"
+        let isOnLegacyBelowSixGB = isOnLegacy && deviceRAM < 6.0
+
+        // Only migrate if the user is impacted by either change.
+        guard wasUsingLFM || isOnLegacyBelowSixGB else { return }
+
+        // Clear the now-removed LFM model id so the legacy engine doesn't try
+        // to resolve it later.
+        if currentModelId == "lfm-2.5-1.2b" {
+            UserDefaults.standard.removeObject(forKey: onDeviceModelKey)
+        }
+
+        if deviceRAM >= 4.0 {
+            UserDefaults.standard.set(AIEngineType.mlxSwift.rawValue, forKey: aiEngineKey)
+            UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+            UserDefaults.standard.set(MLXModelOption.smallModelId, forKey: MLXSwiftSettingsKeys.modelId)
+            NSLog("✅ Migrated legacy On-Device AI user to MLX 1.7B (RAM: \(deviceRAM)GB, was LFM: \(wasUsingLFM))")
+        } else {
+            UserDefaults.standard.set(AIEngineType.mistralAI.rawValue, forKey: aiEngineKey)
+            NSLog("✅ Migrated <4GB legacy On-Device AI user to Mistral AI (MLX requires 4GB+)")
+        }
+    }
+
+    /// Removes the LFM 2.5 model file from disk if present. The model was
+    /// removed in v2.0 and any cached weights are pure dead space (~731MB).
+    private func deleteLFMModelFileIfPresent() {
+        let lfmFileURL = URL.onDeviceLLMModelsDirectory
+            .appendingPathComponent("LFM2.5-1.2B-Thinking-Q4_K_M")
+            .appendingPathExtension("gguf")
+
+        guard FileManager.default.fileExists(atPath: lfmFileURL.path) else { return }
+        do {
+            try FileManager.default.removeItem(at: lfmFileURL)
+            NSLog("✅ Deleted legacy LFM 2.5 model file at \(lfmFileURL.path)")
+        } catch {
+            NSLog("⚠️ Failed to delete LFM 2.5 model file at \(lfmFileURL.path): \(error.localizedDescription)")
+        }
+    }
+
     private func migrateiCloudSensitiveBackupDefault() {
         let migrationKey = "iCloudSensitiveBackupDefaultMigrated_v1.4"
 
@@ -314,6 +381,7 @@ struct BisonNotesAIApp: App {
         migrateWhisperKitToParakeet()
         migrateOnDeviceLLMNameToOnDeviceAI()
         migrateRemovedModels()
+        migrateLegacyOnDeviceUsersOffSubSixGB()
         migrateiCloudSensitiveBackupDefault()
         setupDarwinNotificationObserver()
     }

@@ -94,36 +94,29 @@ struct SettingsView: View {
             SummaryManager.shared.setEngine(newEngine)
             AppLog.shared.log("SettingsView: Updated AI engine to '\(newEngine)'", level: .debug, category: .general)
         }
-        .onChange(of: enableExperimentalModels) { oldValue, newValue in
+        .onChange(of: enableExperimentalModels) { _, newValue in
+            // This toggle only gates legacy On-Device AI (llama) experimental
+            // models and unlocks the legacy engine on <6GB devices. MLX is
+            // unrelated and must not be touched here.
             OnDeviceLLMDownloadManager.shared.refreshModelStatus()
 
-            if !newValue {
-                UserDefaults.standard.set(false, forKey: MLXSwiftSettingsKeys.enabled)
+            guard !newValue else { return }
 
-                let currentModelId = UserDefaults.standard.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId) ?? ""
-                if !OnDeviceLLMModelInfo.availableModels.contains(where: { $0.id == currentModelId }) {
-                    if let firstAvailable = OnDeviceLLMModelInfo.availableModels.first {
-                        UserDefaults.standard.set(firstAvailable.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
-                    }
-                }
+            // If the currently selected legacy model is no longer in the
+            // available set (e.g. it was experimental-only), reset to the
+            // first available legacy model.
+            let currentModelId = UserDefaults.standard.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId) ?? ""
+            if !OnDeviceLLMModelInfo.availableModels.contains(where: { $0.id == currentModelId }),
+               let firstAvailable = OnDeviceLLMModelInfo.availableModels.first {
+                UserDefaults.standard.set(firstAvailable.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+            }
 
-                let onDeviceHasModels = !OnDeviceLLMModelInfo.availableModels.isEmpty
-                let fallbackEngine: String
-                if onDeviceHasModels {
-                    fallbackEngine = AIEngineType.onDeviceLLM.rawValue
-                } else {
-                    fallbackEngine = AIEngineType.appleNative.rawValue
-                }
-
-                if selectedAIEngine == AIEngineType.mlxSwift.rawValue {
-                    selectedAIEngine = fallbackEngine
-                    SummaryManager.shared.setEngine(fallbackEngine)
-                }
-
-                if selectedAIEngine == AIEngineType.onDeviceLLM.rawValue && !onDeviceHasModels {
-                    selectedAIEngine = fallbackEngine
-                    SummaryManager.shared.setEngine(fallbackEngine)
-                }
+            // If the user is on the legacy engine but the device no longer
+            // has any legacy models available, fall through to Apple Native.
+            let onDeviceHasModels = !OnDeviceLLMModelInfo.availableModels.isEmpty
+            if selectedAIEngine == AIEngineType.onDeviceLLM.rawValue && !onDeviceHasModels {
+                selectedAIEngine = AIEngineType.appleNative.rawValue
+                SummaryManager.shared.setEngine(AIEngineType.appleNative.rawValue)
             }
         }
         .sheet(isPresented: $showingAISettings) {
@@ -501,9 +494,9 @@ struct SettingsView: View {
 
     private var experimentalSection: some View {
         Section {
-            Toggle("Experimental summary models & MLX AI engine", isOn: $enableExperimentalModels)
+            Toggle("Experimental features", isOn: $enableExperimentalModels)
         } footer: {
-            Text("Allow experimental local summary models and show the MLX Swift AI engine in AI settings. These models are unreliable and may produce empty summaries. For devices with <6GB RAM, this enables on-device AI with only LFM 2.5 available.")
+            Text("Exposes experimental models in the On Device AI (Legacy) engine and the smaller Ternary Bonsai 1.7B model in the On Device AI engine. Experimental models are less reliable and may produce empty summaries.")
         }
     }
 

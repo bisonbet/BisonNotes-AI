@@ -161,15 +161,7 @@ struct SummaryDetailView: View {
 
             AppLog.shared.summarization("SummaryDetailView: hasLocationData=\(recording.locationData != nil)", level: .debug)
 
-            // Refresh summary data from coordinator to get the latest version
-            if let recordingEntry = appCoordinator.getRecording(url: recording.url),
-               let recordingId = recordingEntry.id,
-               let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
-               let latestSummary = completeData.summary,
-               latestSummary.id != summaryData.id {
-                AppLog.shared.summarization("Refreshing summary from Core Data, new length: \(latestSummary.summary.count) chars", level: .debug)
-                summaryData = latestSummary
-            }
+            refreshSummaryFromCoreData()
 
             scheduleLocationGeocoding()
             loadSupplementalSummaryData()
@@ -186,6 +178,11 @@ struct SummaryDetailView: View {
                         isRegenerating = false
                         regeneratingJobId = nil
                         if job.status == .completed {
+                            // Pull the new summary into our local state so the AI Engine /
+                            // AI Model fields (and everything else) update immediately —
+                            // necessary on layouts where dismiss() doesn't tear the view
+                            // down (e.g. iPad split-view detail column).
+                            refreshSummaryFromCoreData()
                             dismiss()
                         } else if job.status.isError {
                             regenerationError = job.status.errorMessage ?? "Regeneration failed"
@@ -1233,8 +1230,28 @@ struct SummaryDetailView: View {
         }
     }
     
+    // MARK: - Summary Refresh
+
+    /// Reloads `summaryData` from Core Data so the displayed metadata
+    /// (AI Engine, AI Model, timestamps, etc.) reflects the latest stored
+    /// summary. Called both onAppear and right after a regeneration job
+    /// completes — the latter handles iPad split-view layouts where
+    /// `dismiss()` may not actually tear the view down.
+    private func refreshSummaryFromCoreData() {
+        guard let recordingEntry = appCoordinator.getRecording(url: recording.url),
+              let recordingId = recordingEntry.id,
+              let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
+              let latestSummary = completeData.summary else {
+            return
+        }
+        if latestSummary.id != summaryData.id {
+            AppLog.shared.summarization("Refreshing summary from Core Data, new length: \(latestSummary.summary.count) chars, new model: \(latestSummary.aiModel)", level: .debug)
+            summaryData = latestSummary
+        }
+    }
+
     // MARK: - Regeneration Logic
-    
+
     private func regenerateSummary() {
         guard !isRegenerating else { return }
 

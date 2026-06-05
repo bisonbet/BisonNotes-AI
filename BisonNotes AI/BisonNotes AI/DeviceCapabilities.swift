@@ -22,27 +22,18 @@ struct DeviceCapabilities {
         return ProcessInfo.processInfo.physicalMemory
     }
 
-    /// Check if device has sufficient RAM for on-device LLM processing
-    /// Requires at least 6GB of RAM for reliable operation
-    /// For devices with <6GB RAM, returns true only if experimental models are enabled
+    /// Legacy On-Device AI (llama) requires at least 6GB of RAM. No experimental
+    /// override — devices under 6GB were unreliable in practice and are off the
+    /// legacy path entirely.
     static var supportsOnDeviceLLM: Bool {
-        let minimumRAM: Double = 6.0 // 6GB minimum for reliable operation
-        let deviceRAM = totalRAMInGB
-
-        // Devices with 6GB+ RAM always support on-device LLM
-        if deviceRAM >= minimumRAM {
-            return true
-        }
-
-        // Devices with <6GB RAM only support on-device LLM if experimental models are enabled
-        let experimentalEnabled = UserDefaults.standard.bool(forKey: "onDeviceLLMEnableExperimentalModels")
-        return experimentalEnabled
+        return totalRAMInGB >= 6.0
     }
 
-    /// Check if device meets MLX Swift requirements: 6GB+ RAM, no experimental override.
-    /// MLX is the default on-device path on supported hardware and is strictly gated.
+    /// MLX-based on-device AI supports devices down to 4GB by way of the small
+    /// 1.7B model. 6GB+ devices get the 4B/8B options; 4-6GB devices are
+    /// limited to the 1.7B model.
     static var supportsMLX: Bool {
-        return totalRAMInGB >= 6.0
+        return totalRAMInGB >= 4.0
     }
 
     /// Check if device has sufficient RAM for basic Whisper models
