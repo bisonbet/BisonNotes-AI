@@ -184,8 +184,17 @@ struct ContentView: View {
             }
             #endif
         }
-        .alert("Download Complete", isPresented: $downloadMonitor.showingCompletionAlert) {
+        .alert("Download Complete", isPresented: Binding(
+            get: { downloadMonitor.showingCompletionAlert && !recorderVM.isRecording },
+            set: { newValue in
+                if !newValue {
+                    downloadMonitor.showingCompletionAlert = false
+                    downloadMonitor.reset()
+                }
+            }
+        )) {
             Button("OK") {
+                downloadMonitor.showingCompletionAlert = false
                 downloadMonitor.reset()
             }
         } message: {

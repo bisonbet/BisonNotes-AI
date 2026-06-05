@@ -103,7 +103,7 @@ struct OnDeviceLLMSettingsView: View {
                 connectionTestButton
             }
         }
-        .navigationTitle("On-Device AI")
+        .navigationTitle(AIEngineType.onDeviceLLM.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

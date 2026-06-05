@@ -2,7 +2,7 @@
 //  MLXSwiftSettingsView.swift
 //  BisonNotes AI
 //
-//  Settings for the experimental MLX Swift summarization engine.
+//  Settings for the MLX Swift summarization engine.
 //
 
 import SwiftUI
@@ -14,6 +14,7 @@ struct MLXModelOption: Identifiable {
     let displayName: String
     let description: String
     let downloadSize: String
+    let downloadSizeBytes: Int64
     let parameters: String
     let contextWindow: Int
     /// Minimum device RAM in GB required to run this model
@@ -25,6 +26,7 @@ struct MLXModelOption: Identifiable {
             displayName: "Ternary Bonsai 4B",
             description: "Fast, memory-efficient model for on-device summaries.",
             downloadSize: "~1.1 GB",
+            downloadSizeBytes: 1_100_000_000,
             parameters: "4B",
             contextWindow: 16_384,
             requiredRAM: 6.0
@@ -34,6 +36,7 @@ struct MLXModelOption: Identifiable {
             displayName: "Ternary Bonsai 8B",
             description: "Slower but higher quality summaries.",
             downloadSize: "~2.3 GB",
+            downloadSizeBytes: 2_300_000_000,
             parameters: "8B",
             contextWindow: 16_384,
             requiredRAM: 8.0
@@ -66,7 +69,7 @@ struct MLXSwiftSettingsView: View {
     // MARK: - Body
 
     var body: some View {
-        let isSupported = DeviceCapabilities.supportsOnDeviceLLM
+        let isSupported = DeviceCapabilities.supportsMLX
 
         return Form {
             // Info Section
@@ -75,27 +78,8 @@ struct MLXSwiftSettingsView: View {
                     Text("Process transcripts locally using Apple's MLX framework. Models download from Hugging Face on first use. No internet connection required after download.")
                         .font(.caption)
                         .foregroundColor(.secondary)
-
-                    let deviceRAM = DeviceCapabilities.totalRAMInGB
-                    if deviceRAM >= 4.0 && deviceRAM < 6.0 {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(.orange)
-                                .font(.caption)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Limited Memory")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.orange)
-                                Text("Your device has 4-6GB RAM. The 4B model is recommended. The 8B model may not fit in memory.")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
                 } else {
-                    Text("MLX Swift requires a device with 4GB+ RAM and Apple Silicon. Your device does not meet this requirement.")
+                    Text("MLX Swift requires a device with 6GB+ RAM and Apple Silicon. Your device does not meet this requirement.")
                         .font(.caption)
                         .foregroundColor(.red)
                 }
@@ -132,7 +116,7 @@ struct MLXSwiftSettingsView: View {
                 }
             }
         }
-        .navigationTitle("MLX Swift")
+        .navigationTitle(AIEngineType.mlxSwift.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

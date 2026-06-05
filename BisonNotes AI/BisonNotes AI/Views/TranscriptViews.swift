@@ -667,7 +667,7 @@ struct TranscriptsView: View {
         AppLog.shared.summarization("generateSummary called from TranscriptsView row", level: .debug)
         generatingSummaryRecordingIds.insert(recordingId)
 
-        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         let selectedModel = UserDefaults.standard.string(forKey: "SelectedAIModel")
         let recordingURL: URL
         if let absoluteURL = appCoordinator.getAbsoluteURL(for: recording) {
@@ -1370,7 +1370,7 @@ struct EditableTranscriptView: View {
         AppLog.shared.summarization("generateSummary called from EditableTranscriptView", level: .debug)
         isGeneratingSummary = true
 
-        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         let selectedModel = UserDefaults.standard.string(forKey: "SelectedAIModel")
         let recordingURL: URL
         if let absoluteURL = appCoordinator.getAbsoluteURL(for: recording) {

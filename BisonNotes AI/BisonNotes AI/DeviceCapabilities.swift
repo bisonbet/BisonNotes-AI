@@ -33,10 +33,16 @@ struct DeviceCapabilities {
         if deviceRAM >= minimumRAM {
             return true
         }
-        
+
         // Devices with <6GB RAM only support on-device LLM if experimental models are enabled
         let experimentalEnabled = UserDefaults.standard.bool(forKey: "onDeviceLLMEnableExperimentalModels")
         return experimentalEnabled
+    }
+
+    /// Check if device meets MLX Swift requirements: 6GB+ RAM, no experimental override.
+    /// MLX is the default on-device path on supported hardware and is strictly gated.
+    static var supportsMLX: Bool {
+        return totalRAMInGB >= 6.0
     }
 
     /// Check if device has sufficient RAM for basic Whisper models

@@ -19,7 +19,7 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var hasShownCompletion = false
     private let fluidAudioManager = FluidAudioManager.shared
-    private let onDeviceLLMManager = OnDeviceLLMDownloadManager.shared
+    private let mlxManager = MLXSwiftDownloadManager.shared
 
     private init() {
         setupMonitoring()
@@ -37,8 +37,8 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Monitor On-Device LLM download completion
-        onDeviceLLMManager.$isModelReady
+        // Monitor MLX on-device AI download completion
+        mlxManager.$isModelDownloaded
             .removeDuplicates()
             .dropFirst()
             .sink { [weak self] _ in
@@ -53,7 +53,7 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
         guard !hasShownCompletion else { return }
 
         let parakeetReady = fluidAudioManager.isModelReady
-        let onDeviceLLMReady = onDeviceLLMManager.isModelReady
+        let onDeviceLLMReady = mlxManager.isModelDownloaded
 
         if parakeetReady && onDeviceLLMReady {
             hasShownCompletion = true

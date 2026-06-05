@@ -1769,14 +1769,27 @@ enum AIEngineType: String, CaseIterable {
     case mlxSwift = "MLX Swift"
     case appleNative = "Apple Native"
 
+    /// User-facing label for the engine. Decoupled from rawValue so the persisted
+    /// identifier (UserDefaults, summary records) stays stable while UI copy can evolve.
+    var displayName: String {
+        switch self {
+        case .mlxSwift: return "On Device AI"
+        case .onDeviceLLM: return "On Device AI (Legacy)"
+        default: return rawValue
+        }
+    }
+
     /// Returns all available engine types based on device capabilities
     static var availableCases: [AIEngineType] {
         return allCases.filter { engineType in
-            // Hide on-device engines if device doesn't have sufficient RAM
-            if engineType == .onDeviceLLM || engineType == .mlxSwift {
+            switch engineType {
+            case .mlxSwift:
+                return DeviceCapabilities.supportsMLX
+            case .onDeviceLLM:
                 return DeviceCapabilities.supportsOnDeviceLLM
+            default:
+                return true
             }
-            return true
         }
     }
 
@@ -1797,7 +1810,7 @@ enum AIEngineType: String, CaseIterable {
         case .onDeviceLLM:
             return "Privacy-focused on-device AI processing using local AI models"
         case .mlxSwift:
-            return "Experimental on-device AI processing using MLX Swift and Ternary Bonsai"
+            return "On-device AI processing using MLX Swift and Ternary Bonsai"
         case .appleNative:
             return "Uses Apple's on-device Foundation Models runtime for private summaries"
         }
@@ -1827,7 +1840,7 @@ enum AIEngineType: String, CaseIterable {
         case .onDeviceLLM:
             return ["Downloaded LLM Model (~2 GB)", "No Internet Required", "A16+ Chip Recommended"]
         case .mlxSwift:
-            return ["Experimental Toggle Enabled", "First-use Model Download (~2.3 GB)", "Apple Silicon / 6GB+ RAM Recommended"]
+            return ["Apple Silicon / 6GB+ RAM", "First-use Model Download (~1.1 GB)", "No Internet Required"]
         case .appleNative:
             return ["Apple Intelligence-supported device", "iOS/iPadOS/macOS/visionOS 26+", "No Internet Required"]
         }

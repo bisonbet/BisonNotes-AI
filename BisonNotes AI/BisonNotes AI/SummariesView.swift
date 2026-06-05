@@ -602,7 +602,7 @@ struct SummariesView: View {
         isGeneratingSummary = true
         generatingSummaryRecordingId = recording.id
 
-        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         let selectedModel = UserDefaults.standard.string(forKey: "SelectedAIModel")
         let recordingURL: URL
         if let absoluteURL = appCoordinator.getAbsoluteURL(for: recording) {

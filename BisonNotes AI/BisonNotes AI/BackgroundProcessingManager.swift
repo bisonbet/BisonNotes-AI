@@ -1644,8 +1644,8 @@ class BackgroundProcessingManager: ObservableObject {
     private func generateAndSaveTitle(for recordingURL: URL, from transcriptText: String) async {
         do {
             // Use the currently selected engine for title generation
-            let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
-            let engineType = AIEngineType.allCases.first(where: { $0.rawValue == selectedEngineName }) ?? .onDeviceLLM
+            let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
+            let engineType = AIEngineType.allCases.first(where: { $0.rawValue == selectedEngineName }) ?? .mlxSwift
             let engine = AIEngineFactory.createEngine(type: engineType)
             let titles = try await engine.extractTitles(from: transcriptText)
             
@@ -2163,7 +2163,7 @@ class BackgroundProcessingManager: ObservableObject {
             let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
             type = .transcription(engine: engine)
         } else {
-            type = .summarization(engine: jobEntry.engine ?? "On-Device AI")
+            type = .summarization(engine: jobEntry.engine ?? AIEngineType.mlxSwift.rawValue)
         }
         
         // Convert status string back to JobProcessingStatus enum

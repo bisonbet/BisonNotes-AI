@@ -49,7 +49,7 @@ struct BisonNotesAIApp: App {
     }
 
     /// Migrates legacy "None" and "Not Configured" AI engine selections to intelligent defaults
-    /// Defaults to On-Device AI on supported devices, OpenAI with dummy key on older devices
+    /// Defaults to MLX Swift on 6GB+ devices, OpenAI on older devices
     private func migrateAIEngineSelection() {
         let aiEngineKey = "SelectedAIEngine"
         let transcriptionEngineKey = "selectedTranscriptionEngine"
@@ -63,16 +63,17 @@ struct BisonNotesAIApp: App {
         let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
         let currentTranscriptionEngine = UserDefaults.standard.string(forKey: transcriptionEngineKey)
 
-        // Determine the appropriate default based on device capabilities
-        // Check if device has 6GB+ RAM for on-device AI support
-        let hasOnDeviceAISupport = DeviceCapabilities.supportsOnDeviceLLM
+        // Determine the appropriate default based on device capabilities.
+        // MLX is the on-device default and requires 6GB+ RAM strictly.
+        let hasOnDeviceAISupport = DeviceCapabilities.supportsMLX
 
         // Migrate AI engine if not configured
         if currentAIEngine == "None" || currentAIEngine == "Not Configured" || currentAIEngine == nil {
             if hasOnDeviceAISupport {
-                UserDefaults.standard.set("On-Device AI", forKey: aiEngineKey)
-                UserDefaults.standard.set(true, forKey: "enableOnDeviceLLM")
-                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'On-Device AI' (device has 6GB+ RAM)")
+                UserDefaults.standard.set(AIEngineType.mlxSwift.rawValue, forKey: aiEngineKey)
+                UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+                UserDefaults.standard.set(MLXSwiftSettingsKeys.defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
+                NSLog("✅ AI engine migrated from '\(currentAIEngine ?? "nil")' to 'MLX Swift' (device has 6GB+ RAM)")
             } else {
                 // Set OpenAI as default for devices with less than 6GB RAM
                 UserDefaults.standard.set("OpenAI", forKey: aiEngineKey)

@@ -554,13 +554,14 @@ public class RecordingRegistryManager: ObservableObject {
         availableEngines["OpenAI API Compatible"] = OpenAICompatibleEngine()
         availableEngines["Google AI Studio"] = GoogleAIStudioEngine()
         availableEngines["Mistral AI"] = MistralAIEngine()
-        availableEngines["On-Device AI"] = OnDeviceLLMEngine()
+        availableEngines[AIEngineType.onDeviceLLM.rawValue] = OnDeviceLLMEngine()
+        availableEngines[AIEngineType.mlxSwift.rawValue] = MLXSwiftEngine()
 
         AppLog.shared.fileManagement("Available engines: \(availableEngines.keys.joined(separator: ", "))")
 
         // Set default engine based on user's selection
-        let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
-        currentEngine = availableEngines[selectedEngineName] ?? availableEngines["On-Device AI"]
+        let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
+        currentEngine = availableEngines[selectedEngineName] ?? availableEngines[AIEngineType.mlxSwift.rawValue]
 
         if let engine = currentEngine {
             AppLog.shared.fileManagement("Current engine set to: \(engine.name)")

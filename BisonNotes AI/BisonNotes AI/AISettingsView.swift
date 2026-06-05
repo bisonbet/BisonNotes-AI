@@ -58,7 +58,7 @@ final class AISettingsViewModel: ObservableObject {
 
     /// Moves the engine selection logic into the view model.
     func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) {
-        let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         let newEngine = engineType.rawValue
 
         guard oldEngine != newEngine else { return }
@@ -94,7 +94,7 @@ final class AISettingsViewModel: ObservableObject {
             AppLog.shared.general("Auto-enabled On-Device AI engine")
         case .mlxSwift:
             UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
-            AppLog.shared.general("Auto-enabled experimental MLX Swift engine")
+            AppLog.shared.general("Auto-enabled MLX Swift engine")
         case .appleNative:
             AppLog.shared.general("Selected Apple Native engine")
         }
@@ -137,7 +137,7 @@ struct AISettingsView: View {
     private var currentEngineType: AIEngineType? {
         // Note: AudioRecorderViewModel doesn't have selectedAIEngine property
         // Use the actual current engine from UserDefaults
-        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         return AIEngineType.allCases.first { $0.rawValue == currentEngineName }
     }
     
@@ -148,7 +148,7 @@ struct AISettingsView: View {
             }
             
             var statuses: [String: EngineAvailabilityStatus] = [:]
-            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
             
             // Check each engine type
             for engineType in AIEngineType.allCases {
@@ -215,7 +215,7 @@ struct AISettingsView: View {
             #if targetEnvironment(simulator)
             return isEnabled
             #else
-            return isEnabled && DeviceCapabilities.supportsOnDeviceLLM
+            return isEnabled && DeviceCapabilities.supportsMLX
             #endif
         case .appleNative:
             return AppleNativeEngine.modelAvailable
@@ -295,7 +295,7 @@ struct AISettingsView: View {
             )
             // Align regeneration manager with the user's currently selected engine instead of forcing OpenAI
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ??
-                AIEngineType.onDeviceLLM.rawValue
+                AIEngineType.mlxSwift.rawValue
             viewModel.regenerationManager.setEngine(currentEngine)
             self.refreshEngineStatuses()
         }
@@ -338,7 +338,7 @@ struct AISettingsView: View {
             #if targetEnvironment(macCatalyst)
             VStack(spacing: 0) {
                 HStack {
-                    Text("On-Device AI").font(.headline)
+                    Text(AIEngineType.onDeviceLLM.displayName).font(.headline)
                     Spacer()
                     Button("Done") { showingOnDeviceLLMSettings = false }.buttonStyle(.bordered)
                 }
@@ -356,7 +356,7 @@ struct AISettingsView: View {
             #if targetEnvironment(macCatalyst)
             VStack(spacing: 0) {
                 HStack {
-                    Text("MLX Swift").font(.headline)
+                    Text(AIEngineType.mlxSwift.displayName).font(.headline)
                     Spacer()
                     Button("Done") { showingMLXSwiftSettings = false }.buttonStyle(.bordered)
                 }
@@ -383,7 +383,7 @@ struct AISettingsView: View {
 private extension AISettingsView {
 
     var selectedEngineName: String {
-        UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.onDeviceLLM.rawValue
+        UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
     }
 
     var timeoutConfigurationSection: some View {
@@ -440,7 +440,7 @@ private extension AISettingsView {
                 let status = engineStatuses[currentEngine.rawValue]
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Label(currentEngine.rawValue, systemImage: iconName(for: currentEngine))
+                        Label(currentEngine.displayName, systemImage: iconName(for: currentEngine))
                             .font(.subheadline.weight(.semibold))
                             .foregroundColor(engineColor(for: currentEngine))
                         Spacer()
@@ -469,7 +469,7 @@ private extension AISettingsView {
                         Button {
                             openSettings(for: currentEngine)
                         } label: {
-                            Label("Configure \(currentEngine.rawValue)", systemImage: "gear")
+                            Label("Configure \(currentEngine.displayName)", systemImage: "gear")
                                 .font(.caption.weight(.semibold))
                         }
                         .buttonStyle(.borderedProminent)
@@ -508,7 +508,6 @@ private extension AISettingsView {
 
     func engines(in category: EngineCategory) -> [AIEngineType] {
         AIEngineType.availableCases.filter { engine in
-            if engine == .mlxSwift && !enableExperimentalModels { return false }
             switch category {
             case .onDevice:
                 return [.onDeviceLLM, .mlxSwift, .appleNative].contains(engine)
@@ -532,7 +531,7 @@ private extension AISettingsView {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .foregroundColor(isSelected ? engineColor(for: engine) : .secondary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(engine.rawValue)
+                    Text(engine.displayName)
                         .font(.subheadline)
                     Text(shortDescription(for: engine))
                         .font(.caption)
@@ -548,7 +547,7 @@ private extension AISettingsView {
     func shortDescription(for engine: AIEngineType) -> String {
         switch engine {
         case .onDeviceLLM: return "Private, no internet after download"
-        case .mlxSwift: return "Experimental MLX local summaries"
+        case .mlxSwift: return "On-device MLX summaries"
         case .appleNative: return "Apple Foundation Models, fully on-device"
         case .openAI: return "High quality summaries"
         case .googleAIStudio: return "Gemini model support"
@@ -582,7 +581,7 @@ private extension AISettingsView {
             guard DeviceCapabilities.supportsOnDeviceLLM else { return }
             showingOnDeviceLLMSettings = true
         case .mlxSwift:
-            guard enableExperimentalModels else { return }
+            guard DeviceCapabilities.supportsMLX else { return }
             showingMLXSwiftSettings = true
         case .appleNative:
             break // No separate settings sheet — configured via Apple Intelligence system settings
@@ -612,10 +611,6 @@ private extension AISettingsView {
             Text("Not Supported")
                 .font(.caption2.weight(.medium))
                 .foregroundColor(.secondary)
-        } else if engine == .mlxSwift {
-            Text((status?.isAvailable ?? false) ? "Experimental" : "Setup")
-                .font(.caption2.weight(.medium))
-                .foregroundColor((status?.isAvailable ?? false) ? .orange : .secondary)
         } else if engine == .mistralAI && !(status?.isAvailable ?? false) {
             HStack(spacing: 4) {
                 Text("Free")

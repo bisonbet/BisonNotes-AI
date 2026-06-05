@@ -1240,7 +1240,7 @@ struct SummaryDetailView: View {
 
         isRegenerating = true
 
-        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         let selectedModel = UserDefaults.standard.string(forKey: "SelectedAIModel")
         let oldSummaryId = summaryData.id
         let recordingURL = summaryData.recordingURL

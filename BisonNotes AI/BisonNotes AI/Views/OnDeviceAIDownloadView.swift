@@ -13,14 +13,15 @@ struct OnDeviceAIDownloadView: View {
     let onCancel: () -> Void
 
     @ObservedObject private var fluidAudioManager = FluidAudioManager.shared
-    @ObservedObject private var onDeviceLLMManager = OnDeviceLLMDownloadManager.shared
+    @ObservedObject private var mlxManager = MLXSwiftDownloadManager.shared
 
     // Model info
     private let parakeetVersion = FluidAudioModelInfo.selectedModelVersion
-    private let onDeviceLLMModel = OnDeviceLLMModelInfo.granite4Micro
+    private let mlxModel: MLXModelOption = MLXModelOption.available.first { $0.id == MLXSwiftSettingsKeys.defaultModelId }
+        ?? MLXModelOption.available[0]
 
     private var totalDownloadSize: String {
-        let totalBytes = parakeetVersion.downloadSizeBytes + onDeviceLLMModel.downloadSizeBytes
+        let totalBytes = parakeetVersion.downloadSizeBytes + mlxModel.downloadSizeBytes
         let totalGB = Double(totalBytes) / 1_000_000_000.0
         return String(format: "%.2f GB", totalGB)
     }
@@ -42,13 +43,9 @@ struct OnDeviceAIDownloadView: View {
         .frame(minWidth: 520, minHeight: 640)
         #endif
         .onAppear {
-            // Set On-Device LLM to use Granite Micro (recommended for 6GB+ devices)
-            // Do this BEFORE any access to selectedModel to prevent migration loops
-            UserDefaults.standard.set(onDeviceLLMModel.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
-
-            // Select the model in the manager directly to avoid accessing selectedModel property
-            // This prevents the migration check from running
-            onDeviceLLMManager.selectModel(onDeviceLLMModel)
+            // Ensure MLX is configured to use the 4B model before checking download state.
+            UserDefaults.standard.set(mlxModel.id, forKey: MLXSwiftSettingsKeys.modelId)
+            mlxManager.refreshModelStatus()
         }
     }
 
@@ -81,11 +78,11 @@ struct OnDeviceAIDownloadView: View {
                     icon: "waveform"
                 )
 
-                // On-Device LLM model info
+                // MLX on-device AI model info
                 modelInfoCard(
-                    name: "Granite Micro",
-                    description: "Recommended AI Summary Model",
-                    size: formatSize(onDeviceLLMModel.downloadSizeBytes),
+                    name: mlxModel.displayName,
+                    description: "On-Device AI Summary Model",
+                    size: formatSize(mlxModel.downloadSizeBytes),
                     icon: "brain"
                 )
             }
@@ -193,19 +190,13 @@ struct OnDeviceAIDownloadView: View {
     // MARK: - Actions
 
     private func startBackgroundDownloads() {
-        // Ensure LLM model is set before starting downloads
-        UserDefaults.standard.set(onDeviceLLMModel.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
+        // Ensure MLX is pointed at the 4B model before starting downloads.
+        UserDefaults.standard.set(mlxModel.id, forKey: MLXSwiftSettingsKeys.modelId)
+        mlxManager.refreshModelStatus()
 
-        // Select the On-Device LLM model explicitly (this doesn't trigger migration)
-        onDeviceLLMManager.selectModel(onDeviceLLMModel)
-
-        // Check Parakeet status
         let parakeetReady = fluidAudioManager.isModelReady
+        let mlxReady = mlxManager.isModelDownloaded
 
-        // Check On-Device LLM status
-        let onDeviceLLMReady = onDeviceLLMManager.isModelReady || onDeviceLLMModel.isDownloaded
-
-        // Start Parakeet download if not already downloaded
         if !parakeetReady {
             Task {
                 do {
@@ -220,12 +211,11 @@ struct OnDeviceAIDownloadView: View {
             AppLog.shared.summarization("OnDeviceAIDownload: Parakeet model already downloaded", level: .debug)
         }
 
-        // Start On-Device LLM download if not already downloaded
-        if !onDeviceLLMReady {
-            AppLog.shared.summarization("OnDeviceAIDownload: Starting On-Device LLM download...", level: .debug)
-            onDeviceLLMManager.startDownload(for: onDeviceLLMModel)
+        if !mlxReady {
+            AppLog.shared.summarization("OnDeviceAIDownload: Starting MLX \(mlxModel.displayName) download...", level: .debug)
+            mlxManager.startDownload()
         } else {
-            AppLog.shared.summarization("OnDeviceAIDownload: On-Device LLM model already downloaded", level: .debug)
+            AppLog.shared.summarization("OnDeviceAIDownload: MLX model already downloaded", level: .debug)
         }
 
         // Close the view - downloads will continue in background

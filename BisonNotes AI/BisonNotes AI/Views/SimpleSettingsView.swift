@@ -90,8 +90,8 @@ struct SimpleSettingsView: View {
         }
         .onAppear {
             loadCurrentSettings()
-            // Check if device supports On-Device LLM (requires 6GB+ RAM)
-            deviceSupported = DeviceCapabilities.supportsOnDeviceLLM
+            // Check if device supports MLX on-device AI (requires 6GB+ RAM)
+            deviceSupported = DeviceCapabilities.supportsMLX
             // Check if this is first launch
             isFirstLaunch = !UserDefaults.standard.bool(forKey: "hasCompletedFirstSetup")
         }
@@ -102,22 +102,17 @@ struct SimpleSettingsView: View {
             }
         }
         .onChange(of: showingOnDeviceAIDownload) { oldValue, newValue in
-            // When download view is dismissed, check if both models are ready and complete setup
-            if oldValue == true && newValue == false {
+            // Once the user has acknowledged the download sheet (Start Download
+            // or Cancel), advance into the app immediately on first launch.
+            // Downloads keep running in the background; OnDeviceAIDownloadMonitor
+            // surfaces the completion alert when both models finish.
+            if oldValue == true && newValue == false,
+               isFirstLaunch, selectedOption == .onDeviceLLM {
                 Task { @MainActor in
-                    let fluidAudioReady = FluidAudioManager.shared.isModelReady
-                    OnDeviceLLMDownloadManager.shared.refreshModelStatus()
-                    let onDeviceAIReady = OnDeviceLLMDownloadManager.shared.isModelReady
-
-                    // If both models are ready and this is first launch, complete the setup
-                    if fluidAudioReady && onDeviceAIReady && isFirstLaunch && selectedOption == .onDeviceLLM {
-                        // Post notification to complete first setup and navigate to recording page
-                        try? await Task.sleep(nanoseconds: 500_000_000) // Wait 0.5 seconds
-                        NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
-                        // Also request location permission after setup
-                        try? await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second
-                        NotificationCenter.default.post(name: NSNotification.Name("RequestLocationPermission"), object: nil)
-                    }
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    NotificationCenter.default.post(name: NSNotification.Name("RequestLocationPermission"), object: nil)
                 }
             }
         }
@@ -683,9 +678,9 @@ struct SimpleSettingsView: View {
                     UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")
                     UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
                     
-                    // Honor any local AI engine the user has already chosen (On-Device LLM,
-                    // MLX, or Apple Intelligence) along with its selected model. Only fall
-                    // back to the On-Device LLM + Granite default if no local engine is set.
+                    // Honor any local AI engine the user has already chosen (MLX,
+                    // legacy On-Device LLM, or Apple Intelligence) along with its
+                    // selected model. Only fall back to MLX + 4B if none is set.
                     let currentAI = UserDefaults.standard.string(forKey: "SelectedAIEngine")
                     let localEngines: Set<String> = [
                         AIEngineType.onDeviceLLM.rawValue,
@@ -700,15 +695,9 @@ struct SimpleSettingsView: View {
                             UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
                         }
                     } else {
-                        UserDefaults.standard.set(AIEngineType.onDeviceLLM.rawValue, forKey: "SelectedAIEngine")
-                        UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
-
-                        let deviceRAM = DeviceCapabilities.totalRAMInGB
-                        if deviceRAM >= 6.0 {
-                            UserDefaults.standard.set(OnDeviceLLMModelInfo.granite4Micro.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
-                        } else if deviceRAM >= 8.0 {
-                            UserDefaults.standard.set(OnDeviceLLMModelInfo.granite4H.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
-                        }
+                        UserDefaults.standard.set(AIEngineType.mlxSwift.rawValue, forKey: "SelectedAIEngine")
+                        UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+                        UserDefaults.standard.set(MLXSwiftSettingsKeys.defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
                     }
                 }
                 
@@ -728,8 +717,8 @@ struct SimpleSettingsView: View {
                     
                     // Check if models are already downloaded
                     let fluidAudioReady = FluidAudioManager.shared.isModelReady
-                    OnDeviceLLMDownloadManager.shared.refreshModelStatus()
-                    let onDeviceAIReady = OnDeviceLLMDownloadManager.shared.isModelReady
+                    MLXSwiftDownloadManager.shared.refreshModelStatus()
+                    let onDeviceAIReady = MLXSwiftDownloadManager.shared.isModelDownloaded
 
                     await MainActor.run {
                         if fluidAudioReady && onDeviceAIReady {
