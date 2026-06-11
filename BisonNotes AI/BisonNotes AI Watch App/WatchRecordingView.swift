@@ -11,31 +11,81 @@ import SwiftUI
 import WatchKit
 #endif
 
+// MARK: - Theme
+
+private enum WatchTheme {
+    /// Brand blue, defined once in AccentColor.colorset (#4A7BC4 - brightened
+    /// from the bison's suit/horn navy so it reads on black)
+    static let accent = Color.accentColor
+    /// Dark disc fill for the idle circle on a black background
+    static let circleFillIdle = Color(white: 0.12)
+    /// Text/icon tone sitting on the blue disc
+    static let onAccent = Color.white
+}
+
+// MARK: - Recording View
+
+@MainActor
 struct WatchRecordingView: View {
-    @StateObject private var viewModel = WatchRecordingViewModel()
+    @StateObject private var viewModel: WatchRecordingViewModel
     @State private var showingErrorAlert = false
-    @State private var recordButtonPressed = false
-    @State private var pauseButtonPressed = false
+
+    init() {
+        _viewModel = StateObject(wrappedValue: WatchRecordingViewModel())
+    }
+
+    /// Inject a preconfigured view model (used by previews)
+    init(viewModel: WatchRecordingViewModel) {
+        _viewModel = StateObject(wrappedValue: viewModel)
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 10) {
-                headerView
+        NavigationStack {
+            GeometryReader { geo in
+                ZStack {
+                    Color.black.ignoresSafeArea()
 
-                recordingTimerView
+                    // Center: the one big button
+                    VStack(spacing: 10) {
+                        Spacer(minLength: 0)
 
-                if viewModel.isTransferringAudio {
-                    audioTransferView
+                        recorderCircle(diameter: min(geo.size.width, geo.size.height) * 0.62)
+
+                        if viewModel.recordingState == .idle {
+                            Text("Tap to Start")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .transition(.opacity)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    // Bottom corners: status chips and mute
+                    VStack {
+                        Spacer()
+                        HStack(alignment: .bottom) {
+                            bottomLeadingStatus
+                            Spacer(minLength: 4)
+                            if viewModel.recordingState.isRecordingSession {
+                                muteButton
+                                    .transition(.scale.combined(with: .opacity))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 2)
                 }
-
-                bottomControlsView
+                .animation(.easeInOut(duration: 0.25), value: viewModel.recordingState)
+                .animation(.easeInOut(duration: 0.25), value: viewModel.isTransferringAudio)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .navigationTitle {
+                Text("BisonNotes")
+                    .foregroundStyle(WatchTheme.accent)
+            }
+            .navigationBarTitleDisplayMode(.inline)
         }
-        .background(Color.black)
-        .navigationTitle("BisonNotes AI")
-        .navigationBarTitleDisplayMode(.inline)
         .alert("Error", isPresented: $showingErrorAlert) {
             Button("OK") {
                 viewModel.dismissError()
@@ -55,224 +105,131 @@ struct WatchRecordingView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Recorder Circle
 
-    private var headerView: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "waveform")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.accentColor)
-                .frame(width: 30, height: 30)
-                .background(Color.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("BisonNotes")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-
-                Text(viewModel.recordingStateDescription)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(timerColor)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 4)
-
-            topStatusBar
-        }
-        .watchCardPadding()
-        .watchCardBackground()
-    }
-
-    // MARK: - Top Status Bar
-
-    private var topStatusBar: some View {
-        HStack(spacing: 4) {
-            Image(systemName: batteryIcon)
-                .foregroundColor(batteryColor)
-                .font(.system(size: 11, weight: .semibold))
-                .scaleEffect(viewModel.batteryLevel <= 0.10 ? 1.14 : 1.0)
-                .animation(
-                    viewModel.batteryLevel <= 0.10 ?
-                    .easeInOut(duration: 1.0).repeatForever(autoreverses: true) :
-                    .easeInOut(duration: 0.3),
-                    value: viewModel.batteryLevel <= 0.10
-                )
-
-            Text(viewModel.formattedBatteryLevel)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(batteryColor)
-                .animation(.easeInOut(duration: 0.3), value: batteryColor)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(Color.white.opacity(0.08), in: Capsule())
-    }
-
-
-    private var batteryIcon: String {
-        let level = viewModel.batteryLevel
-        if level > 0.75 {
-            return "battery.100"
-        } else if level > 0.50 {
-            return "battery.75"
-        } else if level > 0.25 {
-            return "battery.25"
-        } else {
-            return "battery.0"
-        }
-    }
-
-    private var batteryColor: Color {
-        let level = viewModel.batteryLevel
-        if level > 0.20 {
-            return .primary
-        } else if level > 0.10 {
-            return .orange
-        } else {
-            return .red
-        }
-    }
-
-    // MARK: - Recording Timer View
-
-    private var recordingTimerView: some View {
-        VStack(spacing: 8) {
-            Text(viewModel.formattedRecordingTime)
-                .font(.system(size: 31, weight: .bold, design: .monospaced))
-                .foregroundColor(timerColor)
-                .scaleEffect(viewModel.recordingState == .recording ? 1.05 : 1.0)
-                .animation(.easeInOut(duration: 0.3), value: viewModel.recordingState)
-
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(timerColor)
-                    .frame(width: 6, height: 6)
-                    .opacity(viewModel.recordingState == .recording ? 1.0 : 0.6)
-                    .scaleEffect(viewModel.recordingState == .recording ? 1.2 : 1.0)
-                    .animation(
-                        viewModel.recordingState == .recording ?
-                        .easeInOut(duration: 1.0).repeatForever(autoreverses: true) :
-                        .easeInOut(duration: 0.3),
-                        value: viewModel.recordingState
-                    )
-
-                Text(viewModel.recordingStateDescription)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .animation(.easeInOut(duration: 0.3), value: viewModel.recordingState)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Color.white.opacity(0.07), in: Capsule())
-        }
-        .frame(maxWidth: .infinity)
-        .watchCardPadding()
-        .watchCardBackground()
-    }
-
-    private var timerColor: Color {
-        switch viewModel.recordingState {
-        case .recording:
-            return .red
-        case .paused:
-            return .orange
-        case .processing:
-            return .blue
-        case .error:
-            return .red
-        default:
-            return .primary
-        }
-    }
-
-    // MARK: - Bottom Controls View
-
-    private var bottomControlsView: some View {
-        HStack(spacing: 12) {
-            recordButton
-
-            pauseButton
-        }
-        .watchCardPadding()
-        .watchCardBackground()
-    }
-
-    // MARK: - Record Button
-
-    private var recordButton: some View {
-        Button(action: recordButtonAction) {
+    private func recorderCircle(diameter: CGFloat) -> some View {
+        Button(action: circleTapped) {
             ZStack {
                 if viewModel.recordingState == .recording {
-                    Circle()
-                        .fill(recordButtonColor.opacity(0.18))
-                        .frame(width: 72, height: 72)
-                        .scaleEffect(1.08)
-                        .animation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true), value: viewModel.recordingState)
+                    PulsingRings(diameter: diameter)
+                        .transition(.opacity)
                 }
 
                 Circle()
-                    .fill(recordButtonColor.opacity(recordButtonEnabled ? 1.0 : 0.45))
-                    .frame(width: 58, height: 58)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white.opacity(0.8), lineWidth: 2)
-                    )
+                    .fill(circleFill)
+                    .frame(width: diameter, height: diameter)
+                    .overlay {
+                        if viewModel.recordingState == .idle || viewModel.recordingState == .error {
+                            Circle()
+                                .strokeBorder(
+                                    WatchTheme.accent,
+                                    style: StrokeStyle(lineWidth: 2, dash: [6, 5])
+                                )
+                        }
+                    }
 
-                if viewModel.recordingState.isRecordingSession {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.white)
-                        .frame(width: 16, height: 16)
-                        .scaleEffect(viewModel.recordingState == .recording ? 1.1 : 1.0)
-                        .animation(.easeInOut(duration: 0.3), value: viewModel.recordingState)
-                } else {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 18, height: 18)
-                        .scaleEffect(viewModel.canStartRecording ? 1.0 : 0.8)
-                        .animation(.easeInOut(duration: 0.3), value: viewModel.canStartRecording)
-                }
+                circleContent(diameter: diameter)
             }
         }
-        .disabled(!recordButtonEnabled)
         .buttonStyle(.plain)
-        .opacity(recordButtonEnabled ? 1.0 : 0.6)
-        .scaleEffect(viewModel.recordingState == .recording ? 1.05 : 1.0)
-        .animation(.easeInOut(duration: 0.2), value: viewModel.recordingState)
-        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: viewModel.recordingState)
-        .accessibilityLabel(viewModel.recordingState.isRecordingSession ? "Stop Recording" : "Start Recording")
+        .disabled(circleDisabled)
+        .opacity(circleDisabled ? 0.55 : 1.0)
+        .accessibilityLabel(circleAccessibilityLabel)
     }
 
-    private var recordButtonColor: Color {
+    private var circleFill: Color {
         switch viewModel.recordingState {
-        case .idle:
-            return viewModel.canStartRecording ? .red : .gray
+        case .idle, .error:
+            return WatchTheme.circleFillIdle
         case .recording:
-            return .red
-        case .paused:
-            return .red
-        case .stopping, .processing:
-            return .orange
-        case .error:
-            return .red
+            return WatchTheme.accent
+        case .paused, .stopping, .processing:
+            return WatchTheme.accent.opacity(0.35)
         }
     }
 
-    private var recordButtonEnabled: Bool {
+    @ViewBuilder
+    private func circleContent(diameter: CGFloat) -> some View {
         switch viewModel.recordingState {
-        case .idle:
-            return viewModel.canStartRecording
-        case .recording, .paused:
-            return viewModel.canStopRecording
+        case .idle, .error:
+            // The circular avatar IS the button face, like the watch face
+            // complication; the dashed accent ring frames it
+            bisonAvatar
+                .frame(width: diameter * 0.93, height: diameter * 0.93)
+
+        case .recording:
+            VStack(spacing: 3) {
+                bisonAvatar
+                    .frame(width: diameter * 0.30, height: diameter * 0.30)
+
+                Text("Capturing")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(WatchTheme.onAccent)
+
+                Text(viewModel.formattedRecordingTime)
+                    .font(.system(size: 15, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(WatchTheme.onAccent)
+            }
+
+        case .paused:
+            VStack(spacing: 3) {
+                bisonAvatar
+                    .frame(width: diameter * 0.30, height: diameter * 0.30)
+                    .opacity(0.75)
+
+                Text("Muted")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(WatchTheme.onAccent.opacity(0.9))
+
+                Text(viewModel.formattedRecordingTime)
+                    .font(.system(size: 15, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(WatchTheme.onAccent.opacity(0.9))
+            }
+
         case .stopping, .processing:
-            return false
-        case .error:
-            return true // Allow retry
+            VStack(spacing: 6) {
+                ProgressView()
+                    .tint(.white)
+
+                Text("Saving…")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.9))
+            }
         }
     }
 
-    private func recordButtonAction() {
+    private var bisonAvatar: some View {
+        Image("BisonHeadAvatar")
+            .resizable()
+            .scaledToFit()
+            .clipShape(Circle())
+    }
+
+    private var circleDisabled: Bool {
+        switch viewModel.recordingState {
+        case .stopping, .processing:
+            return true
+        case .idle:
+            return !viewModel.canStartRecording
+        case .recording, .paused, .error:
+            return false
+        }
+    }
+
+    private var circleAccessibilityLabel: String {
+        switch viewModel.recordingState {
+        case .idle, .error:
+            return "Start Recording"
+        case .recording, .paused:
+            return "Stop and Save Recording"
+        case .stopping, .processing:
+            return "Saving Recording"
+        }
+    }
+
+    private func circleTapped() {
         switch viewModel.recordingState {
         case .idle, .error:
             viewModel.startRecording()
@@ -283,131 +240,86 @@ struct WatchRecordingView: View {
         }
     }
 
-    // MARK: - Pause Button
+    // MARK: - Mute Button
 
-    private var pauseButton: some View {
-        Button(action: pauseButtonAction) {
-            ZStack {
-                if pauseButtonEnabled {
-                    Circle()
-                        .fill(pauseButtonColor.opacity(0.16))
-                        .frame(width: 58, height: 58)
-                        .scaleEffect(viewModel.recordingState == .paused ? 1.1 : 1.0)
-                        .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: viewModel.recordingState == .paused)
-                }
-
-                Circle()
-                    .fill(pauseButtonColor.opacity(pauseButtonEnabled ? 1.0 : 0.35))
-                    .frame(width: 48, height: 48)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white.opacity(0.75), lineWidth: 2)
-                    )
-
-                Image(systemName: pauseButtonIcon)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(.white)
-                    .scaleEffect(pauseButtonEnabled ? 1.0 : 0.8)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: pauseButtonEnabled)
+    private var muteButton: some View {
+        Button {
+            if viewModel.canPauseRecording {
+                viewModel.pauseRecording()
+            } else if viewModel.canResumeRecording {
+                viewModel.resumeRecording()
             }
+        } label: {
+            Image(systemName: "mic.slash.fill")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(viewModel.recordingState == .paused ? WatchTheme.onAccent : WatchTheme.accent)
+                .frame(width: 38, height: 38)
+                .background(
+                    viewModel.recordingState == .paused
+                        ? AnyShapeStyle(WatchTheme.accent)
+                        : AnyShapeStyle(Color.white.opacity(0.12)),
+                    in: Circle()
+                )
         }
-        .disabled(!pauseButtonEnabled)
         .buttonStyle(.plain)
-        .opacity(pauseButtonEnabled ? 1.0 : 0.3)
-        .scaleEffect(pauseButtonEnabled ? 1.0 : 0.9)
-        .animation(.easeInOut(duration: 0.2), value: viewModel.recordingState)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: pauseButtonEnabled)
-        .accessibilityLabel(viewModel.recordingState == .paused ? "Resume Recording" : "Pause Recording")
+        .accessibilityLabel(viewModel.recordingState == .paused ? "Unmute" : "Mute")
     }
 
-    private var pauseButtonIcon: String {
-        switch viewModel.recordingState {
-        case .recording:
-            return "pause.fill"
-        case .paused:
-            return "play.fill"
-        default:
-            return "pause.fill"
-        }
-    }
+    // MARK: - Bottom Leading Status Chips
 
-    private var pauseButtonColor: Color {
-        switch viewModel.recordingState {
-        case .recording:
-            return .orange
-        case .paused:
-            return .green
-        default:
-            return .gray
-        }
-    }
-
-    private var pauseButtonEnabled: Bool {
-        return viewModel.canPauseRecording || viewModel.canResumeRecording
-    }
-
-    private func pauseButtonAction() {
-        if viewModel.canPauseRecording {
-            viewModel.pauseRecording()
-        } else if viewModel.canResumeRecording {
-            viewModel.resumeRecording()
-        }
-    }
-
-    // MARK: - Audio Transfer View
-
-    private var audioTransferView: some View {
-        VStack(spacing: 6) {
-            HStack {
-                Image(systemName: "iphone.and.arrow.forward")
-                    .font(.system(size: 12))
-                    .foregroundColor(.accentColor)
-                    .scaleEffect(1.1)
-                    .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: viewModel.isTransferringAudio)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(transferStatusText)
-                        .font(.caption2)
-                        .foregroundColor(.accentColor)
-                        .fontWeight(.medium)
-
-                    if viewModel.transferProgress < 1.0 {
-                        Text("Keep screen active for faster transfer")
-                            .font(.caption2)
-                            .foregroundColor(.orange)
-                            .opacity(0.9)
-                    }
-                }
-
-                Spacer()
-
-                Text("\(Int(viewModel.transferProgress * 100))%")
-                    .font(.caption2)
-                    .foregroundColor(.accentColor)
-                    .fontWeight(.bold)
+    @ViewBuilder
+    private var bottomLeadingStatus: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if viewModel.isTransferringAudio {
+                transferChip
+                    .transition(.opacity)
             }
+
+            if showLowBatteryChip {
+                lowBatteryChip
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    private var transferChip: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "iphone.and.arrow.forward")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(WatchTheme.accent)
 
             ProgressView(value: viewModel.transferProgress)
-                .progressViewStyle(LinearProgressViewStyle(tint: .accentColor))
-                .scaleEffect(y: 1.2)
-                .animation(.easeInOut(duration: 0.5), value: viewModel.transferProgress)
+                .tint(WatchTheme.accent)
+                .frame(width: 30)
+
+            Text("\(Int(viewModel.transferProgress * 100))%")
+                .font(.system(size: 10, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(WatchTheme.accent)
         }
-        .watchCardPadding()
-        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.accentColor.opacity(0.25), lineWidth: 1)
-        )
-        .transition(.scale.combined(with: .opacity))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.white.opacity(0.10), in: Capsule())
     }
 
-    /// Dynamic transfer status text based on real file transfer progress
-    private var transferStatusText: String {
-        if viewModel.transferProgress < 1.0 {
-            return "Transferring file..."
-        } else {
-            return "Processing on iPhone..."
+    private var showLowBatteryChip: Bool {
+        // -1 means the system hasn't reported a level yet
+        viewModel.batteryLevel >= 0 && viewModel.batteryLevel <= 0.20
+    }
+
+    private var lowBatteryChip: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "battery.25")
+                .font(.system(size: 10, weight: .semibold))
+
+            Text(viewModel.formattedBatteryLevel)
+                .font(.system(size: 10, weight: .semibold))
+                .monospacedDigit()
         }
+        .foregroundStyle(viewModel.batteryLevel <= 0.10 ? Color.red : Color.orange)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.white.opacity(0.10), in: Capsule())
     }
 
     // MARK: - Error State Overlay
@@ -422,12 +334,10 @@ struct WatchRecordingView: View {
                     .ignoresSafeArea()
 
                 // Error card
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 24, weight: .bold))
                         .foregroundColor(.red)
-                        .scaleEffect(1.2)
-                        .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: viewModel.recordingState == .error)
 
                     Text("Recording Error")
                         .font(.headline)
@@ -447,45 +357,59 @@ struct WatchRecordingView: View {
                     }
                     .font(.caption)
                     .fontWeight(.medium)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.red)
-                        )
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.red)
+                    )
+                    .buttonStyle(.plain)
                 }
-                .padding(16)
+                .padding(14)
                 .background(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color.black.opacity(0.82))
+                        .fill(Color.black.opacity(0.85))
                         .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        .stroke(WatchTheme.accent.opacity(0.35), lineWidth: 1)
                 )
-                .scaleEffect(viewModel.recordingState == .error ? 1.0 : 0.8)
-                .opacity(viewModel.recordingState == .error ? 1.0 : 0.0)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.recordingState == .error)
             }
             .transition(.opacity)
         }
     }
 }
 
-private extension View {
-    func watchCardPadding() -> some View {
-        padding(.horizontal, 12)
-            .padding(.vertical, 10)
-    }
+// MARK: - Pulsing Rings
 
-    func watchCardBackground() -> some View {
-        background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
+/// Concentric rings that expand and fade while capturing. Only placed in the
+/// hierarchy while recording, so the repeatForever animations are torn down
+/// cleanly on any state change.
+private struct PulsingRings: View {
+    let diameter: CGFloat
+    @State private var animate = false
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .stroke(WatchTheme.accent.opacity(0.55), lineWidth: 2)
+                    .frame(width: diameter, height: diameter)
+                    .scaleEffect(animate ? 1.55 : 1.0)
+                    .opacity(animate ? 0.0 : 0.6)
+                    .animation(
+                        .easeOut(duration: 2.4)
+                            .repeatForever(autoreverses: false)
+                            .delay(Double(index) * 0.8),
+                        value: animate
+                    )
+            }
+        }
+        .onAppear { animate = true }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -495,29 +419,34 @@ private extension View {
 struct WatchRecordingView_Previews: PreviewProvider {
     static var previews: some View {
         Group {
-            // Idle State
             WatchRecordingView()
                 .previewDisplayName("Idle")
 
-            // Recording State
-            WatchRecordingView()
-                .previewDisplayName("Recording")
-                .environmentObject({
-                    let vm = WatchRecordingViewModel.preview
-                    vm.recordingState = .recording
-                    vm.recordingTime = 45
-                    return vm
-                }())
+            WatchRecordingView(viewModel: {
+                let vm = WatchRecordingViewModel.preview
+                vm.recordingState = .recording
+                vm.recordingTime = 45
+                return vm
+            }())
+            .previewDisplayName("Capturing")
 
-            // Paused State
-            WatchRecordingView()
-                .previewDisplayName("Paused")
-                .environmentObject({
-                    let vm = WatchRecordingViewModel.preview
-                    vm.recordingState = .paused
-                    vm.recordingTime = 30
-                    return vm
-                }())
+            WatchRecordingView(viewModel: {
+                let vm = WatchRecordingViewModel.preview
+                vm.recordingState = .paused
+                vm.recordingTime = 30
+                return vm
+            }())
+            .previewDisplayName("Muted")
+
+            WatchRecordingView(viewModel: {
+                let vm = WatchRecordingViewModel.preview
+                vm.recordingState = .idle
+                vm.isTransferringAudio = true
+                vm.transferProgress = 0.6
+                vm.batteryLevel = 0.15
+                return vm
+            }())
+            .previewDisplayName("Transferring + Low Battery")
         }
     }
 }
