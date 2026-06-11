@@ -591,7 +591,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			startRecordingTimer()
 
 			// Notify watch of recording state change
-			notifyWatchOfRecordingStateChange()
 
 		} catch {
 			#if targetEnvironment(simulator)
@@ -632,7 +631,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		stopRecordingTimer()
 		recordingState = .paused
 		AppLog.shared.recording("Recording paused at \(Int(recordingTime))s")
-		notifyWatchOfRecordingStateChange()
 	}
 
 	/// Resume a paused recording. Continues writing to the same file on both
@@ -661,7 +659,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		recordingState = .recording
 		startRecordingTimer()
 		AppLog.shared.recording("Recording resumed at \(Int(recordingTime))s")
-		notifyWatchOfRecordingStateChange()
 	}
 
 	func stopRecording() {
@@ -684,7 +681,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 			stopBackgroundTimeMonitoring()
 			endBackgroundTask()
-			notifyWatchOfRecordingStateChange()
 			return
 		}
 
@@ -744,7 +740,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		endBackgroundTask()
 
 		// Notify watch of recording state change
-		notifyWatchOfRecordingStateChange()
 	}
 
 	/// Saves a recording and optional transcript created via live transcription mode.
@@ -813,7 +808,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				self.recordingTime = 0
 				self.lastCheckpointTime = Date()
 				self.startRecordingTimer()
-				self.notifyWatchOfRecordingStateChange()
 				AppLog.shared.recording("Live transcription recording started")
 			} catch {
 				self.isUsingLiveTranscription = false
@@ -831,7 +825,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					self.recordingTime = 0
 					self.lastCheckpointTime = Date()
 					self.startRecordingTimer()
-					self.notifyWatchOfRecordingStateChange()
 				} catch {
 					self.errorMessage = "Failed to start recording: \(error.localizedDescription)"
 				}

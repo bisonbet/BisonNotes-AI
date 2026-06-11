@@ -18,10 +18,8 @@
 		1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED42E5271970044121F /* WatchConnectivity.framework */; };
 		1485FED72E5271AF0044121F /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1485FED62E5271AF0044121F /* WatchConnectivity.framework */; };
 		1485FEDC2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */; };
-		1485FEDD2E5272FA0044121F /* WatchAudioChunk.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED82E5272FA0044121F /* WatchAudioChunk.swift */; };
 		1485FEDE2E5272FA0044121F /* WatchRecordingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */; };
 		1485FEDF2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */; };
-		1485FEE02E5272FA0044121F /* WatchAudioChunk.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED82E5272FA0044121F /* WatchAudioChunk.swift */; };
 		1485FEE12E5272FA0044121F /* WatchRecordingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */; };
 		14B0A0012F80000000BBD2FA /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 14B0A0042F80000000BBD2FA /* MLXLLM */; };
 		14B0A0022F80000000BBD2FA /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 14B0A0052F80000000BBD2FA /* MLXLMCommon */; };
@@ -146,7 +144,6 @@
 		1485FEBB2E526FB30044121F /* BisonNotes AI Watch AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "BisonNotes AI Watch AppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1485FED42E5271970044121F /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = System/Library/Frameworks/WatchConnectivity.framework; sourceTree = SDKROOT; };
 		1485FED62E5271AF0044121F /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS11.5.sdk/System/Library/Frameworks/WatchConnectivity.framework; sourceTree = DEVELOPER_DIR; };
-		1485FED82E5272FA0044121F /* WatchAudioChunk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAudioChunk.swift; sourceTree = "<group>"; };
 		1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecordingMessage.swift; sourceTree = "<group>"; };
 		1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecordingState.swift; sourceTree = "<group>"; };
 		14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BisonNotes AI.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -357,7 +354,6 @@
 		1485FEDB2E5272FA0044121F /* Shared */ = {
 			isa = PBXGroup;
 			children = (
-				1485FED82E5272FA0044121F /* WatchAudioChunk.swift */,
 				1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */,
 				1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */,
 			);
@@ -783,7 +779,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				1485FEDC2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */,
-				1485FEDD2E5272FA0044121F /* WatchAudioChunk.swift in Sources */,
 				1485FEDE2E5272FA0044121F /* WatchRecordingState.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -807,7 +802,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				1485FEDF2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */,
-				1485FEE02E5272FA0044121F /* WatchAudioChunk.swift in Sources */,
 				1485FEE12E5272FA0044121F /* WatchRecordingState.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -32,13 +32,7 @@ struct WatchRecordingView: View {
                 audioTransferView
                     .padding(.top, 8)
             }
-            
-            // Phone App Activation Progress (only shown when activating)
-            if viewModel.isActivatingPhoneApp {
-                phoneActivationView
-                    .padding(.top, 8)
-            }
-            
+
             Spacer()
             
             // Bottom controls: Record + Pause buttons
@@ -54,27 +48,6 @@ struct WatchRecordingView: View {
             }
         } message: {
             Text(viewModel.errorMessage ?? "An unknown error occurred")
-        }
-        .alert("iPhone App", isPresented: $viewModel.showingActivationAlert) {
-            if viewModel.activationFailed {
-                Button("Open iPhone App") {
-                    // Instructions for user to manually open app
-                    viewModel.dismissActivationAlert()
-                }
-                Button("Cancel") {
-                    viewModel.dismissActivationAlert()
-                }
-            } else {
-                Button("Cancel") {
-                    viewModel.dismissActivationAlert()
-                }
-            }
-        } message: {
-            if viewModel.activationFailed {
-                Text("\(viewModel.activationStatusMessage)\n\nPlease open the BisonNotes AI app on your iPhone manually, then try recording again.")
-            } else {
-                Text(viewModel.activationStatusMessage)
-            }
         }
         .overlay(
             errorStateOverlay,
@@ -262,9 +235,6 @@ struct WatchRecordingView: View {
     }
     
     private var recordButtonEnabled: Bool {
-        // Disable during phone app activation
-        guard !viewModel.isActivatingPhoneApp else { return false }
-        
         switch viewModel.recordingState {
         case .idle:
             return viewModel.canStartRecording
@@ -374,9 +344,9 @@ struct WatchRecordingView: View {
                         .font(.caption2)
                         .foregroundColor(.blue)
                         .fontWeight(.medium)
-                    
-                    if viewModel.transferProgress > 0.15 && viewModel.transferProgress < 0.90 {
-                        // Show user guidance during the long file transfer phase
+
+                    if viewModel.transferProgress < 1.0 {
+                        // Show user guidance during the file transfer phase
                         Text("Keep screen active for faster transfer")
                             .font(.caption2)
                             .foregroundColor(.orange)
@@ -407,56 +377,14 @@ struct WatchRecordingView: View {
         .transition(.scale.combined(with: .opacity))
     }
     
-    /// Dynamic transfer status text based on progress
+    /// Dynamic transfer status text based on real file transfer progress
     private var transferStatusText: String {
-        let progress = viewModel.transferProgress
-        
-        if progress < 0.10 {
-            return "Checking iPhone app..."
-        } else if progress < 0.15 {
-            return "Starting sync..."
-        } else if progress < 0.90 {
+        if viewModel.transferProgress < 1.0 {
             return "Transferring file..."
-        } else if progress < 1.0 {
-            return "Processing on iPhone..."
         } else {
-            return "Transfer complete!"
+            return "Processing on iPhone..."
         }
     }
-    
-    private var phoneActivationView: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Image(systemName: "iphone.and.arrow.right.outward")
-                    .font(.system(size: 12))
-                    .foregroundColor(.orange)
-                    .scaleEffect(1.1)
-                    .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: viewModel.isActivatingPhoneApp)
-                
-                Text("Activating iPhone app...")
-                    .font(.caption2)
-                    .foregroundColor(.orange)
-                    .opacity(0.8)
-                    .animation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true), value: viewModel.isActivatingPhoneApp)
-                
-                Spacer()
-            }
-            
-            ProgressView()
-                .progressViewStyle(CircularProgressViewStyle(tint: .orange))
-                .scaleEffect(0.8)
-                .animation(.easeInOut(duration: 0.3), value: viewModel.isActivatingPhoneApp)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.orange.opacity(0.1))
-                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
-        )
-        .transition(.scale.combined(with: .opacity))
-    }
-    
     
     // MARK: - Error State Overlay
     

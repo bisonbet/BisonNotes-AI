@@ -87,7 +87,16 @@ class WatchAudioManager: NSObject, ObservableObject {
             errorMessage = error.localizedDescription
             return false
         }
-        
+
+        // Fail fast if the user has already denied microphone access, instead
+        // of showing a recording UI that can never record
+        guard AVAudioApplication.shared.recordPermission != .denied else {
+            let error = WatchAudioError.permissionDenied("Microphone access denied. Enable it in Settings.")
+            onError?(error)
+            errorMessage = error.localizedDescription
+            return false
+        }
+
         // Request permission and setup recording
         AVAudioApplication.requestRecordPermission { [weak self] granted in
             DispatchQueue.main.async {
@@ -130,7 +139,8 @@ class WatchAudioManager: NSObject, ObservableObject {
         // Stop any active recorder
         audioRecorder?.stop()
         audioRecorder = nil
-        
+        deactivateAudioSession()
+
         // Reset all state
         isRecording = false
         isPaused = false
@@ -271,9 +281,9 @@ class WatchAudioManager: NSObject, ObservableObject {
     
     /// Check recording health and handle issues
     func performHealthCheck() -> Bool {
-        // Check battery level
+        // Check battery level (-1 means unknown, not critical)
         updateBatteryLevel()
-        if batteryLevel <= 0.05 { // 5% critical
+        if batteryLevel >= 0 && batteryLevel <= 0.05 { // 5% critical
             emergencyStopRecording(reason: "Critical battery level")
             return false
         }
@@ -310,17 +320,27 @@ class WatchAudioManager: NSObject, ObservableObject {
     
     private func setupAudioSession() {
         audioSession = AVAudioSession.sharedInstance()
-        
+
         do {
+            // Only configure the category here; the session is activated when
+            // recording actually starts and deactivated when it ends, so the
+            // app doesn't hold a recording session while idle
             try audioSession?.setCategory(.record, mode: .default, options: [.allowBluetoothHFP])
-            // Use notifyOthersOnDeactivation to be more cooperative with system sessions
-            try audioSession?.setActive(true, options: .notifyOthersOnDeactivation)
-            print("⌚ Audio session configured successfully")
+            print("⌚ Audio session category configured")
         } catch {
             print("⌚ Failed to configure audio session: \(error)")
             let audioError = WatchAudioError.configurationFailed("Failed to configure audio session: \(error.localizedDescription)")
             onError?(audioError)
             errorMessage = audioError.localizedDescription
+        }
+    }
+
+    private func deactivateAudioSession() {
+        do {
+            try audioSession?.setActive(false, options: .notifyOthersOnDeactivation)
+            print("⌚ Audio session deactivated")
+        } catch {
+            print("⌚ Failed to deactivate audio session: \(error)")
         }
     }
     
@@ -338,8 +358,9 @@ class WatchAudioManager: NSObject, ObservableObject {
         
         // Configure recorder with whisperOptimized settings (matching iOS app)
         let settings = whisperOptimizedAudioSettings
-        
+
         do {
+            try audioSession?.setActive(true, options: [])
             audioRecorder = try AVAudioRecorder(url: url, settings: settings)
             audioRecorder?.delegate = self
             
@@ -362,7 +383,8 @@ class WatchAudioManager: NSObject, ObservableObject {
             
         } catch {
             print("⌚ Failed to start recording: \(error)")
-            
+            deactivateAudioSession()
+
             // Reset recording state on error
             isRecording = false
             isPaused = false
@@ -383,14 +405,21 @@ class WatchAudioManager: NSObject, ObservableObject {
     
     private func canStartRecording() -> Bool {
         updateBatteryLevel()
-        
+
+        // batteryLevel is -1 while the system hasn't reported a reading yet;
+        // treat unknown as OK rather than blocking recording
+        guard batteryLevel >= 0 else {
+            print("⌚ Battery level unknown, allowing recording")
+            return true
+        }
+
         let batteryThreshold: Float = 0.15 // 15% minimum
         let hasEnoughBattery = batteryLevel > batteryThreshold
-        
+
         if !hasEnoughBattery {
             print("⌚ Battery too low for recording: \(Int(batteryLevel * 100))%")
         }
-        
+
         return hasEnoughBattery
     }
     
@@ -432,8 +461,9 @@ class WatchAudioManager: NSObject, ObservableObject {
     
     private func checkBatteryDuringRecording() {
         let criticalLevel: Float = 0.05 // 5%
-        
-        if batteryLevel <= criticalLevel {
+
+        // -1 means unknown, not critical
+        if batteryLevel >= 0 && batteryLevel <= criticalLevel {
             print("⌚ Critical battery level during recording, stopping...")
             let error = WatchAudioError.batteryTooLow("Recording stopped due to critical battery level")
             onError?(error)
@@ -543,11 +573,14 @@ extension WatchAudioManager: AVAudioRecorderDelegate {
                 onError?(error)
                 errorMessage = error.localizedDescription
             }
-            
+
+            // Release the audio session now that recording is over
+            deactivateAudioSession()
+
             // Reset timing for next recording
             recordingTime = 0
             pausedDuration = 0
-            
+
             onRecordingStateChanged?(false, false)
         }
     }

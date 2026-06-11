@@ -9,98 +9,27 @@ import Foundation
 import WatchConnectivity
 import CoreLocation
 
-/// Messages sent between watch and phone for recording coordination
+/// Messages sent between watch and phone for recording coordination.
+///
+/// Audio itself is delivered via WCSession.transferFile (see the reliable
+/// transfer system in the watch app); these messages cover lifecycle pings
+/// and sync outcome notifications.
 enum WatchRecordingMessage: String, CaseIterable, Codable {
-    // Recording control commands
-    case startRecording = "start_recording"
-    case stopRecording = "stop_recording"
-    case pauseRecording = "pause_recording"
-    case resumeRecording = "resume_recording"
-    
     // Status updates
-    case recordingStatusUpdate = "recording_status_update"
     case connectionStatusUpdate = "connection_status_update"
     case errorOccurred = "error_occurred"
-    
-    // Audio data transfer
-    case audioChunkTransfer = "audio_chunk_transfer"
-    case audioTransferComplete = "audio_transfer_complete"
-    case chunkAcknowledgment = "chunkAcknowledgment"
-    
+
     // App lifecycle
     case phoneAppActivated = "phone_app_activated"
     case watchAppActivated = "watch_app_activated"
-    case requestPhoneAppActivation = "request_phone_app_activation"
     case requestSync = "request_sync"
-    
-    // New sync protocol messages
-    case checkAppReadiness = "check_app_readiness"
-    case appReadinessResponse = "app_readiness_response"
-    case syncRequest = "sync_request"
-    case syncAccepted = "sync_accepted"
-    case syncRejected = "sync_rejected"
-    case fileTransferStart = "file_transfer_start"
-    case fileReceived = "file_received"
-    case metadataTransfer = "metadata_transfer"
-    case coreDataCreated = "core_data_created"
+
+    // Sync outcomes (sent from iPhone via queued transferUserInfo)
     case syncComplete = "sync_complete"
     case syncFailed = "sync_failed"
-    
+
     var userInfo: [String: Any] {
         return ["messageType": self.rawValue]
-    }
-}
-
-/// Data structure for recording status updates
-struct WatchRecordingStatusUpdate: Codable {
-    let state: WatchRecordingState
-    let recordingTime: TimeInterval
-    let timestamp: Date
-    let batteryLevel: Float?
-    let errorMessage: String?
-    
-    init(state: WatchRecordingState, recordingTime: TimeInterval, batteryLevel: Float? = nil, errorMessage: String? = nil) {
-        self.state = state
-        self.recordingTime = recordingTime
-        self.timestamp = Date()
-        self.batteryLevel = batteryLevel
-        self.errorMessage = errorMessage
-    }
-    
-    func toDictionary() -> [String: Any] {
-        var dict: [String: Any] = [
-            "state": state.rawValue,
-            "recordingTime": recordingTime,
-            "timestamp": timestamp.timeIntervalSince1970
-        ]
-        
-        if let batteryLevel = batteryLevel {
-            dict["batteryLevel"] = batteryLevel
-        }
-        
-        if let errorMessage = errorMessage {
-            dict["errorMessage"] = errorMessage
-        }
-        
-        return dict
-    }
-    
-    static func fromDictionary(_ dict: [String: Any]) -> WatchRecordingStatusUpdate? {
-        guard let stateRaw = dict["state"] as? String,
-              let state = WatchRecordingState(rawValue: stateRaw),
-              let recordingTime = dict["recordingTime"] as? TimeInterval else {
-            return nil
-        }
-        
-        let batteryLevel = dict["batteryLevel"] as? Float
-        let errorMessage = dict["errorMessage"] as? String
-        
-        return WatchRecordingStatusUpdate(
-            state: state,
-            recordingTime: recordingTime,
-            batteryLevel: batteryLevel,
-            errorMessage: errorMessage
-        )
     }
 }
 
@@ -159,55 +88,6 @@ enum WatchDeviceType: String, Codable, CaseIterable {
     case appleWatch = "Apple Watch"
 }
 
-/// Data structure for iPhone app readiness response
-struct WatchAppReadinessResponse: Codable {
-    let ready: Bool
-    let reason: String
-    let storageAvailable: Int64?
-    let coreDataReady: Bool
-    let timestamp: Date
-    
-    init(ready: Bool, reason: String, storageAvailable: Int64? = nil, coreDataReady: Bool = true) {
-        self.ready = ready
-        self.reason = reason
-        self.storageAvailable = storageAvailable
-        self.coreDataReady = coreDataReady
-        self.timestamp = Date()
-    }
-    
-    func toDictionary() -> [String: Any] {
-        var dict: [String: Any] = [
-            "ready": ready,
-            "reason": reason,
-            "coreDataReady": coreDataReady,
-            "timestamp": timestamp.timeIntervalSince1970
-        ]
-        
-        if let storageAvailable = storageAvailable {
-            dict["storageAvailable"] = storageAvailable
-        }
-        
-        return dict
-    }
-    
-    static func fromDictionary(_ dict: [String: Any]) -> WatchAppReadinessResponse? {
-        guard let ready = dict["ready"] as? Bool,
-              let reason = dict["reason"] as? String,
-              let coreDataReady = dict["coreDataReady"] as? Bool else {
-            return nil
-        }
-        
-        let storageAvailable = dict["storageAvailable"] as? Int64
-        
-        return WatchAppReadinessResponse(
-            ready: ready,
-            reason: reason,
-            storageAvailable: storageAvailable,
-            coreDataReady: coreDataReady
-        )
-    }
-}
-
 /// Extension to simplify WatchConnectivity message sending
 extension WCSession {
     /// Send a recording message with optional user info
@@ -216,36 +96,15 @@ extension WCSession {
             print("⌚ WCSession not reachable, cannot send message: \(message.rawValue)")
             return
         }
-        
+
         var finalUserInfo = message.userInfo
         if let additionalInfo = userInfo {
             finalUserInfo.merge(additionalInfo) { _, new in new }
         }
-        
+
         sendMessage(finalUserInfo, replyHandler: nil) { error in
             print("❌ Failed to send watch message \(message.rawValue): \(error.localizedDescription)")
         }
-    }
-    
-    /// Send a status update message
-    func sendStatusUpdate(_ statusUpdate: WatchRecordingStatusUpdate) {
-        sendRecordingMessage(.recordingStatusUpdate, userInfo: statusUpdate.toDictionary())
-    }
-    
-    /// Send an error message
-    func sendErrorMessage(_ errorMessage: WatchErrorMessage) {
-        sendRecordingMessage(.errorOccurred, userInfo: errorMessage.toDictionary())
-    }
-    
-    /// Send app readiness response
-    func sendAppReadinessResponse(_ response: WatchAppReadinessResponse) {
-        sendRecordingMessage(.appReadinessResponse, userInfo: response.toDictionary())
-    }
-    
-    /// Send sync response
-    func sendSyncResponse(_ response: WatchSyncResponse) {
-        let messageType: WatchRecordingMessage = response.accepted ? .syncAccepted : .syncRejected
-        sendRecordingMessage(messageType, userInfo: response.toDictionary())
     }
 }
 
@@ -319,61 +178,8 @@ struct WatchSyncRequest: Codable {
     }
 }
 
-/// Data structure for sync response
-struct WatchSyncResponse: Codable {
-    let recordingId: UUID
-    let accepted: Bool
-    let reason: String?
-    let retryAfter: TimeInterval?
-    let timestamp: Date
-    
-    init(recordingId: UUID, accepted: Bool, reason: String? = nil, retryAfter: TimeInterval? = nil) {
-        self.recordingId = recordingId
-        self.accepted = accepted
-        self.reason = reason
-        self.retryAfter = retryAfter
-        self.timestamp = Date()
-    }
-    
-    func toDictionary() -> [String: Any] {
-        var dict: [String: Any] = [
-            "recordingId": recordingId.uuidString,
-            "accepted": accepted,
-            "timestamp": timestamp.timeIntervalSince1970
-        ]
-        
-        if let reason = reason {
-            dict["reason"] = reason
-        }
-        
-        if let retryAfter = retryAfter {
-            dict["retryAfter"] = retryAfter
-        }
-        
-        return dict
-    }
-    
-    static func fromDictionary(_ dict: [String: Any]) -> WatchSyncResponse? {
-        guard let recordingIdString = dict["recordingId"] as? String,
-              let recordingId = UUID(uuidString: recordingIdString),
-              let accepted = dict["accepted"] as? Bool else {
-            return nil
-        }
-        
-        let reason = dict["reason"] as? String
-        let retryAfter = dict["retryAfter"] as? TimeInterval
-        
-        return WatchSyncResponse(
-            recordingId: recordingId,
-            accepted: accepted,
-            reason: reason,
-            retryAfter: retryAfter
-        )
-    }
-}
-
 /// Data structure for location data from watch recordings
-struct WatchLocationData: Codable {
+struct WatchLocationData: Codable, Equatable {
     let latitude: Double
     let longitude: Double
     let timestamp: Date
