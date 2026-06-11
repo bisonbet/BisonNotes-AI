@@ -422,44 +422,6 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
     }
 }
 
-// MARK: - Whisper-Based Engine (Future Implementation)
-
-// OpenAICompatibleEngine has been moved to OpenAISummarizationEngine.swift
-// This placeholder is for future Whisper-based implementations
-
-// MARK: - Supporting Structures for Future Implementation
-
-struct DiarizedTranscript {
-    let segments: [DiarizedSegment]
-    let speakers: [Speaker]
-    let confidence: Double
-    let processingTime: TimeInterval
-}
-
-struct DiarizedSegment {
-    let id: UUID
-    let speakerId: String
-    let text: String
-    let startTime: TimeInterval
-    let endTime: TimeInterval
-    let confidence: Double
-}
-
-struct Speaker {
-    let id: String
-    let name: String?
-    let voiceCharacteristics: VoiceCharacteristics
-    let segmentCount: Int
-    let totalDuration: TimeInterval
-}
-
-struct VoiceCharacteristics {
-    let pitch: Double
-    let tone: String
-    let pace: Double
-    let volume: Double
-}
-
 // MARK: - Local LLM Engine (Ollama)
 
 class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
@@ -1650,73 +1612,6 @@ class GoogleAIStudioEngine: SummarizationEngine {
         }
         
         return (summary: summary, tasks: tasks, reminders: reminders, titles: titles, contentType: contentType)
-    }
-}
-
-// MARK: - Not Configured Engine for unconfigured state
-
-class NotConfiguredEngine: SummarizationEngine {
-    let name: String = "Not Configured"
-    let description: String = "No AI summarization engine has been configured"
-    let version: String = "1.0"
-    let isAvailable: Bool = false
-
-    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
-    }
-
-    func extractTasks(from text: String) async throws -> [TaskItem] {
-        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
-    }
-
-    func extractReminders(from text: String) async throws -> [ReminderItem] {
-        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
-    }
-
-    func extractTitles(from text: String) async throws -> [TitleItem] {
-        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
-    }
-
-    func classifyContent(_ text: String) async throws -> ContentType {
-        return .general
-    }
-
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
-    }
-}
-
-// MARK: - No-Op Engine for "None" selection
-
-class NoOpEngine: SummarizationEngine {
-    let name: String = "None"
-    let description: String = "No AI summarization engine selected"
-    let version: String = "1.0"
-    let isAvailable: Bool = true
-    
-    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        return "AI summarization is disabled. Please select an AI engine in Settings > AI Processing to generate summaries."
-    }
-    
-    func extractTasks(from text: String) async throws -> [TaskItem] {
-        return []
-    }
-    
-    func extractReminders(from text: String) async throws -> [ReminderItem] {
-        return []
-    }
-    
-    func extractTitles(from text: String) async throws -> [TitleItem] {
-        return []
-    }
-    
-    func classifyContent(_ text: String) async throws -> ContentType {
-        return .general
-    }
-    
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        let summary = "AI summarization is disabled. Please select an AI engine in Settings > AI Processing to generate summaries."
-        return (summary, [], [], [], .general)
     }
 }
 

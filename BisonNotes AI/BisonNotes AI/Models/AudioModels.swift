@@ -36,35 +36,6 @@ public enum AudioQuality: String, CaseIterable, Codable {
     }
 }
 
-public enum SummaryMethod: String, CaseIterable {
-    case localServer = "Local Server (Ollama)"
-    case openAI = "OpenAI (GPT-4.1)"
-    case awsBedrock = "AWS Bedrock (Advanced)"
-    case onDeviceAI = "On-Device AI"
-
-    var description: String {
-        switch self {
-        case .localServer:
-            return "Connect to local Ollama server for enhanced AI processing"
-        case .openAI:
-            return "Advanced AI-powered summaries using OpenAI's GPT models"
-        case .awsBedrock:
-            return "Use AWS Bedrock for advanced AI-powered summaries (Coming Soon)"
-        case .onDeviceAI:
-            return "Privacy-focused on-device AI processing using local AI models"
-        }
-    }
-
-    var isAvailable: Bool {
-        switch self {
-        case .localServer, .openAI, .onDeviceAI:
-            return true
-        case .awsBedrock:
-            return false
-        }
-    }
-}
-
 public enum WhisperProtocol: String, CaseIterable, Codable {
     case rest = "REST API"
     case wyoming = "Wyoming"

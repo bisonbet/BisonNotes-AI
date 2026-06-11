@@ -405,15 +405,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         #endif
     }
     
-    private func removeNotificationObservers() {
-        if let observer = interruptionObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = routeChangeObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-    }
-    
     // MARK: - Notification Handlers
     
     func handleAudioInterruption(_ notification: Notification) {
