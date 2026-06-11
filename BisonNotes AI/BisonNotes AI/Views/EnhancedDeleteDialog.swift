@@ -13,177 +13,129 @@ struct EnhancedDeleteDialog: View {
     @Binding var preserveSummary: Bool
     let onConfirm: () -> Void
     let onCancel: () -> Void
-    
+
     @Environment(\.dismiss) private var dismiss
-    
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                // Header
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 40))
-                        .foregroundColor(.orange)
-                    
-                    Text("Delete Recording")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.primary)
-                    
-                    Text("Are you sure you want to delete '\(recording.name)'?")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(.top)
-                
-                // File relationships information
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("File Status")
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    
-                    VStack(spacing: 12) {
-                        FileStatusRow(
-                            icon: "waveform",
-                            title: "Recording",
-                            status: relationships.hasRecording ? "Available" : "Not available",
-                            color: relationships.hasRecording ? .green : .gray
-                        )
-                        
-                        FileStatusRow(
-                            icon: "text.quote",
-                            title: "Transcript",
-                            status: relationships.transcriptExists ? "Available" : "Not available",
-                            color: relationships.transcriptExists ? .blue : .gray
-                        )
-                        
-                        FileStatusRow(
-                            icon: "doc.text",
-                            title: "Summary",
-                            status: relationships.summaryExists ? "Available" : "Not available",
-                            color: relationships.summaryExists ? .purple : .gray
-                        )
+            ScrollView {
+                VStack(spacing: 18) {
+                    VStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.orange)
+
+                        Text("Delete Recording")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.primary)
+
+                        Text("Are you sure you want to delete '\(recording.name)'?")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
                     }
-                }
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.systemGray6))
-                )
-                
-                // Deletion options
-                if relationships.summaryExists {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Deletion Options")
+                    .padding(.top, 8)
+
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("File Status")
                             .font(.headline)
                             .foregroundColor(.primary)
-                        
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Image(systemName: preserveSummary ? "checkmark.circle.fill" : "circle")
-                                    .foregroundColor(preserveSummary ? .green : .gray)
-                                    .font(.title3)
-                                
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Preserve Summary")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.primary)
-                                    
-                                    Text("Keep the summary even after deleting the recording")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                
-                                Spacer()
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                preserveSummary = true
-                            }
-                            
-                            HStack {
-                                Image(systemName: !preserveSummary ? "checkmark.circle.fill" : "circle")
-                                    .foregroundColor(!preserveSummary ? .red : .gray)
-                                    .font(.title3)
-                                
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Delete Everything")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.primary)
-                                    
-                                    Text("Delete recording, transcript, summary, and any notes or attached files")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                
-                                Spacer()
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                preserveSummary = false
-                            }
+
+                        VStack(spacing: 12) {
+                            FileStatusRow(
+                                icon: "waveform",
+                                title: "Recording",
+                                status: relationships.hasRecording ? "Available" : "Not available",
+                                color: relationships.hasRecording ? .green : .gray
+                            )
+
+                            FileStatusRow(
+                                icon: "text.quote",
+                                title: "Transcript",
+                                status: relationships.transcriptExists ? "Available" : "Not available",
+                                color: relationships.transcriptExists ? .blue : .gray
+                            )
+
+                            FileStatusRow(
+                                icon: "doc.text",
+                                title: "Summary",
+                                status: relationships.summaryExists ? "Available" : "Not available",
+                                color: relationships.summaryExists ? .purple : .gray
+                            )
                         }
                     }
                     .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.systemGray6))
-                    )
-                }
-                
-                // Warning message
-                if relationships.summaryExists && preserveSummary {
-                    HStack {
-                        Image(systemName: "info.circle.fill")
-                            .foregroundColor(.blue)
-                        Text("The summary will be preserved and can be accessed later, even without the original recording.")
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                    }
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.blue.opacity(0.1))
-                    )
-                }
-                
-                Spacer()
-                
-                // Action buttons
-                VStack(spacing: 12) {
-                    Button(action: onConfirm) {
-                        HStack {
-                            Image(systemName: "trash.fill")
-                            Text("Delete Recording")
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                    if relationships.summaryExists {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Deletion Options")
+                                .font(.headline)
+                                .foregroundColor(.primary)
+
+                            VStack(alignment: .leading, spacing: 10) {
+                                deletionOptionRow(
+                                    title: "Preserve Summary",
+                                    subtitle: "Keep the summary even after deleting the recording",
+                                    isSelected: preserveSummary,
+                                    selectedColor: .green
+                                ) {
+                                    preserveSummary = true
+                                }
+
+                                deletionOptionRow(
+                                    title: "Delete Everything",
+                                    subtitle: "Delete recording, transcript, summary, and any notes or attached files",
+                                    isSelected: !preserveSummary,
+                                    selectedColor: .red
+                                ) {
+                                    preserveSummary = false
+                                }
+                            }
                         }
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
                         .padding()
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.red)
-                        )
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
-                    
-                    Button(action: onCancel) {
-                        Text("Cancel")
+
+                    if relationships.summaryExists && preserveSummary {
+                        HStack {
+                            Image(systemName: "info.circle.fill")
+                                .foregroundColor(.blue)
+                            Text("The summary will be preserved and can be accessed later, even without the original recording.")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                        .padding()
+                        .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+
+                    VStack(spacing: 12) {
+                        Button(action: onConfirm) {
+                            HStack {
+                                Image(systemName: "trash.fill")
+                                Text("Delete Recording")
+                            }
                             .font(.headline)
-                            .foregroundColor(.primary)
+                            .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding()
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.gray, lineWidth: 1)
-                            )
+                            .background(Color.red, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+
+                        Button(action: onCancel) {
+                            Text("Cancel")
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
                     }
                 }
-                .padding(.bottom)
+                .padding(20)
             }
-            .padding()
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Delete Recording")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -200,6 +152,37 @@ struct EnhancedDeleteDialog: View {
             AppLog.shared.fileManagement("EnhancedDeleteDialog rendering: hasRecording=\(relationships.hasRecording), hasTranscript=\(relationships.transcriptExists), hasSummary=\(relationships.summaryExists), preserveSummary=\(preserveSummary)", level: .debug)
         }
     }
+
+    private func deletionOptionRow(
+        title: String,
+        subtitle: String,
+        isSelected: Bool,
+        selectedColor: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .foregroundColor(isSelected ? selectedColor : .gray)
+                .font(.title3)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding(12)
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+    }
 }
 
 struct FileStatusRow: View {
@@ -207,27 +190,27 @@ struct FileStatusRow: View {
     let title: String
     let status: String
     let color: Color
-    
+
     var body: some View {
         HStack {
             Image(systemName: icon)
                 .font(.title3)
                 .foregroundColor(color)
                 .frame(width: 24)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .foregroundColor(.primary)
-                
+
                 Text(status)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
+
             Circle()
                 .fill(color)
                 .frame(width: 8, height: 8)
@@ -244,7 +227,7 @@ struct FileStatusRow: View {
         summaryExists: true,
         iCloudSynced: false
     )
-    
+
     let sampleRecording = AudioRecordingFile(
         url: URL(string: "file:///sample.m4a")!,
         name: "Sample Recording",
@@ -252,7 +235,7 @@ struct FileStatusRow: View {
         duration: 120.0,
         locationData: nil
     )
-    
+
     EnhancedDeleteDialog(
         recording: sampleRecording,
         relationships: sampleRelationships,
@@ -260,4 +243,4 @@ struct FileStatusRow: View {
         onConfirm: {},
         onCancel: {}
     )
-} 
+}

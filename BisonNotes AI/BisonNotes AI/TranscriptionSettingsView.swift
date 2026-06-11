@@ -24,23 +24,16 @@ struct TranscriptionSettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                liveTranscriptionSection
-                fileTranscriptionSection
-                selectedEngineConfigurationSection
-                displayOptionsSection
-                tipsSection
-                resetSection
-            }
-            .navigationTitle("Transcription Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
+            settingsContent
+                .navigationTitle("Transcription Settings")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") {
+                            dismiss()
+                        }
                     }
                 }
-            }
             .sheet(isPresented: $showingAWSSettings) {
                 AWSSettingsView()
             }
@@ -73,6 +66,210 @@ struct TranscriptionSettingsView: View {
             }
             .onChange(of: selectedTranscriptionEngine) { _, newValue in
                 handleEngineSelection(newValue)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var settingsContent: some View {
+        #if targetEnvironment(macCatalyst)
+        Form {
+            liveTranscriptionSection
+            fileTranscriptionSection
+            selectedEngineConfigurationSection
+            displayOptionsSection
+            tipsSection
+            resetSection
+        }
+        #else
+        modernSettingsContent
+        #endif
+    }
+
+    private var modernSettingsContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                modernHeader
+                modernLiveTranscriptionSection
+                modernFileTranscriptionSection
+                modernSelectedEngineConfigurationSection
+                modernDisplayOptionsSection
+                modernTipsSection
+                modernResetSection
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 36)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private var modernHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Transcription")
+                .font(.largeTitle.weight(.bold))
+                .foregroundColor(.primary)
+
+            Text("Choose how recordings and imported files become editable text.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var modernLiveTranscriptionSection: some View {
+        TranscriptionSettingsCard(title: "During Recording", systemImage: "waveform", tint: .orange) {
+            Toggle(isOn: $enableLiveTranscription) {
+                TranscriptionSettingsLabel(
+                    title: "Live Transcription",
+                    subtitle: "Real-time text as you record",
+                    systemImage: "waveform",
+                    tint: .orange
+                )
+            }
+            .onChange(of: enableLiveTranscription) { _, enabled in
+                if enabled {
+                    Task {
+                        let granted = await LiveTranscriptionService.requestPermission()
+                        if !granted {
+                            await MainActor.run { enableLiveTranscription = false }
+                        }
+                    }
+                }
+            }
+
+            if enableLiveTranscription {
+                TranscriptionInlineStatus(
+                    title: "Uses Apple Speech Recognition",
+                    subtitle: "On-device where available",
+                    systemImage: "checkmark.circle.fill",
+                    tint: .green
+                )
+            }
+
+            Text("Live transcription shows text instantly while you speak.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var modernFileTranscriptionSection: some View {
+        TranscriptionSettingsCard(title: "Files & Re-runs", systemImage: "doc.text", tint: .blue) {
+            Text("Select the engine used for imported files, re-runs, and post-recording transcription.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            modernEngineGroupHeader("On-Device (Private)", systemImage: "iphone", tint: .indigo)
+            modernEngineOptionRow(
+                engine: .fluidAudio,
+                title: "Parakeet",
+                subtitle: "Fast, accurate, works offline",
+                isRecommended: true
+            )
+
+            Divider()
+
+            modernEngineGroupHeader("Cloud (Higher Accuracy)", systemImage: "cloud", tint: .blue)
+            modernEngineOptionRow(
+                engine: .awsTranscribe,
+                title: "AWS Transcribe",
+                subtitle: "Enterprise, speaker diarization, expensive"
+            )
+            modernEngineOptionRow(
+                engine: .mistralAI,
+                title: "Mistral AI",
+                subtitle: "Enterprise, speaker diarization, cheap"
+            )
+            modernEngineOptionRow(
+                engine: .openAI,
+                title: "OpenAI Whisper",
+                subtitle: "Requires API key"
+            )
+
+            Divider()
+
+            modernEngineGroupHeader("Local Server", systemImage: "server.rack", tint: .green)
+            modernEngineOptionRow(
+                engine: .whisper,
+                title: "Whisper Server",
+                subtitle: "Self-hosted on your network"
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var modernSelectedEngineConfigurationSection: some View {
+        if let selectedEngine = TranscriptionEngine(rawValue: selectedTranscriptionEngine),
+           selectedEngine.requiresConfiguration {
+            TranscriptionSettingsCard(title: "Configuration", systemImage: "gear", tint: engineColor(for: selectedEngine)) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(selectedEngine.rawValue) Settings")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Text(configurationHint(for: selectedEngine))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button(action: {
+                        openSettings(for: selectedEngine)
+                    }) {
+                        Label("Configure", systemImage: "gear")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(engineColor(for: selectedEngine))
+                }
+
+                modernEngineStatusView(for: selectedEngine)
+            }
+        }
+    }
+
+    private var modernDisplayOptionsSection: some View {
+        TranscriptionSettingsCard(title: "Display Options", systemImage: "eye", tint: .purple) {
+            Toggle("Show Transcription Progress", isOn: $showTranscriptionProgress)
+
+            Text("Display real-time transcription progress.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var modernTipsSection: some View {
+        TranscriptionSettingsCard(title: "Tips", systemImage: "lightbulb", tint: .yellow) {
+            TipRow(
+                icon: "bolt.fill",
+                title: "Best for speed",
+                description: "Parakeet offers the fastest on-device transcription."
+            )
+
+            TipRow(
+                icon: "lock.shield.fill",
+                title: "Privacy first",
+                description: "On-device engines never send audio to external servers."
+            )
+
+            TipRow(
+                icon: "waveform.badge.plus",
+                title: "Live + File",
+                description: "Enable live transcription AND set a file engine for full coverage."
+            )
+        }
+    }
+
+    private var modernResetSection: some View {
+        TranscriptionSettingsCard(title: "Reset", systemImage: "arrow.counterclockwise", tint: .red) {
+            Button(role: .destructive) {
+                resetToDefaults()
+            } label: {
+                Label("Reset to Defaults", systemImage: "arrow.counterclockwise")
+                    .font(.subheadline.weight(.semibold))
             }
         }
     }
@@ -244,7 +441,7 @@ struct TranscriptionSettingsView: View {
                             .foregroundColor(isDeprecated ? .secondary : .primary)
 
                         if isRecommended {
-                            Text("Recommended")
+                            Text("Best")
                                 .font(.caption2)
                                 .fontWeight(.medium)
                                 .padding(.horizontal, 6)
@@ -292,6 +489,82 @@ struct TranscriptionSettingsView: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
+    }
+
+    private func modernEngineGroupHeader(_ title: String, systemImage: String, tint: Color) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .foregroundColor(tint)
+    }
+
+    private func modernEngineOptionRow(
+        engine: TranscriptionEngine,
+        title: String,
+        subtitle: String,
+        isRecommended: Bool = false,
+        isDeprecated: Bool = false
+    ) -> some View {
+        let tint = engineColor(for: engine)
+        let isSelected = selectedTranscriptionEngine == engine.rawValue
+
+        return Button(action: {
+            selectedTranscriptionEngine = engine.rawValue
+        }) {
+            HStack(spacing: 14) {
+                Image(systemName: transcriptionIcon(for: engine))
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(tint)
+                    .frame(width: 38, height: 38)
+                    .background(tint.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 11))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(isDeprecated ? .secondary : .primary)
+
+                        if isRecommended {
+                            Text("Recommended")
+                                .font(.caption2.weight(.bold))
+                                .foregroundColor(.green)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.green.opacity(0.14))
+                                .clipShape(Capsule())
+                        }
+
+                        if isDeprecated {
+                            Text("Legacy")
+                                .font(.caption2.weight(.bold))
+                                .foregroundColor(.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.14))
+                                .clipShape(Capsule())
+                        }
+                    }
+
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Text(engine.isAvailable ? "Ready" : "Setup")
+                    .font(.caption2.weight(.bold))
+                    .foregroundColor(engine.isAvailable ? .green : .orange)
+
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundColor(isSelected ? tint : .secondary)
+            }
+            .padding(14)
+            .background(isSelected ? tint.opacity(0.12) : Color(.tertiarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 15))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Selected Engine Configuration
@@ -435,6 +708,54 @@ struct TranscriptionSettingsView: View {
         )
     }
 
+    private func modernEngineStatusView(for engine: TranscriptionEngine) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Status")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Label(engine.isAvailable ? "Ready" : "Needs Setup", systemImage: engine.isAvailable ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(engine.isAvailable ? .green : .red)
+            }
+
+            if engine == .fluidAudio {
+                HStack {
+                    Text("Privacy")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Label("On-Device Only", systemImage: "lock.shield.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.green)
+                }
+            }
+        }
+        .padding(12)
+        .background(engineColor(for: engine).opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func transcriptionIcon(for engine: TranscriptionEngine) -> String {
+        switch engine {
+        case .notConfigured:
+            return "circle"
+        case .fluidAudio:
+            return "iphone"
+        case .awsTranscribe:
+            return "shippingbox"
+        case .whisper:
+            return "server.rack"
+        case .openAI:
+            return "sparkles"
+        case .mistralAI:
+            return "wind"
+        case .openAIAPICompatible:
+            return "link"
+        }
+    }
+
     private var displayOptionsSection: some View {
         Section {
             Toggle("Show Transcription Progress", isOn: $showTranscriptionProgress)
@@ -512,6 +833,102 @@ struct TipRow: View {
             Spacer()
         }
         .padding(.vertical, 4)
+    }
+}
+
+private struct TranscriptionSettingsCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    let tint: Color
+    @ViewBuilder let content: Content
+
+    init(title: String, systemImage: String, tint: Color, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.systemImage = systemImage
+        self.tint = tint
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(tint)
+                    .frame(width: 30, height: 30)
+                    .background(tint.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+            }
+
+            content
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+private struct TranscriptionSettingsLabel: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 38, height: 38)
+                .background(tint.opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 11))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.primary)
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+}
+
+private struct TranscriptionInlineStatus: View {
+    let title: String
+    let subtitle: String?
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundColor(tint)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(tint)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 

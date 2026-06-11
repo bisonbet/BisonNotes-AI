@@ -15,20 +15,20 @@ struct OpenAISummarizationSettingsView: View {
     @AppStorage("openAISummarizationMaxTokens") private var maxTokens: Int = 0
     @AppStorage("enableOpenAI") private var enableOpenAI: Bool = true
     @AppStorage(EndpointSecurityPolicy.allowInsecurePublicEndpointsKey) private var allowInsecurePublicEndpoints: Bool = false
-    
+
     @State private var isTestingConnection = false
     @State private var connectionTestResult: String = ""
     @State private var showingConnectionResult = false
     @State private var isConnectionSuccessful = false
     @State private var showingAPIKeyInfo = false
     @Environment(\.dismiss) private var dismiss
-    
+
     var onConfigurationChanged: (() -> Void)?
-    
+
     init(onConfigurationChanged: (() -> Void)? = nil) {
         self.onConfigurationChanged = onConfigurationChanged
     }
-    
+
     var body: some View {
         NavigationStack {
             Form {
@@ -39,6 +39,8 @@ struct OpenAISummarizationSettingsView: View {
                 responseLimitsSection
                 connectionTestSection
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("OpenAI Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -47,7 +49,7 @@ struct OpenAISummarizationSettingsView: View {
                         dismiss()
                     }
                 }
-                
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
                         onConfigurationChanged?()
@@ -67,9 +69,9 @@ struct OpenAISummarizationSettingsView: View {
             }
         }
     }
-    
+
     // MARK: - View Components
-    
+
     private var authenticationSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
@@ -81,10 +83,10 @@ struct OpenAISummarizationSettingsView: View {
                             .foregroundColor(.blue)
                     }
                 }
-                
+
                 SecureField("Enter your OpenAI API key", text: $apiKey)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
-                
+
                 if !apiKey.isEmpty {
                     Text("API key configured (\(apiKey.count) characters)")
                         .font(.caption)
@@ -101,17 +103,17 @@ struct OpenAISummarizationSettingsView: View {
             Text("Your API key is stored securely on your device and only used for summarization requests.")
         }
     }
-    
+
     private var apiConfigurationSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Base URL")
-                
+
                 TextField("API Base URL", text: $baseURL)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
-                
+
                 Text("Default: https://api.openai.com/v1")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -124,7 +126,7 @@ struct OpenAISummarizationSettingsView: View {
             Text("Configure the base URL for OpenAI API.")
         }
     }
-    
+
     private var modelSelectionSection: some View {
         Section {
             Picker("Model", selection: $selectedModel) {
@@ -140,15 +142,15 @@ struct OpenAISummarizationSettingsView: View {
             Text("Choose the AI model for summarization.")
         }
     }
-    
+
     private var generationSettingsSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Temperature: \(temperature, specifier: "%.2f")")
-                
+
                 Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
                     .accentColor(.blue)
-                
+
                 Text("Controls randomness in responses. Lower values are more deterministic.")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -157,25 +159,25 @@ struct OpenAISummarizationSettingsView: View {
             Text("Generation Settings")
         }
     }
-    
+
     private var responseLimitsSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Max Tokens: \(maxTokens == 0 ? "Unlimited" : "\(maxTokens)")")
-                
+
                 HStack {
                     Slider(value: Binding(
                         get: { Double(maxTokens) },
                         set: { maxTokens = Int($0) }
                     ), in: 0...4096, step: 1)
                     .accentColor(.blue)
-                    
+
                     Button("Reset") {
                         maxTokens = 0
                     }
                     .font(.caption)
                 }
-                
+
                 Text("Maximum tokens for response. 0 = unlimited")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -184,7 +186,7 @@ struct OpenAISummarizationSettingsView: View {
             Text("Response Limits")
         }
     }
-    
+
     private var connectionTestSection: some View {
         Section {
             Button(action: testConnection) {
@@ -205,10 +207,10 @@ struct OpenAISummarizationSettingsView: View {
             Text("Test your API connection and model availability.")
         }
     }
-    
+
     private func testConnection() {
         isTestingConnection = true
-        
+
         Task {
             let config = OpenAISummarizationConfig(
                 apiKey: apiKey,
@@ -219,14 +221,14 @@ struct OpenAISummarizationSettingsView: View {
                 timeout: SummarizationTimeouts.current(),
                 dynamicModelId: nil
             )
-            
+
             let service = OpenAISummarizationService(config: config)
-            
+
             let success = await service.testConnection()
-            
+
             await MainActor.run {
                 isConnectionSuccessful = success
-                connectionTestResult = success 
+                connectionTestResult = success
                     ? "✅ Connection successful! Your API key and configuration are working correctly."
                     : "❌ Connection failed. Please check your API key and configuration."
                 showingConnectionResult = true
@@ -234,7 +236,7 @@ struct OpenAISummarizationSettingsView: View {
             }
         }
     }
-    
+
     private func resetToDefaults() {
         apiKey = ""
         selectedModel = OpenAISummarizationModel.gpt41Mini.rawValue
@@ -307,7 +309,7 @@ struct OpenAICompatibleSettingsView: View {
             AppLog.shared.general("OpenAICompatibleSettingsView: Initialized enableOpenAICompatible to \(isSelectedEngine)")
         }
     }
-    
+
     // MARK: - Private Methods
 
     private func loadAvailableModels() {
@@ -377,11 +379,11 @@ struct OpenAICompatibleSettingsView: View {
                 timeout: SummarizationTimeouts.current(),
                 dynamicModelId: selectedModel
             )
-            
+
             let service = OpenAISummarizationService(config: config)
-            
+
             let success = await service.testConnection()
-            
+
             await MainActor.run {
                 connectionTestResult = success
                     ? "Connection successful! API key is valid and model is accessible."
@@ -392,7 +394,7 @@ struct OpenAICompatibleSettingsView: View {
             }
         }
     }
-    
+
     private func resetToDefaults() {
         apiKey = ""
         selectedModel = "gpt-4o"
@@ -408,7 +410,7 @@ struct OpenAICompatibleSettingsView: View {
         manualFormatOverride = false
         manualFormat = "string"
     }
-    
+
     var body: some View {
         NavigationStack {
             Form {
@@ -421,6 +423,8 @@ struct OpenAICompatibleSettingsView: View {
                 connectionTestSection
                 featuresSection
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("OpenAI Compatible")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -638,7 +642,7 @@ struct OpenAICompatibleSettingsView: View {
         }
 
     }
-    
+
     private var apiConfigurationSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
@@ -675,7 +679,7 @@ struct OpenAICompatibleSettingsView: View {
         }
 
     }
-    
+
     private var modelSelectionSection: some View {
         Section {
             Toggle("Fetch Available Models", isOn: $useDynamicModels)
@@ -795,7 +799,7 @@ struct OpenAICompatibleSettingsView: View {
         }
         .padding(.vertical, 4)
     }
-    
+
     private var generationParametersSection: some View {
         Section {
             temperatureControl
@@ -806,7 +810,7 @@ struct OpenAICompatibleSettingsView: View {
             Text("Fine-tune the AI's behavior. Lower temperature for consistent results, higher for more creative summaries.")
         }
     }
-    
+
     private var temperatureControl: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -815,15 +819,15 @@ struct OpenAICompatibleSettingsView: View {
                 Text(String(format: "%.1f", temperature))
                     .foregroundColor(.secondary)
             }
-            
+
             Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
-            
+
             Text("Controls randomness: 0.0 = focused and deterministic, 1.0 = creative and varied")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
     }
-    
+
     private var maxTokensControl: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -947,7 +951,7 @@ struct OpenAICompatibleSettingsView: View {
             Text("Test your API connection. A successful test means the provider is reachable, but individual model performance may vary. If your model produces poor results, try a different model or adjust generation parameters.")
         }
     }
-    
+
     private var connectionTestButton: some View {
         Button(action: testConnection) {
             HStack {
@@ -963,7 +967,7 @@ struct OpenAICompatibleSettingsView: View {
         }
         .disabled(apiKey.isEmpty || isTestingConnection)
     }
-    
+
     @ViewBuilder
     private var connectionTestResultView: some View {
         if showingConnectionResult {
@@ -1004,7 +1008,7 @@ struct OpenAICompatibleSettingsView: View {
             }
         }
     }
-    
+
     private var featuresSection: some View {
         Section {
             FeatureRow(
@@ -1012,31 +1016,31 @@ struct OpenAICompatibleSettingsView: View {
                 title: "Advanced AI Analysis",
                 description: "Comprehensive summaries with task and reminder extraction"
             )
-            
+
             FeatureRow(
                 icon: "list.bullet.clipboard",
                 title: "Smart Task Detection",
                 description: "Automatically identifies actionable items with priorities"
             )
-            
+
             FeatureRow(
                 icon: "bell.badge",
                 title: "Reminder Extraction",
                 description: "Finds time-sensitive items and deadlines"
             )
-            
+
             FeatureRow(
                 icon: "doc.text.magnifyingglass",
                 title: "Content Classification",
                 description: "Automatically categorizes content type for better analysis"
             )
-            
+
             FeatureRow(
                 icon: "textformat.size",
                 title: "Chunked Processing",
                 description: "Handles large transcripts by intelligent text splitting"
             )
-            
+
             FeatureRow(
                 icon: "dollarsign.circle",
                 title: "Usage-Based Pricing",
@@ -1060,7 +1064,7 @@ struct OpenAICompatibleSettingsView: View {
                 .font(.caption)
         }
     }
-    
+
 }
 
 struct OpenAICompatibleSettingsView_Previews: PreviewProvider {

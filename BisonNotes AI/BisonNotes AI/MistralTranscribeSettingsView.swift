@@ -31,6 +31,8 @@ struct MistralTranscribeSettingsView: View {
                 connectionTestSection
                 featuresSection
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Mistral Transcription")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

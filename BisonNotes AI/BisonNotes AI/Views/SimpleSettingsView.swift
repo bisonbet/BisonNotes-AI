@@ -42,6 +42,32 @@ enum ProcessingOption: String, CaseIterable {
             return "Configure additional providers later"
         }
     }
+
+    var iconName: String {
+        switch self {
+        case .openai:
+            return "sparkles"
+        case .mistralAI:
+            return "cloud.fill"
+        case .onDeviceLLM:
+            return "lock.shield.fill"
+        case .chooseLater:
+            return "slider.horizontal.3"
+        }
+    }
+
+    var tintColor: Color {
+        switch self {
+        case .openai:
+            return .purple
+        case .mistralAI:
+            return .orange
+        case .onDeviceLLM:
+            return .green
+        case .chooseLater:
+            return .blue
+        }
+    }
 }
 
 struct SimpleSettingsView: View {
@@ -64,7 +90,7 @@ struct SimpleSettingsView: View {
     var body: some View {
         AdaptiveNavigationWrapper {
             ScrollView {
-                VStack(alignment: .leading, spacing: 32) {
+                VStack(alignment: .leading, spacing: 24) {
                     headerSection
                     processingOptionSection
                     if selectedOption == .mistralAI {
@@ -75,17 +101,21 @@ struct SimpleSettingsView: View {
                         chooseLaterSection
                     }
                     saveSection
-                    
+
                     if !isFirstLaunch {
                         actionButtonSection
                     }
-                    
+
                     Spacer(minLength: 40)
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 96)
                 .frame(maxWidth: 700)
                 .frame(maxWidth: .infinity)
             }
+            .scrollIndicators(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationBarHidden(true)
         }
         .onAppear {
@@ -180,266 +210,143 @@ struct SimpleSettingsView: View {
             })
         }
     }
-    
+
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("BisonNotes AI Setup")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                Button("Additional Settings") {
-                    showingAdvancedSettings = true
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "waveform.and.mic")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 48, height: 48)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.accentColor.gradient)
+                    )
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("BisonNotes AI")
+                        .font(.largeTitle.weight(.bold))
+                        .foregroundColor(.primary)
+
+                    Text("Choose how recordings become transcripts, summaries, tasks, and reminders.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.caption)
-                .foregroundColor(.blue)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.blue.opacity(0.1))
-                )
+
+                Spacer(minLength: 0)
             }
-            .padding(.top, 20)
-            
-            Text("Choose your preferred transcription method and get started.")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+
+            Button(action: {
+                showingAdvancedSettings = true
+            }) {
+                Label("Additional Settings", systemImage: "gearshape")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
         }
     }
-    
+
     private var processingOptionSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Processing Method")
-                .font(.headline)
-                .foregroundColor(.primary)
-            
+        SetupCard(spacing: 18) {
+            sectionTitle("Processing Method", subtitle: "Pick the default path for new audio notes.")
+
             VStack(spacing: 12) {
                 ForEach(ProcessingOption.allCases.filter { option in
                     // Show Mistral AI (free cloud), On-Device (if supported), and Advanced
                     // OpenAI is available under Advanced & Other Options
                     option == .mistralAI || option == .chooseLater || (option == .onDeviceLLM && deviceSupported)
                 }, id: \.self) { option in
-                    Button(action: {
+                    ProcessingOptionRow(
+                        option: option,
+                        isSelected: selectedOption == option
+                    ) {
                         selectedOption = option
-                    }) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(option.displayName)
-                                    .font(.body)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.primary)
-                                
-                                Text(option.description)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            Image(systemName: selectedOption == option ? "checkmark.circle.fill" : "circle")
-                                .foregroundColor(selectedOption == option ? .blue : .gray)
-                        }
-                        .padding()
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(selectedOption == option ? Color.blue.opacity(0.1) : Color(.systemGray6))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(selectedOption == option ? Color.blue : Color.clear, lineWidth: 1)
-                        )
                     }
-                    .buttonStyle(PlainButtonStyle())
                 }
             }
-            
+
             if !deviceSupported {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Image(systemName: "info.circle.fill")
-                            .foregroundColor(.blue)
-                        Text("Device Compatibility")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.blue)
-                    }
-                    
+                InlineNotice(
+                    title: "Device Compatibility",
+                    systemImage: "info.circle.fill",
+                    tint: .blue
+                ) {
                     Text("On-Device AI requires 6GB+ RAM. Your device has \(String(format: "%.1f", DeviceCapabilities.totalRAMInGB))GB RAM.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.blue.opacity(0.05))
-                )
             }
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.blue, lineWidth: 1)
-                )
-        )
     }
-    
+
     private var onDeviceAIInfoSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("On-Device AI Setup")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                
-                Text("Private, on-device AI processing. No data leaves your device.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Setup Process:")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.blue)
-                
-                VStack(alignment: .leading, spacing: 6) {
+        SetupCard {
+            SectionHeader(
+                title: "On-Device AI Setup",
+                subtitle: "Private processing for users who want recordings and summaries to stay local.",
+                systemImage: "lock.shield.fill",
+                tint: .green
+            )
+
+            DetailGroup(title: "Setup Process", tint: .blue) {
+                VStack(alignment: .leading, spacing: 8) {
                     FeatureBullet(text: "Step 1: Download transcription model (150-520MB)")
                     FeatureBullet(text: "Step 2: Download AI summary model (2-3GB)")
                     FeatureBullet(text: "Total storage needed: ~3.5GB")
                 }
             }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.blue.opacity(0.05))
-            )
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Important Notes:")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.orange)
-                
-                VStack(alignment: .leading, spacing: 6) {
+
+            DetailGroup(title: "Important Notes", tint: .orange) {
+                VStack(alignment: .leading, spacing: 8) {
                     LimitationBullet(text: "Best for recordings under 60 minutes")
                     LimitationBullet(text: "May be less accurate than cloud services")
                 }
             }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.orange.opacity(0.05))
-            )
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.green, lineWidth: 1)
-                )
-        )
     }
 
     private var mistralAIInfoSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Mistral AI Setup")
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    Spacer()
-                    Text("Free")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.orange)
-                        .clipShape(Capsule())
-                }
+        SetupCard {
+            SectionHeader(
+                title: "Mistral AI Setup",
+                subtitle: "Free cloud AI with transcription and summaries. No credit card required -- just create an account.",
+                systemImage: "cloud.fill",
+                tint: .orange,
+                badge: "Free"
+            )
 
-                Text("Free cloud AI with transcription and summaries. No credit card required -- just create an account.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("What you'll get:")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.orange)
-
-                VStack(alignment: .leading, spacing: 6) {
+            DetailGroup(title: "What You'll Get", tint: .orange) {
+                VStack(alignment: .leading, spacing: 8) {
                     FeatureBullet(text: "Audio transcription with Voxtral Mini")
                     FeatureBullet(text: "AI summaries with Mistral Medium")
                     FeatureBullet(text: "Speaker diarization support")
                     FeatureBullet(text: "All models included on free tier")
                 }
             }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.orange.opacity(0.05))
-            )
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Setup Process:")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-
-                VStack(alignment: .leading, spacing: 6) {
+            DetailGroup(title: "Setup Process", tint: .blue) {
+                VStack(alignment: .leading, spacing: 8) {
                     FeatureBullet(text: "Step 1: Create free Mistral account (~1 min)")
                     FeatureBullet(text: "Step 2: Generate an API key (~30 sec)")
                     FeatureBullet(text: "Step 3: Paste key into app")
                 }
             }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.blue.opacity(0.05))
-            )
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.orange, lineWidth: 1)
-                )
-        )
     }
 
     private var chooseLaterSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Advanced & Other Options")
-                    .font(.headline)
-                    .foregroundColor(.primary)
+        SetupCard {
+            SectionHeader(
+                title: "Advanced & Other Options",
+                subtitle: "Configure providers manually from app settings. Existing provider configuration is preserved.",
+                systemImage: "slider.horizontal.3",
+                tint: .blue
+            )
 
-                Text("Configure processing providers manually from the app settings. If you already have an AI provider set up, your existing configuration is preserved.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Available Options:")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-
+            DetailGroup(title: "Available Options", tint: .blue) {
                 VStack(alignment: .leading, spacing: 8) {
                     FeatureBullet(text: "OpenAI - GPT-4.1 Mini transcription and summaries")
                     FeatureBullet(text: "OpenAI Compatible - Use LiteLLM, vLLM, or similar proxies")
@@ -448,48 +355,25 @@ struct SimpleSettingsView: View {
                     FeatureBullet(text: "Mistral AI - Free and paid cloud AI processing")
                 }
             }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.blue.opacity(0.05))
-            )
 
             Button(action: {
                 showingHelpDocumentation = true
             }) {
-                HStack {
-                    Image(systemName: "safari")
+                Label {
                     Text("Learn More About Processing Options")
-                        .fontWeight(.medium)
+                } icon: {
+                    Image(systemName: "safari")
                 }
-                .foregroundColor(.blue)
-                .padding()
                 .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.blue.opacity(0.1))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.blue, lineWidth: 1)
-                        )
-                )
             }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.blue, lineWidth: 1)
-                )
-        )
     }
 
     // OpenAI setup has been moved to Advanced & Other Options.
     // Existing OpenAI users keep their configuration; they see "Advanced" selected on this page.
-    
+
     private var saveSection: some View {
         VStack(spacing: 16) {
             Button(action: saveConfiguration) {
@@ -505,11 +389,9 @@ struct SimpleSettingsView: View {
                         .fontWeight(.medium)
                 }
                 .frame(maxWidth: .infinity)
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(isSaving ? Color.gray : Color.blue)
-                )
+                .frame(height: 54)
+                .background(isSaving ? Color.gray : Color.accentColor)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
                 .foregroundColor(.white)
             }
             .disabled(isSaving)
@@ -519,44 +401,36 @@ struct SimpleSettingsView: View {
                 // Reset save result when switching options
                 showingSaveResult = false
             }
-            
+
             if showingSaveResult {
                 HStack {
                     Image(systemName: saveSuccessful ? "checkmark.circle.fill" : "xmark.circle.fill")
                         .foregroundColor(saveSuccessful ? .green : .red)
-                    
+
                     Text(saveMessage)
                         .font(.caption)
-                        .foregroundColor(saveSuccessful ? .green : .red)
+                        .foregroundColor(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill((saveSuccessful ? Color.green : Color.red).opacity(0.1))
-                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background((saveSuccessful ? Color.green : Color.red).opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
-            
+
         }
     }
-    
+
     private var actionButtonSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("🎯 Action Button Setup")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                
-                Text("Set up your iPhone's Action Button to quickly start recording with BisonNotes AI.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("How to Configure:")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-                
+        SetupCard {
+            SectionHeader(
+                title: "Action Button Setup",
+                subtitle: "Start recording quickly from supported iPhone models.",
+                systemImage: "button.programmable",
+                tint: .purple
+            )
+
+            DetailGroup(title: "How to Configure", tint: .purple) {
                 VStack(alignment: .leading, spacing: 8) {
                     FeatureBullet(text: "1. Open Settings app on your iPhone")
                     FeatureBullet(text: "2. Go to Action Button")
@@ -565,34 +439,30 @@ struct SimpleSettingsView: View {
                     FeatureBullet(text: "5. Press Action Button to launch app and start recording!")
                 }
             }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.blue.opacity(0.05))
-            )
-            
-            Text("✨ Works on iPhone models that include an Action Button.")
+
+            Text("Works on iPhone models that include an Action Button.")
                 .font(.caption)
                 .foregroundColor(.secondary)
-                .padding(.horizontal)
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.blue, lineWidth: 1)
-                )
-        )
     }
-    
+
+    private func sectionTitle(_ title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.headline)
+                .foregroundColor(.primary)
+
+            Text(subtitle)
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
     private func loadCurrentSettings() {
         // Determine which option should be selected based on current configuration
         let transcriptionEngine = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? "Not Configured"
         let aiEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "Not Configured"
-        
+
         // Check if Mistral AI is selected
         if aiEngine == "Mistral AI" {
             selectedOption = .mistralAI
@@ -614,7 +484,7 @@ struct SimpleSettingsView: View {
             selectedOption = .chooseLater
         }
     }
-    
+
     private func saveConfiguration() {
         // For Mistral, launch the onboarding wizard only if no API key exists yet
         if selectedOption == .mistralAI {
@@ -641,7 +511,7 @@ struct SimpleSettingsView: View {
                     // Only set to "Not Configured" if this is truly a first-time setup
                     let currentTranscription = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine")
                     let currentAI = UserDefaults.standard.string(forKey: "SelectedAIEngine")
-                    
+
                     // Only set to "Not Configured" if nothing is currently configured
                     if currentTranscription == nil || currentTranscription == "Not Configured" {
                         UserDefaults.standard.set("Not Configured", forKey: "selectedTranscriptionEngine")
@@ -657,10 +527,10 @@ struct SimpleSettingsView: View {
                         showingSaveResult = true
                         isSaving = false
                     }
-                    
+
                     // Mark first setup as complete
                     UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
-                    
+
                     // Immediately open the advanced settings page
                     try await Task.sleep(nanoseconds: 500_000_000) // Brief delay to show message
                     await MainActor.run {
@@ -677,7 +547,7 @@ struct SimpleSettingsView: View {
                     // Set transcription engine to FluidAudio (On Device) for transcription
                     UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")
                     UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
-                    
+
                     // Honor any local AI engine the user has already chosen (MLX,
                     // legacy On-Device LLM, or Apple Intelligence) along with its
                     // selected model. Only fall back to MLX + 4B if none is set.
@@ -700,21 +570,21 @@ struct SimpleSettingsView: View {
                         UserDefaults.standard.set(MLXSwiftSettingsKeys.defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
                     }
                 }
-                
+
                 await MainActor.run {
                     saveMessage = "Configuration saved successfully! Ready to start recording."
                     saveSuccessful = true
                     showingSaveResult = true
                     isSaving = false
                 }
-                
+
                 // Mark first setup as complete
                 UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
-                
+
                 // If On-Device AI was selected, show download confirmation dialog
                 if selectedOption == .onDeviceLLM {
                     try await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second to show success message
-                    
+
                     // Check if models are already downloaded
                     let fluidAudioReady = FluidAudioManager.shared.isModelReady
                     MLXSwiftDownloadManager.shared.refreshModelStatus()
@@ -751,7 +621,7 @@ struct SimpleSettingsView: View {
                         }
                     }
                 }
-                
+
             } catch {
                 await MainActor.run {
                     saveMessage = "Configuration saved, but API key test failed: \(error.localizedDescription)"
@@ -764,35 +634,184 @@ struct SimpleSettingsView: View {
     }
 }
 
+private struct SetupCard<Content: View>: View {
+    let spacing: CGFloat
+    @ViewBuilder let content: Content
+
+    init(spacing: CGFloat = 16, @ViewBuilder content: () -> Content) {
+        self.spacing = spacing
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            content
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+private struct ProcessingOptionRow: View {
+    let option: ProcessingOption
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: option.iconName)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(option.tintColor)
+                    .frame(width: 34, height: 34)
+                    .background(option.tintColor.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(option.displayName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.primary)
+
+                    Text(option.description)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundColor(isSelected ? option.tintColor : .secondary)
+            }
+            .padding(14)
+            .background(isSelected ? option.tintColor.opacity(0.12) : Color(.tertiarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(isSelected ? option.tintColor.opacity(0.55) : Color.clear, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct SectionHeader: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let tint: Color
+    var badge: String?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 36, height: 36)
+                .background(tint.opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 11))
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+
+                    if let badge {
+                        Text(badge)
+                            .font(.caption2.weight(.bold))
+                            .foregroundColor(tint)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(tint.opacity(0.14))
+                            .clipShape(Capsule())
+                    }
+                }
+
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct DetailGroup<Content: View>: View {
+    let title: String
+    let tint: Color
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(tint)
+
+            content
+        }
+        .padding(.top, 4)
+    }
+}
+
+private struct InlineNotice<Content: View>: View {
+    let title: String
+    let systemImage: String
+    let tint: Color
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .foregroundColor(tint)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(tint)
+
+                content
+            }
+        }
+        .padding(12)
+        .background(tint.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
 struct FeatureBullet: View {
     let text: String
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.caption)
                 .foregroundColor(.blue)
                 .padding(.top, 2)
-            
+
             Text(text)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
-    
+
 }
 
 struct LimitationBullet: View {
     let text: String
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundColor(.orange)
                 .padding(.top, 2)
-            
+
             Text(text)
                 .font(.caption)
                 .foregroundColor(.secondary)

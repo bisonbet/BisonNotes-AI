@@ -31,108 +31,120 @@ struct AudioPlayerView: View {
     @State private var transcriptStateRefresh = false
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 0) {
             HStack {
-                Spacer()
-                Button(action: prepareAudioExport) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.title3)
-                        .foregroundColor(.accentColor)
-                }
-                .padding(.trailing)
-            }
-
-            Text("Audio Player")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-                .foregroundColor(.primary)
-
-            RecordingTitleEditorView(
-                title: $editableTitle,
-                savedTitle: currentSavedTitle,
-                isSaving: isUpdatingTitle,
-                onSave: updateRecordingTitle
-            )
-            .frame(maxWidth: .infinity)
-
-            Text("Date: \(recording.dateString)")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-
-            transcriptActionRow
-
-            Spacer()
-            
-            // Audio scrubber with progress and seek functionality
-            if duration > 0 {
-                AudioScrubber(
-                    currentTime: recorderVM.playingTime,
-                    duration: duration,
-                    onSeek: { time in
-                        recorderVM.seekToTime(time)
-                    }
-                )
-                .padding(.horizontal)
-                // Remove debug logging - scrubber working properly now
-            } else {
-                // Loading state
-                VStack {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle())
-                    Text("Loading audio...")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Audio Player")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                    Text(recording.dateString)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-                .frame(height: 50)
-            }
-            
-            // Playback controls
-            HStack(spacing: 30) {
-                // Skip backward 15 seconds
-                Button(action: skipBackward) {
-                    VStack {
-                        Image(systemName: "gobackward.15")
-                            .font(.title2)
-                        Text("15s")
-                            .font(.caption2)
-                    }
-                }
-                .foregroundColor(.accentColor)
-                
-                // Main play/pause button
-                Button(action: togglePlayback) {
-                    Image(systemName: recorderVM.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 60))
+
+                Spacer()
+
+                Button(action: prepareAudioExport) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.headline)
                         .foregroundColor(.accentColor)
+                        .frame(width: 38, height: 38)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
-                
-                // Skip forward 15 seconds
-                Button(action: skipForward) {
-                    VStack {
-                        Image(systemName: "goforward.15")
-                            .font(.title2)
-                        Text("15s")
-                            .font(.caption2)
+                .accessibilityLabel("Export Audio")
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
+
+            ScrollView {
+                VStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        RecordingTitleEditorView(
+                            title: $editableTitle,
+                            savedTitle: currentSavedTitle,
+                            isSaving: isUpdatingTitle,
+                            onSave: updateRecordingTitle
+                        )
+                        .frame(maxWidth: .infinity)
+
+                        transcriptActionRow
                     }
+                    .padding(16)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                    VStack(spacing: 18) {
+                        if duration > 0 {
+                            AudioScrubber(
+                                currentTime: recorderVM.playingTime,
+                                duration: duration,
+                                onSeek: { time in
+                                    recorderVM.seekToTime(time)
+                                }
+                            )
+                        } else {
+                            VStack(spacing: 10) {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle())
+                                Text("Loading audio...")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(height: 70)
+                        }
+
+                        HStack(spacing: 30) {
+                            Button(action: skipBackward) {
+                                VStack(spacing: 4) {
+                                    Image(systemName: "gobackward.15")
+                                        .font(.title2)
+                                    Text("15s")
+                                        .font(.caption2)
+                                }
+                                .frame(width: 56, height: 56)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(.accentColor)
+
+                            Button(action: togglePlayback) {
+                                Image(systemName: recorderVM.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                    .font(.system(size: 64))
+                                    .foregroundColor(.accentColor)
+                            }
+                            .buttonStyle(.plain)
+
+                            Button(action: skipForward) {
+                                VStack(spacing: 4) {
+                                    Image(systemName: "goforward.15")
+                                        .font(.title2)
+                                    Text("15s")
+                                        .font(.caption2)
+                                }
+                                .frame(width: 56, height: 56)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(.accentColor)
+                        }
+                    }
+                    .padding(18)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                    Button("Close") {
+                        if recorderVM.isPlaying {
+                            recorderVM.stopPlaying()
+                        }
+                        dismiss()
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 4)
                 }
-                .foregroundColor(.accentColor)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
             }
-            .padding()
-            
-            Spacer()
-            
-            Button("Close") {
-                if recorderVM.isPlaying {
-                    recorderVM.stopPlaying()
-                }
-                dismiss()
-            }
-            .font(.headline)
-            .padding()
         }
-        .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
+        .background(Color(.systemGroupedBackground))
         .sheet(isPresented: $showingShareSheet, onDismiss: {
             audioExportURL = nil
             RecordingArchiveService.shared.cleanupAudioExportStaging()
@@ -210,7 +222,7 @@ struct AudioPlayerView: View {
             }
         }
     }
-    
+
     /// "Generate Transcript" action shown in the player. Disappears once a transcript exists —
     /// users edit transcripts from the Transcripts tab. Resolves the RecordingEntry on demand
     /// so state reflects the latest Core Data state (post-transcription, post-rename).
@@ -241,11 +253,14 @@ struct AudioPlayerView: View {
                     }
                 }
                 .font(.subheadline)
+                .fontWeight(.medium)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(isProcessing ? Color.orange : Color.accentColor)
-                .foregroundColor(.white)
-                .cornerRadius(10)
+                .background(
+                    (isProcessing ? Color.orange : Color.accentColor).opacity(0.12),
+                    in: Capsule()
+                )
+                .foregroundColor(isProcessing ? .orange : .accentColor)
             }
             .buttonStyle(.plain)
             .disabled(isProcessing)
@@ -267,7 +282,7 @@ struct AudioPlayerView: View {
             duration = recording.duration
         }
     }
-    
+
     private func togglePlayback() {
         AppLog.shared.recording("Toggle playback - currently playing: \(recorderVM.isPlaying)", level: .debug)
         if recorderVM.isPlaying {
@@ -276,13 +291,13 @@ struct AudioPlayerView: View {
             recorderVM.playRecording(url: recording.url)
         }
     }
-    
+
     private func skipBackward() {
         let currentTime = recorderVM.getCurrentTime()
         let newTime = max(currentTime - 15.0, 0)
         recorderVM.seekToTime(newTime)
     }
-    
+
     private func skipForward() {
         let currentTime = recorderVM.getCurrentTime()
         let newTime = min(currentTime + 15.0, duration)
@@ -303,7 +318,7 @@ struct AudioPlayerView: View {
         audioExportURL = stagedURL
         showingShareSheet = true
     }
-    
+
     private func formatTime(_ time: TimeInterval) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
@@ -364,11 +379,16 @@ struct RecordingTitleEditorView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Recording Title")
                 .font(.caption)
+                .fontWeight(.semibold)
                 .foregroundColor(.secondary)
+                .textCase(.uppercase)
 
             HStack(spacing: 8) {
                 TextField("Enter title", text: $title)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .disabled(isSaving)
                     .onSubmit { onSave() }
 
@@ -377,11 +397,12 @@ struct RecordingTitleEditorView: View {
                         ProgressView()
                             .scaleEffect(0.8)
                     } else {
-                        Text("Save")
+                        Image(systemName: "checkmark")
                             .fontWeight(.semibold)
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
                 .disabled(
                     isSaving ||
                     title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||

@@ -196,6 +196,8 @@ struct MistralAISettingsView: View {
                     .disabled(apiKey.isEmpty || isTestingConnection)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Mistral AI")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

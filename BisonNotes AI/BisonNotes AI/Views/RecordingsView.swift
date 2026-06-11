@@ -76,22 +76,20 @@ struct RecordingsView: View {
     @ViewBuilder
     private var startRecordingButton: some View {
         Button(action: { recorderVM.startRecording() }) {
-            HStack {
-                Image(systemName: "mic.circle.fill").font(.title)
+            HStack(spacing: 12) {
+                Image(systemName: "mic.fill")
+                    .font(.title3.weight(.semibold))
                 Text("Start Recording")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+                    .font(.headline)
+                    .fontWeight(.bold)
             }
             .foregroundColor(.white)
-            .padding()
+            .frame(height: 56)
             .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.accentColor)
-                    .shadow(color: .accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
-            )
-            .padding(.horizontal, 40)
+            .background(Color.accentColor)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
         }
+        .buttonStyle(.plain)
     }
 
     private func recordingActionButton(
@@ -101,214 +99,141 @@ struct RecordingsView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack {
-                Image(systemName: systemImage).font(.title)
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.title3)
                 Text(title)
-                    .font(.title2)
+                    .font(.headline)
                     .fontWeight(.semibold)
             }
             .foregroundColor(.white)
-            .padding()
+            .frame(height: 50)
             .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(tint)
-                    .shadow(color: tint.opacity(0.3), radius: 8, x: 0, y: 4)
-            )
+            .background(tint)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
         }
+        .buttonStyle(.plain)
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                // Help documentation link at the top
-                HStack {
-                    Spacer()
-                    Button(action: {
-                        showingHelpDocumentation = true
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "questionmark.circle")
-                            Text("Help")
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Record")
+                                .font(.largeTitle.weight(.bold))
+                                .foregroundColor(.primary)
+
+                            Text("Capture audio, import files, and pick up previous recordings.")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
                         }
-                        .font(.subheadline)
-                        .foregroundColor(.accentColor)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.accentColor.opacity(0.1))
-                        )
+
+                        Spacer()
+
+                        Button(action: {
+                            showingHelpDocumentation = true
+                        }) {
+                            Image(systemName: "questionmark.circle")
+                                .font(.title3)
+                                .frame(width: 40, height: 40)
+                                .background(Color(.secondarySystemGroupedBackground))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Help")
                     }
-                    .padding(.trailing)
-                    .padding(.top, 8)
-                }
-                
-                Spacer()
-                
-                VStack(spacing: 40) {
-                    VStack(spacing: 20) {
+
+                    VStack(spacing: 18) {
                         Image("AppLogo")
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(maxHeight: min(geometry.size.height * 0.25, 200))
-                            .frame(maxWidth: .infinity)
-                            .shadow(color: Color(red: 0.102, green: 0.541, blue: 0.490).opacity(0.4), radius: 12, x: 0, y: 4)
-                        
-                        Text("BisonNotes AI")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                            .foregroundColor(.primary)
+                            .frame(width: 116, height: 116)
+
+                        VStack(spacing: 6) {
+                            Text("BisonNotes AI")
+                                .font(.title.weight(.bold))
+                                .foregroundColor(.primary)
+
+                            Text("Ready when you are.")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
                     }
                     .frame(maxWidth: .infinity)
-                    
-                    VStack(spacing: 16) {
+                    .padding(.vertical, 18)
+
+                    VStack(spacing: 14) {
                         if recorderVM.isRecording {
                             recordingTimerView
                             recordingControls
                         } else {
                             startRecordingButton
                         }
-                        
-                        Button(action: {
-                            showingRecordingsList = true
-                        }) {
-                            HStack {
-                                Image(systemName: "list.bullet")
-                                    .font(.title3)
-                                Text("View Recordings")
-                                    .font(.title3)
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.accentColor)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .stroke(Color.accentColor, lineWidth: 2)
-                                    .background(Color.accentColor.opacity(0.1))
-                            )
-                            .padding(.horizontal, 40)
-                        }
-                        
-                        Button(action: {
-                            // Directly trigger document picker for audio files
-                            documentPickerCoordinator.selectAudioFiles { urls in
-                                if !urls.isEmpty {
-                                    Task {
-                                        await importManager.importAudioFiles(from: urls)
-                                    }
-                                }
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: "plus.circle")
-                                    .font(.title3)
-                                Text("Import Audio Files")
-                                    .font(.title3)
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.green)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .stroke(Color.green, lineWidth: 2)
-                                    .background(Color.green.opacity(0.1))
-                            )
-                            .padding(.horizontal, 40)
-                        }
 
-                        // Video import button hidden — feature not yet ready for users
-                        // videoPickerCoordinator.selectVideoFiles { ... }
-
-                        Button(action: {
-                            // Trigger document picker for text files
-                            textDocumentPickerCoordinator.selectTextFiles { urls in
-                                if !urls.isEmpty {
-                                    Task {
-                                        await transcriptImportManager.importTranscriptFiles(from: urls)
-                                    }
-                                }
+                        VStack(spacing: 10) {
+                            homeActionButton(
+                                title: "View Recordings",
+                                subtitle: "Browse saved audio",
+                                systemImage: "list.bullet",
+                                tint: .accentColor
+                            ) {
+                                showingRecordingsList = true
                             }
-                        }) {
-                            HStack {
-                                Image(systemName: "doc.text")
-                                    .font(.title3)
-                                Text("Import Transcripts")
-                                    .font(.title3)
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.purple)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .stroke(Color.purple, lineWidth: 2)
-                                    .background(Color.purple.opacity(0.1))
-                            )
-                            .padding(.horizontal, 40)
-                        }
-                        
-                        if recorderVM.isRecording {
-                            VStack(spacing: 12) {
-                                // Phase 5: State-aware status indicator
-                                HStack(spacing: 8) {
-                                    statusIndicator(for: recorderVM.recordingState)
-                                    Text(statusText(for: recorderVM.recordingState))
-                                        .foregroundColor(.secondary)
-                                        .font(.subheadline)
-                                }
 
-                                // Phase 5: Warning banners
-                                warningBannersView()
-
-                                // Background recording indicator
-                                if recorderVM.isRecording {
-                                    HStack {
-                                        Image(systemName: "arrow.up.circle.fill")
-                                            .foregroundColor(.green)
-                                            .font(.caption)
-                                        Text("Background recording enabled")
-                                            .font(.caption)
-                                            .foregroundColor(.green)
-                                    }
-                                }
-
-                                // Live transcript display
-                                if !recorderVM.liveTranscriptText.isEmpty {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "waveform")
-                                                .font(.caption)
-                                                .foregroundColor(.accentColor)
-                                            Text("Live Transcript")
-                                                .font(.caption)
-                                                .fontWeight(.semibold)
-                                                .foregroundColor(.accentColor)
+                            homeActionButton(
+                                title: "Import Audio Files",
+                                subtitle: "Add audio from Files",
+                                systemImage: "plus.circle",
+                                tint: .green
+                            ) {
+                                // Directly trigger document picker for audio files
+                                documentPickerCoordinator.selectAudioFiles { urls in
+                                    if !urls.isEmpty {
+                                        Task {
+                                            await importManager.importAudioFiles(from: urls)
                                         }
-                                        Text(recorderVM.liveTranscriptText)
-                                            .font(.caption)
-                                            .foregroundColor(.primary)
-                                            .multilineTextAlignment(.leading)
-                                            .lineLimit(4)
                                     }
-                                    .padding(10)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(Color(.systemGray6))
-                                    .cornerRadius(10)
-                                    .padding(.horizontal, 40)
                                 }
                             }
+
+                            // Video import button hidden — feature not yet ready for users
+                            // videoPickerCoordinator.selectVideoFiles { ... }
+
+                            homeActionButton(
+                                title: "Import Transcripts",
+                                subtitle: "Add text files",
+                                systemImage: "doc.text",
+                                tint: .purple
+                            ) {
+                                // Trigger document picker for text files
+                                textDocumentPickerCoordinator.selectTextFiles { urls in
+                                    if !urls.isEmpty {
+                                        Task {
+                                            await transcriptImportManager.importTranscriptFiles(from: urls)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if recorderVM.isRecording {
+                            recordingStatusPanel
                         }
                     }
-                    
-                    Spacer()
+                    .padding(18)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 22))
                 }
-                .frame(maxWidth: 600)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(.systemBackground))
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 32)
+                .frame(maxWidth: 620)
+                .frame(maxWidth: .infinity)
             }
+            .scrollIndicators(.hidden)
+            .background(Color(.systemGroupedBackground))
             .sheet(isPresented: $showingRecordingsList) {
                 RecordingsListView()
                     .environmentObject(recorderVM)
@@ -393,6 +318,91 @@ struct RecordingsView: View {
         }
     }
 
+    private var recordingStatusPanel: some View {
+        VStack(spacing: 12) {
+            // Phase 5: State-aware status indicator
+            HStack(spacing: 8) {
+                statusIndicator(for: recorderVM.recordingState)
+                Text(statusText(for: recorderVM.recordingState))
+                    .foregroundColor(.secondary)
+                    .font(.subheadline)
+            }
+
+            // Phase 5: Warning banners
+            warningBannersView()
+
+            // Background recording indicator
+            if recorderVM.isRecording {
+                Label("Background recording enabled", systemImage: "arrow.up.circle.fill")
+                    .font(.caption)
+                    .foregroundColor(.green)
+            }
+
+            // Live transcript display
+            if !recorderVM.liveTranscriptText.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "waveform")
+                            .font(.caption)
+                            .foregroundColor(.accentColor)
+                        Text("Live Transcript")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.accentColor)
+                    }
+                    Text(recorderVM.liveTranscriptText)
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(4)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.tertiarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+        }
+    }
+
+    private func homeActionButton(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(tint)
+                    .frame(width: 38, height: 38)
+                    .background(tint.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 11))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.primary)
+
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(14)
+            .background(Color(.tertiarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 15))
+        }
+        .buttonStyle(.plain)
+    }
+
 
 
     private var backgroundProcessingIndicator: some View {
@@ -403,22 +413,22 @@ struct RecordingsView: View {
                 Image(systemName: "gear.circle.fill")
                     .font(.title3)
                     .foregroundColor(.blue)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Background Processing")
                         .font(.subheadline)
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
-                    
+
                     let activeJobs = processingManager.activeJobs.filter { $0.status == .processing }.count
                     let completedJobs = processingManager.activeJobs.filter { $0.status == .completed }.count
                     Text("\(activeJobs) active, \(completedJobs) completed")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 Spacer()
-                
+
                 Image(systemName: "chevron.right")
                     .font(.caption)
                     .foregroundColor(.secondary)

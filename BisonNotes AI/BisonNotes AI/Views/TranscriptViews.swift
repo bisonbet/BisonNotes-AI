@@ -92,7 +92,7 @@ struct TranscriptsView: View {
             isShowingAlert = newValue
         }
     }
-    
+
     private var mainContentView: some View {
         let filtered = filteredRecordings
         let filteredImported = filteredImportedTranscripts
@@ -129,7 +129,7 @@ struct TranscriptsView: View {
             DispatchQueue.main.async {
                 self.refreshTrigger.toggle()
             }
-            
+
             // Start periodic refresh timer
             refreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
                 DispatchQueue.main.async {
@@ -155,16 +155,16 @@ struct TranscriptsView: View {
             }
         }
     }
-    
+
     private var emptyStateView: some View {
         VStack(spacing: 16) {
             Image(systemName: "text.bubble")
                 .font(.system(size: 60))
-                .foregroundColor(.secondary)
+                .foregroundColor(.accentColor)
 
             Text("No Recordings Found")
                 .font(.title2)
-                .fontWeight(.medium)
+                .fontWeight(.semibold)
                 .foregroundColor(.primary)
 
             Text("Record some audio first to generate transcripts")
@@ -173,14 +173,16 @@ struct TranscriptsView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
         }
+        .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
     }
 
     private var noResultsView: some View {
         VStack(spacing: 16) {
             Image(systemName: isDateFilterActive ? "calendar.badge.exclamationmark" : "magnifyingglass")
                 .font(.system(size: 48))
-                .foregroundColor(.secondary)
+                .foregroundColor(.accentColor)
 
             Text("No Results")
                 .font(.title2)
@@ -200,7 +202,9 @@ struct TranscriptsView: View {
                 .buttonStyle(.bordered)
             }
         }
+        .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
     }
 
     private var noResultsMessage: String {
@@ -234,7 +238,7 @@ struct TranscriptsView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-        .background(Color(.systemGray6))
+        .background(Color(.secondarySystemGroupedBackground))
     }
 
     private var dateFilterSheet: some View {
@@ -351,13 +355,19 @@ struct TranscriptsView: View {
         }
         .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
         #else
-        // iOS / iPadOS: original preview list with "More" navigation to the full list page.
+        // iOS / iPadOS: preview cards with "More" navigation to the full list page.
         let recentRecordings = Array(filtered.prefix(3))
         let recentImportedTranscripts = Array(filteredImported.prefix(3))
 
-        return List {
-            if !filtered.isEmpty {
-                Section(header: Text("Audio Transcripts")) {
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                if !filtered.isEmpty {
+                    transcriptSectionHeader(
+                        title: "Audio Transcripts",
+                        count: filtered.count,
+                        systemImage: "waveform"
+                    )
+
                     ForEach(recentRecordings, id: \.recording.id) { recordingData in
                         recordingRowView(recordingData)
                     }
@@ -370,23 +380,16 @@ struct TranscriptsView: View {
                         }
                     }
                 }
-            }
 
-            if !filteredImported.isEmpty {
-                Section(header:
-                    HStack {
-                        Text("Imported Transcripts")
-                        Spacer()
-                        Text("\(filteredImported.count)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                ) {
+                if !filteredImported.isEmpty {
+                    transcriptSectionHeader(
+                        title: "Imported Transcripts",
+                        count: filteredImported.count,
+                        systemImage: "doc.text.fill"
+                    )
+
                     ForEach(recentImportedTranscripts, id: \.recording.id) { recordingData in
                         importedTranscriptRowView(recordingData)
-                    }
-                    .onDelete { indexSet in
-                        deleteImportedTranscripts(at: indexSet, in: recentImportedTranscripts)
                     }
 
                     if filteredImported.count > recentImportedTranscripts.count {
@@ -398,6 +401,15 @@ struct TranscriptsView: View {
                     }
                 }
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 96)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Color(.systemGroupedBackground))
+        .refreshable {
+            loadRecordings()
         }
         .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
         #endif
@@ -422,10 +434,16 @@ struct TranscriptsView: View {
                 Section(header: Text(sectionData.section.title)) {
                     ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
                         recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                     }
                 }
             }
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Audio Transcripts")
     }
 
@@ -448,6 +466,9 @@ struct TranscriptsView: View {
                 Section(header: Text(sectionData.section.title)) {
                     ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
                         importedTranscriptRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                     }
                     .onDelete { indexSet in
                         let itemsToDelete = indexSet.map { sectionData.items[$0] }
@@ -459,71 +480,104 @@ struct TranscriptsView: View {
                 }
             }
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Imported Transcripts")
     }
 
     private func moreRowView(remainingCount: Int) -> some View {
-        HStack {
-            Text("More")
+        HStack(spacing: 12) {
+            Image(systemName: "ellipsis.circle")
+                .font(.title3)
+                .foregroundColor(.accentColor)
+            Text("Show \(remainingCount) more")
+                .font(.subheadline.weight(.semibold))
             Spacer()
-            Text("\(remainingCount)")
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
                 .foregroundColor(.secondary)
         }
-        .foregroundColor(.accentColor)
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 15))
     }
 
     private func recordingRowView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
                 recordingInfoView(recordingData)
                 Spacer()
-                transcriptButtonView(recordingData)
-                summaryButtonView(recordingData)
+                transcriptStatusIcon(hasTranscript: recordingData.transcript != nil)
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    transcriptButtonView(recordingData)
+                    summaryButtonView(recordingData)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    transcriptButtonView(recordingData)
+                    summaryButtonView(recordingData)
+                }
             }
         }
-        .padding(.vertical, 4)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 
     private func importedTranscriptRowView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
         Button(action: {
             selectedRecording = recordingData.recording
         }) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "doc.text.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.purple)
+                        .frame(width: 38, height: 38)
+                        .background(Color.purple.opacity(0.14))
+                        .clipShape(RoundedRectangle(cornerRadius: 11))
+
                     VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "doc.text.fill")
-                                .font(.caption2)
-                                .foregroundColor(.purple)
-                            Text(recordingData.recording.recordingName ?? "Untitled Import")
-                                .font(.headline)
-                                .foregroundColor(.primary)
-                        }
+                        Text(recordingData.recording.recordingName ?? "Untitled Import")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+
                         Text(UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()))
                             .font(.caption)
                             .foregroundColor(.secondary)
+
                         if let transcript = recordingData.transcript {
                             Text("\(transcript.segments.reduce(0) { $0 + $1.text.split(separator: " ").count }) words")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
+
                     Spacer()
+
                     Image(systemName: "chevron.right")
-                        .font(.caption)
+                        .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(16)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(.plain)
     }
-    
+
     private func recordingInfoView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(recordingData.recording.recordingName ?? "Unknown Recording")
                 .font(.headline)
                 .foregroundColor(.primary)
+
             Text(UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()))
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -535,7 +589,7 @@ struct TranscriptsView: View {
             }
         }
     }
-    
+
     private func locationButtonView(_ locationData: LocationData, recordingURL: URL) -> some View {
         Button(action: {
             selectedLocationData = locationData
@@ -551,7 +605,7 @@ struct TranscriptsView: View {
         }
         .buttonStyle(PlainButtonStyle())
     }
-    
+
     private func transcriptButtonView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
         let hasTranscript = recordingData.transcript != nil
         let hasActiveJob = transcriptionStarter.hasActiveTranscriptionJob(for: recordingData.recording, appCoordinator: appCoordinator)
@@ -572,27 +626,23 @@ struct TranscriptsView: View {
                 }
             }
         }) {
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 if isProcessing && !hasTranscript {
                     ProgressView()
                         .scaleEffect(0.7)
-                        .tint(.white)
+                        .tint(.primary)
                     Text(processingButtonLabel(isCleaning: isCleaning, isQueuedForCleanup: isQueuedForCleanup, jobStatus: jobStatus))
-                        .font(.caption2)
                 } else {
                     Image(systemName: hasTranscript ? "text.bubble.fill" : "text.bubble")
                     Text(hasTranscript ? "Edit Transcript" : "Generate Transcript")
                 }
             }
-            .font(.caption)
+            .font(.caption.weight(.semibold))
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                hasTranscript ? Color.green :
-                isProcessing ? Color.orange : Color.accentColor
-            )
-            .foregroundColor(.white)
-            .cornerRadius(8)
+            .frame(height: 34)
+            .background((hasTranscript ? Color.green : isProcessing ? Color.orange : Color.accentColor).opacity(0.14))
+            .foregroundColor(hasTranscript ? .green : isProcessing ? .orange : .accentColor)
+            .clipShape(Capsule())
         }
         .disabled(isProcessing && !hasTranscript)
         .buttonStyle(.plain)
@@ -638,28 +688,57 @@ struct TranscriptsView: View {
                     generateSummary(for: recording)
                 }
             }) {
-                HStack(spacing: 6) {
+                HStack(spacing: 7) {
                     if isGenerating {
                         ProgressView()
                             .scaleEffect(0.7)
-                            .tint(.white)
+                            .tint(.purple)
                         Text("Generating…")
-                            .font(.caption2)
                     } else {
                         Image(systemName: "doc.text.magnifyingglass")
                         Text("Generate Summary")
                     }
                 }
-                .font(.caption)
+                .font(.caption.weight(.semibold))
                 .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(isGenerating ? Color.orange : Color.purple)
-                .foregroundColor(.white)
-                .cornerRadius(8)
+                .frame(height: 34)
+                .background((isGenerating ? Color.orange : Color.purple).opacity(0.14))
+                .foregroundColor(isGenerating ? .orange : .purple)
+                .clipShape(Capsule())
             }
             .buttonStyle(.plain)
             .disabled(isGenerating)
         }
+    }
+
+    private func transcriptSectionHeader(title: String, count: Int, systemImage: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.accentColor)
+                .frame(width: 26, height: 26)
+                .background(Color.accentColor.opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            Text(title)
+                .font(.headline)
+
+            Spacer()
+
+            Text("\(count)")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(Capsule())
+        }
+    }
+
+    private func transcriptStatusIcon(hasTranscript: Bool) -> some View {
+        Image(systemName: hasTranscript ? "checkmark.circle.fill" : "clock")
+            .font(.title3)
+            .foregroundColor(hasTranscript ? .green : .secondary)
     }
 
     private func generateSummary(for recording: RecordingEntry) {
@@ -865,17 +944,17 @@ struct TranscriptsView: View {
             AppLog.shared.transcription("Deleted imported transcript")
         }
     }
-    
+
     func loadLocationDataForRecording(url: URL) -> LocationData? {
         // Find the recording entry by URL
         guard let recording = appCoordinator.getRecording(url: url) else {
             return nil
         }
-        
+
         // Use the proper location loading system
         return appCoordinator.loadLocationData(for: recording)
     }
-    
+
     static func loadLocationDataForRecording(url: URL) -> LocationData? {
         // Legacy static method - try direct file access as fallback
         let locationURL = url.deletingPathExtension().appendingPathExtension("location")
@@ -885,7 +964,7 @@ struct TranscriptsView: View {
         }
         return locationData
     }
-    
+
     private func loadLocationAddressesBatch(for recordings: [RecordingEntry]) {
         // Filter recordings that have location data and don't already have cached addresses
         let recordingsNeedingGeocode = recordings.filter { recording in
@@ -893,13 +972,13 @@ struct TranscriptsView: View {
                   let _ = appCoordinator.loadLocationData(for: recording) else { return false }
             return locationAddresses[recordingURL] == nil
         }
-        
+
         // Process recordings one by one to respect rate limiting
         for recording in recordingsNeedingGeocode {
             loadLocationAddress(for: recording)
         }
     }
-    
+
     private func loadLocationAddress(for recording: RecordingEntry) {
         // Use async dispatch to avoid blocking main thread
         Task {
@@ -908,12 +987,12 @@ struct TranscriptsView: View {
                   let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
                 return
             }
-            
+
             // Skip if we already have an address for this recording
             if locationAddresses[recordingURL] != nil {
                 return
             }
-            
+
             await MainActor.run {
                 let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
                 // Use a default location manager since AudioRecorderViewModel doesn't have one
@@ -926,16 +1005,16 @@ struct TranscriptsView: View {
             }
         }
     }
-    
+
     private func forceRefreshUI() {
         DispatchQueue.main.async {
             self.refreshTrigger.toggle()
             self.loadRecordings()
         }
     }
-    
 
-    
+
+
     private func generateTranscript(for recording: RecordingEntry) {
         // Skip if this recording already has a queued or processing transcription job.
         guard !transcriptionStarter.hasActiveTranscriptionJob(for: recording, appCoordinator: appCoordinator) else { return }
@@ -948,7 +1027,7 @@ struct TranscriptsView: View {
     private func setupTranscriptionCompletionCallback() {
         // Capture the transcription manager for the notification handler
         let transcriptionManager = enhancedTranscriptionManager
-        
+
         // Set up notification listener for updating pending jobs when recordings are renamed
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("UpdatePendingTranscriptionJobs"),
@@ -961,7 +1040,7 @@ struct TranscriptsView: View {
                   let newName = userInfo["newName"] as? String else {
                 return
             }
-            
+
             Task { @MainActor in
                 transcriptionManager.updatePendingJobsForRenamedRecording(
                     from: oldURL,
@@ -970,7 +1049,7 @@ struct TranscriptsView: View {
                 )
             }
         }
-        
+
         // Set up completion handler for BackgroundProcessingManager
         backgroundProcessingManager.onTranscriptionCompleted = { transcriptData, job in
             Task { @MainActor in
@@ -984,15 +1063,15 @@ struct TranscriptsView: View {
                     return recordingURL == job.recordingURL
                 }) {
                     AppLog.shared.transcription("Background transcript already saved by BackgroundProcessingManager", level: .debug)
-                    
+
                     // Don't automatically open the transcript view - let user choose when to edit
-                    
+
                     // Force UI refresh to update button states
                     self.forceRefreshUI()
-                    
+
                     // Send notification for other views to refresh
                     NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
-                    
+
                     // Show completion alert to notify user transcription finished in background
                     if !self.isShowingAlert {
                         self.completedTranscriptionText = "Transcription completed for: \(recording.recording.recordingName ?? "Unknown Recording")"
@@ -1003,12 +1082,12 @@ struct TranscriptsView: View {
                 }
             }
         }
-        
+
         enhancedTranscriptionManager.onTranscriptionCompleted = { result, jobInfo in
             Task { @MainActor in
-                
+
                 AppLog.shared.transcription("Background transcription completed, available recordings: \(recordings.count)", level: .debug)
-                
+
                 // Find the recording that matches this transcription
                 if let recording = recordings.first(where: { recording in
                     guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording.recording) else {
@@ -1021,14 +1100,14 @@ struct TranscriptsView: View {
                         AppLog.shared.transcription("Invalid recording URL in completion handler", level: .error)
                         return
                     }
-                    
+
                     let transcriptData = TranscriptData(
                         recordingURL: recordingURL,
                         recordingName: recording.recording.recordingName ?? "Unknown Recording",
                         recordingDate: recording.recording.recordingDate ?? Date(),
                         segments: result.segments
                     )
-                    
+
                     // Save transcript using Core Data
                     let appCoordinator = appCoordinator
                     guard let recordingId = transcriptData.recordingId else {
@@ -1048,13 +1127,13 @@ struct TranscriptsView: View {
                     } else {
                         AppLog.shared.transcription("Failed to save background transcript to Core Data", level: .error)
                     }
-                    
+
                     // Force UI refresh to update button states
                     self.forceRefreshUI()
-                    
+
                     // Send notification for other views to refresh
                     NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
-                    
+
                     // Show completion alert to notify user transcription finished in background
                     if !self.isShowingAlert {
                         self.completedTranscriptionText = "Transcription completed for: \(recording.recording.recordingName ?? "Unknown Recording")"
@@ -1113,7 +1192,7 @@ struct EditableTranscriptView: View {
         self._editableRecordingName = State(initialValue: initialName)
         self._savedRecordingName = State(initialValue: initialName)
     }
-    
+
     var body: some View {
         // NavigationStack { Form } is the only sheet pattern that scrolls reliably
         // on Mac Catalyst. See feedback_mac_catalyst_scrollview.md.
@@ -1128,13 +1207,14 @@ struct EditableTranscriptView: View {
                         VStack(spacing: 16) {
                             Image(systemName: "doc.text")
                                 .font(.system(size: 48))
-                                .foregroundColor(.gray)
+                                .foregroundColor(.accentColor)
                             Text("No transcript content available")
                                 .font(.title3)
+                                .fontWeight(.semibold)
                                 .foregroundColor(.secondary)
                             Text("Transcript segments: \(editedSegments.count)")
                                 .font(.caption)
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondary)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
@@ -1191,6 +1271,8 @@ struct EditableTranscriptView: View {
                     .disabled(isRerunningTranscription)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Edit Transcript")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1467,7 +1549,7 @@ struct EditableTranscriptView: View {
             }
         }
     }
-    
+
     private func rerunTranscription() {
         AppLog.shared.transcription("Starting transcription rerun", level: .debug)
 
@@ -1499,10 +1581,10 @@ struct EditableTranscriptView: View {
                 )
 
                 AppLog.shared.transcription("Transcription rerun job started through BackgroundProcessingManager")
-                
+
                 // Set up a one-time completion handler for this specific rerun
                 setupRerunCompletionHandler(for: recordingURL)
-                
+
             } catch {
                 AppLog.shared.transcription("Failed to start transcription rerun job: \(error)", level: .error)
 
@@ -1516,21 +1598,21 @@ struct EditableTranscriptView: View {
                         }
                         return
                     }
-                    
+
                     // Get the currently configured transcription engine
                     let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
-                    
+
                     let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recordingURL, using: selectedEngine)
-                    
+
                     AppLog.shared.transcription("Transcription rerun result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
-                    
+
                     if result.success && !result.fullText.isEmpty {
                         await MainActor.run {
                             // Save the new transcript to Core Data first (this will replace the existing transcript)
                             saveNewTranscriptToCoreData(segments: result.segments)
-                            
+
                             AppLog.shared.transcription("Transcript UI updated with rerun results")
-                            
+
                             // Force the parent view to refresh by posting a notification
                             NotificationCenter.default.post(name: NSNotification.Name("TranscriptReplacementCompleted"), object: nil)
                         }
@@ -1540,18 +1622,18 @@ struct EditableTranscriptView: View {
                 } catch {
                     AppLog.shared.transcription("Fallback transcription rerun also failed: \(error)", level: .error)
                 }
-                
+
                 await MainActor.run {
                     isRerunningTranscription = false
                 }
             }
         }
     }
-    
+
     private func setupRerunCompletionHandler(for recordingURL: URL) {
         // Set up a temporary completion handler for the background processing manager
         let originalHandler = backgroundProcessingManager.onTranscriptionCompleted
-        
+
         backgroundProcessingManager.onTranscriptionCompleted = { transcriptData, job in
             // Only handle completion for our specific recording
             if job.recordingURL == recordingURL {
@@ -1560,7 +1642,7 @@ struct EditableTranscriptView: View {
 
                     // Save the new transcript to Core Data and post notification
                     AppLog.shared.transcription("Saving rerun transcript to Core Data...", level: .debug)
-                    
+
                     // Post notification with the new segments
                     NotificationCenter.default.post(
                         name: NSNotification.Name("TranscriptionRerunCompleted"),
@@ -1570,9 +1652,9 @@ struct EditableTranscriptView: View {
                             "segments": transcriptData.segments
                         ]
                     )
-                    
+
                     AppLog.shared.transcription("Posted transcription rerun completion notification", level: .debug)
-                    
+
                     // Restore the original handler
                     BackgroundProcessingManager.shared.onTranscriptionCompleted = originalHandler
                 }
@@ -1582,7 +1664,7 @@ struct EditableTranscriptView: View {
             }
         }
     }
-    
+
     private func saveNewTranscriptToCoreData(segments: [TranscriptSegment]) {
         AppLog.shared.transcription("Saving new transcript to Core Data...", level: .debug)
 
@@ -1591,23 +1673,23 @@ struct EditableTranscriptView: View {
             AppLog.shared.transcription("Invalid recording URL for Core Data save", level: .error)
             return
         }
-        
+
         // Use the app coordinator from environment
         let coordinator = appCoordinator
-        
+
         // Find the recording entry
         if let recordingEntry = coordinator.getRecording(url: recordingURL),
            let recordingId = recordingEntry.id {
-            
+
             // For rerun transcriptions, we'll replace the existing transcript
             // The Core Data system will update the existing transcript instead of creating a new one
             AppLog.shared.transcription("Replacing transcript for recording ID: \(recordingId)", level: .debug)
-            
+
             // Get the selected transcription engine
             let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue
             let engine = TranscriptionEngine(rawValue: engineString) ?? .fluidAudio
-            
-            
+
+
             // Add the new transcript
             let transcriptId = coordinator.addTranscript(
                 for: recordingId,
@@ -1617,13 +1699,13 @@ struct EditableTranscriptView: View {
                 processingTime: 0.0, // We don't track this in reruns
                 confidence: 1.0
             )
-            
+
             if transcriptId != nil {
                 AppLog.shared.transcription("Transcript replaced in Core Data with ID: \(transcriptId!)")
-                
+
                 // Immediately refresh the UI with the updated transcript data
                 refreshTranscriptFromCoreData()
-                
+
                 // Post notification to refresh the main transcripts view
                 NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
             } else {
@@ -1633,25 +1715,25 @@ struct EditableTranscriptView: View {
             AppLog.shared.transcription("Could not find recording entry in Core Data for transcript save", level: .error)
         }
     }
-    
+
     private func refreshTranscriptFromCoreData() {
         guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
             return
         }
-        
+
         // Force Core Data context to refresh its cache
         appCoordinator.coreDataManager.refreshContext()
-        
+
         // Get the updated transcript data from Core Data
         if let recordingEntry = appCoordinator.getRecording(url: recordingURL),
            let recordingId = recordingEntry.id,
            let updatedTranscript = appCoordinator.getTranscriptData(for: recordingId) {
-            
+
             // Only update if we have segments with actual content
             let hasValidContent = updatedTranscript.segments.contains { !$0.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty }
-            
+
             guard hasValidContent else { return }
-            
+
             // Force SwiftUI to detect the change by clearing first, then setting
             editedSegments = []
             speakerMappings = updatedTranscript.speakerMappings
@@ -1701,11 +1783,11 @@ struct TranscriptSegmentView: View {
             HStack {
                 Text(formatTime(segment.startTime))
                     .font(.caption)
+                    .fontWeight(.medium)
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color(.systemGray5))
-                    .cornerRadius(6)
+                    .background(Color(.tertiarySystemGroupedBackground), in: Capsule())
 
                 if hasSpeakerLabel {
                     Text(displaySpeaker)
@@ -1714,13 +1796,12 @@ struct TranscriptSegmentView: View {
                         .foregroundColor(speakerColor)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(speakerColor.opacity(0.12))
-                        .cornerRadius(6)
+                        .background(speakerColor.opacity(0.12), in: Capsule())
                 }
 
                 Spacer()
             }
-            
+
             TextEditor(text: Binding(
                 get: { segment.text },
                 set: { segment = TranscriptSegment(speaker: segment.speaker, text: $0, startTime: segment.startTime, endTime: segment.endTime) }
@@ -1728,42 +1809,39 @@ struct TranscriptSegmentView: View {
             .font(.body)
             .frame(minHeight: max(120, calculateTextHeight(for: segment.text)))
             .padding(12)
-            .background(Color(.systemBackground))
+            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color(.systemGray4), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color(.separator).opacity(0.35), lineWidth: 1)
             )
-            .cornerRadius(10)
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 4)
-        .background(Color(.systemGray6).opacity(0.3))
-        .cornerRadius(12)
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
-    
+
     private func formatTime(_ time: TimeInterval) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%d:%02d", minutes, seconds)
     }
-    
+
     private func calculateTextHeight(for text: String) -> CGFloat {
         // More accurate height calculation
         let lineHeight: CGFloat = 22 // Body font line height
         let charactersPerLine: CGFloat = 60 // Characters per line (adjusted for wider view)
-        
+
         // Count explicit line breaks
         let explicitLines = CGFloat(text.components(separatedBy: "\n").count)
-        
+
         // Estimate wrapped lines
         let wrappedLines = max(1, ceil(CGFloat(text.count) / charactersPerLine))
-        
+
         // Use the larger of the two estimates
         let totalLines = max(explicitLines, wrappedLines)
-        
+
         // Calculate height with padding
         let calculatedHeight = totalLines * lineHeight + 24 // 24pt for padding
-        
+
         // Ensure reasonable bounds
         return max(120, min(calculatedHeight, 400))
     }
@@ -1863,6 +1941,8 @@ struct SpeakerEditingView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color(.systemGroupedBackground))
     }
 
     private func applyNames() {
@@ -1899,7 +1979,7 @@ struct TranscriptDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
-    
+
     var body: some View {
         // NavigationStack { Form } is the only sheet pattern that scrolls reliably
         // on Mac Catalyst. See feedback_mac_catalyst_scrollview.md.
@@ -1950,6 +2030,8 @@ struct TranscriptDetailView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Transcript")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1979,7 +2061,7 @@ struct TitleRowView: View {
     let title: TitleItem
     let recordingName: String
     @StateObject private var systemIntegration = SystemIntegrationManager()
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // Category icon
@@ -1987,22 +2069,22 @@ struct TitleRowView: View {
                 .font(.caption)
                 .foregroundColor(.accentColor)
                 .frame(width: 16)
-            
+
             VStack(alignment: .leading, spacing: 4) {
                 // Title text
                 Text(title.text)
                     .font(.body)
                     .foregroundColor(.primary)
                     .multilineTextAlignment(.leading)
-                
+
                 // Confidence indicator
                 HStack {
                     Text("Confidence: \(safeConfidencePercent(title.confidence))%")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    
+
                     Spacer()
-                    
+
                     // Copy button
                     Button(action: {
                         UIPasteboard.general.string = title.text
@@ -2013,7 +2095,7 @@ struct TitleRowView: View {
                     }
                 }
             }
-            
+
             Spacer()
         }
         .padding(.vertical, 4)
@@ -2026,7 +2108,7 @@ struct EnhancedTitleRowView: View {
     let title: TitleItem
     let recordingName: String
     @StateObject private var systemIntegration = SystemIntegrationManager()
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // Category icon with background
@@ -2034,12 +2116,12 @@ struct EnhancedTitleRowView: View {
                 Circle()
                     .fill(Color.accentColor.opacity(0.1))
                     .frame(width: 32, height: 32)
-                
+
                 Image(systemName: title.category.icon)
                     .font(.caption)
                     .foregroundColor(.accentColor)
             }
-            
+
             VStack(alignment: .leading, spacing: 6) {
                 // Title text
                 Text(title.text)
@@ -2048,7 +2130,7 @@ struct EnhancedTitleRowView: View {
                     .foregroundColor(.primary)
                     .multilineTextAlignment(.leading)
                     .lineLimit(nil)
-                
+
                 // Metadata row
                 HStack {
                     // Confidence indicator
@@ -2060,7 +2142,7 @@ struct EnhancedTitleRowView: View {
                             .font(.caption2)
                             .foregroundColor(confidenceColor)
                     }
-                    
+
                     // Category badge
                     Text(title.category.rawValue)
                         .font(.caption2)
@@ -2069,9 +2151,9 @@ struct EnhancedTitleRowView: View {
                         .background(Color.secondary.opacity(0.1))
                         .foregroundColor(.secondary)
                         .cornerRadius(4)
-                    
+
                     Spacer()
-                    
+
                     // Copy button
                     Button(action: {
                         UIPasteboard.general.string = title.text
@@ -2082,7 +2164,7 @@ struct EnhancedTitleRowView: View {
                     }
                 }
             }
-            
+
             Spacer()
         }
         .padding(.vertical, 8)
@@ -2090,7 +2172,7 @@ struct EnhancedTitleRowView: View {
         .background(Color.secondary.opacity(0.05))
         .cornerRadius(8)
     }
-    
+
     private var confidenceColor: Color {
         guard title.confidence.isFinite else { return .gray }
         switch title.confidence {
