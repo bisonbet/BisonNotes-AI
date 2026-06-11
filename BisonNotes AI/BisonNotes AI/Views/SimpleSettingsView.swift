@@ -212,61 +212,99 @@ struct SimpleSettingsView: View {
     }
 
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "waveform.and.mic")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 48, height: 48)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color.accentColor.gradient)
-                    )
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "waveform.and.mic")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 48, height: 48)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Color.accentColor.gradient)
+                )
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("BisonNotes AI")
-                        .font(.largeTitle.weight(.bold))
-                        .foregroundColor(.primary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("BisonNotes AI")
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundColor(.primary)
 
-                    Text("Choose how recordings become transcripts, summaries, tasks, and reminders.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 0)
+                Text("Choose how recordings become transcripts, summaries, tasks, and reminders.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+
+            Spacer(minLength: 8)
 
             Button(action: {
                 showingAdvancedSettings = true
             }) {
-                Label("Additional Settings", systemImage: "gearshape")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity)
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 38, height: 38)
+                    .background(Color(.secondarySystemGroupedBackground), in: Circle())
             }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Additional Settings")
+        }
+    }
+
+    /// Options offered on this page: Mistral AI (free cloud), On-Device (if
+    /// supported), and Advanced. OpenAI is available under Advanced & Other Options.
+    private var availableProcessingOptions: [ProcessingOption] {
+        ProcessingOption.allCases.filter { option in
+            option == .mistralAI || option == .chooseLater || (option == .onDeviceLLM && deviceSupported)
         }
     }
 
     private var processingOptionSection: some View {
-        SetupCard(spacing: 18) {
+        SetupCard(spacing: 14) {
             sectionTitle("Processing Method", subtitle: "Pick the default path for new audio notes.")
 
-            VStack(spacing: 12) {
-                ForEach(ProcessingOption.allCases.filter { option in
-                    // Show Mistral AI (free cloud), On-Device (if supported), and Advanced
-                    // OpenAI is available under Advanced & Other Options
-                    option == .mistralAI || option == .chooseLater || (option == .onDeviceLLM && deviceSupported)
-                }, id: \.self) { option in
-                    ProcessingOptionRow(
-                        option: option,
-                        isSelected: selectedOption == option
-                    ) {
-                        selectedOption = option
+            Menu {
+                Picker("Processing Method", selection: $selectedOption) {
+                    ForEach(availableProcessingOptions, id: \.self) { option in
+                        Label(option.displayName, systemImage: option.iconName)
+                            .tag(option)
                     }
                 }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: selectedOption.iconName)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(selectedOption.tintColor)
+                        .frame(width: 38, height: 38)
+                        .background(
+                            selectedOption.tintColor.opacity(0.14),
+                            in: RoundedRectangle(cornerRadius: 11)
+                        )
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(selectedOption.displayName)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.primary)
+
+                        Text(selectedOption.description)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                }
+                .padding(12)
+                .background(
+                    Color(.tertiarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 14)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 14))
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Processing Method: \(selectedOption.displayName)")
 
             if !deviceSupported {
                 InlineNotice(
@@ -651,50 +689,6 @@ private struct SetupCard<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
-    }
-}
-
-private struct ProcessingOptionRow: View {
-    let option: ProcessingOption
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: option.iconName)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(option.tintColor)
-                    .frame(width: 34, height: 34)
-                    .background(option.tintColor.opacity(0.14))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(option.displayName)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.primary)
-
-                    Text(option.description)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 8)
-
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundColor(isSelected ? option.tintColor : .secondary)
-            }
-            .padding(14)
-            .background(isSelected ? option.tintColor.opacity(0.12) : Color(.tertiarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(isSelected ? option.tintColor.opacity(0.55) : Color.clear, lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
     }
 }
 

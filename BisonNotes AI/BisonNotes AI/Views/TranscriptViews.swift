@@ -422,29 +422,43 @@ struct TranscriptsView: View {
             let date: Date
         }
 
-        let recordingsWithDates: [RecordingWithDate] = recordings.compactMap { item in
+        // Respect the same date/search filters as the main page
+        let recordingsWithDates: [RecordingWithDate] = filteredRecordings.compactMap { item in
             guard let date = item.recording.recordingDate else { return nil }
             return RecordingWithDate(recording: item.recording, transcript: item.transcript, date: date)
         }
 
         let sectioned = DateSectionHelper.groupBySection(recordingsWithDates, dateKeyPath: \.date)
 
-        return List {
-            ForEach(sectioned, id: \.section) { sectionData in
-                Section(header: Text(sectionData.section.title)) {
-                    ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
-                        recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
-                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
+        return VStack(spacing: 0) {
+            if isDateFilterActive {
+                activeDateFilterBanner
+            }
+
+            List {
+                ForEach(sectioned, id: \.section) { sectionData in
+                    Section(header: Text(sectionData.section.title)) {
+                        ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
+                            recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
+                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                        }
                     }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Audio Transcripts")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showDateFilter = true }) {
+                    Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                }
+            }
+        }
     }
 
     private var importedTranscriptsFullListView: some View {
@@ -454,36 +468,50 @@ struct TranscriptsView: View {
             let date: Date
         }
 
-        let importedWithDates: [ImportedWithDate] = importedTranscripts.compactMap { item in
+        // Respect the same date/search filters as the main page
+        let importedWithDates: [ImportedWithDate] = filteredImportedTranscripts.compactMap { item in
             guard let date = item.recording.recordingDate else { return nil }
             return ImportedWithDate(recording: item.recording, transcript: item.transcript, date: date)
         }
 
         let sectioned = DateSectionHelper.groupBySection(importedWithDates, dateKeyPath: \.date)
 
-        return List {
-            ForEach(sectioned, id: \.section) { sectionData in
-                Section(header: Text(sectionData.section.title)) {
-                    ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
-                        importedTranscriptRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
-                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                    }
-                    .onDelete { indexSet in
-                        let itemsToDelete = indexSet.map { sectionData.items[$0] }
-                        for item in itemsToDelete {
-                            deleteImportedTranscript((recording: item.recording, transcript: item.transcript))
+        return VStack(spacing: 0) {
+            if isDateFilterActive {
+                activeDateFilterBanner
+            }
+
+            List {
+                ForEach(sectioned, id: \.section) { sectionData in
+                    Section(header: Text(sectionData.section.title)) {
+                        ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
+                            importedTranscriptRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
+                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
                         }
-                        loadRecordings()
+                        .onDelete { indexSet in
+                            let itemsToDelete = indexSet.map { sectionData.items[$0] }
+                            for item in itemsToDelete {
+                                deleteImportedTranscript((recording: item.recording, transcript: item.transcript))
+                            }
+                            loadRecordings()
+                        }
                     }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Imported Transcripts")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showDateFilter = true }) {
+                    Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                }
+            }
+        }
     }
 
     private func moreRowView(remainingCount: Int) -> some View {

@@ -412,6 +412,50 @@ struct SummariesView: View {
     // MARK: - Recordings List View
 
     private func recordingsListView(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]) -> some View {
+        #if targetEnvironment(macCatalyst)
+        // On Mac Catalyst, the preview-+-NavigationLink-to-More pattern wedges the responder chain
+        // (destination renders but becomes unresponsive). Render everything inline instead.
+        return summariesSectionedScroll(filtered)
+        #else
+        // iOS / iPadOS: preview cards with "More" navigation to the full list page.
+        let recentRecordings = Array(filtered.prefix(3))
+
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                summarySectionHeader(
+                    title: "Summaries",
+                    count: filtered.count
+                )
+
+                ForEach(recentRecordings, id: \.recording.objectID) { recordingData in
+                    recordingRowView(recordingData)
+                }
+
+                if filtered.count > recentRecordings.count {
+                    NavigationLink {
+                        summariesFullListView
+                    } label: {
+                        moreRowView(remainingCount: filtered.count - recentRecordings.count)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 96)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Color(.systemGroupedBackground))
+        .refreshable {
+            loadRecordings()
+        }
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        #endif
+    }
+
+    /// Full date-sectioned scroll of summaries (Mac Catalyst inline view)
+    private func summariesSectionedScroll(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]) -> some View {
         // Filter out recordings with nil dates and create wrapper struct with non-optional dates
         struct RecordingWithDate {
             let recording: RecordingEntry
@@ -459,11 +503,80 @@ struct SummariesView: View {
         .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
     }
 
+    /// Full list page reached via the "More" row (matches TranscriptViews' full list pages).
+    /// Respects the same date/search filters as the main page.
+    private var summariesFullListView: some View {
+        struct RecordingWithDate {
+            let recording: RecordingEntry
+            let transcript: TranscriptData?
+            let summary: EnhancedSummaryData?
+            let date: Date
+        }
+
+        let recordingsWithDates: [RecordingWithDate] = filteredRecordings.compactMap { item in
+            guard let date = item.recording.recordingDate else { return nil }
+            return RecordingWithDate(
+                recording: item.recording,
+                transcript: item.transcript,
+                summary: item.summary,
+                date: date
+            )
+        }
+
+        let sectioned = DateSectionHelper.groupBySection(recordingsWithDates, dateKeyPath: \.date)
+
+        return VStack(spacing: 0) {
+            if isDateFilterActive {
+                activeDateFilterBanner
+            }
+
+            List {
+                ForEach(sectioned, id: \.section) { sectionData in
+                    Section(header: Text(sectionData.section.title)) {
+                        ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
+                            recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
+                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Summaries")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showDateFilter = true }) {
+                    Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                }
+            }
+        }
+    }
+
+    private func moreRowView(remainingCount: Int) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "ellipsis.circle")
+                .font(.title3)
+                .foregroundColor(.accentColor)
+            Text("Show \(remainingCount) more")
+                .font(.subheadline.weight(.semibold))
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 15))
+    }
+
     // MARK: - Recording Row View
 
     private func recordingRowView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)) -> some View {
         let recording = recordingData.recording
-        let transcript = recordingData.transcript
         let summary = recordingData.summary
 
         return VStack(alignment: .leading, spacing: 14) {
@@ -490,16 +603,9 @@ struct SummariesView: View {
                 statusIndicator(for: recording)
             }
 
-            if let transcript = transcript {
-                Text(transcript.plainText)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(3)
-            }
-
             if let summary {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(summary.summary)
+                    Text(summaryPreviewText(summary.summary))
                         .font(.subheadline)
                         .foregroundColor(.primary)
                         .lineLimit(3)
@@ -523,6 +629,21 @@ struct SummariesView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .contentShape(Rectangle())
 
+    }
+
+    /// Compact plain-text preview of a markdown summary: header lines are
+    /// dropped entirely (they're section labels, not content), remaining
+    /// markdown syntax is stripped, and whitespace is collapsed.
+    private func summaryPreviewText(_ markdown: String) -> String {
+        let withoutHeaderLines = markdown
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+            .joined(separator: " ")
+
+        return withoutHeaderLines
+            .strippingMarkdown()
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Status Indicator
