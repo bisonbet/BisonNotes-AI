@@ -92,7 +92,6 @@ enum DuplicateEntryType {
 class DataMigrationManager: ObservableObject {
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
-    private var unifiediCloudSyncManager: UnifiediCloudSyncManager?
     private var iCloudStorageManager: iCloudStorageManager?
     
     @Published var migrationProgress: Double = 0.0
@@ -100,18 +99,13 @@ class DataMigrationManager: ObservableObject {
     @Published var isCompleted: Bool = false
     
     init(persistenceController: PersistenceController = PersistenceController.shared,
-         unifiediCloudSyncManager: UnifiediCloudSyncManager? = nil,
          iCloudStorageManager: iCloudStorageManager? = nil) {
         self.persistenceController = persistenceController
         self.context = persistenceController.container.viewContext
-        self.unifiediCloudSyncManager = unifiediCloudSyncManager
         self.iCloudStorageManager = iCloudStorageManager
     }
     
-    func setCloudSyncManagers(unified: UnifiediCloudSyncManager? = nil, legacy: iCloudStorageManager? = nil) {
-        if let unified = unified {
-            self.unifiediCloudSyncManager = unified
-        }
+    func setCloudSyncManagers(legacy: iCloudStorageManager? = nil) {
         if let legacy = legacy {
             self.iCloudStorageManager = legacy
         }
@@ -415,30 +409,7 @@ class DataMigrationManager: ObservableObject {
         
         AppLog.shared.dataMigration("Starting iCloud data recovery")
         
-        // Try UnifiediCloudSyncManager first
-        if let unifiedManager = unifiediCloudSyncManager {
-            AppLog.shared.dataMigration("Using UnifiediCloudSyncManager for recovery")
-            do {
-                if !unifiedManager.isEnabled {
-                    AppLog.shared.dataMigration("Unified iCloud sync is disabled", level: .error)
-                    errors.append("Unified iCloud sync is disabled - enable it in Settings")
-                } else {
-                    AppLog.shared.dataMigration("Fetching data from unified iCloud sync")
-                    try await unifiedManager.fetchAllDataFromCloud()
-                    
-                    // The unified manager updates the registry, but we need Core Data entries
-                    // This would need integration with the registry to create Core Data entries
-                    AppLog.shared.dataMigration("Unified iCloud recovery fetched data to registry, but Core Data integration needed", level: .error)
-                    errors.append("Unified iCloud recovery needs Core Data integration")
-                }
-            } catch {
-                AppLog.shared.dataMigration("Unified iCloud recovery failed: \(error)", level: .error)
-                errors.append("Unified iCloud error: \(error.localizedDescription)")
-            }
-        }
-        
-        // Try legacy iCloudStorageManager if unified is not available
-        else if let legacyManager = iCloudStorageManager {
+        if let legacyManager = iCloudStorageManager {
             AppLog.shared.dataMigration("Using legacy iCloudStorageManager for recovery")
             do {
                 if !legacyManager.isEnabled {
@@ -510,7 +481,7 @@ class DataMigrationManager: ObservableObject {
         // No iCloud managers available
         else {
             AppLog.shared.dataMigration("No iCloud sync managers available", level: .error)
-            errors.append("No iCloud sync managers available - they need to be passed to DataMigrationManager")
+            errors.append("No iCloud sync manager available - it needs to be passed to DataMigrationManager")
         }
         
         AppLog.shared.dataMigration("Recovery results: \(transcriptCount) transcripts, \(summaryCount) summaries recovered")

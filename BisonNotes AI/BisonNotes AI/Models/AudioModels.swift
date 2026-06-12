@@ -59,6 +59,36 @@ public enum WhisperProtocol: String, CaseIterable, Codable {
     }
 }
 
+public enum ProcessingStatus: String, Codable, CaseIterable {
+    case notStarted = "Not Started"
+    case queued = "Queued"
+    case processing = "Processing"
+    case completed = "Completed"
+    case failed = "Failed"
+    case cancelled = "Cancelled"
+    case interrupted = "Interrupted"
+
+    public var description: String {
+        return rawValue
+    }
+
+    public var isActive: Bool {
+        return self == .queued || self == .processing
+    }
+
+    public var isComplete: Bool {
+        return self == .completed
+    }
+
+    public var hasError: Bool {
+        return self == .failed || self == .cancelled
+    }
+
+    public var isResumable: Bool {
+        return self == .interrupted
+    }
+}
+
 public enum TranscriptionEngine: String, CaseIterable, Codable {
     case notConfigured = "Not Configured"
     case fluidAudio = "On Device"
