@@ -45,7 +45,7 @@ struct TranscriptsView: View {
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var dateFilterEnd: Date = Date()
     @State private var isDateFilterActive = false
-    @State private var expandedTranscriptDateSections: Set<DateSection> = []
+    @State private var expandedTranscriptDateSections: Set<DateSection> = [.today]
     /// Shared service that owns the serial audio-cleanup queue and transcription start.
     @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
     /// Recordings whose summary generation we kicked off and are still awaiting completion.
@@ -313,7 +313,7 @@ struct TranscriptsView: View {
                         title: sectionData.section.title,
                         count: sectionData.items.count,
                         isExpanded: isTranscriptDateSectionExpanded(sectionData.section),
-                        isAlwaysExpanded: sectionData.section == .today,
+                        isAlwaysExpanded: false,
                         onToggle: { toggleTranscriptDateSection(sectionData.section) }
                     )
                 ) {
@@ -415,7 +415,7 @@ struct TranscriptsView: View {
                             title: sectionData.section.title,
                             count: sectionData.items.count,
                             isExpanded: isTranscriptDateSectionExpanded(sectionData.section),
-                            isAlwaysExpanded: sectionData.section == .today,
+                            isAlwaysExpanded: false,
                             onToggle: { toggleTranscriptDateSection(sectionData.section) }
                         )
                     ) {
@@ -471,7 +471,7 @@ struct TranscriptsView: View {
                             title: sectionData.section.title,
                             count: sectionData.items.count,
                             isExpanded: isTranscriptDateSectionExpanded(sectionData.section),
-                            isAlwaysExpanded: sectionData.section == .today,
+                            isAlwaysExpanded: false,
                             onToggle: { toggleTranscriptDateSection(sectionData.section) }
                         )
                     ) {
@@ -579,11 +579,10 @@ struct TranscriptsView: View {
     }
 
     private func isTranscriptDateSectionExpanded(_ section: DateSection) -> Bool {
-        section == .today || expandedTranscriptDateSections.contains(section)
+        expandedTranscriptDateSections.contains(section)
     }
 
     private func toggleTranscriptDateSection(_ section: DateSection) {
-        guard section != .today else { return }
         if expandedTranscriptDateSections.contains(section) {
             expandedTranscriptDateSections.remove(section)
         } else {

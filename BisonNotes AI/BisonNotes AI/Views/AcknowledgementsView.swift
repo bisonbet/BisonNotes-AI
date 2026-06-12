@@ -40,20 +40,6 @@ struct AcknowledgementsView: View {
                     }
                 }
 
-                Section("Forked Repositories") {
-                    Link("github.com/bisonbet", destination: URL(string: "https://github.com/bisonbet")!)
-                        .font(.caption)
-                    ForEach(forkedRepositories) { repository in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Link(repository.name, destination: repository.url)
-                            Text(repository.description)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-
                 Section {
                     DisclosureGroup("Transitive Dependencies", isExpanded: $showTransitiveDependencies) {
                         ForEach(transitiveDependencyGroups) { group in
@@ -96,14 +82,6 @@ private struct DependencyCard: Identifiable {
     var id: String { name }
 }
 
-private struct AcknowledgementLink: Identifiable {
-    let name: String
-    let description: String
-    let url: URL
-
-    var id: String { name }
-}
-
 private struct DependencyGroup: Identifiable {
     let title: String
     let projects: [TransitiveProject]
@@ -120,11 +98,25 @@ private struct TransitiveProject: Identifiable {
 
 private let directDependencies: [DependencyCard] = [
     DependencyCard(
-        name: "Textual (swift-markdown-ui)",
-        description: "Markdown rendering library for summaries and transcripts with custom styling adjustments.",
+        name: "Textual",
+        description: "Markdown rendering library for summaries, transcripts, and formatted content.",
         license: "MIT",
-        linkText: "gonzalezreal/swift-markdown-ui",
-        url: URL(string: "https://github.com/gonzalezreal/swift-markdown-ui")!
+        linkText: "gonzalezreal/Textual",
+        url: URL(string: "https://github.com/gonzalezreal/Textual")!
+    ),
+    DependencyCard(
+        name: "FluidAudio",
+        description: "On-device speech framework powering Parakeet transcription.",
+        license: "Apache 2.0",
+        linkText: "FluidInference/FluidAudio",
+        url: URL(string: "https://github.com/FluidInference/FluidAudio")!
+    ),
+    DependencyCard(
+        name: "MLX Swift / MLX Swift LM",
+        description: "Apple Silicon ML framework and language-model utilities used for on-device summarization with Ternary Bonsai models.",
+        license: "MIT",
+        linkText: "ml-explore/mlx-swift + mlx-swift-lm",
+        url: URL(string: "https://github.com/ml-explore/mlx-swift")!
     ),
     DependencyCard(
         name: "llama.cpp",
@@ -149,19 +141,15 @@ private let directDependencies: [DependencyCard] = [
     )
 ]
 
-private let forkedRepositories: [AcknowledgementLink] = [
-    AcknowledgementLink(
-        name: "bisonbet/textual",
-        description: "Fork of gonzalezreal/swift-markdown-ui.",
-        url: URL(string: "https://github.com/bisonbet/textual")!
-    )
-]
-
 private let transitiveDependencyGroups: [DependencyGroup] = [
     DependencyGroup(
         title: "Apple Swift Server Libraries",
         projects: [
             TransitiveProject(name: "Swift NIO", url: URL(string: "https://github.com/apple/swift-nio")!),
+            TransitiveProject(name: "Swift NIO Extras", url: URL(string: "https://github.com/apple/swift-nio-extras")!),
+            TransitiveProject(name: "Swift NIO HTTP/2", url: URL(string: "https://github.com/apple/swift-nio-http2")!),
+            TransitiveProject(name: "Swift NIO SSL", url: URL(string: "https://github.com/apple/swift-nio-ssl")!),
+            TransitiveProject(name: "Swift NIO Transport Services", url: URL(string: "https://github.com/apple/swift-nio-transport-services")!),
             TransitiveProject(name: "Swift Crypto", url: URL(string: "https://github.com/apple/swift-crypto")!),
             TransitiveProject(name: "Swift Protobuf", url: URL(string: "https://github.com/apple/swift-protobuf")!),
             TransitiveProject(name: "Swift Collections", url: URL(string: "https://github.com/apple/swift-collections")!),
@@ -176,8 +164,10 @@ private let transitiveDependencyGroups: [DependencyGroup] = [
             TransitiveProject(name: "Swift Certificates", url: URL(string: "https://github.com/apple/swift-certificates")!),
             TransitiveProject(name: "Swift ASN1", url: URL(string: "https://github.com/apple/swift-asn1")!),
             TransitiveProject(name: "Swift HTTP Types", url: URL(string: "https://github.com/apple/swift-http-types")!),
+            TransitiveProject(name: "Swift HTTP Structured Headers", url: URL(string: "https://github.com/apple/swift-http-structured-headers")!),
             TransitiveProject(name: "Swift Distributed Tracing", url: URL(string: "https://github.com/apple/swift-distributed-tracing")!),
-            TransitiveProject(name: "Swift Service Context", url: URL(string: "https://github.com/apple/swift-service-context")!)
+            TransitiveProject(name: "Swift Service Context", url: URL(string: "https://github.com/apple/swift-service-context")!),
+            TransitiveProject(name: "Swift Configuration", url: URL(string: "https://github.com/apple/swift-configuration")!)
         ]
     ),
     DependencyGroup(
@@ -190,6 +180,10 @@ private let transitiveDependencyGroups: [DependencyGroup] = [
             TransitiveProject(name: "AWS CRT Swift", url: URL(string: "https://github.com/awslabs/aws-crt-swift")!),
             TransitiveProject(name: "Smithy Swift", url: URL(string: "https://github.com/smithy-lang/smithy-swift")!),
             TransitiveProject(name: "Swift Jinja", url: URL(string: "https://github.com/huggingface/swift-jinja")!),
+            TransitiveProject(name: "Swift HuggingFace", url: URL(string: "https://github.com/huggingface/swift-huggingface")!),
+            TransitiveProject(name: "SwiftUI Math", url: URL(string: "https://github.com/gonzalezreal/swiftui-math")!),
+            TransitiveProject(name: "EventSource", url: URL(string: "https://github.com/mattt/EventSource")!),
+            TransitiveProject(name: "yyjson", url: URL(string: "https://github.com/ibireme/yyjson")!),
             TransitiveProject(name: "Swift Concurrency Extras", url: URL(string: "https://github.com/pointfreeco/swift-concurrency-extras")!)
         ]
     )

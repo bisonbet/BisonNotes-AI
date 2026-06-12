@@ -30,7 +30,7 @@ struct SummariesView: View {
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var dateFilterEnd: Date = Date()
     @State private var isDateFilterActive = false
-    @State private var expandedSummaryDateSections: Set<DateSection> = []
+    @State private var expandedSummaryDateSections: Set<DateSection> = [.today]
 
     @AppStorage("hasSeeniCloudPrompt") private var hasSeeniCloudPrompt = false
 
@@ -485,7 +485,7 @@ struct SummariesView: View {
                         title: sectionData.section.title,
                         count: sectionData.items.count,
                         isExpanded: isSummaryDateSectionExpanded(sectionData.section),
-                        isAlwaysExpanded: sectionData.section == .today,
+                        isAlwaysExpanded: false,
                         onToggle: { toggleSummaryDateSection(sectionData.section) }
                     )
 
@@ -543,7 +543,7 @@ struct SummariesView: View {
                             title: sectionData.section.title,
                             count: sectionData.items.count,
                             isExpanded: isSummaryDateSectionExpanded(sectionData.section),
-                            isAlwaysExpanded: sectionData.section == .today,
+                            isAlwaysExpanded: false,
                             onToggle: { toggleSummaryDateSection(sectionData.section) }
                         )
                     ) {
@@ -754,11 +754,10 @@ struct SummariesView: View {
     }
 
     private func isSummaryDateSectionExpanded(_ section: DateSection) -> Bool {
-        section == .today || expandedSummaryDateSections.contains(section)
+        expandedSummaryDateSections.contains(section)
     }
 
     private func toggleSummaryDateSection(_ section: DateSection) {
-        guard section != .today else { return }
         if expandedSummaryDateSections.contains(section) {
             expandedSummaryDateSections.remove(section)
         } else {
