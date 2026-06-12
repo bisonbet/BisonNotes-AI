@@ -20,7 +20,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     @Published var lastError: AudioProcessingError?
     
     // MARK: - Private Properties
-    private let session = AVAudioSession.sharedInstance()
+    private lazy var session = AVAudioSession.sharedInstance()
     private var interruptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
     

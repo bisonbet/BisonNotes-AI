@@ -30,6 +30,7 @@ struct SummariesView: View {
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var dateFilterEnd: Date = Date()
     @State private var isDateFilterActive = false
+    @State private var expandedSummaryDateSections: Set<DateSection> = []
 
     @AppStorage("hasSeeniCloudPrompt") private var hasSeeniCloudPrompt = false
 
@@ -480,13 +481,18 @@ struct SummariesView: View {
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
                 ForEach(sectioned, id: \.section) { sectionData in
-                    summarySectionHeader(
+                    CollapsibleDateSectionHeader(
                         title: sectionData.section.title,
-                        count: sectionData.items.count
+                        count: sectionData.items.count,
+                        isExpanded: isSummaryDateSectionExpanded(sectionData.section),
+                        isAlwaysExpanded: sectionData.section == .today,
+                        onToggle: { toggleSummaryDateSection(sectionData.section) }
                     )
 
-                    ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
-                        recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
+                    if isSummaryDateSectionExpanded(sectionData.section) {
+                        ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
+                            recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
+                        }
                     }
                 }
             }
@@ -532,12 +538,22 @@ struct SummariesView: View {
 
             List {
                 ForEach(sectioned, id: \.section) { sectionData in
-                    Section(header: Text(sectionData.section.title)) {
-                        ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
-                            recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
-                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
+                    Section(
+                        header: CollapsibleDateSectionHeader(
+                            title: sectionData.section.title,
+                            count: sectionData.items.count,
+                            isExpanded: isSummaryDateSectionExpanded(sectionData.section),
+                            isAlwaysExpanded: sectionData.section == .today,
+                            onToggle: { toggleSummaryDateSection(sectionData.section) }
+                        )
+                    ) {
+                        if isSummaryDateSectionExpanded(sectionData.section) {
+                            ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
+                                recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
                         }
                     }
                 }
@@ -734,6 +750,19 @@ struct SummariesView: View {
                 .padding(.vertical, 4)
                 .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(Capsule())
+        }
+    }
+
+    private func isSummaryDateSectionExpanded(_ section: DateSection) -> Bool {
+        section == .today || expandedSummaryDateSections.contains(section)
+    }
+
+    private func toggleSummaryDateSection(_ section: DateSection) {
+        guard section != .today else { return }
+        if expandedSummaryDateSections.contains(section) {
+            expandedSummaryDateSections.remove(section)
+        } else {
+            expandedSummaryDateSections.insert(section)
         }
     }
 

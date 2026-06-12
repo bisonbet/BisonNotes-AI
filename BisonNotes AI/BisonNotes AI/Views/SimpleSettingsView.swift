@@ -102,7 +102,7 @@ struct SimpleSettingsView: View {
                     }
                     saveSection
 
-                    if !isFirstLaunch {
+                    if !isFirstLaunch && DeviceCapabilities.supportsActionButton {
                         actionButtonSection
                     }
 
@@ -153,25 +153,9 @@ struct SimpleSettingsView: View {
                 .environmentObject(appCoordinator)
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
-            #if targetEnvironment(macCatalyst)
-            VStack(spacing: 0) {
-                HStack {
-                    Text("On-Device AI Settings")
-                        .font(.headline)
-                    Spacer()
-                    Button("Done") { showingOnDeviceLLMSettings = false }
-                        .buttonStyle(.bordered)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                Divider()
-                OnDeviceLLMSettingsView()
-            }
-            #else
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
-            #endif
         }
         .sheet(isPresented: $showingHelpDocumentation) {
             #if !targetEnvironment(macCatalyst)
@@ -262,10 +246,14 @@ struct SimpleSettingsView: View {
             sectionTitle("Processing Method", subtitle: "Pick the default path for new audio notes.")
 
             Menu {
-                Picker("Processing Method", selection: $selectedOption) {
-                    ForEach(availableProcessingOptions, id: \.self) { option in
-                        Label(option.displayName, systemImage: option.iconName)
-                            .tag(option)
+                ForEach(availableProcessingOptions, id: \.self) { option in
+                    Button {
+                        selectedOption = option
+                    } label: {
+                        Label(
+                            option.displayName,
+                            systemImage: selectedOption == option ? "checkmark" : option.iconName
+                        )
                     }
                 }
             } label: {

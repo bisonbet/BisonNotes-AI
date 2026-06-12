@@ -157,6 +157,7 @@ struct RecordingsListView: View {
             .sheet(item: $selectedRecordingForPlayer) { recording in
                 AudioPlayerView(recording: recording)
                     .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
             }
             .sheet(isPresented: $showingCombineView) {
                 if let recordings = recordingsToCombine {
@@ -561,39 +562,6 @@ struct RecordingsListView: View {
     }
 
     private var dateFilterSheet: some View {
-        #if targetEnvironment(macCatalyst)
-        VStack(spacing: 0) {
-            HStack {
-                Button("Cancel") { showDateFilter = false }
-                Spacer()
-                Text("Filter by Date").font(.headline)
-                Spacer()
-                Button("Apply") {
-                    isDateFilterActive = true
-                    showDateFilter = false
-                }
-                .fontWeight(.semibold)
-            }
-            .padding(.horizontal, 16).padding(.vertical, 10)
-            Divider()
-            Form {
-                Section {
-                    DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
-                    DatePicker("To", selection: $dateFilterEnd, in: dateFilterStart...Date(), displayedComponents: .date)
-                }
-                if isDateFilterActive {
-                    Section {
-                        Button(role: .destructive) {
-                            isDateFilterActive = false
-                            showDateFilter = false
-                        } label: {
-                            HStack { Spacer(); Text("Clear Filter"); Spacer() }
-                        }
-                    }
-                }
-            }
-        }
-        #else
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
@@ -637,7 +605,6 @@ struct RecordingsListView: View {
                 }
             }
         }
-        #endif
     }
 
     private func recordingsListView(_ filtered: [AudioRecordingFile]) -> some View {

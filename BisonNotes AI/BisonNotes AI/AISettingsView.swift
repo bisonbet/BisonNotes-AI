@@ -329,40 +329,14 @@ struct AISettingsView: View {
             AWSBedrockSettingsView()
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
-            #if targetEnvironment(macCatalyst)
-            VStack(spacing: 0) {
-                HStack {
-                    Text(AIEngineType.onDeviceLLM.displayName).font(.headline)
-                    Spacer()
-                    Button("Done") { showingOnDeviceLLMSettings = false }.buttonStyle(.bordered)
-                }
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                Divider()
-                OnDeviceLLMSettingsView()
-            }
-            #else
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
-            #endif
         }
         .sheet(isPresented: $showingMLXSwiftSettings) {
-            #if targetEnvironment(macCatalyst)
-            VStack(spacing: 0) {
-                HStack {
-                    Text(AIEngineType.mlxSwift.displayName).font(.headline)
-                    Spacer()
-                    Button("Done") { showingMLXSwiftSettings = false }.buttonStyle(.bordered)
-                }
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                Divider()
-                MLXSwiftSettingsView()
-            }
-            #else
             NavigationStack {
                 MLXSwiftSettingsView()
             }
-            #endif
         }
         .fullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
@@ -373,16 +347,7 @@ struct AISettingsView: View {
 
     @ViewBuilder
     private var settingsContent: some View {
-        #if targetEnvironment(macCatalyst)
-        Form {
-            selectedEngineConfigurationSection
-            engineSelectionSection
-            timeoutConfigurationSection
-            summaryManagementSection
-        }
-        #else
         modernSettingsContent
-        #endif
     }
 
     private var modernSettingsContent: some View {

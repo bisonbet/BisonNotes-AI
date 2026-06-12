@@ -53,9 +53,6 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        // NavigationStack { Form } is the only sheet pattern that scrolls reliably
-        // on Mac Catalyst — Form is UITableView-backed, ScrollView is not. See
-        // feedback_mac_catalyst_scrollview.md for the diagnostic that confirmed this.
         NavigationStack {
             settingsContent
                 .navigationTitle("Settings")
@@ -156,26 +153,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var settingsContent: some View {
-        #if targetEnvironment(macCatalyst)
-        legacySettingsForm
-        #else
         modernSettingsScroll
-        #endif
-    }
-
-    private var legacySettingsForm: some View {
-        Form {
-            preferencesSection
-            aiEngineSection
-            transcriptionSection
-            microphoneSection
-            locationSection
-            iCloudSyncSection
-            comedyModeSection
-            experimentalSection
-            debugTroubleshootingSection
-            aboutSection
-        }
     }
 
     private var modernSettingsScroll: some View {
@@ -243,6 +221,14 @@ struct SettingsView: View {
 
     private var modernRecordingSection: some View {
         ModernSettingsCard(title: "Recording", systemImage: "mic", tint: .green) {
+            #if targetEnvironment(macCatalyst)
+            ModernInlineStatus(
+                title: "Using Mac system microphone",
+                subtitle: "BisonNotes uses the current macOS Sound input. Change it in System Settings if needed.",
+                systemImage: "mic.fill",
+                tint: .green
+            )
+            #else
             if recorderVM.availableInputs.isEmpty {
                 ModernInlineStatus(
                     title: "No microphones found",
@@ -277,6 +263,7 @@ struct SettingsView: View {
             .buttonStyle(.bordered)
 
             Divider()
+            #endif
 
             Toggle(isOn: Binding(
                 get: { recorderVM.isLocationTrackingEnabled },
@@ -533,6 +520,18 @@ struct SettingsView: View {
 
     private var microphoneSection: some View {
         Section {
+            #if targetEnvironment(macCatalyst)
+            HStack {
+                Image(systemName: "mic.fill")
+                    .foregroundColor(.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Using Mac system microphone")
+                    Text("Change the input device in macOS System Settings.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            #else
             if recorderVM.availableInputs.isEmpty {
                 HStack {
                     Image(systemName: "exclamationmark.triangle")
@@ -563,15 +562,18 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
             }
+            #endif
         } header: {
             HStack {
                 Text("Microphone Selection")
                 Spacer()
+                #if !targetEnvironment(macCatalyst)
                 Button {
                     Task { await recorderVM.fetchInputs() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
+                #endif
             }
         }
     }

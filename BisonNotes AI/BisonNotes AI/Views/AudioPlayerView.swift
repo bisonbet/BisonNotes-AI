@@ -21,6 +21,7 @@ struct AudioPlayerView: View {
     @State private var titleUpdateError: String?
     @State private var audioExportURL: URL?
     @State private var audioExportError: String?
+    @State private var audioLoadError: String?
 
     // Transcript-from-recording flow
     @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
@@ -82,6 +83,17 @@ struct AudioPlayerView: View {
                                     recorderVM.seekToTime(time)
                                 }
                             )
+                        } else if let audioLoadError {
+                            VStack(spacing: 10) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.title2)
+                                    .foregroundColor(.orange)
+                                Text(audioLoadError)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .frame(height: 86)
                         } else {
                             VStack(spacing: 10) {
                                 ProgressView()
@@ -112,6 +124,7 @@ struct AudioPlayerView: View {
                                     .foregroundColor(.accentColor)
                             }
                             .buttonStyle(.plain)
+                            .disabled(audioLoadError != nil)
 
                             Button(action: skipForward) {
                                 VStack(spacing: 4) {
@@ -236,7 +249,7 @@ struct AudioPlayerView: View {
                 || transcriptionStarter.hasActiveTranscriptionJob(for: entry, appCoordinator: appCoordinator)
 
             Button(action: {
-                if !isProcessing {
+                if !isProcessing, audioLoadError == nil {
                     recordingPendingTranscription = entry
                     showingAudioCleanupPrompt = true
                 }
@@ -263,7 +276,7 @@ struct AudioPlayerView: View {
                 .foregroundColor(isProcessing ? .orange : .accentColor)
             }
             .buttonStyle(.plain)
-            .disabled(isProcessing)
+            .disabled(isProcessing || audioLoadError != nil)
             .id("transcript-action-\(recordingId)-\(isProcessing)-\(transcriptStateRefresh)")
         }
     }
@@ -274,12 +287,23 @@ struct AudioPlayerView: View {
         // Get duration from the audio file
         do {
             let player = try AVAudioPlayer(contentsOf: recording.url)
+            guard player.duration.isFinite, player.duration > 0 else {
+                throw NSError(
+                    domain: "AudioPlayerView",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "This audio file appears to be empty or corrupted."]
+                )
+            }
             duration = player.duration
+            audioLoadError = nil
             AppLog.shared.recording("Duration loaded from AVAudioPlayer: \(duration)", level: .debug)
         } catch {
             AppLog.shared.recording("Error getting audio duration: \(error)", level: .error)
             // Fallback to recording duration if available
             duration = recording.duration
+            if duration <= 0 {
+                audioLoadError = "This audio file appears to be empty or corrupted."
+            }
         }
     }
 

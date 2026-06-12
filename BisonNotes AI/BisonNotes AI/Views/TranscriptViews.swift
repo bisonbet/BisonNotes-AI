@@ -10,6 +10,18 @@ import AVFoundation
 import Speech
 import CoreLocation
 
+private enum TranscriptListSource {
+    case audio
+    case imported
+}
+
+private struct TranscriptWithDate {
+    let recording: RecordingEntry
+    let transcript: TranscriptData?
+    let date: Date
+    let source: TranscriptListSource
+}
+
 struct TranscriptsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
@@ -33,6 +45,7 @@ struct TranscriptsView: View {
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var dateFilterEnd: Date = Date()
     @State private var isDateFilterActive = false
+    @State private var expandedTranscriptDateSections: Set<DateSection> = []
     /// Shared service that owns the serial audio-cleanup queue and transcription start.
     @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
     /// Recordings whose summary generation we kicked off and are still awaiting completion.
@@ -242,41 +255,6 @@ struct TranscriptsView: View {
     }
 
     private var dateFilterSheet: some View {
-        #if targetEnvironment(macCatalyst)
-        VStack(spacing: 0) {
-            HStack {
-                Button("Cancel") { showDateFilter = false }
-                Spacer()
-                Text("Filter by Date").font(.headline)
-                Spacer()
-                Button("Apply") {
-                    isDateFilterActive = true
-                    showDateFilter = false
-                    refreshTrigger.toggle()
-                }
-                .fontWeight(.semibold)
-            }
-            .padding(.horizontal, 16).padding(.vertical, 10)
-            Divider()
-            Form {
-                Section {
-                    DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
-                    DatePicker("To", selection: $dateFilterEnd, in: dateFilterStart...Date(), displayedComponents: .date)
-                }
-                if isDateFilterActive {
-                    Section {
-                        Button(role: .destructive) {
-                            isDateFilterActive = false
-                            showDateFilter = false
-                            refreshTrigger.toggle()
-                        } label: {
-                            HStack { Spacer(); Text("Clear Filter"); Spacer() }
-                        }
-                    }
-                }
-            }
-        }
-        #else
         NavigationStack {
             Form {
                 Section {
@@ -317,38 +295,30 @@ struct TranscriptsView: View {
                 }
             }
         }
-        #endif
     }
 
     private func transcriptsListView(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?)], _ filteredImported: [(recording: RecordingEntry, transcript: TranscriptData?)]) -> some View {
         #if targetEnvironment(macCatalyst)
         // On Mac Catalyst, the preview-+-NavigationLink-to-More pattern wedges the responder chain
-        // (destination renders but becomes unresponsive). Render everything inline instead;
-        // List handles virtualization for arbitrary item counts.
-        return List {
-            if !filtered.isEmpty {
-                Section(header: Text("Audio Transcripts")) {
-                    ForEach(filtered, id: \.recording.id) { recordingData in
-                        recordingRowView(recordingData)
-                    }
-                }
-            }
+        // (destination renders but becomes unresponsive). Render everything inline instead.
+        let sectioned = DateSectionHelper.groupBySection(
+            transcriptItemsWithDates(filtered, source: .audio) + transcriptItemsWithDates(filteredImported, source: .imported),
+            dateKeyPath: \.date
+        )
 
-            if !filteredImported.isEmpty {
-                Section(header:
-                    HStack {
-                        Text("Imported Transcripts")
-                        Spacer()
-                        Text("\(filteredImported.count)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+        return List {
+            ForEach(sectioned, id: \.section) { sectionData in
+                Section(
+                    header: CollapsibleDateSectionHeader(
+                        title: sectionData.section.title,
+                        count: sectionData.items.count,
+                        isExpanded: isTranscriptDateSectionExpanded(sectionData.section),
+                        isAlwaysExpanded: sectionData.section == .today,
+                        onToggle: { toggleTranscriptDateSection(sectionData.section) }
+                    )
                 ) {
-                    ForEach(filteredImported, id: \.recording.id) { recordingData in
-                        importedTranscriptRowView(recordingData)
-                    }
-                    .onDelete { indexSet in
-                        deleteImportedTranscripts(at: indexSet, in: filteredImported)
+                    if isTranscriptDateSectionExpanded(sectionData.section) {
+                        transcriptDateSectionRows(sectionData.items)
                     }
                 }
             }
@@ -437,12 +407,22 @@ struct TranscriptsView: View {
 
             List {
                 ForEach(sectioned, id: \.section) { sectionData in
-                    Section(header: Text(sectionData.section.title)) {
-                        ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
-                            recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
-                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
+                    Section(
+                        header: CollapsibleDateSectionHeader(
+                            title: sectionData.section.title,
+                            count: sectionData.items.count,
+                            isExpanded: isTranscriptDateSectionExpanded(sectionData.section),
+                            isAlwaysExpanded: sectionData.section == .today,
+                            onToggle: { toggleTranscriptDateSection(sectionData.section) }
+                        )
+                    ) {
+                        if isTranscriptDateSectionExpanded(sectionData.section) {
+                            ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
+                                recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
                         }
                     }
                 }
@@ -483,19 +463,29 @@ struct TranscriptsView: View {
 
             List {
                 ForEach(sectioned, id: \.section) { sectionData in
-                    Section(header: Text(sectionData.section.title)) {
-                        ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
-                            importedTranscriptRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
-                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
-                        }
-                        .onDelete { indexSet in
-                            let itemsToDelete = indexSet.map { sectionData.items[$0] }
-                            for item in itemsToDelete {
-                                deleteImportedTranscript((recording: item.recording, transcript: item.transcript))
+                    Section(
+                        header: CollapsibleDateSectionHeader(
+                            title: sectionData.section.title,
+                            count: sectionData.items.count,
+                            isExpanded: isTranscriptDateSectionExpanded(sectionData.section),
+                            isAlwaysExpanded: sectionData.section == .today,
+                            onToggle: { toggleTranscriptDateSection(sectionData.section) }
+                        )
+                    ) {
+                        if isTranscriptDateSectionExpanded(sectionData.section) {
+                            ForEach(sectionData.items, id: \.recording.id) { itemWithDate in
+                                importedTranscriptRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript))
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
                             }
-                            loadRecordings()
+                            .onDelete { indexSet in
+                                let itemsToDelete = indexSet.map { sectionData.items[$0] }
+                                for item in itemsToDelete {
+                                    deleteImportedTranscript((recording: item.recording, transcript: item.transcript))
+                                }
+                                loadRecordings()
+                            }
                         }
                     }
                 }
@@ -511,6 +501,90 @@ struct TranscriptsView: View {
                     Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                 }
             }
+        }
+    }
+
+    private func transcriptItemsWithDates(
+        _ items: [(recording: RecordingEntry, transcript: TranscriptData?)],
+        source: TranscriptListSource
+    ) -> [TranscriptWithDate] {
+        items.compactMap { item in
+            guard let date = item.recording.recordingDate else { return nil }
+            return TranscriptWithDate(
+                recording: item.recording,
+                transcript: item.transcript,
+                date: date,
+                source: source
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func transcriptDateSectionRows(_ items: [TranscriptWithDate]) -> some View {
+        let audioItems = items.filter { $0.source == .audio }
+        let importedItems = items.filter { $0.source == .imported }
+        let showSourceLabels = !audioItems.isEmpty && !importedItems.isEmpty
+
+        if !audioItems.isEmpty {
+            if showSourceLabels {
+                transcriptSourceLabel("Audio Transcripts", count: audioItems.count, systemImage: "waveform")
+            }
+
+            ForEach(audioItems, id: \.recording.objectID) { item in
+                recordingRowView((recording: item.recording, transcript: item.transcript))
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+        }
+
+        if !importedItems.isEmpty {
+            if showSourceLabels {
+                transcriptSourceLabel("Imported Transcripts", count: importedItems.count, systemImage: "doc.text.fill")
+            }
+
+            ForEach(importedItems, id: \.recording.objectID) { item in
+                importedTranscriptRowView((recording: item.recording, transcript: item.transcript))
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+            .onDelete { indexSet in
+                let itemsToDelete = indexSet.map { importedItems[$0] }
+                for item in itemsToDelete {
+                    deleteImportedTranscript((recording: item.recording, transcript: item.transcript))
+                }
+                loadRecordings()
+            }
+        }
+    }
+
+    private func transcriptSourceLabel(_ title: String, count: Int, systemImage: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.semibold))
+            Text(title)
+            Text("\(count)")
+                .foregroundColor(.secondary)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundColor(.secondary)
+        .textCase(.uppercase)
+        .padding(.top, 4)
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+    }
+
+    private func isTranscriptDateSectionExpanded(_ section: DateSection) -> Bool {
+        section == .today || expandedTranscriptDateSections.contains(section)
+    }
+
+    private func toggleTranscriptDateSection(_ section: DateSection) {
+        guard section != .today else { return }
+        if expandedTranscriptDateSections.contains(section) {
+            expandedTranscriptDateSections.remove(section)
+        } else {
+            expandedTranscriptDateSections.insert(section)
         }
     }
 
@@ -1900,23 +1974,6 @@ struct SpeakerEditingView: View {
     }
 
     var body: some View {
-        #if targetEnvironment(macCatalyst)
-        VStack(spacing: 0) {
-            HStack {
-                Button("Cancel") { dismiss() }
-                Spacer()
-                Text("Edit Speakers").font(.headline)
-                Spacer()
-                Button("Apply") {
-                    applyNames()
-                }
-                .fontWeight(.semibold)
-            }
-            .padding(.horizontal, 16).padding(.vertical, 10)
-            Divider()
-            speakerForm
-        }
-        #else
         NavigationStack {
             speakerForm
                 .navigationTitle("Edit Speakers")
@@ -1931,7 +1988,6 @@ struct SpeakerEditingView: View {
                     }
                 }
         }
-        #endif
     }
 
     private var speakerForm: some View {
