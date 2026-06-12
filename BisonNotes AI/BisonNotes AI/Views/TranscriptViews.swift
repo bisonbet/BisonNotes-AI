@@ -359,7 +359,10 @@ struct TranscriptsView: View {
                     )
 
                     ForEach(recentImportedTranscripts, id: \.recording.id) { recordingData in
-                        importedTranscriptRowView(recordingData)
+                        importedTranscriptRowView(recordingData) {
+                            deleteImportedTranscript(recordingData)
+                            loadRecordings()
+                        }
                     }
 
                     if filteredImported.count > recentImportedTranscripts.count {
@@ -626,52 +629,88 @@ struct TranscriptsView: View {
             }
         }
         .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 
-    private func importedTranscriptRowView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
-        Button(action: {
-            selectedRecording = recordingData.recording
-        }) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "doc.text.fill")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.purple)
-                        .frame(width: 38, height: 38)
-                        .background(Color.purple.opacity(0.14))
-                        .clipShape(RoundedRectangle(cornerRadius: 11))
+    private func importedTranscriptRowView(
+        _ recordingData: (recording: RecordingEntry, transcript: TranscriptData?),
+        onDelete: (() -> Void)? = nil
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Button(action: {
+                selectedRecording = recordingData.recording
+            }) {
+                importedTranscriptRowContent(recordingData, showsChevron: onDelete == nil)
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(recordingData.recording.recordingName ?? "Untitled Import")
-                            .font(.headline)
-                            .foregroundColor(.primary)
+            if let onDelete {
+                Divider()
+                    .frame(height: 44)
 
-                        Text(UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.headline)
+                        .foregroundColor(.red)
+                        .frame(width: 44, height: 44)
+                        .background(Color.red.opacity(0.12))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Delete imported transcript")
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            if let onDelete {
+                Button(role: .destructive, action: onDelete) {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
+    }
 
-                        if let transcript = recordingData.transcript {
-                            Text("\(transcript.segments.reduce(0) { $0 + $1.text.split(separator: " ").count }) words")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                    }
+    private func importedTranscriptRowContent(
+        _ recordingData: (recording: RecordingEntry, transcript: TranscriptData?),
+        showsChevron: Bool
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "doc.text.fill")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(.purple)
+                .frame(width: 38, height: 38)
+                .background(Color.purple.opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 11))
 
-                    Spacer()
+            VStack(alignment: .leading, spacing: 4) {
+                Text(recordingData.recording.recordingName ?? "Untitled Import")
+                    .font(.headline)
+                    .foregroundColor(.primary)
 
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
+                Text(UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                if let transcript = recordingData.transcript {
+                    Text("\(transcript.segments.reduce(0) { $0 + $1.text.split(separator: " ").count }) words")
+                        .font(.caption2)
                         .foregroundColor(.secondary)
                 }
             }
-            .padding(16)
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 18))
+
+            Spacer()
+
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
         }
-        .buttonStyle(.plain)
     }
 
     private func recordingInfoView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
