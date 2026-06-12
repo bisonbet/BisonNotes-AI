@@ -202,8 +202,12 @@ extension AudioRecorderViewModel {
 	}
 
 	private static func catalystScratchURL(for finalURL: URL) -> URL {
-		finalURL
-			.deletingPathExtension()
+		// Stage in the temp directory, not next to the recording: an orphaned
+		// scratch file left by a crash between stop and finalize would otherwise
+		// sit in the recordings directory. The name is derived from the final
+		// recording so the start-pipeline retry cleanup can find and remove it.
+		FileManager.default.temporaryDirectory
+			.appendingPathComponent(finalURL.deletingPathExtension().lastPathComponent)
 			.appendingPathExtension("caf")
 	}
 
@@ -243,8 +247,10 @@ extension AudioRecorderViewModel {
 			)
 		}
 
-		let tempURL = finalURL
-			.deletingLastPathComponent()
+		// Export into the temp directory, not the recordings directory: a stray
+		// `.m4a` left there by a failed/killed export would be misread as an
+		// orphaned recording by EnhancedFileManager's documents-directory scan.
+		let tempURL = fileManager.temporaryDirectory
 			.appendingPathComponent("catalyst_export_\(UUID().uuidString).m4a")
 
 		if fileManager.fileExists(atPath: tempURL.path) {
