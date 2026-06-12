@@ -190,6 +190,14 @@ class CoreDataManager: ObservableObject {
         return relativePathToURL(urlString)
     }
 
+    private func preservedContentURL(for recording: RecordingEntry, recordingId: UUID) -> URL {
+        if let storedURL = getStoredURL(for: recording) {
+            return storedURL
+        }
+
+        return URL(fileURLWithPath: "/preserved-recordings/\(recordingId.uuidString)")
+    }
+
     // MARK: - Location Data Helpers
     
     func getLocationData(for recording: RecordingEntry) -> LocationData? {
@@ -690,13 +698,9 @@ class CoreDataManager: ObservableObject {
             return nil
         }
 
-        // The transcript is valid even when the audio file is gone (archived
-        // recordings intentionally have no local audio). Fall back to the
-        // stored URL so the transcript stays visible in the Transcripts list.
-        guard let url = getAbsoluteURL(for: recordingEntry) ?? getStoredURL(for: recordingEntry) else {
-            AppLog.shared.coreData("Could not resolve any URL for recording ID: \(recordingEntry.id?.uuidString ?? "nil")", level: .debug)
-            return nil
-        }
+        // The transcript is valid even when the audio file is gone. Use a
+        // stable recording-scoped placeholder when no stored URL remains.
+        let url = getAbsoluteURL(for: recordingEntry) ?? preservedContentURL(for: recordingEntry, recordingId: recordingId)
         
         // Decode segments from JSON
         var segments: [TranscriptSegment] = []
@@ -737,8 +741,9 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Missing IDs for summary/recording conversion", level: .error)
             return nil
         }
-        // Allow preserved summaries without an audio URL by falling back to an empty URL
-        let url = getAbsoluteURL(for: recordingEntry) ?? URL(fileURLWithPath: "")
+        // Allow preserved summaries without an audio URL by using a stable
+        // recording-scoped placeholder when no stored URL remains.
+        let url = getAbsoluteURL(for: recordingEntry) ?? preservedContentURL(for: recordingEntry, recordingId: recordingId)
         
         // Decode structured data from JSON
         var titles: [TitleItem] = []
