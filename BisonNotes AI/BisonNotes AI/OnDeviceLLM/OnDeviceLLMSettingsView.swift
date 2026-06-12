@@ -34,7 +34,7 @@ struct OnDeviceLLMSettingsView: View {
 
     var body: some View {
         let isSupported = DeviceCapabilities.supportsOnDeviceLLM
-        
+
         return Form {
             // Info Section
             Section {
@@ -42,7 +42,7 @@ struct OnDeviceLLMSettingsView: View {
                     Text("Process transcripts locally on your device using a downloaded AI model. No internet connection required after model download.")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
+
                     // Warning for devices with 4-6GB RAM about experimental models
                     let deviceRAM = DeviceCapabilities.totalRAMInGB
                     if deviceRAM >= 4.0 && deviceRAM < 6.0 {
@@ -103,6 +103,8 @@ struct OnDeviceLLMSettingsView: View {
                 connectionTestButton
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(AIEngineType.onDeviceLLM.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -135,7 +137,7 @@ struct OnDeviceLLMSettingsView: View {
     private func modelRow(for model: OnDeviceLLMModelInfo) -> some View {
         let isRamSufficient = DeviceCapabilities.totalRAMInGB >= model.requiredRAM
         let canSelect = isRamSufficient && model.isDownloaded
-        
+
         Button {
             if canSelect && model.id != downloadManager.selectedModel.id {
                 selectModelAndApplyDefaults(model)
@@ -148,7 +150,7 @@ struct OnDeviceLLMSettingsView: View {
                             Text(model.displayName)
                                 .font(.headline)
                                 .foregroundColor(isRamSufficient ? .primary : .secondary)
-                            
+
                             if model.isRecommended {
                                 Text("Recommended")
                                     .font(.caption2)
@@ -171,7 +173,7 @@ struct OnDeviceLLMSettingsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(2)
-                        
+
                         if !isRamSufficient {
                             Text("⚠️ Requires \(String(format: "%.0f", model.requiredRAM))GB RAM (Device: \(String(format: "%.1f", DeviceCapabilities.totalRAMInGB))GB)")
                                 .font(.caption2)
@@ -187,7 +189,7 @@ struct OnDeviceLLMSettingsView: View {
                     Label(model.downloadSize, systemImage: "arrow.down.circle")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    
+
                     Text("by \(model.maker)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -412,7 +414,7 @@ struct OnDeviceLLMSettingsView: View {
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }
-        
+
 
         // Repeat Penalty
         VStack(alignment: .leading, spacing: 4) {

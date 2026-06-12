@@ -460,6 +460,8 @@ struct JobDetailView: View {
                                 .foregroundColor(.secondary)
                         }
                     }
+                    .padding(16)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                     // Status and progress
                     VStack(alignment: .leading, spacing: 12) {
@@ -486,6 +488,8 @@ struct JobDetailView: View {
                             }
                         }
                     }
+                    .padding(16)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                     // Timing information
                     VStack(alignment: .leading, spacing: 12) {
@@ -530,6 +534,8 @@ struct JobDetailView: View {
                         }
                         .font(.subheadline)
                     }
+                    .padding(16)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                     // Engine information
                     VStack(alignment: .leading, spacing: 12) {
@@ -553,6 +559,8 @@ struct JobDetailView: View {
                         }
                         .font(.subheadline)
                     }
+                    .padding(16)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                     // Chunk information
                     if let chunks = job.chunks, !chunks.isEmpty {
@@ -564,6 +572,8 @@ struct JobDetailView: View {
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
+                        .padding(16)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
 
                     // Error details
@@ -577,10 +587,12 @@ struct JobDetailView: View {
                                 .foregroundColor(.red)
                                 .padding()
                                 .background(
-                                    RoundedRectangle(cornerRadius: 8)
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                                         .fill(Color.red.opacity(0.1))
                                 )
                         }
+                        .padding(16)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
 
                     // Interrupted details
@@ -594,10 +606,12 @@ struct JobDetailView: View {
                                 .foregroundColor(.orange)
                                 .padding()
                                 .background(
-                                    RoundedRectangle(cornerRadius: 8)
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                                         .fill(Color.orange.opacity(0.1))
                                 )
                         }
+                        .padding(16)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
 
                     // Cancel button for active/queued jobs
@@ -614,9 +628,8 @@ struct JobDetailView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding()
-                            .background(Color.red)
+                            .background(Color.red, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .foregroundColor(.white)
-                            .cornerRadius(10)
                         }
                     }
 
@@ -624,6 +637,7 @@ struct JobDetailView: View {
                 }
                 .padding()
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Job Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

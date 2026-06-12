@@ -38,6 +38,12 @@ class WatchRecordingViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var recordingSessionId: UUID?
     private var recordingStartLocation: WatchLocationData?
+
+    // Mute (pause) timeout: auto-save after this long muted to stop holding
+    // the audio session open and burning battery
+    private var pausedAt: Date?
+    private var muteTimeoutTimer: Timer?
+    private static let muteTimeout: TimeInterval = 15 * 60
     
     // MARK: - Computed Properties
     
@@ -286,6 +292,7 @@ class WatchRecordingViewModel: ObservableObject {
         print("⌚ Stopping recording...")
         let oldState = recordingState
         recordingState = .stopping
+        cancelMuteTimeout()
 
         // Stop audio recording
         audioManager.stopRecording()
@@ -467,10 +474,10 @@ class WatchRecordingViewModel: ObservableObject {
     private func handleAudioRecordingStateChanged(isRecording: Bool, isPaused: Bool) {
         if isRecording && isPaused {
             recordingState = .paused
-        } else if isRecording {
-            recordingState = .recording
+            startMuteTimeout()
         } else {
-            recordingState = .idle
+            recordingState = isRecording ? .recording : .idle
+            cancelMuteTimeout()
         }
 
         // Keep the connectivity manager informed so it can minimize
@@ -478,6 +485,40 @@ class WatchRecordingViewModel: ObservableObject {
         connectivityManager.watchRecordingState = recordingState
 
         print("⌚ Audio recording state changed: \(recordingState.rawValue)")
+    }
+
+    // MARK: - Mute Timeout
+
+    private func startMuteTimeout() {
+        guard pausedAt == nil else { return } // already armed
+        pausedAt = Date()
+
+        muteTimeoutTimer?.invalidate()
+        muteTimeoutTimer = Timer.scheduledTimer(withTimeInterval: Self.muteTimeout, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.fireMuteTimeoutIfDue()
+            }
+        }
+        print("⌚ Mute timeout armed (\(Int(Self.muteTimeout / 60)) min)")
+    }
+
+    private func cancelMuteTimeout() {
+        pausedAt = nil
+        muteTimeoutTimer?.invalidate()
+        muteTimeoutTimer = nil
+    }
+
+    /// Stop and save the recording if it has been muted past the timeout.
+    /// Deadline is computed from the pausedAt wall-clock timestamp so the
+    /// timer path and the on-wake check agree.
+    private func fireMuteTimeoutIfDue() {
+        guard recordingState == .paused,
+              let pausedAt = pausedAt,
+              Date().timeIntervalSince(pausedAt) >= Self.muteTimeout else { return }
+
+        print("⌚ Muted for \(Int(Self.muteTimeout / 60)) minutes - auto-saving to preserve battery")
+        feedbackManager.provideFeedback(for: .recordingStopped)
+        stopRecording()
     }
     
     /// Sync a recording to iPhone
@@ -656,13 +697,17 @@ class WatchRecordingViewModel: ObservableObject {
     private func handleAppDidBecomeActive() {
         if recordingState == .recording || recordingState == .paused {
             print("⌚ App became active during recording - resuming UI and checking session")
-            
+
+            // If the process was suspended while muted, the timeout Timer
+            // never fired - enforce the deadline on wake
+            fireMuteTimeoutIfDue()
+
             // Verify recording session is still healthy
             if !audioManager.performHealthCheck() {
                 print("⚠️ Recording session compromised after system alert")
                 showError("Recording was interrupted by system alert")
             }
-            
+
             // Update UI state
             updateBatteryLevel()
         } else {

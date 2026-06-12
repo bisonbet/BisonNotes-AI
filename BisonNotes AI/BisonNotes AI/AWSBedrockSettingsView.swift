@@ -16,35 +16,35 @@ struct AWSBedrockSettingsView: View {
     @AppStorage("awsBedrockUseProfile") private var useProfile: Bool = false
     @AppStorage("awsBedrockProfileName") private var profileName: String = ""
     @AppStorage("enableAWSBedrock") private var enableAWSBedrock: Bool = false
-    
+
     @Environment(\.dismiss) private var dismiss
     @State private var showingCredentials = false
     @State private var testResult: String?
     @State private var isTesting = false
     @State private var availableModels: [AWSBedrockModel] = AWSBedrockModel.allCases
     @State private var isLoadingModels = false
-    
+
     // Local state for editing (sync with unified credentials)
     @State private var editingAccessKey: String = ""
     @State private var editingSecretKey: String = ""
     @State private var editingRegion: String = "us-east-1"
-    
+
     private let regions = [
         "us-east-1": "US East (N. Virginia)",
         "us-east-2": "US East (Ohio)",
         "us-west-1": "US West (N. California)",
         "us-west-2": "US West (Oregon)"
     ]
-    
+
     private var selectedModelEnum: AWSBedrockModel {
         return AWSBedrockModel(rawValue: selectedModel) ?? .llama4Maverick
     }
-    
+
     var body: some View {
         NavigationStack {
             Form {
                 headerSection
-                
+
                 if enableAWSBedrock {
                     authenticationSection
                     modelConfigurationSection
@@ -54,6 +54,8 @@ struct AWSBedrockSettingsView: View {
                     documentationSection
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("AWS Bedrock Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -69,7 +71,7 @@ struct AWSBedrockSettingsView: View {
             editingAccessKey = credentialsManager.credentials.accessKeyId
             editingSecretKey = credentialsManager.credentials.secretAccessKey
             editingRegion = credentialsManager.credentials.region
-            
+
             // Validate and fix invalid stored model selection
             if AWSBedrockModel(rawValue: selectedModel) == nil {
                 AppLog.shared.general("Invalid stored model, resetting to default")
@@ -77,14 +79,14 @@ struct AWSBedrockSettingsView: View {
             }
         }
     }
-    
+
     private var headerSection: some View {
         Section(header: Text("AWS Bedrock AI")) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("AWS Bedrock provides access to foundation models from Anthropic, Amazon, Meta, and other providers for high-quality AI summaries and content analysis.")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Context Window")
@@ -94,7 +96,7 @@ struct AWSBedrockSettingsView: View {
                             .font(.caption)
                             .fontWeight(.medium)
                     }
-                    
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Provider")
                             .font(.caption2)
@@ -103,7 +105,7 @@ struct AWSBedrockSettingsView: View {
                             .font(.caption)
                             .fontWeight(.medium)
                     }
-                    
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Cost Tier")
                             .font(.caption2)
@@ -113,7 +115,7 @@ struct AWSBedrockSettingsView: View {
                             .fontWeight(.medium)
                             .foregroundColor(costTierColor(selectedModelEnum.costTier))
                     }
-                    
+
                     Spacer()
                 }
                 .padding(.vertical, 8)
@@ -126,7 +128,7 @@ struct AWSBedrockSettingsView: View {
             .padding(.vertical, 4)
         }
     }
-    
+
     private var authenticationSection: some View {
         Section(header: Text("Authentication")) {
             VStack(alignment: .leading, spacing: 16) {
@@ -135,15 +137,15 @@ struct AWSBedrockSettingsView: View {
                     Text("AWS Profile").tag(true)
                 }
                 .pickerStyle(SegmentedPickerStyle())
-                
+
                 if useProfile {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("AWS Profile Name")
                             .font(.headline)
-                        
+
                         TextField("Enter profile name (e.g., default)", text: $profileName)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
-                        
+
                         Text("Use an AWS profile configured with the AWS CLI or SDK. The profile should have access to AWS Bedrock in the selected region.")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -158,7 +160,7 @@ struct AWSBedrockSettingsView: View {
                             }
                             .font(.caption)
                         }
-                        
+
                         if showingCredentials {
                             TextField("Enter Access Key ID", text: $editingAccessKey)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -172,7 +174,7 @@ struct AWSBedrockSettingsView: View {
                                     credentialsManager.updateAccessKey(newValue)
                                 }
                         }
-                        
+
                         HStack {
                             Text("Secret Access Key")
                             Spacer()
@@ -181,7 +183,7 @@ struct AWSBedrockSettingsView: View {
                             }
                             .font(.caption)
                         }
-                        
+
                         if showingCredentials {
                             TextField("Enter Secret Access Key", text: $editingSecretKey)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -195,11 +197,11 @@ struct AWSBedrockSettingsView: View {
                                     credentialsManager.updateSecretKey(newValue)
                                 }
                         }
-                        
+
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Session Token (Optional)")
                                 .font(.headline)
-                            
+
                             if showingCredentials {
                                 TextField("Enter session token", text: $sessionToken)
                                     .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -207,20 +209,20 @@ struct AWSBedrockSettingsView: View {
                                 SecureField("Enter session token", text: $sessionToken)
                                     .textFieldStyle(RoundedBorderTextFieldStyle())
                             }
-                            
+
                             Text("Required only for temporary credentials or assume role scenarios.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
                 }
-                
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Security Note")
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.orange)
-                    
+
                     Text("Your AWS credentials are stored securely on your device. Never share these credentials or commit them to version control.")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -229,7 +231,7 @@ struct AWSBedrockSettingsView: View {
             }
         }
     }
-    
+
     private var modelConfigurationSection: some View {
         Section(header: Text("Model Configuration")) {
             VStack(alignment: .leading, spacing: 16) {
@@ -242,14 +244,14 @@ struct AWSBedrockSettingsView: View {
                 .onChange(of: editingRegion) { _, newValue in
                     credentialsManager.updateRegion(newValue)
                 }
-                
+
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Model")
                             .font(.headline)
-                        
+
                         Spacer()
-                        
+
                         Button(action: loadAvailableModels) {
                             HStack(spacing: 4) {
                                 if isLoadingModels {
@@ -265,7 +267,7 @@ struct AWSBedrockSettingsView: View {
                         }
                         .disabled(isLoadingModels || !isConfigurationValid)
                     }
-                    
+
                     Picker("Model", selection: $selectedModel) {
                         ForEach(availableModels, id: \.self) { model in
                             VStack(alignment: .leading) {
@@ -279,17 +281,17 @@ struct AWSBedrockSettingsView: View {
                         }
                     }
                     .pickerStyle(MenuPickerStyle())
-                    
+
                     // Model details
                     VStack(alignment: .leading, spacing: 8) {
                         Text(selectedModelEnum.displayName)
                             .font(.body)
                             .fontWeight(.medium)
-                        
+
                         Text(selectedModelEnum.description)
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        
+
                         HStack(spacing: 16) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Context Window")
@@ -299,7 +301,7 @@ struct AWSBedrockSettingsView: View {
                                     .font(.caption)
                                     .fontWeight(.medium)
                             }
-                            
+
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Max Output")
                                     .font(.caption2)
@@ -308,7 +310,7 @@ struct AWSBedrockSettingsView: View {
                                     .font(.caption)
                                     .fontWeight(.medium)
                             }
-                            
+
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Structured Output")
                                     .font(.caption2)
@@ -318,7 +320,7 @@ struct AWSBedrockSettingsView: View {
                                     .fontWeight(.medium)
                                     .foregroundColor(selectedModelEnum.supportsStructuredOutput ? .green : .orange)
                             }
-                            
+
                             Spacer()
                         }
                     }
@@ -332,7 +334,7 @@ struct AWSBedrockSettingsView: View {
             }
         }
     }
-    
+
     private var advancedSettingsSection: some View {
         Section(header: Text("Advanced Settings")) {
             VStack(alignment: .leading, spacing: 16) {
@@ -345,14 +347,14 @@ struct AWSBedrockSettingsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    
+
                     Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
-                    
+
                     Text("Controls randomness in responses. Lower values (0.1) are more focused and deterministic, higher values (0.9) are more creative and varied.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Max Tokens")
@@ -362,12 +364,12 @@ struct AWSBedrockSettingsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    
+
                     Slider(value: Binding(
                         get: { Double(maxTokens) },
                         set: { maxTokens = Int($0) }
                     ), in: 512...Double(selectedModelEnum.maxTokens), step: 256)
-                    
+
                     Text("Maximum number of tokens in the response. Higher values allow for longer responses but may increase costs.")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -375,7 +377,7 @@ struct AWSBedrockSettingsView: View {
             }
         }
     }
-    
+
     private var connectionTestSection: some View {
         Section(header: Text("Test Connection")) {
             VStack(alignment: .leading, spacing: 12) {
@@ -391,7 +393,7 @@ struct AWSBedrockSettingsView: View {
                     }
                 }
                 .disabled(isTesting || !isConfigurationValid)
-                
+
                 if let testResult = testResult {
                     Text(testResult)
                         .font(.caption)
@@ -400,7 +402,7 @@ struct AWSBedrockSettingsView: View {
             }
         }
     }
-    
+
     private var setupInstructionsSection: some View {
         Section(header: Text("Setup Instructions")) {
             VStack(alignment: .leading, spacing: 12) {
@@ -409,25 +411,25 @@ struct AWSBedrockSettingsView: View {
                     title: "Create AWS Account",
                     description: "Sign up for AWS if you don't have an account"
                 )
-                
+
                 InstructionRow(
                     number: "2",
                     title: "Enable Bedrock Access",
                     description: "Request access to foundation models in the AWS Bedrock console"
                 )
-                
+
                 InstructionRow(
                     number: "3",
                     title: "Create IAM User",
                     description: "Create an IAM user with bedrock:InvokeModel permissions"
                 )
-                
+
                 InstructionRow(
                     number: "4",
                     title: "Generate Access Keys",
                     description: "Create Access Key ID and Secret Access Key for the IAM user"
                 )
-                
+
                 InstructionRow(
                     number: "5",
                     title: "Configure App",
@@ -436,7 +438,7 @@ struct AWSBedrockSettingsView: View {
             }
         }
     }
-    
+
     private var documentationSection: some View {
         Section {
             Link("AWS Bedrock Documentation", destination: URL(string: "https://docs.aws.amazon.com/bedrock/")!)
@@ -444,7 +446,7 @@ struct AWSBedrockSettingsView: View {
             Link("IAM Permissions Guide", destination: URL(string: "https://docs.aws.amazon.com/bedrock/latest/userguide/security_iam_service-with-iam.html")!)
         }
     }
-    
+
     private var isConfigurationValid: Bool {
         if useProfile {
             return !profileName.isEmpty && !credentialsManager.credentials.region.isEmpty
@@ -452,7 +454,7 @@ struct AWSBedrockSettingsView: View {
             return credentialsManager.credentials.isValid
         }
     }
-    
+
     private func costTierColor(_ tier: String) -> Color {
         switch tier {
         case "Economy":
@@ -465,18 +467,18 @@ struct AWSBedrockSettingsView: View {
             return .gray
         }
     }
-    
+
     private func loadAvailableModels() {
         guard isConfigurationValid else { return }
-        
+
         isLoadingModels = true
-        
+
         Task {
             do {
                 let config = createConfig()
                 let service = AWSBedrockService(config: config)
                 let models = try await service.listAvailableModels()
-                
+
                 await MainActor.run {
                     availableModels = models
                     isLoadingModels = false
@@ -490,19 +492,19 @@ struct AWSBedrockSettingsView: View {
             }
         }
     }
-    
+
     private func testConnection() {
         guard isConfigurationValid else { return }
-        
+
         isTesting = true
         testResult = nil
-        
+
         Task {
             let config = createConfig()
             let service = AWSBedrockService(config: config)
-            
+
             let success = await service.testConnection()
-            
+
             await MainActor.run {
                 if success {
                     testResult = "✅ AWS Bedrock connection successful! Model \(selectedModelEnum.displayName) is ready to use."
@@ -513,7 +515,7 @@ struct AWSBedrockSettingsView: View {
             }
         }
     }
-    
+
     private func createConfig() -> AWSBedrockConfig {
         return AWSBedrockConfig(
             region: credentialsManager.credentials.region,

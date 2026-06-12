@@ -85,13 +85,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var recordingStartedAt: (url: URL, date: Date)?
 
 	#if targetEnvironment(macCatalyst)
-	// On Mac Catalyst, AVAudioRecorder cannot reliably encode without an
-	// AVAudioSession. We use AVAudioEngine + AVAudioFile instead — input node
-	// taps deliver PCM buffers we can write directly to a single file with
-	// pause/resume implemented by removing/re-installing the tap.
+	// On Mac Catalyst, AVAudioRecorder cannot reliably encode to the app's
+	// M4A target. AVAudioEngine taps deliver PCM buffers to a scratch file that
+	// is exported to M4A when recording stops; AVAudioSession is only used as a
+	// fallback if the direct engine path cannot start.
 	var catalystAudioEngine: AVAudioEngine?
 	var catalystAudioFile: AVAudioFile?
 	var catalystEngineFormat: AVAudioFormat?
+	var catalystScratchRecordingURL: URL?
+	var catalystAudioSessionActivated = false
 	#endif
 	let checkpointInterval: TimeInterval = 30.0 // Try to checkpoint every 30 seconds
 	let forceCheckpointInterval: TimeInterval = 90.0 // Force checkpoint after 90 seconds even without silence

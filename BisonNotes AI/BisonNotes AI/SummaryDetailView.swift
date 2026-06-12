@@ -100,12 +100,12 @@ struct SummaryDetailView: View {
             }
         }
     }
-    
+
     init(recording: RecordingFile, summaryData: EnhancedSummaryData) {
         self.recording = recording
         self._summaryData = State(initialValue: summaryData)
     }
-    
+
     var body: some View {
         // NavigationStack { Form } is the only sheet pattern that scrolls reliably
         // on Mac Catalyst. See feedback_mac_catalyst_scrollview.md.
@@ -122,6 +122,8 @@ struct SummaryDetailView: View {
                 Section { metadataSection }
                 Section { regenerateSection }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Summary")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -284,6 +286,8 @@ struct SummaryDetailView: View {
                             .textSelection(.enabled)
                     }
                 }
+                .scrollContentBackground(.hidden)
+                .background(Color(.systemGroupedBackground))
                 .navigationTitle(selectedAttachmentName)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -323,7 +327,7 @@ struct SummaryDetailView: View {
             Text(attachmentError ?? "")
         }
     }
-    
+
     // MARK: - Geocoding Helpers
 
     @MainActor
@@ -412,7 +416,7 @@ struct SummaryDetailView: View {
     }
 
     // MARK: - Location Section
-    
+
     private var locationSection: some View {
         Group {
             if let locationData = recording.locationData {
@@ -437,7 +441,7 @@ struct SummaryDetailView: View {
                         Image(systemName: "location.fill")
                             .font(.subheadline)
                             .foregroundColor(.orange)
-                        
+
                         VStack(alignment: .leading, spacing: 2) {
                             if let address = locationAddress, !address.isEmpty {
                                 Text(address)
@@ -450,14 +454,14 @@ struct SummaryDetailView: View {
                                     .fontWeight(.medium)
                                     .foregroundColor(.primary)
                             }
-                            
+
                             Text(locationData.coordinateString)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        
+
                         Spacer()
-                        
+
                         // Edit location button
                         Button(action: {
                             showingLocationPicker = true
@@ -467,7 +471,7 @@ struct SummaryDetailView: View {
                                 .foregroundColor(.green)
                         }
                         .disabled(isUpdatingLocation)
-                        
+
                         // Button to open full map view
                         Button(action: {
                             showingLocationDetail = true
@@ -479,7 +483,7 @@ struct SummaryDetailView: View {
                     }
                     .padding(.horizontal)
                     .padding(.vertical, 12)
-                    .background(Color(.systemGray6))
+                    .background(Color(.secondarySystemGroupedBackground))
                 }
             } else {
                 // No location - show add location option
@@ -488,21 +492,21 @@ struct SummaryDetailView: View {
                         Image(systemName: "location.slash")
                             .font(.title2)
                             .foregroundColor(.gray)
-                        
+
                         VStack(alignment: .leading, spacing: 4) {
                             Text("No Location Set")
                                 .font(.headline)
                                 .foregroundColor(.primary)
-                            
+
                             Text("Add a location to remember where this recording was made")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.leading)
                         }
-                        
+
                         Spacer()
                     }
-                    
+
                     Button(action: {
                         showingLocationPicker = true
                     }) {
@@ -526,16 +530,16 @@ struct SummaryDetailView: View {
                     .disabled(isUpdatingLocation)
                 }
                 .padding()
-                .background(Color(.systemGray6).opacity(0.5))
+                .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .padding(.horizontal)
                 .padding(.vertical, 8)
             }
         }
     }
-    
+
     // MARK: - Header Section
-    
+
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Recording name
@@ -543,28 +547,28 @@ struct SummaryDetailView: View {
                 .font(.title2)
                 .fontWeight(.bold)
                 .foregroundColor(.primary)
-            
+
             // Prominent date/time display
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Image(systemName: "calendar.circle.fill")
                         .font(.title3)
                         .foregroundColor(.blue)
-                    
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Recording Date & Time")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .fontWeight(.medium)
-                        
+
                         Text(formatFullDateTime(summaryData.recordingDate))
                             .font(.body)
                             .fontWeight(.medium)
                             .foregroundColor(.primary)
                     }
-                    
+
                     Spacer()
-                    
+
                     // Custom date indicator (we'll implement this later)
                     if isCustomDate {
                         Text("Custom")
@@ -579,10 +583,10 @@ struct SummaryDetailView: View {
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
-                .background(Color(.systemGray6).opacity(0.5))
+                .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
-            
+
             // Duration info
             HStack {
                 Image(systemName: "clock")
@@ -591,14 +595,14 @@ struct SummaryDetailView: View {
                 Text("Duration: \(recording.durationString)")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+
                 Spacer()
             }
         }
     }
-    
+
     // MARK: - Metadata Section
-    
+
     private var metadataSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -609,7 +613,7 @@ struct SummaryDetailView: View {
                 Spacer()
             }
             .padding(.bottom, 8)
-            
+
             VStack(alignment: .leading, spacing: 12) {
                 metadataRow(title: "AI Engine", value: summaryData.aiEngine, icon: "cpu")
                 metadataRow(title: "AI Model", value: summaryData.aiModel, icon: "brain.head.profile")
@@ -629,22 +633,22 @@ struct SummaryDetailView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .frame(width: 20)
-            
+
             Text(title)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            
+
             Spacer()
-            
+
             Text(value)
                 .font(.caption)
                 .foregroundColor(valueColor)
                 .fontWeight(.medium)
         }
     }
-    
+
     // MARK: - Summary Section
-    
+
     private var summarySection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -655,7 +659,7 @@ struct SummaryDetailView: View {
                 Spacer()
             }
             .padding(.bottom, 8)
-            
+
             AITextView(text: summaryData.summary, aiService: AIService.from(aiEngine: summaryData.aiEngine, aiModel: summaryData.aiModel))
                 .font(.body)
                 .lineSpacing(4)
@@ -663,9 +667,9 @@ struct SummaryDetailView: View {
                 .textSelection(.enabled)
         }
     }
-    
+
     // MARK: - Tasks Section
-    
+
     private var tasksSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -681,7 +685,7 @@ struct SummaryDetailView: View {
                 Spacer()
             }
             .padding(.bottom, 8)
-            
+
             if summaryData.tasks.isEmpty {
                 emptyStateView(message: "No tasks found", icon: "checkmark.circle")
             } else {
@@ -696,7 +700,7 @@ struct SummaryDetailView: View {
     }
 
     // MARK: - Reminders Section
-    
+
     private var remindersSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -712,7 +716,7 @@ struct SummaryDetailView: View {
                 Spacer()
             }
             .padding(.bottom, 8)
-            
+
             if summaryData.reminders.isEmpty {
                 emptyStateView(message: "No reminders found", icon: "bell.slash")
             } else {
@@ -727,7 +731,7 @@ struct SummaryDetailView: View {
     }
 
     // MARK: - Titles Section
-    
+
     private var titlesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -741,7 +745,7 @@ struct SummaryDetailView: View {
                         .foregroundColor(.secondary)
                 }
                 Spacer()
-                
+
                 // Button to show title selector
                 Button(action: {
                     showingTitleSelector = true
@@ -758,7 +762,7 @@ struct SummaryDetailView: View {
                 .disabled(isUpdatingRecordingName)
             }
             .padding(.bottom, 8)
-            
+
             // Current recording name display
             VStack(alignment: .leading, spacing: 4) {
                 Text("Current Title")
@@ -769,20 +773,20 @@ struct SummaryDetailView: View {
                         .font(.body)
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
-                    
+
                     if isUpdatingRecordingName {
                         ProgressView()
                             .scaleEffect(0.6)
                     }
-                    
+
                     Spacer()
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal, 8)
-                .background(Color(.systemGray6))
+                .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
-            
+
             if summaryData.titles.isEmpty {
                 emptyStateView(message: "No alternative titles found", icon: "text.quote")
             } else {
@@ -790,11 +794,11 @@ struct SummaryDetailView: View {
                     Text("Alternative Titles")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
+
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(summaryData.titles, id: \.id) { title in
                             SelectableTitleRowView(
-                                title: title, 
+                                title: title,
                                 isCurrentTitle: title.text == summaryData.recordingName,
                                 onSelect: { selectedTitle in
                                     updateRecordingName(to: selectedTitle.text)
@@ -881,7 +885,7 @@ struct SummaryDetailView: View {
                         .lineLimit(3)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.systemGray6))
+                        .background(Color(.secondarySystemGroupedBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .onTapGesture {
                             showingNoteEditor = true
@@ -922,7 +926,7 @@ struct SummaryDetailView: View {
                             .buttonStyle(.plain)
                         }
                         .padding(10)
-                        .background(Color(.systemGray6))
+                        .background(Color(.secondarySystemGroupedBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }
@@ -931,12 +935,12 @@ struct SummaryDetailView: View {
     }
 
     // MARK: - Date/Time Editor Section
-    
+
     private var dateTimeEditorSection: some View {
         VStack(spacing: 16) {
             Divider()
                 .padding(.horizontal)
-            
+
             VStack(spacing: 12) {
                 HStack {
                     Image(systemName: "calendar.badge.clock")
@@ -945,12 +949,12 @@ struct SummaryDetailView: View {
                         .font(.headline)
                     Spacer()
                 }
-                
+
                 Text("Set a custom date and time for this recording")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
-                
+
                 Button(action: {
                     // Initialize the editing dates with current recording date
                     editingDate = summaryData.recordingDate
@@ -986,24 +990,24 @@ struct SummaryDetailView: View {
             )
         }
     }
-    
+
     // MARK: - Regenerate Section
-    
+
     private var regenerateSection: some View {
         VStack(spacing: 16) {
             Divider()
                 .padding(.horizontal)
-            
+
             VStack(spacing: 12) {
                 Text("Need a different summary?")
                     .font(.headline)
                     .foregroundColor(.primary)
-                
+
                 Text("Regenerate this summary with the current AI engine settings")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
-                
+
                 Button(action: {
                     // Check if AI engine is configured before allowing regeneration
                     if !ConfigurationWarningHelper.isAIEngineConfigured() {
@@ -1033,22 +1037,22 @@ struct SummaryDetailView: View {
                 .buttonStyle(.borderless)
                 .disabled(isRegenerating)
             }
-            
+
             // Location Editor Section
             locationEditorSection
-            
+
             // Delete Section
             deleteSection
         }
     }
-    
+
     // MARK: - Location Editor Section
-    
+
     private var locationEditorSection: some View {
         VStack(spacing: 16) {
             Divider()
                 .padding(.horizontal)
-            
+
             VStack(spacing: 12) {
                 HStack {
                     Image(systemName: "location.circle.fill")
@@ -1057,14 +1061,14 @@ struct SummaryDetailView: View {
                         .font(.headline)
                     Spacer()
                 }
-                
+
                 if let locationData = recording.locationData {
                     // Show current location with edit option
                     VStack(spacing: 8) {
                         Text("Current location set")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        
+
                         if let address = locationAddress, !address.isEmpty {
                             Text(address)
                                 .font(.body)
@@ -1078,7 +1082,7 @@ struct SummaryDetailView: View {
                                 .foregroundColor(.primary)
                                 .multilineTextAlignment(.center)
                         }
-                        
+
                         Button(action: {
                             showingLocationPicker = true
                         }) {
@@ -1137,24 +1141,24 @@ struct SummaryDetailView: View {
             }
         }
     }
-    
+
     // MARK: - Delete Section
-    
+
     private var deleteSection: some View {
         VStack(spacing: 12) {
             Divider()
                 .padding(.horizontal)
-            
+
             VStack(spacing: 8) {
                 Text("Delete Summary")
                     .font(.headline)
                     .foregroundColor(.primary)
-                
+
                 Text("Remove this summary while keeping the audio file and transcript")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
-                
+
                 Button(action: {
                     showingDeleteConfirmation = true
                 }) {
@@ -1174,9 +1178,9 @@ struct SummaryDetailView: View {
             }
         }
     }
-    
+
     // MARK: - Delete Logic
-    
+
     private func deleteSummary() {
         AppLog.shared.summarization("Deleting summary ID: \(summaryData.id)", level: .debug)
 
@@ -1229,7 +1233,7 @@ struct SummaryDetailView: View {
             }
         }
     }
-    
+
     // MARK: - Summary Refresh
 
     /// Reloads `summaryData` from Core Data so the displayed metadata
@@ -1288,15 +1292,15 @@ struct SummaryDetailView: View {
             }
         }
     }
-    
+
     // MARK: - Helper Views
-    
+
     private func emptyStateView(message: String, icon: String) -> some View {
         HStack {
             Image(systemName: icon)
                 .font(.title2)
                 .foregroundColor(.secondary)
-            
+
             Text(message)
                 .font(.body)
                 .foregroundColor(.secondary)
@@ -1304,11 +1308,11 @@ struct SummaryDetailView: View {
         }
         .padding(.top, 4)
     }
-    
+
     private func formatDate(_ date: Date) -> String {
         return UserPreferences.shared.formatShortDateTime(date)
     }
-    
+
     private func formatFullDateTime(_ date: Date) -> String {
         return UserPreferences.shared.formatFullDateTime(date)
     }
@@ -1328,9 +1332,9 @@ struct SummaryDetailView: View {
         // For now, return false. This will be implemented when we add dateSource to Core Data
         return false
     }
-    
+
     // MARK: - Title Management
-    
+
     private func updateRecordingName(to newName: String) {
         guard !isUpdatingRecordingName,
               let recordingId = summaryData.recordingId,
@@ -1338,9 +1342,9 @@ struct SummaryDetailView: View {
               !newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
-        
+
         isUpdatingRecordingName = true
-        
+
         Task {
             do {
                 // Update the recording name in Core Data
@@ -1348,7 +1352,7 @@ struct SummaryDetailView: View {
                     for: recordingId,
                     newName: newName.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
-                
+
                 await MainActor.run {
                     // Update local state
                     let updatedSummaryData = EnhancedSummaryData(
@@ -1375,17 +1379,17 @@ struct SummaryDetailView: View {
                         compressionRatio: summaryData.compressionRatio,
                         confidence: summaryData.confidence
                     )
-                    
+
                     summaryData = updatedSummaryData
                     isUpdatingRecordingName = false
-                    
+
                     // Post notification to refresh other views
                     NotificationCenter.default.post(
                         name: NSNotification.Name("RecordingRenamed"),
                         object: nil,
                         userInfo: ["recordingId": recordingId, "newName": newName]
                     )
-                    
+
                     AppLog.shared.summarization("Successfully updated recording name")
                 }
             } catch {
@@ -1398,23 +1402,23 @@ struct SummaryDetailView: View {
             }
         }
     }
-    
+
     // MARK: - Date/Time Management
-    
+
     private func updateRecordingDateTime(to newDateTime: Date) {
         guard !isUpdatingDate,
               let recordingId = summaryData.recordingId,
               newDateTime != summaryData.recordingDate else {
             return
         }
-        
+
         isUpdatingDate = true
-        
+
         Task {
             do {
                 // Update the recording date in Core Data
                 try await updateRecordingDateInCoreData(recordingId: recordingId, newDate: newDateTime)
-                
+
                 await MainActor.run {
                     // Update local state
                     let updatedSummaryData = EnhancedSummaryData(
@@ -1441,17 +1445,17 @@ struct SummaryDetailView: View {
                         compressionRatio: summaryData.compressionRatio,
                         confidence: summaryData.confidence
                     )
-                    
+
                     summaryData = updatedSummaryData
                     isUpdatingDate = false
-                    
+
                     // Post notification to refresh other views
                     NotificationCenter.default.post(
                         name: NSNotification.Name("RecordingDateUpdated"),
                         object: nil,
                         userInfo: ["recordingId": recordingId, "newDate": newDateTime]
                     )
-                    
+
                     AppLog.shared.summarization("Successfully updated recording date")
                 }
             } catch {
@@ -1464,46 +1468,46 @@ struct SummaryDetailView: View {
             }
         }
     }
-    
+
     private func updateRecordingDateInCoreData(recordingId: UUID, newDate: Date) async throws {
         // For now, we'll use a simple approach - later we'll add the dateSource field
         guard let recording = appCoordinator.getRecording(id: recordingId) else {
             throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found"])
         }
-        
+
         recording.recordingDate = newDate
         recording.lastModified = Date()
-        
+
         try appCoordinator.coreDataManager.saveContext()
     }
-    
+
     // MARK: - Location Management
-    
+
     private func updateRecordingLocation(_ locationData: LocationData) {
         guard !isUpdatingLocation,
               let recordingId = summaryData.recordingId else {
             return
         }
-        
+
         isUpdatingLocation = true
-        
+
         Task {
             do {
                 // Update the recording location in Core Data
                 try await updateRecordingLocationInCoreData(recordingId: recordingId, locationData: locationData)
-                
+
                 await MainActor.run {
                     isUpdatingLocation = false
                     locationAddress = locationData.displayLocation
                     scheduleLocationGeocoding(for: locationData)
-                    
+
                     // Post notification to refresh other views
                     NotificationCenter.default.post(
                         name: NSNotification.Name("RecordingLocationUpdated"),
                         object: nil,
                         userInfo: ["recordingId": recordingId, "location": locationData]
                     )
-                    
+
                     AppLog.shared.summarization("Successfully added location")
                 }
             } catch {
@@ -1516,12 +1520,12 @@ struct SummaryDetailView: View {
             }
         }
     }
-    
+
     private func updateRecordingLocationInCoreData(recordingId: UUID, locationData: LocationData) async throws {
         guard let recording = appCoordinator.getRecording(id: recordingId) else {
             throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found"])
         }
-        
+
         // Update location fields
         recording.locationLatitude = locationData.latitude
         recording.locationLongitude = locationData.longitude
@@ -1529,7 +1533,7 @@ struct SummaryDetailView: View {
         recording.locationAccuracy = locationData.accuracy ?? 0.0
         recording.locationAddress = locationData.address
         recording.lastModified = Date()
-        
+
         try appCoordinator.coreDataManager.saveContext()
     }
 
@@ -1734,7 +1738,7 @@ struct EnhancedTaskRowView: View {
     @State private var showingIntegrationSelection = false
     @State private var showingSuccessAlert = false
     @State private var showingErrorAlert = false
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // Priority indicator
@@ -1742,7 +1746,7 @@ struct EnhancedTaskRowView: View {
                 .fill(priorityColor)
                 .frame(width: 8, height: 8)
                 .padding(.top, 6)
-            
+
             // Task content
             VStack(alignment: .leading, spacing: 4) {
                 // Task text - sanitized for display
@@ -1756,28 +1760,28 @@ struct EnhancedTaskRowView: View {
                     Image(systemName: task.category.icon)
                         .font(.caption2)
                         .foregroundColor(categoryColor)
-                    
+
                     Text(task.category.rawValue)
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    
+
                     if let timeRef = task.timeReference {
                         Image(systemName: "clock")
                             .font(.caption2)
                             .foregroundColor(.secondary)
-                        
+
                         Text(timeRef)
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
-                    
+
                     Spacer()
                 }
-                
+
                 // Integration button
                 HStack {
                     Spacer()
-                    
+
                     Button(action: {
                         showingIntegrationSelection = true
                     }) {
@@ -1797,12 +1801,12 @@ struct EnhancedTaskRowView: View {
                     .disabled(integrationManager.isProcessing)
                 }
             }
-            
+
             Spacer()
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 12)
-        .background(Color(.systemGray6).opacity(0.5))
+        .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .sheet(isPresented: $showingIntegrationSelection) {
             IntegrationSelectionView(
@@ -1847,10 +1851,10 @@ struct EnhancedTaskRowView: View {
         } message: {
             Text(integrationManager.lastError ?? "Failed to add task to system.")
         }
-        .background(Color(.systemGray6).opacity(0.5))
+        .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
-    
+
     private var priorityColor: Color {
         switch task.priority {
         case .high: return .red
@@ -1858,7 +1862,7 @@ struct EnhancedTaskRowView: View {
         case .low: return .green
         }
     }
-    
+
     private var categoryColor: Color {
         switch task.category {
         case .call: return .blue
@@ -1882,7 +1886,7 @@ struct EnhancedReminderRowView: View {
     @State private var showingIntegrationSelection = false
     @State private var showingSuccessAlert = false
     @State private var showingErrorAlert = false
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // Urgency indicator
@@ -1890,7 +1894,7 @@ struct EnhancedReminderRowView: View {
                 .foregroundColor(urgencyColor)
                 .font(.caption)
                 .padding(.top, 2)
-            
+
             // Reminder content
             VStack(alignment: .leading, spacing: 4) {
                 // Reminder text - sanitized for display
@@ -1905,22 +1909,22 @@ struct EnhancedReminderRowView: View {
                         .font(.caption2)
                         .foregroundColor(urgencyColor)
                         .fontWeight(.medium)
-                    
+
                     Image(systemName: "clock")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    
+
                     Text(reminder.timeReference.displayText)
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    
+
                     Spacer()
                 }
-                
+
                 // Integration button
                 HStack {
                     Spacer()
-                    
+
                     Button(action: {
                         showingIntegrationSelection = true
                     }) {
@@ -1940,12 +1944,12 @@ struct EnhancedReminderRowView: View {
                     .disabled(integrationManager.isProcessing)
                 }
             }
-            
+
             Spacer()
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 12)
-        .background(Color(.systemGray6).opacity(0.5))
+        .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .sheet(isPresented: $showingIntegrationSelection) {
             IntegrationSelectionView(
@@ -1991,7 +1995,7 @@ struct EnhancedReminderRowView: View {
             Text(integrationManager.lastError ?? "Failed to add reminder to system.")
         }
     }
-    
+
     private var urgencyColor: Color {
         switch reminder.urgency {
         case .immediate: return .red
@@ -2009,7 +2013,7 @@ struct SelectableTitleRowView: View {
     let isCurrentTitle: Bool
     let onSelect: (TitleItem) -> Void
     let onEdit: (TitleItem) -> Void
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // Selection indicator
@@ -2021,7 +2025,7 @@ struct SelectableTitleRowView: View {
                     .foregroundColor(isCurrentTitle ? .green : .gray)
             }
             .disabled(isCurrentTitle)
-            
+
             VStack(alignment: .leading, spacing: 4) {
                 // Title text - sanitized for display (includes quote stripping)
                 Text(title.text.sanitizedForTitle())
@@ -2055,7 +2059,7 @@ struct SelectableTitleRowView: View {
                     }
                 }
             }
-            
+
             // Edit button
             Button(action: {
                 onEdit(title)
@@ -2067,7 +2071,7 @@ struct SelectableTitleRowView: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
-        .background(isCurrentTitle ? Color.green.opacity(0.05) : Color(.systemGray6).opacity(0.5))
+        .background(isCurrentTitle ? Color.green.opacity(0.05) : Color(.secondarySystemGroupedBackground).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -2079,11 +2083,11 @@ struct TitleSelectorView: View {
     let currentTitle: String
     let onTitleSelected: (String) -> Void
     let onCustomTitle: (String) -> Void
-    
+
     @Environment(\.dismiss) private var dismiss
     @State private var customTitleText = ""
     @State private var showingCustomTitleField = false
-    
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -2092,15 +2096,15 @@ struct TitleSelectorView: View {
                     Text("Choose Recording Title")
                         .font(.title2)
                         .fontWeight(.bold)
-                    
+
                     Text("Select from AI-generated titles or create your own")
                         .font(.body)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-                .background(Color(.systemGray6))
-                
+                .padding(20)
+                .background(Color(.systemGroupedBackground))
+
                 // Current title
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -2110,7 +2114,7 @@ struct TitleSelectorView: View {
                             .font(.headline)
                         Spacer()
                     }
-                    
+
                     Text(currentTitle)
                         .font(.body)
                         .padding(.horizontal, 12)
@@ -2118,10 +2122,11 @@ struct TitleSelectorView: View {
                         .background(Color.green.opacity(0.1))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
-                .padding()
-                
-                Divider()
-                
+                .padding(16)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.horizontal, 20)
+                .padding(.bottom, 8)
+
                 // Title options
                 ScrollView {
                     LazyVStack(spacing: 12) {
@@ -2135,7 +2140,7 @@ struct TitleSelectorView: View {
                                         .font(.headline)
                                     Spacer()
                                 }
-                                
+
                                 ForEach(titles.sorted { $0.confidence > $1.confidence }, id: \.id) { title in
                                     TitleOptionRow(
                                         title: title,
@@ -2147,11 +2152,10 @@ struct TitleSelectorView: View {
                                     )
                                 }
                             }
+                            .padding(16)
+                            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         }
-                        
-                        Divider()
-                            .padding(.vertical)
-                        
+
                         // Custom title section
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -2161,21 +2165,21 @@ struct TitleSelectorView: View {
                                     .font(.headline)
                                 Spacer()
                             }
-                            
+
                             if showingCustomTitleField {
                                 VStack(spacing: 12) {
                                     TextField("Enter custom title...", text: $customTitleText)
                                         .textFieldStyle(.roundedBorder)
-                                    
+
                                     HStack {
                                         Button("Cancel") {
                                             showingCustomTitleField = false
                                             customTitleText = ""
                                         }
                                         .buttonStyle(.bordered)
-                                        
+
                                         Spacer()
-                                        
+
                                         Button("Use This Title") {
                                             onCustomTitle(customTitleText)
                                             dismiss()
@@ -2199,10 +2203,14 @@ struct TitleSelectorView: View {
                                 .buttonStyle(.bordered)
                             }
                         }
+                        .padding(16)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
-                    .padding()
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
                 }
             }
+            .background(Color(.systemGroupedBackground))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -2221,7 +2229,7 @@ struct TitleOptionRow: View {
     let title: TitleItem
     let isSelected: Bool
     let onSelect: () -> Void
-    
+
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 12) {
@@ -2229,7 +2237,7 @@ struct TitleOptionRow: View {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
                     .foregroundColor(isSelected ? .green : .gray)
-                
+
                 VStack(alignment: .leading, spacing: 4) {
                     // Title text - sanitized for display (includes quote stripping)
                     Text(title.text.sanitizedForTitle())
@@ -2252,7 +2260,7 @@ struct TitleOptionRow: View {
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 12)
-            .background(isSelected ? Color.green.opacity(0.1) : Color(.systemGray6))
+            .background(isSelected ? Color.green.opacity(0.1) : Color(.secondarySystemGroupedBackground))
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
@@ -2264,18 +2272,18 @@ struct TitleOptionRow: View {
 struct DateTimeEditorView: View {
     let currentDate: Date
     let onDateTimeSelected: (Date) -> Void
-    
+
     @Environment(\.dismiss) private var dismiss
     @State private var selectedDate: Date
     @State private var selectedTime: Date
-    
+
     init(currentDate: Date, onDateTimeSelected: @escaping (Date) -> Void) {
         self.currentDate = currentDate
         self.onDateTimeSelected = onDateTimeSelected
         self._selectedDate = State(initialValue: currentDate)
         self._selectedTime = State(initialValue: currentDate)
     }
-    
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -2284,15 +2292,15 @@ struct DateTimeEditorView: View {
                     Text("Set Recording Date & Time")
                         .font(.title2)
                         .fontWeight(.bold)
-                    
+
                     Text("Choose the date and time when this recording was made")
                         .font(.body)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-                .background(Color(.systemGray6))
-                
+                .padding(20)
+                .background(Color(.systemGroupedBackground))
+
                 // Current date display
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -2302,18 +2310,19 @@ struct DateTimeEditorView: View {
                             .font(.headline)
                         Spacer()
                     }
-                    
+
                     Text(formatFullDateTime(currentDate))
                         .font(.body)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(Color(.systemGray6))
+                        .background(Color(.secondarySystemGroupedBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
-                .padding()
-                
-                Divider()
-                
+                .padding(16)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.horizontal, 20)
+                .padding(.bottom, 8)
+
                 // Date and time pickers
                 ScrollView {
                     VStack(spacing: 24) {
@@ -2326,7 +2335,7 @@ struct DateTimeEditorView: View {
                                     .font(.headline)
                                 Spacer()
                             }
-                            
+
                             DatePicker(
                                 "Date",
                                 selection: $selectedDate,
@@ -2335,9 +2344,9 @@ struct DateTimeEditorView: View {
                             .datePickerStyle(.graphical)
                             .labelsHidden()
                         }
-                        
-                        Divider()
-                        
+                        .padding(16)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
                         // Time picker section
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -2347,7 +2356,7 @@ struct DateTimeEditorView: View {
                                     .font(.headline)
                                 Spacer()
                             }
-                            
+
                             DatePicker(
                                 "Time",
                                 selection: $selectedTime,
@@ -2357,7 +2366,9 @@ struct DateTimeEditorView: View {
                             .labelsHidden()
                             .frame(height: 120)
                         }
-                        
+                        .padding(16)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
                         // Preview section
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
@@ -2367,7 +2378,7 @@ struct DateTimeEditorView: View {
                                     .font(.headline)
                                 Spacer()
                             }
-                            
+
                             Text(formatFullDateTime(combinedDateTime))
                                 .font(.body)
                                 .fontWeight(.medium)
@@ -2376,7 +2387,9 @@ struct DateTimeEditorView: View {
                                 .background(Color.purple.opacity(0.1))
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
-                        
+                        .padding(16)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
                         // Action buttons
                         VStack(spacing: 12) {
                             Button(action: {
@@ -2395,7 +2408,7 @@ struct DateTimeEditorView: View {
                                 .background(Color.blue)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                             }
-                            
+
                             Button(action: {
                                 // Reset to file date (current original date)
                                 onDateTimeSelected(currentDate)
@@ -2415,9 +2428,11 @@ struct DateTimeEditorView: View {
                             }
                         }
                     }
-                    .padding()
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
                 }
             }
+            .background(Color(.systemGroupedBackground))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -2429,22 +2444,22 @@ struct DateTimeEditorView: View {
         }
         .presentationDetents([.large])
     }
-    
+
     private var combinedDateTime: Date {
         let calendar = Calendar.current
         let dateComponents = calendar.dateComponents([.year, .month, .day], from: selectedDate)
         let timeComponents = calendar.dateComponents([.hour, .minute], from: selectedTime)
-        
+
         var combined = DateComponents()
         combined.year = dateComponents.year
         combined.month = dateComponents.month
         combined.day = dateComponents.day
         combined.hour = timeComponents.hour
         combined.minute = timeComponents.minute
-        
+
         return calendar.date(from: combined) ?? selectedDate
     }
-    
+
     private func formatFullDateTime(_ date: Date) -> String {
         return UserPreferences.shared.formatFullDateTime(date)
     }
@@ -2454,7 +2469,7 @@ struct DateTimeEditorView: View {
 
 struct LocationPickerView: View {
     let onLocationSelected: (LocationData) -> Void
-    
+
     @Environment(\.dismiss) private var dismiss
     @StateObject private var locationManager = LocationManager()
     @State private var searchText = ""
@@ -2466,7 +2481,7 @@ struct LocationPickerView: View {
     @State private var manualLongitude = ""
     @State private var isGettingCurrentLocation = false
     @State private var searchTask: Task<Void, Never>?
-    
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -2475,17 +2490,15 @@ struct LocationPickerView: View {
                     Text("Add Recording Location")
                         .font(.title2)
                         .fontWeight(.bold)
-                    
+
                     Text("Search for a location, use your current location, or enter coordinates manually")
                         .font(.body)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-                .background(Color(.systemGray6))
-                
-                Divider()
-                
+                .padding(20)
+                .background(Color(.systemGroupedBackground))
+
                 ScrollView {
                     VStack(spacing: 24) {
                         // Current location option
@@ -2497,7 +2510,7 @@ struct LocationPickerView: View {
                                     .font(.headline)
                                 Spacer()
                             }
-                            
+
                             Button(action: {
                                 requestCurrentLocation()
                             }) {
@@ -2521,9 +2534,9 @@ struct LocationPickerView: View {
                             }
                             .disabled(isGettingCurrentLocation)
                         }
-                        
-                        Divider()
-                        
+                        .padding(16)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
                         // Search location option
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -2533,20 +2546,20 @@ struct LocationPickerView: View {
                                     .font(.headline)
                                 Spacer()
                             }
-                            
+
                             HStack {
                                 TextField("Search for a place...", text: $searchText)
                                     .textFieldStyle(.roundedBorder)
                                     .onSubmit {
                                         searchForLocation()
                                     }
-                                
+
                                 Button(action: searchForLocation) {
                                     Image(systemName: "magnifyingglass")
                                         .foregroundColor(.accentColor)
                                 }
                             }
-                            
+
                             if isSearching {
                                 HStack {
                                     ProgressView()
@@ -2556,14 +2569,14 @@ struct LocationPickerView: View {
                                         .foregroundColor(.secondary)
                                 }
                             }
-                            
+
                             // Search error message
                             if let searchError = searchError {
                                 HStack {
                                     Image(systemName: "exclamationmark.triangle")
                                         .foregroundColor(.orange)
                                         .font(.caption)
-                                    
+
                                     Text(searchError)
                                         .font(.caption)
                                         .foregroundColor(.secondary)
@@ -2571,7 +2584,7 @@ struct LocationPickerView: View {
                                 }
                                 .padding(.vertical, 4)
                             }
-                            
+
                             // Search results (top matches)
                             if !searchResults.isEmpty {
                                 VStack(spacing: 8) {
@@ -2594,9 +2607,9 @@ struct LocationPickerView: View {
                                 }
                             }
                         }
-                        
-                        Divider()
-                        
+                        .padding(16)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
                         // Manual entry option
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -2606,7 +2619,7 @@ struct LocationPickerView: View {
                                     .font(.headline)
                                 Spacer()
                             }
-                            
+
                             if showingManualEntry {
                                 VStack(spacing: 12) {
                                     HStack {
@@ -2618,7 +2631,7 @@ struct LocationPickerView: View {
                                                 .textFieldStyle(.roundedBorder)
                                                 .keyboardType(.decimalPad)
                                         }
-                                        
+
                                         VStack(alignment: .leading) {
                                             Text("Longitude")
                                                 .font(.caption)
@@ -2628,7 +2641,7 @@ struct LocationPickerView: View {
                                                 .keyboardType(.decimalPad)
                                         }
                                     }
-                                    
+
                                     HStack {
                                         Button("Cancel") {
                                             showingManualEntry = false
@@ -2636,9 +2649,9 @@ struct LocationPickerView: View {
                                             manualLongitude = ""
                                         }
                                         .buttonStyle(.bordered)
-                                        
+
                                         Spacer()
-                                        
+
                                         Button("Use This Location") {
                                             useManualLocation()
                                         }
@@ -2660,10 +2673,14 @@ struct LocationPickerView: View {
                                 .buttonStyle(.bordered)
                             }
                         }
+                        .padding(16)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
-                    .padding()
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
                 }
             }
+            .background(Color(.systemGroupedBackground))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -2679,25 +2696,25 @@ struct LocationPickerView: View {
             searchTask = nil
         }
     }
-    
+
     private var isValidManualEntry: Bool {
         guard let lat = Double(manualLatitude),
               let lng = Double(manualLongitude) else {
             return false
         }
         // Check for NaN, infinity, and valid coordinate ranges
-        guard lat.isFinite && lng.isFinite && 
+        guard lat.isFinite && lng.isFinite &&
               !lat.isNaN && !lng.isNaN &&
               lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 else {
             return false
         }
         return true
     }
-    
+
     private func requestCurrentLocation() {
         AppLog.shared.summarization("Requesting current location...", level: .debug)
         isGettingCurrentLocation = true
-        
+
         locationManager.requestCurrentLocation { location in
             DispatchQueue.main.async {
                 guard let location = location else {
@@ -2705,9 +2722,9 @@ struct LocationPickerView: View {
                     self.isGettingCurrentLocation = false
                     return
                 }
-                
+
                 AppLog.shared.summarization("Got current location", level: .debug)
-                
+
                 // Reverse geocode to get address
                 self.locationManager.reverseGeocodeLocation(location) { address in
                     let finalLocationData = LocationData(
@@ -2717,7 +2734,7 @@ struct LocationPickerView: View {
                         accuracy: location.horizontalAccuracy,
                         address: address ?? "Current Location"
                     )
-                    
+
                     DispatchQueue.main.async {
                         self.isGettingCurrentLocation = false
                         self.onLocationSelected(finalLocationData)
@@ -2727,7 +2744,7 @@ struct LocationPickerView: View {
             }
         }
     }
-    
+
     private func searchForLocation() {
         let trimmedText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedText.count >= 2 else {
@@ -2927,15 +2944,15 @@ struct LocationPickerView: View {
             AppLog.shared.summarization("Failed to parse manual coordinates", level: .error)
             return
         }
-        
+
         // Additional safety check for NaN/infinite values
-        guard lat.isFinite && lng.isFinite && 
+        guard lat.isFinite && lng.isFinite &&
               !lat.isNaN && !lng.isNaN &&
               lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 else {
             AppLog.shared.summarization("Invalid coordinate values", level: .error)
             return
         }
-        
+
         let locationData = LocationData(
             latitude: lat,
             longitude: lng,
@@ -2943,7 +2960,7 @@ struct LocationPickerView: View {
             accuracy: 0.0, // Manual entry has no accuracy
             address: "Manual: \(lat), \(lng)"
         )
-        
+
         AppLog.shared.summarization("Using manual location", level: .debug)
         onLocationSelected(locationData)
         dismiss()
@@ -2965,7 +2982,7 @@ struct LocationSearchResult {
 struct LocationResultRow: View {
     let result: LocationSearchResult
     let onSelect: (LocationSearchResult) -> Void
-    
+
     var body: some View {
         Button(action: {
             onSelect(result)
@@ -2974,19 +2991,19 @@ struct LocationResultRow: View {
                 Image(systemName: "mappin.circle")
                     .font(.title2)
                     .foregroundColor(.blue)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text(result.name)
                         .font(.body)
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    
+
                     Text(result.address)
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    
+
                     Text("Lat: \(result.latitude, specifier: "%.4f"), Lng: \(result.longitude, specifier: "%.4f")")
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -2995,7 +3012,7 @@ struct LocationResultRow: View {
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 12)
-            .background(Color(.systemGray6))
+            .background(Color(.secondarySystemGroupedBackground))
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
@@ -3490,7 +3507,10 @@ private struct NoteEditorSheet: View {
                 TextEditor(text: $draft)
                     .focused($isFocused)
                     .padding()
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(20)
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Note")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -36,6 +36,36 @@ struct DeviceCapabilities {
         return totalRAMInGB >= 4.0
     }
 
+    /// Action Button is only available on supported iPhone hardware. Apple
+    /// does not expose a direct capability API, so gate the setup guidance by
+    /// known device identifier families and keep Mac Catalyst/iPad hidden.
+    static var supportsActionButton: Bool {
+        #if targetEnvironment(macCatalyst)
+        return false
+        #else
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            return false
+        }
+
+        let components = modelName
+            .replacingOccurrences(of: "iPhone", with: "")
+            .split(separator: ",")
+            .compactMap { Int($0) }
+
+        guard components.count == 2 else {
+            return false
+        }
+
+        let major = components[0]
+        let minor = components[1]
+
+        // iPhone16,1 and iPhone16,2 are iPhone 15 Pro / Pro Max, the first
+        // iPhones with Action Button. Later iPhone identifier families include
+        // Action Button across the currently supported lineup.
+        return major > 16 || (major == 16 && (minor == 1 || minor == 2))
+        #endif
+    }
+
     /// Check if device has sufficient RAM for basic Whisper models
     /// Requires at least 4GB of RAM for base/medium models
     static var supportsWhisperBasic: Bool {
@@ -98,6 +128,7 @@ struct DeviceCapabilities {
         report += "Model: \(modelName)\n"
         report += "RAM: \(ramDescription)\n"
         report += "On-Device LLM Support: \(supportsOnDeviceLLM ? "✅" : "❌")\n"
+        report += "Action Button Support: \(supportsActionButton ? "✅" : "❌")\n"
 
         if #available(iOS 16.0, *) {
             report += "iOS Version: ✅ (16.0+)\n"

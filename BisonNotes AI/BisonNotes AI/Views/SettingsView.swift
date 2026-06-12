@@ -42,7 +42,7 @@ struct SettingsView: View {
     @State private var isRunningCloudBackupAction = false
     @State private var cloudBackupActionMessage = ""
     @State private var cloudBackupActionIsError = false
-    
+
     init() {
         // Initialize regeneration manager with the coordinator's registry manager
         self._regenerationManager = StateObject(wrappedValue: SummaryRegenerationManager(
@@ -51,31 +51,17 @@ struct SettingsView: View {
             appCoordinator: AppDataCoordinator()
         ))
     }
-    
+
     var body: some View {
-        // NavigationStack { Form } is the only sheet pattern that scrolls reliably
-        // on Mac Catalyst — Form is UITableView-backed, ScrollView is not. See
-        // feedback_mac_catalyst_scrollview.md for the diagnostic that confirmed this.
         NavigationStack {
-            Form {
-                preferencesSection
-                aiEngineSection
-                transcriptionSection
-                microphoneSection
-                locationSection
-                iCloudSyncSection
-                comedyModeSection
-                experimentalSection
-                debugTroubleshootingSection
-                aboutSection
-            }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+            settingsContent
+                .navigationTitle("Settings")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") { dismiss() }
+                    }
                 }
-            }
         }
         .alert("Regeneration Complete", isPresented: $regenerationManager.showingRegenerationAlert) {
             Button("OK") {
@@ -148,7 +134,7 @@ struct SettingsView: View {
                     VStack(spacing: 12) {
                         ProgressView()
                             .progressViewStyle(.circular)
-                        Text("Preparing logs…")
+                        Text("Preparing logs...")
                             .font(.headline)
                             .foregroundColor(.primary)
                     }
@@ -164,7 +150,347 @@ struct SettingsView: View {
             }
         }
     }
-    
+
+    @ViewBuilder
+    private var settingsContent: some View {
+        modernSettingsScroll
+    }
+
+    private var modernSettingsScroll: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                modernHeader
+                modernConfigurationSection
+                modernRecordingSection
+                moderniCloudSection
+                modernBehaviorSection
+                modernMaintenanceSection
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 36)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private var modernHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Additional Settings")
+                .font(.largeTitle.weight(.bold))
+                .foregroundColor(.primary)
+
+            Text("Configure processing, privacy, sync, and diagnostics.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var modernConfigurationSection: some View {
+        ModernSettingsCard(title: "Configuration", systemImage: "slider.horizontal.3", tint: .accentColor) {
+            ModernSettingsNavigationRow(
+                title: "Display Preferences",
+                subtitle: "Time format and display options",
+                systemImage: "clock",
+                tint: .indigo,
+                action: { showingPreferences = true }
+            )
+
+            ModernSettingsNavigationRow(
+                title: "AI Engines",
+                subtitle: selectedAIEngine,
+                systemImage: "sparkles",
+                tint: .blue,
+                trailing: {
+                    ModernStatusPill(text: "Available", tint: .green)
+                },
+                action: { showingAISettings = true }
+            )
+
+            ModernSettingsNavigationRow(
+                title: "Transcription",
+                subtitle: TranscriptionEngine(rawValue: selectedTranscriptionEngine)?.rawValue ?? "On Device",
+                systemImage: "text.bubble",
+                tint: .orange,
+                action: { showingTranscriptionSettings = true }
+            )
+        }
+    }
+
+    private var modernRecordingSection: some View {
+        ModernSettingsCard(title: "Recording", systemImage: "mic", tint: .green) {
+            #if targetEnvironment(macCatalyst)
+            ModernInlineStatus(
+                title: "Using Mac system microphone",
+                subtitle: "BisonNotes uses the current macOS Sound input. Change it in System Settings if needed.",
+                systemImage: "mic.fill",
+                tint: .green
+            )
+            #else
+            if recorderVM.availableInputs.isEmpty {
+                ModernInlineStatus(
+                    title: "No microphones found",
+                    subtitle: "Pull to refresh or reconnect your input device.",
+                    systemImage: "exclamationmark.triangle",
+                    tint: .orange
+                )
+            } else {
+                ForEach(recorderVM.availableInputs, id: \.uid) { input in
+                    Button {
+                        recorderVM.selectedInput = input
+                        recorderVM.setPreferredInput()
+                    } label: {
+                        ModernSelectableRow(
+                            title: input.portName,
+                            subtitle: input.portType.rawValue,
+                            systemImage: "mic.fill",
+                            tint: .green,
+                            isSelected: recorderVM.selectedInput?.uid == input.uid
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Button {
+                Task { await recorderVM.fetchInputs() }
+            } label: {
+                Label("Refresh Microphones", systemImage: "arrow.clockwise")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+
+            Divider()
+            #endif
+
+            Toggle(isOn: Binding(
+                get: { recorderVM.isLocationTrackingEnabled },
+                set: { recorderVM.toggleLocationTracking($0) }
+            )) {
+                ModernSettingsLabel(
+                    title: "Location Services",
+                    subtitle: "Capture location data with recordings",
+                    systemImage: "location.fill",
+                    tint: .blue
+                )
+            }
+
+            if recorderVM.isLocationTrackingEnabled {
+                ModernInlineStatus(
+                    title: locationStatusText,
+                    subtitle: nil,
+                    systemImage: locationStatusIcon,
+                    tint: locationStatusColor
+                )
+            }
+        }
+    }
+
+    private var moderniCloudSection: some View {
+        ModernSettingsCard(
+            title: "iCloud Sync",
+            systemImage: "icloud",
+            tint: .blue,
+            trailing: {
+                ModernStatusPill(text: iCloudManager.isEnabled ? "Enabled" : "Disabled", tint: iCloudManager.isEnabled ? .green : .secondary)
+            }
+        ) {
+            Toggle("Enable iCloud Sync", isOn: $iCloudManager.isEnabled)
+
+            if iCloudManager.isEnabled {
+                Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
+                Toggle("Include app settings", isOn: $iCloudBackupIncludeSettings)
+                Toggle("Include sensitive settings", isOn: $iCloudBackupIncludeSensitiveSettings)
+                    .disabled(!iCloudBackupIncludeSettings)
+
+                Text("API keys and AWS credentials stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    Button {
+                        Task { await backupAllDataToiCloud() }
+                    } label: {
+                        Label("Backup", systemImage: "icloud.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isRunningCloudBackupAction)
+
+                    Button {
+                        Task { await restoreAllDataFromiCloud() }
+                    } label: {
+                        Label("Restore", systemImage: "arrow.down.doc")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.green)
+                    .disabled(isRunningCloudBackupAction)
+                }
+
+                if isRunningCloudBackupAction {
+                    ModernInlineStatus(
+                        title: "Working...",
+                        subtitle: nil,
+                        systemImage: "arrow.triangle.2.circlepath",
+                        tint: .secondary,
+                        showsProgress: true
+                    )
+                }
+
+                if !cloudBackupActionMessage.isEmpty {
+                    Text(cloudBackupActionMessage)
+                        .font(.caption)
+                        .foregroundColor(cloudBackupActionIsError ? .red : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Button {
+                    checkForiCloudData()
+                } label: {
+                    Label("Check for iCloud Data", systemImage: "icloud.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if !iCloudManager.pendingConflicts.isEmpty {
+                ForEach(iCloudManager.pendingConflicts, id: \.summaryId) { conflict in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(conflict.localSummary.recordingName)
+                            .font(.caption.weight(.semibold))
+                        Text("Modified on different devices")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        HStack {
+                            Button("Use Local") {
+                                Task { try? await iCloudManager.resolveConflict(conflict, useLocal: true) }
+                            }
+                            .buttonStyle(.bordered)
+                            Button("Use Cloud") {
+                                Task { try? await iCloudManager.resolveConflict(conflict, useLocal: false) }
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.green)
+                        }
+                    }
+                    .padding(12)
+                    .background(Color(.tertiarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+            }
+
+            if let error = iCloudManager.lastError {
+                Text("Error: \(error)")
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+        }
+    }
+
+    private var modernBehaviorSection: some View {
+        ModernSettingsCard(title: "App Behavior", systemImage: "wand.and.stars", tint: .purple) {
+            Toggle("Comedy Mode", isOn: $comedyModeEnabled)
+
+            if comedyModeEnabled {
+                Picker("Style", selection: $comedyModeStyle) {
+                    Text("Snarky - dry wit & sarcasm").tag("snarky")
+                    Text("Funny - goofy & absurd").tag("funny")
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Text("Make AI summaries entertaining with a comedic twist. All information is preserved.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Divider()
+
+            Toggle("Experimental features", isOn: $enableExperimentalModels)
+            Text("Exposes experimental on-device models. Experimental models are less reliable and may produce empty summaries.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var modernMaintenanceSection: some View {
+        ModernSettingsCard(title: "Maintenance", systemImage: "wrench.and.screwdriver", tint: .gray) {
+            HStack {
+                ModernSettingsLabel(
+                    title: "Total Recordings Storage",
+                    subtitle: "Space used by audio recordings",
+                    systemImage: "externaldrive",
+                    tint: .teal
+                )
+                Spacer()
+                Text(totalRecordingsStorageString)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
+
+            ModernSettingsNavigationRow(
+                title: "Background Processing",
+                subtitle: "Manage transcription and summarization jobs",
+                systemImage: "gearshape.2",
+                tint: .blue,
+                action: { showingBackgroundProcessing = true }
+            )
+
+            Button {
+                exportDiagnosticLogs()
+            } label: {
+                HStack(spacing: 14) {
+                    ModernIcon(systemName: "envelope", tint: .orange)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Export Diagnostic Logs")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.primary)
+                        Text("Email logs to developer for troubleshooting")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if isPreparingLogs {
+                        ProgressView().scaleEffect(0.8)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(isPreparingLogs)
+
+            if let logExportError {
+                Text("Error: \(logExportError)")
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+
+            ModernSettingsNavigationRow(
+                title: "Acknowledgements",
+                subtitle: "Open-source projects and licenses",
+                systemImage: "hand.raised.fill",
+                tint: .indigo,
+                action: { showingAcknowledgements = true }
+            )
+
+            Button(role: .destructive) {
+                showingTroubleshootingWarning = true
+            } label: {
+                Label("Advanced Troubleshooting", systemImage: "wrench.and.screwdriver")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .alert("Warning", isPresented: $showingTroubleshootingWarning) {
+                Button("Cancel", role: .cancel) { }
+                Button("OK") {
+                    showingDataMigration = true
+                }
+            } message: {
+                Text("These tools can delete data. Use with caution.")
+            }
+        }
+    }
+
     private var preferencesSection: some View {
         Section("Preferences") {
             Button {
@@ -191,9 +517,21 @@ struct SettingsView: View {
             .buttonStyle(.plain)
         }
     }
-    
+
     private var microphoneSection: some View {
         Section {
+            #if targetEnvironment(macCatalyst)
+            HStack {
+                Image(systemName: "mic.fill")
+                    .foregroundColor(.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Using Mac system microphone")
+                    Text("Change the input device in macOS System Settings.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            #else
             if recorderVM.availableInputs.isEmpty {
                 HStack {
                     Image(systemName: "exclamationmark.triangle")
@@ -224,19 +562,22 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
             }
+            #endif
         } header: {
             HStack {
                 Text("Microphone Selection")
                 Spacer()
+                #if !targetEnvironment(macCatalyst)
                 Button {
                     Task { await recorderVM.fetchInputs() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
+                #endif
             }
         }
     }
-    
+
 
     private var aiEngineSection: some View {
         Section("AI Processing") {
@@ -296,9 +637,9 @@ struct SettingsView: View {
             .buttonStyle(.plain)
         }
     }
-    
-    
-    
+
+
+
     private var locationSection: some View {
         Section {
             Toggle("Location Services", isOn: Binding(
@@ -477,7 +818,7 @@ struct SettingsView: View {
             Text("Sync summaries, transcripts, and settings across your devices")
         }
     }
-    
+
     private var comedyModeSection: some View {
         Section {
             Toggle("Comedy Mode", isOn: $comedyModeEnabled)
@@ -635,9 +976,9 @@ struct SettingsView: View {
     private var databaseMaintenanceSection: some View {
         EmptyView()
     }
-    
+
     // MARK: - Location Status Helpers
-    
+
     private var locationStatusIcon: String {
         switch recorderVM.locationManager.locationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
@@ -650,7 +991,7 @@ struct SettingsView: View {
             return "location"
         }
     }
-    
+
     private var locationStatusColor: Color {
         switch recorderVM.locationManager.locationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
@@ -663,7 +1004,7 @@ struct SettingsView: View {
             return .gray
         }
     }
-    
+
     private var locationStatusText: String {
         switch recorderVM.locationManager.locationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
@@ -676,7 +1017,7 @@ struct SettingsView: View {
             return "Unknown location status"
         }
     }
-    
+
     private func microphoneTypeDescription(for portType: AVAudioSession.Port) -> String {
         switch portType {
         case .builtInMic:
@@ -701,14 +1042,14 @@ struct SettingsView: View {
             return portType.rawValue.capitalized
         }
     }
-    
+
     private func clearAllSummaries() {
         // This function is no longer needed as summaries are managed by the coordinator
     }
-    
-    
+
+
     // MARK: - iCloud Sync Functions
-    
+
     private func syncAllSummaries() async {
         do {
             try await iCloudManager.syncAllSummaries()
@@ -809,7 +1150,100 @@ struct SettingsView: View {
             }
         }
     }
-    
+
+    private func checkForiCloudData() {
+        Task {
+            do {
+                let cloudSummaries = try await iCloudManager.fetchSummariesFromiCloud(forRecovery: true)
+
+                let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+                let localSummaryIds = Set(localSummaries.compactMap { $0.id })
+                let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
+
+                if !cloudOnlySummaries.isEmpty {
+                    await MainActor.run {
+                        let alert = UIAlertController(
+                            title: "iCloud Data Found",
+                            message: "We found \(cloudOnlySummaries.count) summaries in your iCloud that aren't on this device. Would you like to download them?",
+                            preferredStyle: .alert
+                        )
+                        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+                        alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
+                            Task {
+                                do {
+                                    let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
+                                    AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
+                                } catch {
+                                    AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                                }
+                            }
+                        })
+                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                           let rootViewController = windowScene.windows.first?.rootViewController {
+                            rootViewController.present(alert, animated: true)
+                        }
+                    }
+                } else {
+                    await MainActor.run {
+                        let alert = UIAlertController(
+                            title: "No iCloud Data",
+                            message: "No summaries were found in your iCloud account.",
+                            preferredStyle: .alert
+                        )
+                        alert.addAction(UIAlertAction(title: "OK", style: .default))
+                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                           let rootViewController = windowScene.windows.first?.rootViewController {
+                            rootViewController.present(alert, animated: true)
+                        }
+                    }
+                }
+            } catch {
+                AppLog.shared.log("Failed to check for iCloud data: \(error)", level: .error, category: .general)
+                await MainActor.run {
+                    let alert = UIAlertController(
+                        title: "Check Failed",
+                        message: "Could not check for iCloud data: \(error.localizedDescription)",
+                        preferredStyle: .alert
+                    )
+                    alert.addAction(UIAlertAction(title: "OK", style: .default))
+                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                       let rootViewController = windowScene.windows.first?.rootViewController {
+                        rootViewController.present(alert, animated: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func exportDiagnosticLogs() {
+        logExportError = nil
+        withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = true }
+
+        Task {
+            do {
+                let url = try await Task.detached(priority: .userInitiated) {
+                    try await LogExporter.exportLogs()
+                }.value
+
+                await MainActor.run {
+                    LogEmailPresenter.shared.presentLogEmail(
+                        logFileURL: url,
+                        onPresented: {
+                            withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
+                        }
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
+                    logExportError = error.localizedDescription
+                }
+            }
+        }
+    }
+
     private func refreshEngineStatuses() {
         // Set the engine to the currently selected one from settings
         regenerationManager.setEngine(selectedAIEngine)
@@ -842,6 +1276,268 @@ struct SettingsView: View {
 }
 
 // MARK: - Supporting Structures
+
+private struct ModernSettingsCard<Content: View, Trailing: View>: View {
+    let title: String
+    let systemImage: String
+    let tint: Color
+    @ViewBuilder let trailing: Trailing
+    @ViewBuilder let content: Content
+
+    init(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        @ViewBuilder trailing: () -> Trailing,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.tint = tint
+        self.trailing = trailing()
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                ModernIcon(systemName: systemImage, tint: tint, size: 30, cornerRadius: 9)
+
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+
+                Spacer()
+
+                trailing
+            }
+
+            content
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+private extension ModernSettingsCard where Trailing == EmptyView {
+    init(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.init(
+            title: title,
+            systemImage: systemImage,
+            tint: tint,
+            trailing: { EmptyView() },
+            content: content
+        )
+    }
+}
+
+private struct ModernSettingsNavigationRow<Trailing: View>: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let tint: Color
+    @ViewBuilder let trailing: Trailing
+    let action: () -> Void
+
+    init(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        tint: Color,
+        @ViewBuilder trailing: () -> Trailing,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.systemImage = systemImage
+        self.tint = tint
+        self.trailing = trailing()
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                ModernIcon(systemName: systemImage, tint: tint)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.primary)
+
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+
+                trailing
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(14)
+            .background(Color(.tertiarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 15))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private extension ModernSettingsNavigationRow where Trailing == EmptyView {
+    init(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) {
+        self.init(
+            title: title,
+            subtitle: subtitle,
+            systemImage: systemImage,
+            tint: tint,
+            trailing: { EmptyView() },
+            action: action
+        )
+    }
+}
+
+private struct ModernSelectableRow: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let tint: Color
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ModernIcon(systemName: systemImage, tint: tint)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.primary)
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.title3)
+                .foregroundColor(isSelected ? tint : .secondary)
+        }
+        .padding(14)
+        .background(isSelected ? tint.opacity(0.12) : Color(.tertiarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 15))
+    }
+}
+
+private struct ModernSettingsLabel: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ModernIcon(systemName: systemImage, tint: tint)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.primary)
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+}
+
+private struct ModernInlineStatus: View {
+    let title: String
+    let subtitle: String?
+    let systemImage: String
+    let tint: Color
+    var showsProgress = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            if showsProgress {
+                ProgressView()
+                    .scaleEffect(0.8)
+                    .padding(.top, 1)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(tint)
+                    .padding(.top, 2)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(tint)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct ModernStatusPill: View {
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.bold))
+            .foregroundColor(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.14))
+            .clipShape(Capsule())
+    }
+}
+
+private struct ModernIcon: View {
+    let systemName: String
+    let tint: Color
+    var size: CGFloat = 38
+    var cornerRadius: CGFloat = 11
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundColor(tint)
+            .frame(width: size, height: size)
+            .background(tint.opacity(0.14))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+    }
+}
 
 struct DebugButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {

@@ -18,118 +18,109 @@ struct ArchiveConfirmationView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                // Header
-                VStack(spacing: 8) {
-                    Image(systemName: "archivebox.fill")
-                        .font(.system(size: 40))
-                        .foregroundColor(.accentColor)
+            ScrollView {
+                VStack(spacing: 18) {
+                    VStack(spacing: 8) {
+                        Image(systemName: "archivebox.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.accentColor)
 
-                    Text("Archive \(recordingCount) Recording\(recordingCount == 1 ? "" : "s")")
-                        .font(.title2)
-                        .fontWeight(.bold)
+                        Text("Archive \(recordingCount) Recording\(recordingCount == 1 ? "" : "s")")
+                            .font(.title2)
+                            .fontWeight(.bold)
 
-                    Text(fileSizeString)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        Text(fileSizeString)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
 
-                    Text("Archive copies are currently limited to iCloud Drive so the app can reliably track, restore, and clean them up.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                }
-                .padding(.top, 20)
+                        Text("Archive copies are currently limited to iCloud Drive so the app can reliably track, restore, and clean them up.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                    .padding(.top, 8)
 
-                // Recording list preview (up to 5)
-                if !recordingNames.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(recordingNames.prefix(5), id: \.self) { name in
-                            HStack(spacing: 8) {
-                                Image(systemName: "waveform")
+                    if !recordingNames.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(recordingNames.prefix(5), id: \.self) { name in
+                                HStack(spacing: 8) {
+                                    Image(systemName: "waveform")
+                                        .font(.caption)
+                                        .foregroundColor(.accentColor)
+                                    Text(name)
+                                        .font(.subheadline)
+                                        .lineLimit(1)
+                                }
+                            }
+                            if recordingNames.count > 5 {
+                                Text("and \(recordingNames.count - 5) more...")
                                     .font(.caption)
-                                    .foregroundColor(.accentColor)
-                                Text(name)
-                                    .font(.subheadline)
-                                    .lineLimit(1)
+                                    .foregroundColor(.secondary)
+                                    .padding(.leading, 22)
                             }
                         }
-                        if recordingNames.count > 5 {
-                            Text("and \(recordingNames.count - 5) more...")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.leading, 22)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.systemGray6))
-                    )
-                    .padding(.horizontal)
-                }
-
-                // Options
-                VStack(spacing: 12) {
-                    Toggle(isOn: $removeLocal) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Remove local audio after export")
-                                .font(.subheadline)
-                            Text("Transcripts and summaries will be kept")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.systemGray6))
-                    )
-                }
-                .padding(.horizontal)
-
-                if removeLocal {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                            .font(.caption)
-                        Text("Use the download button to restore audio later")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-                    .padding(.horizontal)
-                }
-
-                Spacer()
-
-                // Actions
-                VStack(spacing: 12) {
-                    Button(action: onConfirm) {
-                        HStack {
-                            Image(systemName: "square.and.arrow.up")
-                            Text("Choose iCloud Location")
-                                .fontWeight(.semibold)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.accentColor)
-                        )
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
 
-                    Button(action: onCancel) {
-                        Text("Cancel")
-                            .foregroundColor(.secondary)
+                    Toggle(isOn: $removeLocal) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "externaldrive.badge.minus")
+                                .font(.headline)
+                                .foregroundColor(.accentColor)
+                                .frame(width: 34, height: 34)
+                                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Remove local audio after export")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                Text("Transcripts and summaries will be kept")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding()
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                    if removeLocal {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                                .font(.caption)
+                            Text("Use the download button to restore audio later")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+
+                    VStack(spacing: 12) {
+                        Button(action: onConfirm) {
+                            HStack {
+                                Image(systemName: "square.and.arrow.up")
+                                Text("Choose iCloud Location")
+                                    .fontWeight(.semibold)
+                            }
+                            .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding()
+                            .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+
+                        Button(action: onCancel) {
+                            Text("Cancel")
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                        }
                     }
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 20)
+                .padding(20)
             }
+            .background(Color(.systemGroupedBackground))
             .navigationBarHidden(true)
         }
     }

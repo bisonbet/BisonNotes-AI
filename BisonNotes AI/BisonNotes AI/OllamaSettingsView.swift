@@ -16,21 +16,21 @@ struct OllamaSettingsView: View {
     /// Maximum context window the selected model supports
     @AppStorage("ollamaContextTokens") private var maxContextTokens: Int = 4096
     @AppStorage(EndpointSecurityPolicy.allowInsecurePublicEndpointsKey) private var allowInsecurePublicEndpoints: Bool = false
-    
+
     var onConfigurationChanged: (() -> Void)?
-    
+
     @State private var ollamaService: OllamaService
     @State private var isTestingConnection = false
     @State private var isLoadingModels = false
     @State private var testResult: String?
     @State private var showingError = false
     @State private var errorMessage = ""
-    
+
     @Environment(\.dismiss) private var dismiss
-    
+
     init(onConfigurationChanged: (() -> Void)? = nil) {
         self.onConfigurationChanged = onConfigurationChanged
-        
+
         // Initialize with current settings
         let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
         let port = UserDefaults.standard.integer(forKey: "ollamaPort")
@@ -48,10 +48,10 @@ struct OllamaSettingsView: View {
             maxContextTokens: contextTokens > 0 ? contextTokens : 4096,
             timeoutInterval: SummarizationTimeouts.current()
         )
-        
+
         _ollamaService = State(initialValue: OllamaService(config: config))
     }
-    
+
     var body: some View {
         NavigationStack {
             Form {
@@ -62,6 +62,8 @@ struct OllamaSettingsView: View {
                 }
                 helpSection
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Ollama Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -102,9 +104,9 @@ struct OllamaSettingsView: View {
             }
         }
     }
-    
+
     // MARK: - View Sections
-    
+
     private var headerSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 12) {
@@ -112,25 +114,25 @@ struct OllamaSettingsView: View {
                     Image(systemName: "server.rack")
                         .foregroundColor(.green)
                         .font(.title2)
-                    
+
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Ollama Local LLM")
                             .font(.title2)
                             .fontWeight(.semibold)
                             .foregroundColor(.primary)
-                        
+
                         Text("Connect to your local Ollama server for privacy-focused AI processing")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                 }
-                
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Privacy Note")
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.green)
-                    
+
                     Text("All processing happens on your local machine. No data is sent to external servers.")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -139,7 +141,7 @@ struct OllamaSettingsView: View {
             }
         }
     }
-    
+
     private var serverConfigurationSection: some View {
         Section(header: Text("Server Configuration")) {
             serverURLConfiguration
@@ -148,18 +150,18 @@ struct OllamaSettingsView: View {
             connectionTestResult
         }
     }
-    
+
     private var serverURLConfiguration: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Server URL")
                 .font(.headline)
-            
+
             TextField("Server URL", text: $serverURL)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .keyboardType(.URL)
                 .autocapitalization(.none)
                 .disableAutocorrection(true)
-            
+
             Text("Enter the URL of your Ollama server (e.g., http://localhost)")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -167,22 +169,22 @@ struct OllamaSettingsView: View {
             endpointSecurityWarning(for: "\(serverURL):\(port)")
         }
     }
-    
+
     private var portConfiguration: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Port")
                 .font(.headline)
-            
+
             TextField("Port", value: $port, format: .number.grouping(.never))
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .keyboardType(.numberPad)
-            
+
             Text("Default Ollama port is 11434")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
     }
-    
+
     private var connectionTestButton: some View {
         Button(action: testConnection) {
             HStack {
@@ -198,7 +200,7 @@ struct OllamaSettingsView: View {
         .disabled(isTestingConnection || serverURL.isEmpty)
         .foregroundColor(.blue)
     }
-    
+
     @ViewBuilder
     private var connectionTestResult: some View {
         if let testResult = testResult {
@@ -208,7 +210,7 @@ struct OllamaSettingsView: View {
                 .padding(.top, 4)
         }
     }
-    
+
     private var modelConfigurationSection: some View {
         Section(header: Text("Model Configuration")) {
             modelSelectionView
@@ -217,12 +219,12 @@ struct OllamaSettingsView: View {
             temperatureConfiguration
         }
     }
-    
+
     private var modelSelectionView: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Available Models")
                 .font(.headline)
-            
+
             if isLoadingModels {
                 HStack {
                     ProgressView()
@@ -257,30 +259,30 @@ struct OllamaSettingsView: View {
             }
         }
     }
-    
+
     private var maxTokensConfiguration: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Max Tokens")
                 .font(.headline)
-            
+
             HStack {
                 Slider(value: Binding(
                     get: { Double(maxTokens) },
                     set: { maxTokens = Int($0) }
                 ), in: 512...4096, step: 256)
-                
+
                 Text("\(maxTokens)")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(width: 60)
             }
-            
+
             Text("Maximum number of tokens in the response")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
     }
-    
+
     private var contextWindowConfiguration: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Context Window")
@@ -303,33 +305,33 @@ struct OllamaSettingsView: View {
                 .foregroundColor(.secondary)
         }
     }
-    
+
     private var temperatureConfiguration: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Temperature")
                 .font(.headline)
-            
+
             HStack {
                 Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
-                
+
                 Text(String(format: "%.1f", temperature))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(width: 40)
             }
-            
+
             Text("Lower values = more focused, Higher values = more creative")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
     }
-    
+
     private var helpSection: some View {
         Section(header: Text("Help")) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Getting Started")
                     .font(.headline)
-                
+
                 Text("1. Install Ollama from https://ollama.ai")
                     .font(.caption)
                 Text("2. Pull a model: ollama pull gpt-oss:20b")
@@ -340,27 +342,27 @@ struct OllamaSettingsView: View {
                     .font(.caption)
             }
             .padding(.vertical, 4)
-            
+
             Link("Ollama Documentation", destination: URL(string: "https://ollama.ai/docs")!)
             Link("Available Models", destination: URL(string: "https://ollama.ai/library")!)
         }
     }
-    
+
     // MARK: - Methods
-    
+
     private func testConnection() {
         isTestingConnection = true
         testResult = nil
-        
+
         // Update the ollamaService with current configuration
         updateOllamaServiceConfiguration()
-        
+
         Task {
             let success = await ollamaService.testConnection()
-            
+
             await MainActor.run {
                 isTestingConnection = false
-                
+
                 if success {
                     testResult = "✅ Connection successful! Server is reachable."
                     loadModelsIfConnected()
@@ -370,12 +372,12 @@ struct OllamaSettingsView: View {
             }
         }
     }
-    
+
     private func loadModelsIfConnected() {
         guard ollamaService.isConnected else { return }
-        
+
         isLoadingModels = true
-        
+
         Task {
             do {
                 _ = try await ollamaService.loadAvailableModels()
@@ -391,16 +393,16 @@ struct OllamaSettingsView: View {
             }
         }
     }
-    
+
     private func resetConnection() {
         // Update the ollamaService with current configuration
         updateOllamaServiceConfiguration()
-        
+
         ollamaService.isConnected = false
         ollamaService.availableModels = []
         testResult = nil
     }
-    
+
     private func updateOllamaServiceConfiguration() {
         let config = OllamaConfig(
             serverURL: serverURL,
@@ -411,11 +413,11 @@ struct OllamaSettingsView: View {
             maxContextTokens: maxContextTokens,
             timeoutInterval: SummarizationTimeouts.current()
         )
-        
+
         // Create a new OllamaService instance with the updated configuration
         ollamaService = OllamaService(config: config)
     }
-    
+
     private func formatFileSize(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useGB, .useMB]
@@ -442,4 +444,4 @@ struct OllamaSettingsView_Previews: PreviewProvider {
     static var previews: some View {
         OllamaSettingsView()
     }
-} 
+}

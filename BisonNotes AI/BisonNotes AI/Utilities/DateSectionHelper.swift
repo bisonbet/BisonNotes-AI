@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 enum DateSection: Comparable {
     case today
@@ -144,5 +145,47 @@ struct DateSectionHelper {
         return grouped
             .sorted { $0.key < $1.key }
             .map { (section: $0.key, items: $0.value) }
+    }
+}
+
+struct CollapsibleDateSectionHeader: View {
+    let title: String
+    let count: Int
+    let isExpanded: Bool
+    let isAlwaysExpanded: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button {
+            guard !isAlwaysExpanded else { return }
+            onToggle()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundColor(isAlwaysExpanded ? .secondary : .accentColor)
+                    .frame(width: 22)
+
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.primary)
+                    .textCase(.uppercase)
+
+                Spacer()
+
+                Text("\(count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(.tertiarySystemGroupedBackground), in: Capsule())
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(count) items")
+        .accessibilityHint(isAlwaysExpanded ? "Today is always expanded" : (isExpanded ? "Collapse section" : "Expand section"))
     }
 }

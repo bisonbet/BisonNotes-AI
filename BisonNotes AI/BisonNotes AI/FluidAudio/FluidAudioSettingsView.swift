@@ -78,6 +78,8 @@ struct FluidAudioSettingsView: View {
                     .foregroundColor(.secondary)
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("On Device Transcription")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

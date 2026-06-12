@@ -73,6 +73,8 @@ struct AcknowledgementsView: View {
                     Text("These are brought in through AWS SDK and other direct dependencies. All dependencies are MIT or Apache 2.0 licensed. See each project repository for full terms.")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Acknowledgements")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -192,4 +194,3 @@ private let transitiveDependencyGroups: [DependencyGroup] = [
         ]
     )
 ]
-

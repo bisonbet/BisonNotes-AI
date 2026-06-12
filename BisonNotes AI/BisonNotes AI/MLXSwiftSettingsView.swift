@@ -131,6 +131,8 @@ struct MLXSwiftSettingsView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(AIEngineType.mlxSwift.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
