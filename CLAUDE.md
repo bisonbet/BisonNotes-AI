@@ -9,17 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build and Development Commands
 
-**CRITICAL: DO NOT BUILD OR RUN WITHOUT EXPLICIT USER REQUEST**
-
-Never run `xcodebuild`, build commands, or any compilation/execution commands unless the user explicitly asks you to do so. This includes:
-- Do NOT run `xcodebuild` to verify fixes
-- Do NOT compile to check for errors
-- Do NOT run tests automatically
-- Do NOT execute the app to verify functionality
-
-If you make code changes, explain what you fixed and let the user verify by building themselves.
-
-This is an iOS application built with Xcode. When explicitly requested by the user, use standard Xcode commands:
+This is an iOS application built with Xcode. Use standard Xcode commands to build, run, test, and verify changes when working in a macOS/Xcode environment:
 
 - **Build**: Open `BisonNotes AI.xcodeproj` in Xcode and build (⌘+B)
 - **Run**: Build and run on simulator or device (⌘+R)

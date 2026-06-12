@@ -757,21 +757,6 @@ struct BisonNotesAIApp: App {
         AppLog.shared.general("Background app refresh configured via BGTaskScheduler")
     }
     
-    private func requestNotificationPermission() {
-        // Request notification permissions
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
-            DispatchQueue.main.async {
-                if granted {
-                    AppLog.shared.general("Notification permission granted")
-                } else if let error = error {
-                    AppLog.shared.general("Notification permission denied: \(error.localizedDescription)", level: .error)
-                } else {
-                    AppLog.shared.general("Notification permission denied by user", level: .error)
-                }
-            }
-        }
-    }
-    
     private func handleBackgroundProcessing(task: BGProcessingTask) {
         AppLog.shared.general("Background processing task started: \(task.identifier)")
 
