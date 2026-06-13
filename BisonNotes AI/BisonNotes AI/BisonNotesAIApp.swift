@@ -364,6 +364,37 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
+    /// Downgrades the file-protection class on existing files from .complete to
+    /// .completeUntilFirstUserAuthentication. v1.11 (initial release) created
+    /// recordings, transcripts, logs, and Core Data files with .complete, which
+    /// makes them unreadable while the device is locked — breaking background
+    /// recording and post-lock loads. Runs once after the user brings the app to
+    /// the foreground (so protected data is available).
+    private func migrateFileProtectionForExistingFiles() {
+        let migrationKey = "fileProtectionDowngradeMigration_v1.11.1"
+
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            return
+        }
+
+        let fileManager = FileManager.default
+        let directories: [URL] = [
+            fileManager.urls(for: .documentDirectory, in: .userDomainMask).first,
+            fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        ].compactMap { $0 }
+
+        for directory in directories {
+            AppFileProtection.applyRecursively(to: directory)
+        }
+
+        UserDefaults.standard.set(true, forKey: migrationKey)
+        AppLog.shared.general("Downgraded existing file protection class to completeUntilFirstUserAuthentication (1.11 → 1.11.1)")
+    }
+
     init() {
 #if DEBUG
         Self.configureCoverageOutputIfNeeded()
@@ -446,6 +477,8 @@ struct BisonNotesAIApp: App {
                     // scene-based SwiftUI apps where the UIApplicationDelegate method
                     // may be skipped.
                     appDelegate.clearAppBadge(reason: "activation")
+                    // Repair any files left at .complete protection by v1.11.0.
+                    migrateFileProtectionForExistingFiles()
                     // Scan for files placed by the Share Extension (Voice Memos, etc.)
                     scanSharedContainerForImports(trigger: .pendingToken)
                     // Also scan Documents/Inbox/ for files from "Open In" / document interaction.
