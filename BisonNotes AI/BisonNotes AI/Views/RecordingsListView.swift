@@ -84,102 +84,8 @@ struct RecordingsListView: View {
 
     var body: some View {
         NavigationStack {
-            VStack {
-                // Custom header
-                HStack {
-                    Text("Recordings")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                    Spacer()
-
-                    if isSelectionMode {
-                        HStack(spacing: 12) {
-                            if selectionAction == .combine && selectedRecordings.count >= 2 {
-                                Button("Combine") {
-                                    handleCombineSelected()
-                                }
-                                .font(.headline)
-                                .foregroundColor(.blue)
-                            }
-
-                            if selectionAction == .archive && !selectedRecordings.isEmpty {
-                                Button("Archive") {
-                                    prepareArchiveFromSelection()
-                                }
-                                .font(.headline)
-                                .foregroundColor(.orange)
-                            }
-
-                            if selectionAction == .export && !selectedRecordings.isEmpty {
-                                Button("Export") {
-                                    prepareExportFromSelection()
-                                }
-                                .font(.headline)
-                                .foregroundColor(.accentColor)
-                            }
-
-                            Button("Cancel") {
-                                isSelectionMode = false
-                                selectedRecordings.removeAll()
-                                showSelectionWarning = false
-                            }
-                            .font(.headline)
-                        }
-                    } else {
-                        HStack(spacing: 12) {
-                            Button(action: { showDateFilter = true }) {
-                                Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                                    .font(.title2)
-                            }
-
-                            Menu {
-                                if recordings.count >= 2 {
-                                    Button(action: {
-                                        selectionAction = .combine
-                                        isSelectionMode = true
-                                        selectedRecordings.removeAll()
-                                        showSelectionWarning = false
-                                    }) {
-                                        Label("Combine Recordings", systemImage: "link")
-                                    }
-                                }
-
-                                Button(action: {
-                                    selectionAction = .archive
-                                    isSelectionMode = true
-                                    selectedRecordings.removeAll()
-                                    showSelectionWarning = false
-                                }) {
-                                    Label("Archive Selected", systemImage: "archivebox")
-                                }
-
-                                Button(action: {
-                                    selectionAction = .export
-                                    isSelectionMode = true
-                                    selectedRecordings.removeAll()
-                                    showSelectionWarning = false
-                                }) {
-                                    Label("Export Selected", systemImage: "square.and.arrow.up")
-                                }
-
-                                Button(action: {
-                                    showingArchiveOlderThan = true
-                                }) {
-                                    Label("Archive Older Than...", systemImage: "calendar.badge.clock")
-                                }
-                            } label: {
-                                Image(systemName: "ellipsis.circle")
-                                    .font(.title2)
-                            }
-
-                            Button("Done") {
-                                dismiss()
-                            }
-                            .font(.headline)
-                        }
-                    }
-                }
-                .padding()
+            VStack(spacing: 0) {
+                headerView
 
                 if isSelectionMode {
                     selectionBanner
@@ -187,6 +93,7 @@ struct RecordingsListView: View {
 
                 recordingsContent
             }
+            .background(Color(.systemGroupedBackground))
             .searchable(text: $searchText, prompt: "Search recordings...")
             .sheet(isPresented: $showDateFilter) {
                 dateFilterSheet
@@ -233,7 +140,7 @@ struct RecordingsListView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
-                        
+
                         Button("Cancel") {
                             showingEnhancedDeleteDialog = false
                             deletionData.recordingToDelete = nil
@@ -250,6 +157,7 @@ struct RecordingsListView: View {
             .sheet(item: $selectedRecordingForPlayer) { recording in
                 AudioPlayerView(recording: recording)
                     .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
             }
             .sheet(isPresented: $showingCombineView) {
                 if let recordings = recordingsToCombine {
@@ -259,7 +167,7 @@ struct RecordingsListView: View {
                         secondURL: recordings.second.url
                     ).first
                     let recommendedRecording = recommended == recordings.first.url ? recordings.first : recordings.second
-                    
+
                     CombineRecordingsView(
                         firstRecording: recordings.first,
                         secondRecording: recordings.second,
@@ -411,11 +319,145 @@ struct RecordingsListView: View {
             loadRecordings()
         }
     }
-    
 
-    
+    private var headerView: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Recordings")
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
 
-    
+                Text(recordingsHeaderSubtitle)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if isSelectionMode {
+                selectionHeaderActions
+            } else {
+                standardHeaderActions
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private var recordingsHeaderSubtitle: String {
+        if recordings.isEmpty {
+            return "Manage audio files"
+        }
+
+        let count = recordings.count
+        return "\(count) recording\(count == 1 ? "" : "s")"
+    }
+
+    private var selectionHeaderActions: some View {
+        HStack(spacing: 8) {
+            if selectionAction == .combine && selectedRecordings.count >= 2 {
+                Button(action: handleCombineSelected) {
+                    Label("Combine", systemImage: "link")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+            if selectionAction == .archive && !selectedRecordings.isEmpty {
+                Button(action: prepareArchiveFromSelection) {
+                    Label("Archive", systemImage: "archivebox")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+            if selectionAction == .export && !selectedRecordings.isEmpty {
+                Button(action: prepareExportFromSelection) {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+            Button("Cancel") {
+                isSelectionMode = false
+                selectedRecordings.removeAll()
+                showSelectionWarning = false
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    private var standardHeaderActions: some View {
+        HStack(spacing: 10) {
+            Button(action: { showDateFilter = true }) {
+                Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    .font(.headline)
+                    .frame(width: 36, height: 36)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .accessibilityLabel("Filter Recordings")
+
+            Menu {
+                if recordings.count >= 2 {
+                    Button(action: {
+                        selectionAction = .combine
+                        isSelectionMode = true
+                        selectedRecordings.removeAll()
+                        showSelectionWarning = false
+                    }) {
+                        Label("Combine Recordings", systemImage: "link")
+                    }
+                }
+
+                Button(action: {
+                    selectionAction = .archive
+                    isSelectionMode = true
+                    selectedRecordings.removeAll()
+                    showSelectionWarning = false
+                }) {
+                    Label("Archive Selected", systemImage: "archivebox")
+                }
+
+                Button(action: {
+                    selectionAction = .export
+                    isSelectionMode = true
+                    selectedRecordings.removeAll()
+                    showSelectionWarning = false
+                }) {
+                    Label("Export Selected", systemImage: "square.and.arrow.up")
+                }
+
+                Button(action: {
+                    showingArchiveOlderThan = true
+                }) {
+                    Label("Archive Older Than...", systemImage: "calendar.badge.clock")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.headline)
+                    .frame(width: 36, height: 36)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .accessibilityLabel("Recording Actions")
+
+            Button(action: {
+                dismiss()
+            }) {
+                Image(systemName: "xmark")
+                    .font(.headline)
+                    .frame(width: 36, height: 36)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .accessibilityLabel("Done")
+        }
+    }
+
     private var recordingsContent: some View {
         let filtered = filteredRecordings
         return Group {
@@ -433,16 +475,16 @@ struct RecordingsListView: View {
             }
         }
     }
-    
+
     private var emptyStateView: some View {
         VStack(spacing: 16) {
             Image(systemName: "waveform")
                 .font(.system(size: 60))
-                .foregroundColor(.secondary)
+                .foregroundColor(.accentColor)
 
             Text("No Recordings")
                 .font(.title2)
-                .fontWeight(.medium)
+                .fontWeight(.semibold)
                 .foregroundColor(.primary)
 
             Text("Start recording or import audio files to see them here")
@@ -451,14 +493,16 @@ struct RecordingsListView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
         }
+        .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
     }
 
     private var noResultsView: some View {
         VStack(spacing: 16) {
             Image(systemName: isDateFilterActive ? "calendar.badge.exclamationmark" : "magnifyingglass")
                 .font(.system(size: 48))
-                .foregroundColor(.secondary)
+                .foregroundColor(.accentColor)
 
             Text("No Results")
                 .font(.title2)
@@ -477,7 +521,9 @@ struct RecordingsListView: View {
                 .buttonStyle(.bordered)
             }
         }
+        .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
     }
 
     private var noResultsMessage: String {
@@ -500,6 +546,7 @@ struct RecordingsListView: View {
                 .foregroundColor(.blue)
             Text("\(dateFilterStart, format: .dateTime.month().day()) - \(dateFilterEnd, format: .dateTime.month().day())")
                 .font(.subheadline)
+                .fontWeight(.medium)
             Spacer()
             Button(action: {
                 isDateFilterActive = false
@@ -508,67 +555,40 @@ struct RecordingsListView: View {
                     .foregroundColor(.secondary)
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(Color(.systemGray6))
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 20)
+        .padding(.bottom, 10)
     }
 
     private var dateFilterSheet: some View {
-        #if targetEnvironment(macCatalyst)
-        VStack(spacing: 0) {
-            HStack {
-                Button("Cancel") { showDateFilter = false }
-                Spacer()
-                Text("Filter by Date").font(.headline)
-                Spacer()
-                Button("Apply") {
-                    isDateFilterActive = true
-                    showDateFilter = false
-                }
-                .fontWeight(.semibold)
-            }
-            .padding(.horizontal, 16).padding(.vertical, 10)
-            Divider()
-            Form {
-                Section {
-                    DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
-                    DatePicker("To", selection: $dateFilterEnd, in: dateFilterStart...Date(), displayedComponents: .date)
-                }
-                if isDateFilterActive {
-                    Section {
-                        Button(role: .destructive) {
-                            isDateFilterActive = false
-                            showDateFilter = false
-                        } label: {
-                            HStack { Spacer(); Text("Clear Filter"); Spacer() }
-                        }
-                    }
-                }
-            }
-        }
-        #else
         NavigationStack {
-            Form {
-                Section {
-                    DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
-                    DatePicker("To", selection: $dateFilterEnd, in: dateFilterStart...Date(), displayedComponents: .date)
-                }
+            ScrollView {
+                VStack(spacing: 14) {
+                    VStack(spacing: 10) {
+                        DatePicker("From", selection: $dateFilterStart, in: ...Date(), displayedComponents: .date)
+                        Divider()
+                        DatePicker("To", selection: $dateFilterEnd, in: dateFilterStart...Date(), displayedComponents: .date)
+                    }
+                    .padding(16)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 18)
 
-                if isDateFilterActive {
-                    Section {
+                    if isDateFilterActive {
                         Button(role: .destructive) {
                             isDateFilterActive = false
                             showDateFilter = false
                         } label: {
-                            HStack {
-                                Spacer()
-                                Text("Clear Filter")
-                                Spacer()
-                            }
+                            Label("Clear Filter", systemImage: "xmark.circle")
+                                .frame(maxWidth: .infinity)
                         }
+                        .buttonStyle(.bordered)
+                        .padding(.horizontal, 20)
                     }
                 }
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Filter by Date")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -585,203 +605,213 @@ struct RecordingsListView: View {
                 }
             }
         }
-        #endif
     }
 
     private func recordingsListView(_ filtered: [AudioRecordingFile]) -> some View {
         let sectioned = DateSectionHelper.groupBySection(filtered, dateKeyPath: \.date)
 
-        return List {
-            ForEach(sectioned, id: \.section) { sectionData in
-                Section(header: Text(sectionData.section.title)) {
-                    ForEach(sectionData.items) { recording in
-                        recordingRow(for: recording)
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 18) {
+                ForEach(sectioned, id: \.section) { sectionData in
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(sectionData.section.title)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.secondary)
+                            .textCase(.uppercase)
+                            .padding(.horizontal, 4)
+
+                        VStack(spacing: 10) {
+                            ForEach(sectionData.items) { recording in
+                                recordingRow(for: recording)
+                            }
+                        }
                     }
                 }
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
         }
+        .background(Color(.systemGroupedBackground))
         .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
     }
-    
+
     private func recordingRow(for recording: AudioRecordingFile) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-        HStack {
-            // Selection checkbox (if in selection mode)
-            if isSelectionMode {
-                Button(action: {
-                    toggleSelection(for: recording)
-                }) {
-                    Image(systemName: selectedRecordings.contains(recording.url) ? "checkmark.circle.fill" : "circle")
-                        .font(.title2)
-                        .foregroundColor(selectedRecordings.contains(recording.url) ? .blue : .gray)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            
-            // Main content area - clickable for playback (or selection)
-            Button(action: {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
                 if isSelectionMode {
-                    toggleSelection(for: recording)
-                } else if recording.isArchived && !recording.hasLocalAudio {
-                    // Archived with no local file — show info instead of player
-                    selectedRecordingForPlayer = nil
-                    // Show alert with archive info
-                    archiveInfoRecording = recording
-                } else {
-                    selectedRecordingForPlayer = recording
-                }
-            }) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(recording.name)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                        .multilineTextAlignment(.leading)
-
-                    HStack {
-                        Text(recording.dateString)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("•")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(recording.durationString)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("•")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(recording.fileSizeString)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    // Archive or file availability indicator
-                    if recording.isArchived {
-                        HStack(spacing: 4) {
-                            Image(systemName: "archivebox.fill")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                            if let dateStr = recording.archivedAtString {
-                                Text("Archived \(dateStr)")
-                                    .font(.caption2)
-                                    .foregroundColor(.orange)
-                            } else {
-                                Text("Archived")
-                                    .font(.caption2)
-                                    .foregroundColor(.orange)
-                            }
-                            if !recording.hasLocalAudio {
-                                Text("(audio offloaded)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            } else {
-                                Text("(local audio present)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        if let location = RecordingArchiveService.shared.primaryArchiveLocation(for: recording.recordingId) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "externaldrive.badge.checkmark")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Text("\(location.providerDisplayName) / \(location.displayName)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
-                    } else if let relationships = enhancedFileManager.getFileRelationships(for: recording.url) {
-                        FileAvailabilityIndicator(
-                            status: relationships.availabilityStatus,
-                            showLabel: true,
-                            size: .small
-                        )
-                    }
-                    
-                    if let locationData = recording.locationData {
-                        HStack {
-                            Image(systemName: "location.fill")
-                                .font(.caption)
-                            Text("View Location")
-                                .font(.caption)
-                        }
-                        .foregroundColor(.accentColor)
-                        .onTapGesture {
-                            showLocationDetails(locationData)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(PlainButtonStyle())
-            
-            Spacer()
-            
-            // Action buttons - separate from main clickable area
-            HStack(spacing: 12) {
-                if recording.hasLocalAudio {
                     Button(action: {
-                        prepareExport(for: recording)
+                        toggleSelection(for: recording)
                     }) {
-                        Image(systemName: "square.and.arrow.up")
+                        Image(systemName: selectedRecordings.contains(recording.url) ? "checkmark.circle.fill" : "circle")
                             .font(.title2)
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(selectedRecordings.contains(recording.url) ? .accentColor : .secondary)
+                            .frame(width: 32, height: 32)
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .accessibilityLabel("Export Audio")
-                }
-
-                if recording.isArchived && !recording.hasLocalAudio {
-                    Button(action: {
-                        restoreArchivedAudio(recording)
-                    }) {
-                        if restoringArchiveRecordingId != nil && restoringArchiveRecordingId == recording.recordingId {
-                            ProgressView()
-                                .frame(width: 28, height: 28)
-                        } else {
-                            Image(systemName: "arrow.down.circle.fill")
-                                .font(.title2)
-                                .foregroundColor(.accentColor)
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(restoringArchiveRecordingId != nil && restoringArchiveRecordingId == recording.recordingId)
-                } else if recording.isArchived && recording.hasLocalAudio {
-                    Button(action: {
-                        clearLocalArchiveState(recording)
-                    }) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(.green)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                } else {
-                    Button(action: {
-                        selectedRecordingForPlayer = recording
-                    }) {
-                        Image(systemName: "play.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(.accentColor)
-                    }
-                    .buttonStyle(PlainButtonStyle())
+                    .buttonStyle(.plain)
                 }
 
                 Button(action: {
-                    deletionData.recordingToDelete = recording
-                    deleteRecording(recording)
+                    if isSelectionMode {
+                        toggleSelection(for: recording)
+                    } else if recording.isArchived && !recording.hasLocalAudio {
+                        selectedRecordingForPlayer = nil
+                        archiveInfoRecording = recording
+                    } else {
+                        selectedRecordingForPlayer = recording
+                    }
                 }) {
-                    Image(systemName: "trash")
-                        .font(.title2)
-                        .foregroundColor(.red)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(recording.name)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(2)
+
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 8) {
+                                recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
+                                recordingMetaLabel(systemImage: "timer", text: recording.durationString)
+                                recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
+                                recordingMetaLabel(systemImage: "timer", text: recording.durationString)
+                                recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
+                            }
+                        }
+
+                        recordingStatusView(for: recording)
+
+                        if let locationData = recording.locationData {
+                            Button(action: {
+                                showLocationDetails(locationData)
+                            }) {
+                                Label("View Location", systemImage: "location.fill")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(.accentColor)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .buttonStyle(.plain)
+            }
+
+            Divider()
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    recordingActionButtons(for: recording)
+                    Spacer()
+                    transcriptActionButton(for: recording)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 10) {
+                        recordingActionButtons(for: recording)
+                    }
+                    transcriptActionButton(for: recording)
+                }
+            }
+        }
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func recordingMetaLabel(systemImage: String, text: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+    }
+
+    @ViewBuilder
+    private func recordingStatusView(for recording: AudioRecordingFile) -> some View {
+        if recording.isArchived {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "archivebox.fill")
+                        .font(.caption)
+                    Text(recording.archivedAtString.map { "Archived \($0)" } ?? "Archived")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    Text(recording.hasLocalAudio ? "Local audio present" : "Audio offloaded")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .foregroundColor(.orange)
+
+                if let location = RecordingArchiveService.shared.primaryArchiveLocation(for: recording.recordingId) {
+                    Label("\(location.providerDisplayName) / \(location.displayName)", systemImage: "externaldrive.badge.checkmark")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        } else if let relationships = enhancedFileManager.getFileRelationships(for: recording.url) {
+            FileAvailabilityIndicator(
+                status: relationships.availabilityStatus,
+                showLabel: true,
+                size: .small
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func recordingActionButtons(for recording: AudioRecordingFile) -> some View {
+        if recording.hasLocalAudio {
+            recordingIconButton("Export Audio", systemImage: "square.and.arrow.up", tint: .accentColor) {
+                prepareExport(for: recording)
             }
         }
 
-        transcriptActionButton(for: recording)
+        if recording.isArchived && !recording.hasLocalAudio {
+            Button(action: {
+                restoreArchivedAudio(recording)
+            }) {
+                if restoringArchiveRecordingId != nil && restoringArchiveRecordingId == recording.recordingId {
+                    ProgressView()
+                        .frame(width: 34, height: 34)
+                } else {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.headline)
+                        .frame(width: 34, height: 34)
+                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(restoringArchiveRecordingId != nil && restoringArchiveRecordingId == recording.recordingId)
+            .accessibilityLabel("Restore Audio")
+        } else if recording.isArchived && recording.hasLocalAudio {
+            recordingIconButton("Mark Local Archive State Clear", systemImage: "checkmark.circle.fill", tint: .green) {
+                clearLocalArchiveState(recording)
+            }
+        } else {
+            recordingIconButton("Play Audio", systemImage: "play.fill", tint: .accentColor) {
+                selectedRecordingForPlayer = recording
+            }
         }
-        .padding(.vertical, 4)
+
+        recordingIconButton("Delete Recording", systemImage: "trash", tint: .red) {
+            deletionData.recordingToDelete = recording
+            deleteRecording(recording)
+        }
+    }
+
+    private func recordingIconButton(_ label: String, systemImage: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.headline)
+                .foregroundColor(tint)
+                .frame(width: 34, height: 34)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     /// Labeled "Generate Transcript" action shown beneath each recording row.
@@ -811,7 +841,7 @@ struct RecordingsListView: View {
                     if isProcessing {
                         ProgressView()
                             .scaleEffect(0.8)
-                            .tint(.white)
+                            .tint(.orange)
                         Text(transcriptProcessingLabel(isCleaning: isCleaning,
                                                       isQueuedForCleanup: isQueuedForCleanup,
                                                       jobStatus: jobStatus))
@@ -821,11 +851,14 @@ struct RecordingsListView: View {
                     }
                 }
                 .font(.subheadline)
+                .fontWeight(.medium)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(isProcessing ? Color.orange : Color.accentColor)
-                .foregroundColor(.white)
-                .cornerRadius(10)
+                .background(
+                    (isProcessing ? Color.orange : Color.accentColor).opacity(0.12),
+                    in: Capsule()
+                )
+                .foregroundColor(isProcessing ? .orange : .accentColor)
             }
             .buttonStyle(.plain)
             .disabled(isProcessing)
@@ -845,7 +878,7 @@ struct RecordingsListView: View {
         default: return "Processing…"
         }
     }
-    
+
     // MARK: - Search and Date Filtering
 
     private var filteredRecordings: [AudioRecordingFile] {
@@ -973,14 +1006,14 @@ struct RecordingsListView: View {
         if name.count > 20 && (name.contains("1754") || name.contains("2025") || name.contains("2024")) { return true }
         return false
     }
-    
+
     private func loadLocationDataForRecording(url: URL) -> LocationData? {
         // First try to find the recording in Core Data and use proper URL resolution
         if let recording = appCoordinator.getRecording(url: url) {
             // loadLocationData now checks Core Data fields first, then file
             return appCoordinator.loadLocationData(for: recording)
         }
-        
+
         // Fallback: try direct file access for recordings not yet in Core Data
         let locationURL = url.deletingPathExtension().appendingPathExtension("location")
         guard let data = try? Data(contentsOf: locationURL),
@@ -989,32 +1022,32 @@ struct RecordingsListView: View {
         }
         return locationData
     }
-    
+
     private func showLocationDetails(_ locationData: LocationData) {
         selectedLocationData = locationData
     }
-    
+
     private func loadLocationAddressesBatch(for recordings: [AudioRecordingFile]) {
         // Filter recordings that have location data and don't already have cached addresses
         let recordingsNeedingGeocode = recordings.filter { recording in
             guard let _ = recording.locationData else { return false }
             return locationAddresses[recording.url] == nil
         }
-        
+
         // Process recordings one by one to respect rate limiting
         for recording in recordingsNeedingGeocode {
             loadLocationAddress(for: recording)
         }
     }
-    
+
     private func loadLocationAddress(for recording: AudioRecordingFile) {
         guard let locationData = recording.locationData else { return }
-        
+
         // Skip if we already have an address for this recording
         if locationAddresses[recording.url] != nil {
             return
         }
-        
+
         let location = CLLocation(latitude: locationData.latitude, longitude: locationData.longitude)
         // Use a default location manager since AudioRecorderViewModel doesn't have one
         let locationManager = LocationManager()
@@ -1024,22 +1057,22 @@ struct RecordingsListView: View {
             }
         }
     }
-    
+
     private func deleteRecording(_ recording: AudioRecordingFile) {
         // Set the recording to delete immediately
         deletionData.recordingToDelete = recording
-        
+
         // Set up relationships for enhanced deletion
         Task {
             // First try to get existing relationships
             var relationships = enhancedFileManager.getFileRelationships(for: recording.url)
-            
+
             // If no relationships exist, create them on demand
             if relationships == nil {
                 await enhancedFileManager.refreshRelationships(for: recording.url)
                 relationships = enhancedFileManager.getFileRelationships(for: recording.url)
             }
-            
+
             await MainActor.run {
                 if let relationships = relationships {
                     // Use enhanced deletion with relationships
@@ -1057,7 +1090,7 @@ struct RecordingsListView: View {
             }
         }
     }
-    
+
     private func deleteRecordingWithRelationships(_ recording: AudioRecordingFile, preserveSummary: Bool) async {
         do {
             try await enhancedFileManager.deleteRecording(recording.url, preserveSummary: preserveSummary)
@@ -1068,7 +1101,7 @@ struct RecordingsListView: View {
             AppLog.shared.recording("Failed to delete recording with relationships: \(error)", level: .error)
         }
     }
-    
+
     private func getRecordingDuration(url: URL) -> TimeInterval {
         do {
             let player = try AVAudioPlayer(contentsOf: url)
@@ -1078,21 +1111,21 @@ struct RecordingsListView: View {
             return 0.0
         }
     }
-    
+
     private func refreshFileRelationships() {
         Task {
             // Refresh relationships for all recordings in the background
             for recording in recordings {
                 await enhancedFileManager.refreshRelationships(for: recording.url)
             }
-            
+
             await MainActor.run {
                 // Force a UI refresh by updating the published object
                 enhancedFileManager.objectWillChange.send()
             }
         }
     }
-    
+
     // MARK: - Selection Banner
 
     private var selectionBanner: some View {
@@ -1128,9 +1161,10 @@ struct RecordingsListView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
-        .background(Color(.systemGray6))
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 20)
+        .padding(.bottom, 10)
         .animation(.easeInOut(duration: 0.2), value: showSelectionWarning)
         .animation(.easeInOut(duration: 0.2), value: selectedRecordings.count)
     }
@@ -1152,7 +1186,7 @@ struct RecordingsListView: View {
             }
         }
     }
-    
+
     private func handleCombineSelected() {
         guard selectedRecordings.count >= 2 else { return }
 
@@ -1162,10 +1196,10 @@ struct RecordingsListView: View {
               let secondRecording = recordings.first(where: { $0.url == selectedURLs[1] }) else {
             return
         }
-        
+
         // Check if either recording has transcripts or summaries
         var issues: [String] = []
-        
+
         if let firstEntry = appCoordinator.getRecording(url: firstRecording.url),
            let firstId = firstEntry.id {
             if appCoordinator.getTranscript(for: firstId) != nil {
@@ -1175,7 +1209,7 @@ struct RecordingsListView: View {
                 issues.append("'\(firstRecording.name)' has a summary")
             }
         }
-        
+
         if let secondEntry = appCoordinator.getRecording(url: secondRecording.url),
            let secondId = secondEntry.id {
             if appCoordinator.getTranscript(for: secondId) != nil {
@@ -1185,7 +1219,7 @@ struct RecordingsListView: View {
                 issues.append("'\(secondRecording.name)' has a summary")
             }
         }
-        
+
         if !issues.isEmpty {
             // Show alert explaining why they can't combine
             let alert = UIAlertController(
@@ -1194,12 +1228,12 @@ struct RecordingsListView: View {
                 preferredStyle: .alert
             )
             alert.addAction(UIAlertAction(title: "OK", style: .default))
-            
+
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                let rootViewController = windowScene.windows.first?.rootViewController {
                 rootViewController.present(alert, animated: true)
             }
-            
+
             // Exit selection mode
             isSelectionMode = false
             selectedRecordings.removeAll()

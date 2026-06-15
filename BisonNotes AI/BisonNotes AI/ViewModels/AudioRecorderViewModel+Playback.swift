@@ -20,8 +20,29 @@ extension AudioRecorderViewModel {
 				// Store the current seek position before creating new player
 				let seekPosition = await MainActor.run { playingTime }
 
-				// Create player on current thread (where we can use try)
+				guard FileManager.default.fileExists(atPath: url.path) else {
+					throw NSError(
+						domain: "AudioRecorderViewModel.Playback",
+						code: -1,
+						userInfo: [NSLocalizedDescriptionKey: "The audio file is missing."]
+					)
+				}
+
 				let player = try AVAudioPlayer(contentsOf: url)
+				guard player.duration.isFinite, player.duration > 0 else {
+					throw NSError(
+						domain: "AudioRecorderViewModel.Playback",
+						code: -2,
+						userInfo: [NSLocalizedDescriptionKey: "The audio file is empty or corrupted."]
+					)
+				}
+				guard player.prepareToPlay() else {
+					throw NSError(
+						domain: "AudioRecorderViewModel.Playback",
+						code: -3,
+						userInfo: [NSLocalizedDescriptionKey: "The audio file could not be prepared for playback."]
+					)
+				}
 
 				await MainActor.run {
 					audioPlayer = player
@@ -35,9 +56,14 @@ extension AudioRecorderViewModel {
 						playingTime = 0
 					}
 
-					audioPlayer?.play()
-					isPlaying = true
-					startPlayingTimer()
+					if audioPlayer?.play() == true {
+						isPlaying = true
+						startPlayingTimer()
+					} else {
+						audioPlayer = nil
+						isPlaying = false
+						errorMessage = "Failed to play recording: The audio file could not be started."
+					}
 				}
 
 			} catch {

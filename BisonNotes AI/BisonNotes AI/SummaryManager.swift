@@ -337,11 +337,11 @@ class SummaryManager: ObservableObject {
                 AppLog.shared.summarization("Saved engine '\(savedEngineName)' not available, using '\(availableEngine.name)' temporarily", level: .default)
             }
         } else if savedEngineName == nil {
-            // No saved preference, try to set On-Device AI as the default
-            if let defaultEngine = availableEngines["On-Device AI"], defaultEngine.isAvailable {
+            // No saved preference, try to set MLX (the new on-device default)
+            if let defaultEngine = availableEngines[AIEngineType.mlxSwift.rawValue], defaultEngine.isAvailable {
                 currentEngine = defaultEngine
                 UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
-                AppLog.shared.summarization("No saved preference, set On-Device AI as default engine")
+                AppLog.shared.summarization("No saved preference, set MLX as default engine")
             } else {
                 // Try to find any available engine
                 if let anyAvailableEngine = availableEngines.values.first(where: { $0.isAvailable && $0.name != "None" }) {
@@ -575,7 +575,7 @@ class SummaryManager: ObservableObject {
     }
     
     private func syncCurrentEngineWithSettings() {
-        let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         
         // If current engine doesn't match the selected engine, update it
         if currentEngine?.name != selectedEngineName {
@@ -746,7 +746,7 @@ class SummaryManager: ObservableObject {
         // Update current engine if needed
         if let currentEngine = currentEngine {
             let currentEngineType = AIEngineType.allCases.first(where: { $0.rawValue == currentEngine.name })
-            let currentEngineInstance = AIEngineFactory.createEngine(type: currentEngineType ?? .onDeviceLLM)
+            let currentEngineInstance = AIEngineFactory.createEngine(type: currentEngineType ?? .mlxSwift)
             
             if !currentEngineInstance.isAvailable {
                 AppLog.shared.summarization("Current engine '\(currentEngine.name)' is no longer available", level: .default)

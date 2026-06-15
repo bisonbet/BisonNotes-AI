@@ -422,44 +422,6 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
     }
 }
 
-// MARK: - Whisper-Based Engine (Future Implementation)
-
-// OpenAICompatibleEngine has been moved to OpenAISummarizationEngine.swift
-// This placeholder is for future Whisper-based implementations
-
-// MARK: - Supporting Structures for Future Implementation
-
-struct DiarizedTranscript {
-    let segments: [DiarizedSegment]
-    let speakers: [Speaker]
-    let confidence: Double
-    let processingTime: TimeInterval
-}
-
-struct DiarizedSegment {
-    let id: UUID
-    let speakerId: String
-    let text: String
-    let startTime: TimeInterval
-    let endTime: TimeInterval
-    let confidence: Double
-}
-
-struct Speaker {
-    let id: String
-    let name: String?
-    let voiceCharacteristics: VoiceCharacteristics
-    let segmentCount: Int
-    let totalDuration: TimeInterval
-}
-
-struct VoiceCharacteristics {
-    let pitch: Double
-    let tone: String
-    let pace: Double
-    let volume: Double
-}
-
 // MARK: - Local LLM Engine (Ollama)
 
 class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
@@ -1653,73 +1615,6 @@ class GoogleAIStudioEngine: SummarizationEngine {
     }
 }
 
-// MARK: - Not Configured Engine for unconfigured state
-
-class NotConfiguredEngine: SummarizationEngine {
-    let name: String = "Not Configured"
-    let description: String = "No AI summarization engine has been configured"
-    let version: String = "1.0"
-    let isAvailable: Bool = false
-
-    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
-    }
-
-    func extractTasks(from text: String) async throws -> [TaskItem] {
-        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
-    }
-
-    func extractReminders(from text: String) async throws -> [ReminderItem] {
-        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
-    }
-
-    func extractTitles(from text: String) async throws -> [TitleItem] {
-        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
-    }
-
-    func classifyContent(_ text: String) async throws -> ContentType {
-        return .general
-    }
-
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        throw SummarizationError.configurationRequired(message: "AI summarization engine not configured. Please go to Settings to configure an AI engine.")
-    }
-}
-
-// MARK: - No-Op Engine for "None" selection
-
-class NoOpEngine: SummarizationEngine {
-    let name: String = "None"
-    let description: String = "No AI summarization engine selected"
-    let version: String = "1.0"
-    let isAvailable: Bool = true
-    
-    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        return "AI summarization is disabled. Please select an AI engine in Settings > AI Processing to generate summaries."
-    }
-    
-    func extractTasks(from text: String) async throws -> [TaskItem] {
-        return []
-    }
-    
-    func extractReminders(from text: String) async throws -> [ReminderItem] {
-        return []
-    }
-    
-    func extractTitles(from text: String) async throws -> [TitleItem] {
-        return []
-    }
-    
-    func classifyContent(_ text: String) async throws -> ContentType {
-        return .general
-    }
-    
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        let summary = "AI summarization is disabled. Please select an AI engine in Settings > AI Processing to generate summaries."
-        return (summary, [], [], [], .general)
-    }
-}
-
 // MARK: - Engine Factory
 
 class AIEngineFactory {
@@ -1769,14 +1664,27 @@ enum AIEngineType: String, CaseIterable {
     case mlxSwift = "MLX Swift"
     case appleNative = "Apple Native"
 
+    /// User-facing label for the engine. Decoupled from rawValue so the persisted
+    /// identifier (UserDefaults, summary records) stays stable while UI copy can evolve.
+    var displayName: String {
+        switch self {
+        case .mlxSwift: return "On Device AI"
+        case .onDeviceLLM: return "On Device AI (Legacy)"
+        default: return rawValue
+        }
+    }
+
     /// Returns all available engine types based on device capabilities
     static var availableCases: [AIEngineType] {
         return allCases.filter { engineType in
-            // Hide on-device engines if device doesn't have sufficient RAM
-            if engineType == .onDeviceLLM || engineType == .mlxSwift {
+            switch engineType {
+            case .mlxSwift:
+                return DeviceCapabilities.supportsMLX
+            case .onDeviceLLM:
                 return DeviceCapabilities.supportsOnDeviceLLM
+            default:
+                return true
             }
-            return true
         }
     }
 
@@ -1797,7 +1705,7 @@ enum AIEngineType: String, CaseIterable {
         case .onDeviceLLM:
             return "Privacy-focused on-device AI processing using local AI models"
         case .mlxSwift:
-            return "Experimental on-device AI processing using MLX Swift and Ternary Bonsai"
+            return "On-device AI processing using MLX Swift and Ternary Bonsai"
         case .appleNative:
             return "Uses Apple's on-device Foundation Models runtime for private summaries"
         }
@@ -1827,7 +1735,7 @@ enum AIEngineType: String, CaseIterable {
         case .onDeviceLLM:
             return ["Downloaded LLM Model (~2 GB)", "No Internet Required", "A16+ Chip Recommended"]
         case .mlxSwift:
-            return ["Experimental Toggle Enabled", "First-use Model Download (~2.3 GB)", "Apple Silicon / 6GB+ RAM Recommended"]
+            return ["Apple Silicon / 6GB+ RAM", "First-use Model Download (~1.1 GB)", "No Internet Required"]
         case .appleNative:
             return ["Apple Intelligence-supported device", "iOS/iPadOS/macOS/visionOS 26+", "No Internet Required"]
         }

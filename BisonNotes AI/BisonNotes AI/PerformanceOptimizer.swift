@@ -9,6 +9,19 @@ import Foundation
 import SwiftUI
 import os.log
 
+extension UIDevice {
+    /// True when the app is running on a Mac (Mac Catalyst or "Designed for iPad" on Apple Silicon).
+    /// Battery APIs return unreliable values in both cases — `batteryLevel` reports ~0.01
+    /// and `batteryState` spams "Error retrieving battery status" to the log.
+    static var isRunningOnMac: Bool {
+        #if targetEnvironment(macCatalyst)
+        return true
+        #else
+        return ProcessInfo.processInfo.isiOSAppOnMac
+        #endif
+    }
+}
+
 // MARK: - Battery Monitor
 
 struct BatteryInfo {
@@ -130,11 +143,10 @@ class PerformanceOptimizer: ObservableObject, Sendable {
     // MARK: - Battery Monitoring
     
     private func startBatteryMonitoring() {
-        #if targetEnvironment(macCatalyst)
-        // No battery API on Mac — leave default battery info (treated as full/charged)
+        // No reliable battery API on Mac — leave default battery info (treated as full/charged)
         // and skip the polling timer to avoid "Error retrieving battery status" logs.
-        return
-        #else
+        if UIDevice.isRunningOnMac { return }
+
         UIDevice.current.isBatteryMonitoringEnabled = true
 
         batteryMonitorTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
@@ -147,20 +159,21 @@ class PerformanceOptimizer: ObservableObject, Sendable {
         Task { @MainActor in
             await updateBatteryInfo()
         }
-        #endif
     }
 
     private func updateBatteryInfo() async {
-        #if targetEnvironment(macCatalyst)
-        // Battery state is not available on Mac; only respect Low Power Mode.
-        let batteryInfo = BatteryInfo(
-            level: 1.0,
-            state: .unknown,
-            isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
-        )
-        self.batteryInfo = batteryInfo
-        await adjustOptimizationLevel()
-        #else
+        if UIDevice.isRunningOnMac {
+            // Battery state is not available on Mac; only respect Low Power Mode.
+            let batteryInfo = BatteryInfo(
+                level: 1.0,
+                state: .unknown,
+                isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+            )
+            self.batteryInfo = batteryInfo
+            await adjustOptimizationLevel()
+            return
+        }
+
         let device = UIDevice.current
         let batteryInfo = BatteryInfo(
             level: device.batteryLevel,
@@ -172,7 +185,6 @@ class PerformanceOptimizer: ObservableObject, Sendable {
 
         // Adjust optimization level based on battery state
         await adjustOptimizationLevel()
-        #endif
     }
     
     private func adjustOptimizationLevel() async {
@@ -483,9 +495,9 @@ class PerformanceOptimizer: ObservableObject, Sendable {
         batteryMonitorTimer = nil
         optimizationTimer = nil
 
-        #if !targetEnvironment(macCatalyst)
-        UIDevice.current.isBatteryMonitoringEnabled = false
-        #endif
+        if !UIDevice.isRunningOnMac {
+            UIDevice.current.isBatteryMonitoringEnabled = false
+        }
     }
     
     // MARK: - Chunked Processing

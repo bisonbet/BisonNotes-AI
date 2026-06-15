@@ -2,7 +2,7 @@
 //  MLXSwiftEngine.swift
 //  BisonNotes AI
 //
-//  Experimental MLX Swift summarization engine.
+//  On-device MLX Swift summarization engine.
 //
 
 import Foundation
@@ -117,9 +117,13 @@ final class MLXSwiftEngine: SummarizationEngine, ConnectionTestable {
     var name: String { "MLX Swift" }
     var engineType: String { "MLX Swift" }
     var description: String {
-        "Experimental on-device summarization with MLX Swift."
+        "On-device summarization with MLX Swift."
     }
-    let version = "Experimental"
+    var version: String {
+        let modelId = UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
+            ?? MLXSwiftSettingsKeys.defaultModelId
+        return modelId.components(separatedBy: "/").last ?? modelId
+    }
 
     var metadataName: String {
         UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
@@ -134,7 +138,7 @@ final class MLXSwiftEngine: SummarizationEngine, ConnectionTestable {
         #if targetEnvironment(simulator)
         return true
         #else
-        return DeviceCapabilities.supportsOnDeviceLLM
+        return DeviceCapabilities.supportsMLX
         #endif
     }
 

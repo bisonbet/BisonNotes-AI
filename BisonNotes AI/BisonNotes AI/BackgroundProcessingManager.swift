@@ -306,22 +306,21 @@ enum JobProcessingStatus: Codable, Equatable {
 @MainActor
 class BackgroundProcessingManager: ObservableObject {
 
-    // Mac Catalyst doesn't expose battery state — UIDevice.batteryLevel returns -1
+    // Mac doesn't expose battery state — UIDevice.batteryLevel returns -1
     // and accessing .batteryState spams "Error retrieving battery status" to the log.
+    // Applies to both Mac Catalyst and "Designed for iPad" on Apple Silicon.
     fileprivate static var batteryLevelString: String {
-        #if targetEnvironment(macCatalyst)
-        return "n/a (Mac)"
-        #else
+        if UIDevice.isRunningOnMac {
+            return "n/a (Mac)"
+        }
         return "\(UIDevice.current.batteryLevel)"
-        #endif
     }
 
     fileprivate static var batteryStateString: String {
-        #if targetEnvironment(macCatalyst)
-        return "n/a (Mac)"
-        #else
+        if UIDevice.isRunningOnMac {
+            return "n/a (Mac)"
+        }
         return "\(UIDevice.current.batteryState.rawValue)"
-        #endif
     }
 
     // MARK: - Published Properties
@@ -1035,9 +1034,6 @@ class BackgroundProcessingManager: ObservableObject {
             await saveTranscript(transcriptData)
         }
         
-        // Post-processing: Generate title automatically - REMOVED for transcription jobs
-        // await performPostProcessing(for: job, transcriptText: transcriptChunks.first?.transcript ?? "")
-        
         // Complete the job - but validate we actually have transcript content
         let hasTranscriptContent = transcriptChunks.contains { !$0.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         
@@ -1257,18 +1253,6 @@ class BackgroundProcessingManager: ObservableObject {
             serverURL: processedServerURL,
             port: effectivePort,
             whisperProtocol: selectedProtocol
-        )
-    }
-    
-    private func getAWSConfig() -> AWSTranscribeConfig {
-        let credentials = AWSCredentialsManager.shared.credentials
-        let bucketName = UserDefaults.standard.string(forKey: "awsBucketName") ?? ""
-        
-        return AWSTranscribeConfig(
-            region: credentials.region,
-            accessKey: credentials.accessKeyId,
-            secretKey: credentials.secretAccessKey,
-            bucketName: bucketName
         )
     }
     
@@ -1621,83 +1605,6 @@ class BackgroundProcessingManager: ObservableObject {
         }
     }
     
-    private func saveSummary(_ summaryData: EnhancedSummaryData) async {
-        // TODO: Integrate with existing summary storage system
-        // For now, just log that we would save it
-        AppLog.shared.backgroundProcessing("Would save summary: \(summaryData.summary.count) characters, \(summaryData.tasks.count) tasks, \(summaryData.reminders.count) reminders", level: .debug)
-    }
-    
-    private func performPostProcessing(for job: ProcessingJob, transcriptText: String) async {
-        AppLog.shared.backgroundProcessing("Starting post-processing")
-        
-        // Generate and save title
-        await generateAndSaveTitle(for: job.recordingURL, from: transcriptText)
-        
-        // Perform cleanup tasks
-        await performCleanupTasks(for: job)
-        
-        // Update file metadata if needed
-        await updateFileMetadata(for: job)
-        
-        AppLog.shared.backgroundProcessing("Post-processing completed")
-    }
-    
-    private func generateAndSaveTitle(for recordingURL: URL, from transcriptText: String) async {
-        do {
-            // Use the currently selected engine for title generation
-            let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
-            let engineType = AIEngineType.allCases.first(where: { $0.rawValue == selectedEngineName }) ?? .onDeviceLLM
-            let engine = AIEngineFactory.createEngine(type: engineType)
-            let titles = try await engine.extractTitles(from: transcriptText)
-            
-            if let bestTitle = titles.first {
-                await saveGeneratedTitle(bestTitle.text, for: recordingURL)
-                AppLog.shared.backgroundProcessing("Generated title for recording")
-            } else {
-                // Fallback to a simple title based on content
-                let fallbackTitle = generateFallbackTitle(from: transcriptText, recordingURL: recordingURL)
-                await saveGeneratedTitle(fallbackTitle, for: recordingURL)
-                AppLog.shared.backgroundProcessing("Generated fallback title for recording")
-            }
-        } catch {
-            AppLog.shared.backgroundProcessing("Failed to generate title: \(error.localizedDescription)", level: .error)
-            // Generate a simple fallback title
-            let fallbackTitle = generateFallbackTitle(from: transcriptText, recordingURL: recordingURL)
-            await saveGeneratedTitle(fallbackTitle, for: recordingURL)
-        }
-    }
-    
-    private func generateFallbackTitle(from transcriptText: String, recordingURL: URL) -> String {
-        // Extract first meaningful sentence or use filename
-        let sentences = transcriptText.components(separatedBy: CharacterSet(charactersIn: ".!?"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && $0.count > 10 }
-        
-        if let firstSentence = sentences.first {
-            // Limit to reasonable length
-            let maxLength = 50
-            if firstSentence.count > maxLength {
-                let truncated = String(firstSentence.prefix(maxLength))
-                return truncated + "..."
-            }
-            return firstSentence
-        }
-        
-        // Fallback to filename-based title
-        let filename = recordingURL.deletingPathExtension().lastPathComponent
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .medium
-        dateFormatter.timeStyle = .short
-        
-        return "\(filename) - \(dateFormatter.string(from: Date()))"
-    }
-    
-    private func saveGeneratedTitle(_ title: String, for recordingURL: URL) async {
-        // TODO: Integrate with existing title storage system
-        // For now, just log that we would save it
-        AppLog.shared.backgroundProcessing("Would save generated title for recording", level: .debug)
-    }
-    
     private func performCleanupTasks(for job: ProcessingJob) async {
         AppLog.shared.backgroundProcessing("Performing cleanup tasks for job")
 
@@ -1714,7 +1621,7 @@ class BackgroundProcessingManager: ObservableObject {
         if let chunks = job.chunks {
             try? await chunkingService.cleanupChunks(chunks)
         }
-        
+
         // Update file relationships
         await enhancedFileManager.updateFileRelationships(for: job.recordingURL, relationships: FileRelationships(
             recordingURL: job.recordingURL,
@@ -1725,10 +1632,10 @@ class BackgroundProcessingManager: ObservableObject {
             iCloudSynced: false
         ))
     }
-    
+
     private func updateFileMetadata(for job: ProcessingJob) async {
         AppLog.shared.backgroundProcessing("Updating file metadata for job")
-        
+
         // Update file relationships to reflect new transcript
         await enhancedFileManager.updateFileRelationships(for: job.recordingURL, relationships: FileRelationships(
             recordingURL: job.recordingURL,
@@ -1739,12 +1646,7 @@ class BackgroundProcessingManager: ObservableObject {
             iCloudSynced: false
         ))
     }
-    
-    private func clearProcessingCache(for recordingURL: URL) async {
-        // TODO: Clear any cached processing data
-        AppLog.shared.backgroundProcessing("Would clear processing cache", level: .debug)
-    }
-    
+
     // MARK: - Job Status Management
     
 
@@ -2164,7 +2066,7 @@ class BackgroundProcessingManager: ObservableObject {
             let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
             type = .transcription(engine: engine)
         } else {
-            type = .summarization(engine: jobEntry.engine ?? "On-Device AI")
+            type = .summarization(engine: jobEntry.engine ?? AIEngineType.mlxSwift.rawValue)
         }
         
         // Convert status string back to JobProcessingStatus enum

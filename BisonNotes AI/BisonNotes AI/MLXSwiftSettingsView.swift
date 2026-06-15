@@ -2,7 +2,7 @@
 //  MLXSwiftSettingsView.swift
 //  BisonNotes AI
 //
-//  Settings for the experimental MLX Swift summarization engine.
+//  Settings for the MLX Swift summarization engine.
 //
 
 import SwiftUI
@@ -14,6 +14,7 @@ struct MLXModelOption: Identifiable {
     let displayName: String
     let description: String
     let downloadSize: String
+    let downloadSizeBytes: Int64
     let parameters: String
     let contextWindow: Int
     /// Minimum device RAM in GB required to run this model
@@ -21,10 +22,21 @@ struct MLXModelOption: Identifiable {
 
     static let available: [MLXModelOption] = [
         MLXModelOption(
+            id: "prism-ml/Ternary-Bonsai-1.7B-mlx-2bit",
+            displayName: "Ternary Bonsai 1.7B",
+            description: "Compact model for devices with limited memory.",
+            downloadSize: "~470 MB",
+            downloadSizeBytes: 470_000_000,
+            parameters: "1.7B",
+            contextWindow: 16_384,
+            requiredRAM: 4.0
+        ),
+        MLXModelOption(
             id: "prism-ml/Ternary-Bonsai-4B-mlx-2bit",
             displayName: "Ternary Bonsai 4B",
             description: "Fast, memory-efficient model for on-device summaries.",
             downloadSize: "~1.1 GB",
+            downloadSizeBytes: 1_100_000_000,
             parameters: "4B",
             contextWindow: 16_384,
             requiredRAM: 6.0
@@ -34,11 +46,16 @@ struct MLXModelOption: Identifiable {
             displayName: "Ternary Bonsai 8B",
             description: "Slower but higher quality summaries.",
             downloadSize: "~2.3 GB",
+            downloadSizeBytes: 2_300_000_000,
             parameters: "8B",
             contextWindow: 16_384,
             requiredRAM: 8.0
         ),
     ]
+
+    /// Identifier for the 1.7B model — used by both the device-default selection
+    /// (4-6GB devices) and the experimental-models filter (6GB+ devices).
+    static let smallModelId = "prism-ml/Ternary-Bonsai-1.7B-mlx-2bit"
 }
 
 // MARK: - MLX Swift Settings View
@@ -56,6 +73,7 @@ struct MLXSwiftSettingsView: View {
     @AppStorage(MLXSwiftSettingsKeys.topK) private var topK = MLXSwiftSettingsKeys.defaultTopK
     @AppStorage(MLXSwiftSettingsKeys.topP) private var topP = MLXSwiftSettingsKeys.defaultTopP
     @AppStorage(MLXSwiftSettingsKeys.repetitionPenalty) private var repetitionPenalty = MLXSwiftSettingsKeys.defaultRepetitionPenalty
+    @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels) private var experimentalEnabled = false
 
     @StateObject private var downloadManager = MLXSwiftDownloadManager.shared
 
@@ -66,7 +84,7 @@ struct MLXSwiftSettingsView: View {
     // MARK: - Body
 
     var body: some View {
-        let isSupported = DeviceCapabilities.supportsOnDeviceLLM
+        let isSupported = DeviceCapabilities.supportsMLX
 
         return Form {
             // Info Section
@@ -75,25 +93,6 @@ struct MLXSwiftSettingsView: View {
                     Text("Process transcripts locally using Apple's MLX framework. Models download from Hugging Face on first use. No internet connection required after download.")
                         .font(.caption)
                         .foregroundColor(.secondary)
-
-                    let deviceRAM = DeviceCapabilities.totalRAMInGB
-                    if deviceRAM >= 4.0 && deviceRAM < 6.0 {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(.orange)
-                                .font(.caption)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Limited Memory")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.orange)
-                                Text("Your device has 4-6GB RAM. The 4B model is recommended. The 8B model may not fit in memory.")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
                 } else {
                     Text("MLX Swift requires a device with 4GB+ RAM and Apple Silicon. Your device does not meet this requirement.")
                         .font(.caption)
@@ -103,7 +102,7 @@ struct MLXSwiftSettingsView: View {
 
             // Model Selection Section
             Section("Model") {
-                ForEach(MLXModelOption.available.filter { DeviceCapabilities.totalRAMInGB >= $0.requiredRAM }) { model in
+                ForEach(visibleModels) { model in
                     modelRow(for: model)
                 }
             }
@@ -132,7 +131,9 @@ struct MLXSwiftSettingsView: View {
                 }
             }
         }
-        .navigationTitle("MLX Swift")
+        .scrollContentBackground(.hidden)
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle(AIEngineType.mlxSwift.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -157,6 +158,26 @@ struct MLXSwiftSettingsView: View {
         }
         .onChange(of: modelId) {
             downloadManager.refreshModelStatus()
+        }
+    }
+
+    // MARK: - Model Visibility
+
+    /// Models visible for the current device.
+    /// - Include any model whose `requiredRAM` fits the device, **except**
+    ///   the 1.7B model on 6GB+ devices, which is hidden unless experimental is on
+    ///   (those devices have better default options).
+    /// - Always include the currently-selected model so the user can see it
+    ///   even if the experimental flag is now off.
+    private var visibleModels: [MLXModelOption] {
+        let deviceRAM = DeviceCapabilities.totalRAMInGB
+        return MLXModelOption.available.filter { model in
+            guard deviceRAM >= model.requiredRAM else { return false }
+            if model.id == modelId { return true }
+            if model.id == MLXModelOption.smallModelId && deviceRAM >= 6.0 {
+                return experimentalEnabled
+            }
+            return true
         }
     }
 

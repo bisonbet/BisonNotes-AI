@@ -11,10 +11,10 @@ struct CombineRecordingsView: View {
     let firstRecording: AudioRecordingFile
     let secondRecording: AudioRecordingFile
     let recommendedFirst: AudioRecordingFile
-    
+
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var appCoordinator: AppDataCoordinator
-    
+
     @State private var selectedFirst: AudioRecordingFile
     @State private var selectedSecond: AudioRecordingFile
     @State private var isCombining = false
@@ -31,7 +31,7 @@ struct CombineRecordingsView: View {
     @State private var combinedRecordingDuration: TimeInterval = 0
     @State private var firstRecordingId: UUID?
     @State private var secondRecordingId: UUID?
-    
+
     init(firstRecording: AudioRecordingFile, secondRecording: AudioRecordingFile, recommendedFirst: AudioRecordingFile) {
         self.firstRecording = firstRecording
         self.secondRecording = secondRecording
@@ -39,13 +39,13 @@ struct CombineRecordingsView: View {
         _selectedFirst = State(initialValue: recommendedFirst)
         _selectedSecond = State(initialValue: recommendedFirst == firstRecording ? secondRecording : firstRecording)
     }
-    
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     headerSection
-                    
+
                     if hasTranscriptsOrSummaries {
                         blockingMessageSection
                     } else {
@@ -54,8 +54,9 @@ struct CombineRecordingsView: View {
                         combineButton
                     }
                 }
-                .padding()
+                .padding(20)
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Combine Recordings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -86,13 +87,19 @@ struct CombineRecordingsView: View {
             }
         }
     }
-    
+
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: "link")
+                .font(.title2)
+                .foregroundColor(.accentColor)
+                .frame(width: 44, height: 44)
+                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
             Text("Combine Recordings")
                 .font(.title2)
                 .fontWeight(.bold)
-            
+
             if !hasTranscriptsOrSummaries {
                 Text("Select which recording should be first in the combined file. The recordings will be merged in the order you specify.")
                     .font(.body)
@@ -100,21 +107,21 @@ struct CombineRecordingsView: View {
             }
         }
     }
-    
+
     private var blockingMessageSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.title)
                     .foregroundColor(.orange)
-                
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Cannot Combine Recordings")
                         .font(.headline)
                         .foregroundColor(.primary)
-                    
+
                     if let message = blockingMessage {
-                        Text(message)
+                    Text(message)
                             .font(.body)
                             .foregroundColor(.secondary)
                     }
@@ -122,14 +129,14 @@ struct CombineRecordingsView: View {
             }
             .padding()
             .background(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color.orange.opacity(0.1))
             )
-            
+
             VStack(alignment: .leading, spacing: 12) {
                 Text("To combine these recordings:")
                     .font(.headline)
-                
+
                 VStack(alignment: .leading, spacing: 8) {
                     instructionBullet(text: "Delete any existing transcripts from both recordings")
                     instructionBullet(text: "Delete any existing summaries from both recordings")
@@ -138,30 +145,30 @@ struct CombineRecordingsView: View {
             }
             .padding()
             .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(.systemGray6))
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
             )
         }
     }
-    
+
     private func instructionBullet(text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "circle.fill")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .padding(.top, 4)
-            
+
             Text(text)
                 .font(.body)
                 .foregroundColor(.secondary)
         }
     }
-    
+
     private var orderSelectionSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Recording Order")
                 .font(.headline)
-            
+
             VStack(spacing: 12) {
                 // First recording selection
                 Button(action: {
@@ -174,12 +181,12 @@ struct CombineRecordingsView: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
-                
+
                 Image(systemName: "arrow.down")
                     .font(.title2)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 4)
-                
+
                 // Second recording selection
                 recordingOrderCard(
                     recording: selectedSecond,
@@ -190,20 +197,27 @@ struct CombineRecordingsView: View {
         }
         .padding()
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemGray6))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
         )
     }
-    
+
     private func recordingOrderCard(recording: AudioRecordingFile, position: String, isRecommended: Bool) -> some View {
-        HStack {
+        HStack(spacing: 12) {
+            Text(position == "First" ? "1" : "2")
+                .font(.headline)
+                .fontWeight(.semibold)
+                .foregroundColor(.accentColor)
+                .frame(width: 34, height: 34)
+                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(position)
                         .font(.caption)
                         .fontWeight(.medium)
                         .foregroundColor(.secondary)
-                    
+
                     if isRecommended {
                         HStack(spacing: 4) {
                             Image(systemName: "checkmark.circle.fill")
@@ -214,12 +228,12 @@ struct CombineRecordingsView: View {
                         .foregroundColor(.green)
                     }
                 }
-                
+
                 Text(recording.name)
                     .font(.body)
                     .fontWeight(.medium)
                     .foregroundColor(.primary)
-                
+
                 HStack {
                     Text(recording.dateString)
                         .font(.caption)
@@ -232,9 +246,9 @@ struct CombineRecordingsView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            
+
             Spacer()
-            
+
             if position == "First" {
                 Image(systemName: "arrow.up.arrow.down")
                     .font(.title3)
@@ -243,16 +257,16 @@ struct CombineRecordingsView: View {
         }
         .padding()
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color(.systemBackground))
         )
     }
-    
+
     private var recordingPreviewSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Combined Recording Preview")
                 .font(.headline)
-            
+
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Total Duration:")
@@ -263,7 +277,7 @@ struct CombineRecordingsView: View {
                         .font(.body)
                         .fontWeight(.medium)
                 }
-                
+
                 HStack {
                     Text("First Recording:")
                         .font(.body)
@@ -272,7 +286,7 @@ struct CombineRecordingsView: View {
                     Text(formatDuration(selectedFirst.duration))
                         .font(.body)
                 }
-                
+
                 HStack {
                     Text("Second Recording:")
                         .font(.body)
@@ -284,12 +298,12 @@ struct CombineRecordingsView: View {
             }
             .padding()
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(.systemGray6))
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
             )
         }
     }
-    
+
     private var combineButton: some View {
         Button(action: {
             Task {
@@ -317,22 +331,22 @@ struct CombineRecordingsView: View {
         }
         .disabled(isCombining)
     }
-    
+
     private func swapRecordings() {
         let temp = selectedFirst
         selectedFirst = selectedSecond
         selectedSecond = temp
     }
-    
+
     private func formatDuration(_ duration: TimeInterval) -> String {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
         return String(format: "%d:%02d", minutes, seconds)
     }
-    
+
     private func checkForTranscriptsAndSummaries() {
         var issues: [String] = []
-        
+
         // Check first recording
         if let firstEntry = appCoordinator.getRecording(url: firstRecording.url),
            let firstId = firstEntry.id {
@@ -343,7 +357,7 @@ struct CombineRecordingsView: View {
                 issues.append("'\(firstRecording.name)' has a summary")
             }
         }
-        
+
         // Check second recording
         if let secondEntry = appCoordinator.getRecording(url: secondRecording.url),
            let secondId = secondEntry.id {
@@ -354,7 +368,7 @@ struct CombineRecordingsView: View {
                 issues.append("'\(secondRecording.name)' has a summary")
             }
         }
-        
+
         if !issues.isEmpty {
             hasTranscriptsOrSummaries = true
             blockingMessage = issues.joined(separator: "\n")
@@ -363,7 +377,7 @@ struct CombineRecordingsView: View {
             blockingMessage = nil
         }
     }
-    
+
     private func combineRecordings() async {
         // Double-check before combining
         checkForTranscriptsAndSummaries()
@@ -374,17 +388,17 @@ struct CombineRecordingsView: View {
             }
             return
         }
-        
+
         isCombining = true
         errorMessage = nil
-        
+
         do {
             // Create output URL
             let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             let timestamp = Date().timeIntervalSince1970
             let outputFilename = "combined_\(Int(timestamp)).m4a"
             let outputURL = documentsPath.appendingPathComponent(outputFilename)
-            
+
             // Combine the recordings
             let combiner = RecordingCombiner.shared
             let combinedURL = try await combiner.combineRecordings(
@@ -392,15 +406,15 @@ struct CombineRecordingsView: View {
                 secondURL: selectedSecond.url,
                 outputURL: outputURL
             )
-            
+
             // Get date for the second recording (used for combined recording name)
             let secondDate = combiner.getRecordingDate(from: selectedSecond.url) ?? selectedSecond.date
             // Use the second recording's date for the combined recording name
             let combinedDate = secondDate
-            
+
             // Calculate combined duration
             let combinedDuration = selectedFirst.duration + selectedSecond.duration
-            
+
             // Get file size of combined recording
             let fileSize: Int64
             do {
@@ -413,20 +427,20 @@ struct CombineRecordingsView: View {
             } catch {
                 fileSize = 0
             }
-            
+
             // Use default quality (whisperOptimized) for combined recordings
             let quality = AudioQuality.whisperOptimized
-            
+
             // Create recording name using the second recording's date/time
             let dateFormatter = DateFormatter()
             dateFormatter.dateFormat = "yyyy-MM-dd HH:mm"
             let dateTimeString = dateFormatter.string(from: combinedDate)
             let combinedName = "combined recording \(dateTimeString)"
-            
+
             // Get recording IDs for potential deletion
             let firstEntry = appCoordinator.getRecording(url: selectedFirst.url)
             let secondEntry = appCoordinator.getRecording(url: selectedSecond.url)
-            
+
             // Get location data from both recordings
             // Try getLocationData first (from Core Data fields), then loadLocationData (from file)
             let firstLocation: LocationData? = {
@@ -447,7 +461,7 @@ struct CombineRecordingsView: View {
                 AppLog.shared.recording("Combine: No location found for first recording", level: .debug)
                 return nil
             }()
-            
+
             let secondLocation: LocationData? = {
                 guard let entry = secondEntry else {
                     AppLog.shared.recording("Combine: Second recording entry not found", level: .debug)
@@ -466,7 +480,7 @@ struct CombineRecordingsView: View {
                 AppLog.shared.recording("Combine: No location found for second recording", level: .debug)
                 return nil
             }()
-            
+
             // Determine which location to use:
             // - If both have location, use first recording's location
             // - If only one has location, use that one
@@ -489,7 +503,7 @@ struct CombineRecordingsView: View {
                 combinedLocation = nil
                 AppLog.shared.recording("Combine: Neither recording has location", level: .debug)
             }
-            
+
             // Store values for confirmation dialog
             await MainActor.run {
                 combinedRecordingURL = combinedURL
@@ -499,10 +513,10 @@ struct CombineRecordingsView: View {
                 combinedRecordingDuration = combinedDuration
                 firstRecordingId = firstEntry?.id
                 secondRecordingId = secondEntry?.id
-                
+
                 // Log location data before adding
                 AppLog.shared.recording("Combine: hasLocation=\(combinedLocation != nil) for addRecording", level: .debug)
-                
+
                 // Add to Core Data first
                 let recordingId = appCoordinator.addRecording(
                     url: combinedURL,
@@ -513,7 +527,7 @@ struct CombineRecordingsView: View {
                     quality: quality,
                     locationData: combinedLocation
                 )
-                
+
                 // Verify location was saved
                 if let savedRecording = appCoordinator.getRecording(id: recordingId) {
                     let savedLocation = appCoordinator.coreDataManager.getLocationData(for: savedRecording)
@@ -523,10 +537,10 @@ struct CombineRecordingsView: View {
                         AppLog.shared.recording("Combine: Location NOT found in saved recording", level: .error)
                     }
                 }
-                
+
                 // Post notification to refresh views
                 NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-                
+
                 // Show confirmation dialog for deleting originals
                 showingDeleteConfirmation = true
                 isCombining = false
@@ -539,12 +553,12 @@ struct CombineRecordingsView: View {
             }
         }
     }
-    
+
     private func finishCombining() {
         // Just dismiss - recording already added
         dismiss()
     }
-    
+
     private func deleteOriginalRecordings() {
         // Delete the original recordings if they exist in Core Data
         if let firstId = firstRecordingId {
@@ -553,11 +567,11 @@ struct CombineRecordingsView: View {
         if let secondId = secondRecordingId {
             appCoordinator.deleteRecording(id: secondId)
         }
-        
+
         // Post notification to refresh views
         NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-        
+
         dismiss()
     }
-    
+
 }

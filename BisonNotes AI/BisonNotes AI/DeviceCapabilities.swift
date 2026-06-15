@@ -22,21 +22,48 @@ struct DeviceCapabilities {
         return ProcessInfo.processInfo.physicalMemory
     }
 
-    /// Check if device has sufficient RAM for on-device LLM processing
-    /// Requires at least 6GB of RAM for reliable operation
-    /// For devices with <6GB RAM, returns true only if experimental models are enabled
+    /// Legacy On-Device AI (llama) requires at least 6GB of RAM. No experimental
+    /// override — devices under 6GB were unreliable in practice and are off the
+    /// legacy path entirely.
     static var supportsOnDeviceLLM: Bool {
-        let minimumRAM: Double = 6.0 // 6GB minimum for reliable operation
-        let deviceRAM = totalRAMInGB
+        return totalRAMInGB >= 6.0
+    }
 
-        // Devices with 6GB+ RAM always support on-device LLM
-        if deviceRAM >= minimumRAM {
-            return true
+    /// MLX-based on-device AI supports devices down to 4GB by way of the small
+    /// 1.7B model. 6GB+ devices get the 4B/8B options; 4-6GB devices are
+    /// limited to the 1.7B model.
+    static var supportsMLX: Bool {
+        return totalRAMInGB >= 4.0
+    }
+
+    /// Action Button is only available on supported iPhone hardware. Apple
+    /// does not expose a direct capability API, so gate the setup guidance by
+    /// known device identifier families and keep Mac Catalyst/iPad hidden.
+    static var supportsActionButton: Bool {
+        #if targetEnvironment(macCatalyst)
+        return false
+        #else
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            return false
         }
-        
-        // Devices with <6GB RAM only support on-device LLM if experimental models are enabled
-        let experimentalEnabled = UserDefaults.standard.bool(forKey: "onDeviceLLMEnableExperimentalModels")
-        return experimentalEnabled
+
+        let components = modelName
+            .replacingOccurrences(of: "iPhone", with: "")
+            .split(separator: ",")
+            .compactMap { Int($0) }
+
+        guard components.count == 2 else {
+            return false
+        }
+
+        let major = components[0]
+        let minor = components[1]
+
+        // iPhone16,1 and iPhone16,2 are iPhone 15 Pro / Pro Max, the first
+        // iPhones with Action Button. Later iPhone identifier families include
+        // Action Button across the currently supported lineup.
+        return major > 16 || (major == 16 && (minor == 1 || minor == 2))
+        #endif
     }
 
     /// Check if device has sufficient RAM for basic Whisper models
@@ -101,6 +128,7 @@ struct DeviceCapabilities {
         report += "Model: \(modelName)\n"
         report += "RAM: \(ramDescription)\n"
         report += "On-Device LLM Support: \(supportsOnDeviceLLM ? "✅" : "❌")\n"
+        report += "Action Button Support: \(supportsActionButton ? "✅" : "❌")\n"
 
         if #available(iOS 16.0, *) {
             report += "iOS Version: ✅ (16.0+)\n"

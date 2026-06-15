@@ -30,12 +30,13 @@ struct SummariesView: View {
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var dateFilterEnd: Date = Date()
     @State private var isDateFilterActive = false
+    @State private var expandedSummaryDateSections: Set<DateSection> = [.today]
 
     @AppStorage("hasSeeniCloudPrompt") private var hasSeeniCloudPrompt = false
 
 
     // MARK: - Body
-    
+
     var body: some View {
         AdaptiveNavigationWrapper {
             mainContentView
@@ -51,16 +52,16 @@ struct SummariesView: View {
                 .onAppear {
                     // First refresh file relationships
                     enhancedFileManager.refreshAllRelationships()
-                    
+
                     // Then load recordings after a brief delay to ensure relationships are established
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         loadRecordings()
                     }
-                    
+
                     // Configure the transcription manager with the selected engine
                     let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
                     enhancedTranscriptionManager.updateTranscriptionEngine(selectedEngine)
-                    
+
                     // Show first-time iCloud prompt if not seen before and there are summaries
                     checkForFirstTimeiCloudPrompt()
                 }
@@ -221,7 +222,7 @@ struct SummariesView: View {
     } // End of body variable
 
     // MARK: - Main Content View
-    
+
     private var mainContentView: some View {
         let filtered = filteredRecordings
         return Group {
@@ -257,28 +258,30 @@ struct SummariesView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-        .background(Color(.systemGray6))
+        .background(Color(.secondarySystemGroupedBackground))
     }
-    
-    
+
+
     // MARK: - Empty State
-    
+
     private var emptyStateView: some View {
         VStack(spacing: 20) {
             Image(systemName: "doc.text.magnifyingglass")
                 .font(.system(size: 60))
-                .foregroundColor(.secondary)
-            
+                .foregroundColor(.accentColor)
+
             Text("No Summaries Yet")
                 .font(.title2)
                 .fontWeight(.semibold)
-            
+
             Text("Record some audio and generate summaries to see them here.")
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
                 .padding(.horizontal)
         }
+        .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
     }
 
     // MARK: - No Results View
@@ -287,7 +290,7 @@ struct SummariesView: View {
         VStack(spacing: 16) {
             Image(systemName: isDateFilterActive ? "calendar.badge.exclamationmark" : "magnifyingglass")
                 .font(.system(size: 48))
-                .foregroundColor(.secondary)
+                .foregroundColor(.accentColor)
 
             Text("No Results")
                 .font(.title2)
@@ -307,7 +310,9 @@ struct SummariesView: View {
                 .buttonStyle(.bordered)
             }
         }
+        .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
     }
 
     private var noResultsMessage: String {
@@ -408,6 +413,50 @@ struct SummariesView: View {
     // MARK: - Recordings List View
 
     private func recordingsListView(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]) -> some View {
+        #if targetEnvironment(macCatalyst)
+        // On Mac Catalyst, the preview-+-NavigationLink-to-More pattern wedges the responder chain
+        // (destination renders but becomes unresponsive). Render everything inline instead.
+        return summariesSectionedScroll(filtered)
+        #else
+        // iOS / iPadOS: preview cards with "More" navigation to the full list page.
+        let recentRecordings = Array(filtered.prefix(3))
+
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                summarySectionHeader(
+                    title: "Summaries",
+                    count: filtered.count
+                )
+
+                ForEach(recentRecordings, id: \.recording.objectID) { recordingData in
+                    recordingRowView(recordingData)
+                }
+
+                if filtered.count > recentRecordings.count {
+                    NavigationLink {
+                        summariesFullListView
+                    } label: {
+                        moreRowView(remainingCount: filtered.count - recentRecordings.count)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 96)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Color(.systemGroupedBackground))
+        .refreshable {
+            loadRecordings()
+        }
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        #endif
+    }
+
+    /// Full date-sectioned scroll of summaries (Mac Catalyst inline view)
+    private func summariesSectionedScroll(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]) -> some View {
         // Filter out recordings with nil dates and create wrapper struct with non-optional dates
         struct RecordingWithDate {
             let recording: RecordingEntry
@@ -429,147 +478,323 @@ struct SummariesView: View {
         // Group by date section
         let sectioned = DateSectionHelper.groupBySection(recordingsWithDates, dateKeyPath: \.date)
 
-        return List {
-            ForEach(sectioned, id: \.section) { sectionData in
-                Section(header: Text(sectionData.section.title)) {
-                    ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
-                        recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                ForEach(sectioned, id: \.section) { sectionData in
+                    CollapsibleDateSectionHeader(
+                        title: sectionData.section.title,
+                        count: sectionData.items.count,
+                        isExpanded: isSummaryDateSectionExpanded(sectionData.section),
+                        isAlwaysExpanded: false,
+                        onToggle: { toggleSummaryDateSection(sectionData.section) }
+                    )
+
+                    if isSummaryDateSectionExpanded(sectionData.section) {
+                        ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
+                            recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
+                        }
                     }
                 }
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 96)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
         }
-        .listStyle(PlainListStyle())
+        .background(Color(.systemGroupedBackground))
         .refreshable {
             loadRecordings()
         }
         .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
     }
-    
+
+    /// Full list page reached via the "More" row (matches TranscriptViews' full list pages).
+    /// Respects the same date/search filters as the main page.
+    private var summariesFullListView: some View {
+        struct RecordingWithDate {
+            let recording: RecordingEntry
+            let transcript: TranscriptData?
+            let summary: EnhancedSummaryData?
+            let date: Date
+        }
+
+        let recordingsWithDates: [RecordingWithDate] = filteredRecordings.compactMap { item in
+            guard let date = item.recording.recordingDate else { return nil }
+            return RecordingWithDate(
+                recording: item.recording,
+                transcript: item.transcript,
+                summary: item.summary,
+                date: date
+            )
+        }
+
+        let sectioned = DateSectionHelper.groupBySection(recordingsWithDates, dateKeyPath: \.date)
+
+        return VStack(spacing: 0) {
+            if isDateFilterActive {
+                activeDateFilterBanner
+            }
+
+            List {
+                ForEach(sectioned, id: \.section) { sectionData in
+                    Section(
+                        header: CollapsibleDateSectionHeader(
+                            title: sectionData.section.title,
+                            count: sectionData.items.count,
+                            isExpanded: isSummaryDateSectionExpanded(sectionData.section),
+                            isAlwaysExpanded: false,
+                            onToggle: { toggleSummaryDateSection(sectionData.section) }
+                        )
+                    ) {
+                        if isSummaryDateSectionExpanded(sectionData.section) {
+                            ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
+                                recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Summaries")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showDateFilter = true }) {
+                    Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                }
+            }
+        }
+    }
+
+    private func moreRowView(remainingCount: Int) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "ellipsis.circle")
+                .font(.title3)
+                .foregroundColor(.accentColor)
+            Text("Show \(remainingCount) more")
+                .font(.subheadline.weight(.semibold))
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 15))
+    }
+
     // MARK: - Recording Row View
-    
+
     private func recordingRowView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)) -> some View {
         let recording = recordingData.recording
-        let transcript = recordingData.transcript
         let summary = recordingData.summary
-        
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: summary == nil ? "doc.text.magnifyingglass" : "doc.text.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(summary == nil ? .accentColor : .blue)
+                    .frame(width: 38, height: 38)
+                    .background((summary == nil ? Color.accentColor : Color.blue).opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 11))
+
+                VStack(alignment: .leading, spacing: 6) {
                     Text(recording.recordingName ?? "Unknown Recording")
                         .font(.headline)
                         .foregroundColor(.primary)
-                    
+
                     Text(UserPreferences.shared.formatMediumDateTime(recording.recordingDate ?? Date()))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 4) {
-                    statusIndicator(for: recording)
-                    
-                    if summary != nil {
-                        Button(action: {
-                            selectedRecording = recording
-                            showSummary = true
-                        }) {
-                            HStack {
-                                Image(systemName: "doc.text.fill")
-                                Text("View Summary")
-                            }
-                            .font(.caption)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
-                        }
-                    } else if recording.summaryStatus == ProcessingStatus.processing.rawValue || (isGeneratingSummary && generatingSummaryRecordingId == recording.id) {
-                        HStack {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                            Text("Generating...")
-                                .font(.caption2)
-                        }
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.orange)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                    } else {
-                        Button(action: {
-                            guard !isGeneratingSummary else { return }
-                            AppLog.shared.summarization("Generate Summary button pressed", level: .debug)
-                            generateSummary(for: recording)
-                        }) {
-                            HStack {
-                                Image(systemName: "doc.text.magnifyingglass")
-                                Text("Generate Summary")
-                            }
-                            .font(.caption)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(isGeneratingSummary ? Color.gray : Color.accentColor)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
-                        }
-                        .disabled(isGeneratingSummary)
-                        .buttonStyle(.plain)
-                        .contentShape(Rectangle())
 
+                Spacer()
+
+                statusIndicator(for: recording)
+            }
+
+            if let summary {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(summaryPreviewText(summary.summary))
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                        .lineLimit(3)
+
+                    HStack(spacing: 8) {
+                        summaryMetric("Tasks", count: summary.tasks.count, tint: .green)
+                        summaryMetric("Reminders", count: summary.reminders.count, tint: .orange)
                     }
                 }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.tertiarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
             }
-            
-            if let transcript = transcript {
-                Text(transcript.plainText)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(3)
-                    .padding(.top, 4)
-            }
+
+            summaryActionView(recording: recording, summary: summary)
         }
-        .padding(.vertical, 8)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
         .contentShape(Rectangle())
 
     }
-    
+
+    /// Compact plain-text preview of a markdown summary: header lines are
+    /// dropped entirely (they're section labels, not content), remaining
+    /// markdown syntax is stripped, and whitespace is collapsed.
+    private func summaryPreviewText(_ markdown: String) -> String {
+        let withoutHeaderLines = markdown
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+            .joined(separator: " ")
+
+        return withoutHeaderLines
+            .strippingMarkdown()
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: - Status Indicator
-    
+
     private func statusIndicator(for recording: RecordingEntry) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Image(systemName: (recording.transcript != nil) ? "checkmark.circle.fill" : "circle")
                 .foregroundColor((recording.transcript != nil) ? .green : .gray)
                 .font(.caption)
-            
+
             Image(systemName: (recording.summary != nil) ? "doc.text.fill" : "doc.text.magnifyingglass")
                 .foregroundColor((recording.summary != nil) ? .blue : .gray)
                 .font(.caption)
         }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(Color(.tertiarySystemGroupedBackground))
+        .clipShape(Capsule())
     }
-    
+
+    @ViewBuilder
+    private func summaryActionView(recording: RecordingEntry, summary: EnhancedSummaryData?) -> some View {
+        if summary != nil {
+            Button(action: {
+                selectedRecording = recording
+                showSummary = true
+            }) {
+                Label("View Summary", systemImage: "doc.text.fill")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .frame(height: 34)
+                    .background(Color.blue.opacity(0.14))
+                    .foregroundColor(.blue)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        } else if recording.summaryStatus == ProcessingStatus.processing.rawValue || (isGeneratingSummary && generatingSummaryRecordingId == recording.id) {
+            HStack(spacing: 7) {
+                ProgressView()
+                    .scaleEffect(0.75)
+                    .tint(.orange)
+                Text("Generating...")
+            }
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(Color.orange.opacity(0.14))
+            .foregroundColor(.orange)
+            .clipShape(Capsule())
+        } else {
+            Button(action: {
+                guard !isGeneratingSummary else { return }
+                AppLog.shared.summarization("Generate Summary button pressed", level: .debug)
+                generateSummary(for: recording)
+            }) {
+                Label("Generate Summary", systemImage: "doc.text.magnifyingglass")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .frame(height: 34)
+                    .background((isGeneratingSummary ? Color.gray : Color.accentColor).opacity(0.14))
+                    .foregroundColor(isGeneratingSummary ? .gray : .accentColor)
+                    .clipShape(Capsule())
+            }
+            .disabled(isGeneratingSummary)
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+        }
+    }
+
+    private func summarySectionHeader(title: String, count: Int) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.accentColor)
+                .frame(width: 26, height: 26)
+                .background(Color.accentColor.opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            Text(title)
+                .font(.headline)
+
+            Spacer()
+
+            Text("\(count)")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(Capsule())
+        }
+    }
+
+    private func isSummaryDateSectionExpanded(_ section: DateSection) -> Bool {
+        expandedSummaryDateSections.contains(section)
+    }
+
+    private func toggleSummaryDateSection(_ section: DateSection) {
+        if expandedSummaryDateSections.contains(section) {
+            expandedSummaryDateSections.remove(section)
+        } else {
+            expandedSummaryDateSections.insert(section)
+        }
+    }
+
+    private func summaryMetric(_ label: String, count: Int, tint: Color) -> some View {
+        Text("\(count) \(label)")
+            .font(.caption2.weight(.semibold))
+            .foregroundColor(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.12))
+            .clipShape(Capsule())
+    }
+
     // MARK: - Helper Methods
-    
+
     private func loadRecordings() {
         // URL sync is now only needed on app startup - getAbsoluteURL() handles runtime resolution
-        
+
         let recordingsWithData = appCoordinator.getAllRecordingsWithData()
-        
+
         // Show recordings that either have a transcript (can generate) OR already have a summary
         recordings = recordingsWithData.compactMap { recordingData in
             let recording = recordingData.recording
             let transcript = recordingData.transcript
             let summary = recordingData.summary
-            
+
             if transcript != nil || summary != nil || recording.summary != nil {
                 return (recording: recording, transcript: transcript, summary: summary)
             } else {
                 return nil
             }
         }
-        
+
         // Debug Core Data state check (logging removed)
         Task { @MainActor in
             // Check what's actually in Core Data
@@ -595,14 +820,14 @@ struct SummariesView: View {
         // Check if we should show the first-time iCloud prompt
         checkForFirstTimeiCloudPrompt()
     }
-    
+
     private func generateSummary(for recording: RecordingEntry) {
         AppLog.shared.summarization("generateSummary called", level: .debug)
 
         isGeneratingSummary = true
         generatingSummaryRecordingId = recording.id
 
-        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         let selectedModel = UserDefaults.standard.string(forKey: "SelectedAIModel")
         let recordingURL: URL
         if let absoluteURL = appCoordinator.getAbsoluteURL(for: recording) {
@@ -707,7 +932,7 @@ struct SummariesView: View {
 
         return false
     }
-    
+
     private func checkForFirstTimeiCloudPrompt() {
         // Check if this is a fresh install (first launch after installation)
         let isFreshInstall = !UserDefaults.standard.bool(forKey: "hasCompletedInitialLaunch")
@@ -776,7 +1001,7 @@ struct SummariesView: View {
             }
         }
     }
-    
+
     private func syncAllSummaries() async {
         do {
             try await iCloudManager.syncAllSummaries()

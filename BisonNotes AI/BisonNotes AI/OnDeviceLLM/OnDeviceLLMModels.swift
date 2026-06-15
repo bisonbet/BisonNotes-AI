@@ -20,7 +20,6 @@ public enum OnDeviceLLMTemplateType: String, Codable, CaseIterable {
     case olmoe
     case qwen35
     case gemma3
-    case lfm
     case simple
 
     /// Get the LLMTemplate for this type
@@ -44,8 +43,6 @@ public enum OnDeviceLLMTemplateType: String, Codable, CaseIterable {
             return .qwen35(systemPrompt)
         case .gemma3:
             return .gemma3(systemPrompt)
-        case .lfm:
-            return .lfm(systemPrompt)
         case .simple:
             return .simple(systemPrompt)
         }
@@ -254,34 +251,6 @@ extension OnDeviceLLMModelInfo {
         maker: "IBM"
     )
 
-    /// LFM 2.5 1.2B Thinking - Liquid AI's ultra-compact edge model with chain-of-thought
-    /// A highly efficient 1.2B model with thinking/reasoning for agentic tasks and data extraction
-    /// EXPERIMENTAL: Only available for devices with 4-6GB RAM
-    public static let lfm25 = OnDeviceLLMModelInfo(
-        id: "lfm-2.5-1.2b",
-        displayName: "LFM 2.5 Thinking",
-        description: "Experimental • Thinking model, minimal summaries • 731MB • Summary only",
-        filename: "LFM2.5-1.2B-Thinking-Q4_K_M",
-        downloadURL: "https://huggingface.co/unsloth/LFM2.5-1.2B-Thinking-GGUF/resolve/main/LFM2.5-1.2B-Thinking-Q4_K_M.gguf?download=true",
-        downloadSizeBytes: 731_000_000, // ~731 MB for Q4_K_M
-        requiredRAM: 4.0,
-        templateType: .lfm,
-        purpose: .summarization,
-        contextWindow: 16384,
-        defaultSettings: OnDeviceLLMDefaultSettings(
-            temperature: 0.5,
-            topK: 50,
-            topP: 0.85,
-            minP: 0.0,
-            repeatPenalty: 1.25,
-            penaltyLastN: 256,  // Aggressive: look back 256 tokens for repetition
-            frequencyPenalty: 0.15,  // Aggressive: penalize frequently appearing tokens
-            presencePenalty: 0.05  // Aggressive: penalize tokens that have appeared
-        ),
-        isRecommended: false,
-        maker: "Liquid AI"
-    )
-
     /// Qwen3.5-2B - Alibaba's latest multimodal Qwen3.5 model (text-only mode)
     /// A 2B parameter model with strong summarization and instruction following
     /// Small models (0.8B-9B) have thinking mode DISABLED by default
@@ -379,71 +348,49 @@ extension OnDeviceLLMModelInfo {
         granite4H,
         granite4Micro,
         ministral3B,
-        lfm25,
         qwen3_5_2B,
         qwen3_5_4B
     ]
 
-    /// Models available for the current device based on RAM requirements
-    /// RAM-based model availability:
+    /// Models available for the current device based on RAM requirements.
+    /// Legacy On-Device AI requires 6GB+ RAM; devices below that have no models.
+    /// RAM tiers:
     /// - 6GB+ but <8GB: Gemma Small (E2B, recommended), Ministral, Granite Micro (recommended)
     /// - 8GB+: Full Gemma (E4B, recommended), Granite Micro (recommended), Ministral
-    /// NOTE: Experimental models are excluded unless explicitly enabled:
-    ///   - Small experimental (LFM 2.5): Available for 4GB+ devices when enabled
-    ///   - Medium experimental (Qwen3.5 2B): Available for 6GB+ devices when enabled
-    ///   - Large experimental (Qwen3.5 4B, Granite H Tiny): Only available for 8GB+ devices when enabled
-    /// For devices with <6GB RAM, only small experimental models are shown if enabled
-    /// Models are sorted with recommended ones first
+    /// Experimental models (Qwen3.5 2B, Qwen3.5 4B, Granite H Tiny) are
+    /// excluded unless the experimental-features flag is on. Large
+    /// experimental models still require 8GB+.
+    /// Models are sorted with recommended ones first.
     public static var availableModels: [OnDeviceLLMModelInfo] {
         let deviceRAM = DeviceCapabilities.totalRAMInGB
+        guard deviceRAM >= 6.0 else { return [] }
+
         let experimentalEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.enableExperimentalModels)
-        let smallExperimentalModels = ["lfm-2.5-1.2b"] // 4GB+
-        let mediumExperimentalModels = ["qwen3.5-2b"] // 6GB+
-        let largeExperimentalModels = ["qwen3.5-4b", "granite-4.0-h-tiny"] // 8GB+ only
+        let mediumExperimentalModels = ["qwen3.5-2b"]                       // 6GB+
+        let largeExperimentalModels = ["qwen3.5-4b", "granite-4.0-h-tiny"]  // 8GB+
 
         let filtered = allModels.filter { model in
-            // Check basic RAM requirement
             guard deviceRAM >= model.requiredRAM else { return false }
 
-            // For devices with <6GB RAM, only show small experimental models if enabled
-            if deviceRAM < 6.0 {
-                return smallExperimentalModels.contains(model.id) && experimentalEnabled
-            }
-
-            // For devices with 6GB+ but <8GB RAM:
-            // Show: Gemma Small (E2B), Ministral, Granite Micro
-            if deviceRAM >= 6.0 && deviceRAM < 8.0 {
+            if deviceRAM < 8.0 {
                 let allowedModels = ["gemma-3n-e2b", "ministral-3b", "granite-4.0-micro"]
-                // Exclude experimental models unless enabled
-                if smallExperimentalModels.contains(model.id) || mediumExperimentalModels.contains(model.id) {
+                if mediumExperimentalModels.contains(model.id) {
                     return experimentalEnabled
                 }
-                // Large experimental models not available for <8GB
                 if largeExperimentalModels.contains(model.id) {
                     return false
                 }
                 return allowedModels.contains(model.id)
             }
 
-            // For devices with 8GB+ RAM:
-            // Show: Full Gemma (E4B), Granite Micro, Ministral
-            // Plus experimental models (Qwen 2B, Qwen 4B, Granite H Tiny) if enabled
-            if deviceRAM >= 8.0 {
-                let allowedModels = ["gemma-3n-e4b", "granite-4.0-micro", "ministral-3b"]
-                // Check experimental models
-                if smallExperimentalModels.contains(model.id) || mediumExperimentalModels.contains(model.id) {
-                    return experimentalEnabled
-                }
-                if largeExperimentalModels.contains(model.id) {
-                    return experimentalEnabled
-                }
-                return allowedModels.contains(model.id)
+            // 8GB+
+            let allowedModels = ["gemma-3n-e4b", "granite-4.0-micro", "ministral-3b"]
+            if mediumExperimentalModels.contains(model.id) || largeExperimentalModels.contains(model.id) {
+                return experimentalEnabled
             }
-
-            return false
+            return allowedModels.contains(model.id)
         }
-        
-        // Sort: recommended models first, then by display name
+
         return filtered.sorted { first, second in
             if first.isRecommended != second.isRecommended {
                 return first.isRecommended

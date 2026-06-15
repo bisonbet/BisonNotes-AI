@@ -222,42 +222,6 @@ class AppDataCoordinator: ObservableObject {
         return coreDataManager.cleanupRecordingsWithMissingFiles()
     }
     
-    // MARK: - Watch Sync Methods
-    
-    func handleWatchSyncRecording(audioData: Data, syncRequest: WatchSyncRequest) async {
-        do {
-            // Create temporary file from audio data
-            let tempDirectory = FileManager.default.temporaryDirectory
-            let tempURL = tempDirectory.appendingPathComponent(syncRequest.filename)
-            
-            try audioData.write(to: tempURL)
-            AppFileProtection.apply(to: tempURL)
-            
-            // Convert watch location data if available
-            let locationData: LocationData? = syncRequest.locationData?.toLocationData()
-            
-            // Create recording entry
-            let recordingId = addWatchRecording(
-                url: tempURL,
-                name: syncRequest.filename.replacingOccurrences(of: ".m4a", with: ""),
-                date: syncRequest.createdAt,
-                fileSize: syncRequest.fileSize,
-                duration: syncRequest.duration,
-                quality: .whisperOptimized,
-                locationData: locationData
-            )
-            
-            AppLog.shared.coreData("Watch recording synced successfully: \(syncRequest.filename)")
-            
-            // Notify completion
-            WatchConnectivityManager.shared.onWatchRecordingSyncCompleted?(recordingId, true)
-            
-        } catch {
-            AppLog.shared.coreData("Failed to sync watch recording: \(error)", level: .error)
-            WatchConnectivityManager.shared.onWatchRecordingSyncCompleted?(syncRequest.recordingId, false)
-        }
-    }
-    
     // MARK: - Auto-Backup
 
     /// Schedules a debounced auto-backup to iCloud when sync is enabled.

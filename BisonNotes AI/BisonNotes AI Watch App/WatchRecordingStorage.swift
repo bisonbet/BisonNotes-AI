@@ -30,7 +30,10 @@ class WatchRecordingStorage: ObservableObject {
     private let fileManager = FileManager.default
     private let recordingsDirectoryName = "WatchRecordings"
     private let metadataFileName = "metadata.json"
-    private let maxStorageUsage: Int64 = 50 * 1024 * 1024 // 50MB max storage
+    // A max-length recording (2h at 64kbps AAC) is ~58MB, so the cap must
+    // comfortably exceed that or a single long offline recording wedges the
+    // storage check and blocks all new recordings until a sync succeeds.
+    private let maxStorageUsage: Int64 = 250 * 1024 * 1024 // 250MB max storage
     private let maxRecordings = 20 // Keep at most 20 recordings
     
     // Directory URLs
@@ -148,6 +151,18 @@ class WatchRecordingStorage: ObservableObject {
         }
     }
     
+    /// Attach location data to a recording and return the updated metadata
+    @discardableResult
+    func updateLocation(_ recordingId: UUID, location: WatchLocationData?) -> WatchRecordingMetadata? {
+        guard let index = localRecordings.firstIndex(where: { $0.id == recordingId }) else {
+            return nil
+        }
+
+        localRecordings[index].locationData = location
+        saveRecordingsMetadata()
+        return localRecordings[index]
+    }
+
     /// Update sync status for a recording
     func updateSyncStatus(_ recordingId: UUID, status: WatchRecordingSyncStatus, attempts: Int? = nil) {
         if let index = localRecordings.firstIndex(where: { $0.id == recordingId }) {
@@ -243,8 +258,9 @@ class WatchRecordingStorage: ObservableObject {
             let freeSpace = attributes[.systemFreeSize] as? Int64 ?? 0
             
             // Available for recordings is limited by our max usage policy
-            availableStorage = min(freeSpace, maxStorageUsage - storageUsed)
-            
+            // (clamped: storageUsed can exceed the policy cap)
+            availableStorage = max(0, min(freeSpace, maxStorageUsage - storageUsed))
+
         } catch {
             logger.error("Failed to get storage info: \(error.localizedDescription, privacy: .public)")
             availableStorage = max(0, maxStorageUsage - storageUsed)
@@ -347,9 +363,11 @@ struct WatchRecordingMetadata: Codable, Identifiable, Equatable {
     var syncStatus: WatchRecordingSyncStatus
     var syncAttempts: Int
     var lastSyncAttempt: Date?
-    
-    init(id: UUID, filename: String, duration: TimeInterval, createdAt: Date, 
-         fileSize: Int64, syncStatus: WatchRecordingSyncStatus, syncAttempts: Int) {
+    var locationData: WatchLocationData?
+
+    init(id: UUID, filename: String, duration: TimeInterval, createdAt: Date,
+         fileSize: Int64, syncStatus: WatchRecordingSyncStatus, syncAttempts: Int,
+         locationData: WatchLocationData? = nil) {
         self.id = id
         self.filename = filename
         self.duration = duration
@@ -358,6 +376,7 @@ struct WatchRecordingMetadata: Codable, Identifiable, Equatable {
         self.syncStatus = syncStatus
         self.syncAttempts = syncAttempts
         self.lastSyncAttempt = nil
+        self.locationData = locationData
     }
 }
 

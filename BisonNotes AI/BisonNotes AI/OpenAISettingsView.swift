@@ -12,19 +12,19 @@ struct OpenAISettingsView: View {
     @AppStorage("openAIModel") private var selectedModel: String = OpenAITranscribeModel.whisper1.rawValue
     @AppStorage("openAIBaseURL") private var baseURL: String = "https://api.openai.com/v1"
     @AppStorage(EndpointSecurityPolicy.allowInsecurePublicEndpointsKey) private var allowInsecurePublicEndpoints: Bool = false
-    
+
     @State private var isTestingConnection = false
     @State private var connectionTestResult: String = ""
     @State private var showingConnectionResult = false
     @State private var isConnectionSuccessful = false
     @State private var showingAPIKeyInfo = false
-    
+
     @Environment(\.dismiss) private var dismiss
-    
+
     private var selectedModelEnum: OpenAITranscribeModel {
         OpenAITranscribeModel(rawValue: selectedModel) ?? .whisper1
     }
-    
+
     var body: some View {
         NavigationStack {
             Form {
@@ -38,10 +38,10 @@ struct OpenAISettingsView: View {
                                     .foregroundColor(.blue)
                             }
                         }
-                        
+
                         SecureField("Enter your OpenAI API key", text: $apiKey)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
-                        
+
                         if !apiKey.isEmpty {
                             Text("API key configured (\(apiKey.count) characters)")
                                 .font(.caption)
@@ -57,7 +57,7 @@ struct OpenAISettingsView: View {
                 } footer: {
                     Text("Your API key is stored securely on your device and only used for transcription requests.")
                 }
-                
+
                 Section {
                     Picker("Model", selection: $selectedModel) {
                         ForEach(OpenAITranscribeModel.allCases, id: \.rawValue) { model in
@@ -71,16 +71,16 @@ struct OpenAISettingsView: View {
                         }
                     }
                     .pickerStyle(.navigationLink)
-                    
+
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Selected: \(selectedModelEnum.displayName)")
                             .font(.subheadline)
                             .fontWeight(.medium)
-                        
+
                         Text(selectedModelEnum.description)
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        
+
                         if selectedModelEnum.supportsStreaming {
                             Label("Supports streaming", systemImage: "waveform")
                                 .font(.caption)
@@ -93,16 +93,16 @@ struct OpenAISettingsView: View {
                 } footer: {
                     Text("GPT-4o Mini is the cheapest and fastest option. GPT-4o Transcribe is the most robust. Whisper-1 is the legacy model.")
                 }
-                
+
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Base URL")
-                        
+
                         TextField("API Base URL", text: $baseURL)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
-                        
+
                         Text("Use default OpenAI URL or a compatible API endpoint")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -114,7 +114,7 @@ struct OpenAISettingsView: View {
                 } footer: {
                     Text("Advanced users can use OpenAI-compatible APIs by changing the base URL.")
                 }
-                
+
                 Section {
                     Button(action: testConnection) {
                         HStack {
@@ -129,12 +129,12 @@ struct OpenAISettingsView: View {
                         }
                     }
                     .disabled(apiKey.isEmpty || isTestingConnection)
-                    
+
                     if showingConnectionResult {
                         HStack {
                             Image(systemName: isConnectionSuccessful ? "checkmark.circle.fill" : "xmark.circle.fill")
                                 .foregroundColor(isConnectionSuccessful ? .green : .red)
-                            
+
                             Text(connectionTestResult)
                                 .font(.caption)
                                 .foregroundColor(isConnectionSuccessful ? .green : .red)
@@ -145,26 +145,26 @@ struct OpenAISettingsView: View {
                 } footer: {
                     Text("Test your API key and connection to ensure transcription will work properly.")
                 }
-                
+
                 Section {
                     FeatureRow(
                         icon: "doc.text",
                         title: "Supported Formats",
                         description: "MP3, MP4, M4A, WAV, FLAC, OGG, WebM"
                     )
-                    
+
                     FeatureRow(
                         icon: "scalemass",
                         title: "File Size Limit",
                         description: "Maximum 25MB per file"
                     )
-                    
+
                     FeatureRow(
                         icon: "globe",
                         title: "Language Support",
                         description: "Automatic language detection with 99+ languages"
                     )
-                    
+
                     FeatureRow(
                         icon: "dollarsign.circle",
                         title: "Pricing",
@@ -173,7 +173,7 @@ struct OpenAISettingsView: View {
                 } header: {
                     Text("Features & Limits")
                 }
-                
+
                 Section {
                     Button("Reset to Defaults") {
                         resetToDefaults()
@@ -181,6 +181,8 @@ struct OpenAISettingsView: View {
                     .foregroundColor(.red)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("OpenAI Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -197,13 +199,13 @@ struct OpenAISettingsView: View {
             }
         }
     }
-    
+
     private func testConnection() {
         guard !apiKey.isEmpty else { return }
-        
+
         isTestingConnection = true
         showingConnectionResult = false
-        
+
         Task {
             do {
                 let config = OpenAITranscribeConfig(
@@ -211,10 +213,10 @@ struct OpenAISettingsView: View {
                     model: selectedModelEnum,
                     baseURL: baseURL
                 )
-                
+
                 let service = OpenAITranscribeService(config: config, chunkingService: AudioFileChunkingService())
                 try await service.testConnection()
-                
+
                 await MainActor.run {
                     connectionTestResult = "Connection successful! API key is valid."
                     isConnectionSuccessful = true
@@ -231,7 +233,7 @@ struct OpenAISettingsView: View {
             }
         }
     }
-    
+
     private func resetToDefaults() {
         apiKey = ""
         selectedModel = OpenAITranscribeModel.whisper1.rawValue
@@ -258,24 +260,24 @@ struct FeatureRow: View {
     let icon: String
     let title: String
     let description: String
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.title3)
                 .foregroundColor(.blue)
                 .frame(width: 24)
-            
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.subheadline)
                     .fontWeight(.medium)
-                
+
                 Text(description)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            
+
             Spacer()
         }
         .padding(.vertical, 4)

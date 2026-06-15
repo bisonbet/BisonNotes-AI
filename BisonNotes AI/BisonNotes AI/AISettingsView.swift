@@ -14,7 +14,7 @@ struct AppSettingsKeys {
     static let ollamaPort = "ollamaPort"
     static let ollamaModelName = "ollamaModelName"
     static let enableOllama = "enableOllama"
-    
+
     struct Defaults {
         static let ollamaServerURL = "http://localhost"
         static let ollamaPort = 11434
@@ -40,25 +40,25 @@ final class AISettingsViewModel: ObservableObject {
             transcriptManager: TranscriptManager.shared,
             appCoordinator: appCoordinator
         )
-        
+
         // We need to observe changes on the coordinator to republish them
         // so the view updates correctly.
         appCoordinator.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
-        
+
         regenerationManager.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
     }
-    
+
     func updateCoordinator(_ coordinator: AppDataCoordinator) {
         self.appCoordinator = coordinator
     }
 
     /// Moves the engine selection logic into the view model.
     func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) {
-        let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         let newEngine = engineType.rawValue
 
         guard oldEngine != newEngine else { return }
@@ -94,7 +94,7 @@ final class AISettingsViewModel: ObservableObject {
             AppLog.shared.general("Auto-enabled On-Device AI engine")
         case .mlxSwift:
             UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
-            AppLog.shared.general("Auto-enabled experimental MLX Swift engine")
+            AppLog.shared.general("Auto-enabled MLX Swift engine")
         case .appleNative:
             AppLog.shared.general("Selected Apple Native engine")
         }
@@ -128,33 +128,33 @@ struct AISettingsView: View {
     @State private var showingRegenerateConfirmation = false
     @State private var showOnDeviceEngines = true
     @State private var showCloudEngines = true
-    
+
     init() {
         // Initialize with a placeholder coordinator - will be replaced by environment
         self._viewModel = StateObject(wrappedValue: AISettingsViewModel(appCoordinator: AppDataCoordinator()))
     }
-    
+
     private var currentEngineType: AIEngineType? {
         // Note: AudioRecorderViewModel doesn't have selectedAIEngine property
         // Use the actual current engine from UserDefaults
-        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
+        let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         return AIEngineType.allCases.first { $0.rawValue == currentEngineName }
     }
-    
+
     private func refreshEngineStatuses() {
         Task {
             await MainActor.run {
                 isRefreshingStatus = true
             }
-            
+
             var statuses: [String: EngineAvailabilityStatus] = [:]
-            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? "On-Device AI"
-            
+            let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
+
             // Check each engine type
             for engineType in AIEngineType.allCases {
                 let isCurrent = engineType.rawValue == currentEngine
                 let isAvailable = checkEngineAvailability(engineType)
-                
+
                 let status = EngineAvailabilityStatus(
                     name: engineType.rawValue,
                     description: engineType.description,
@@ -164,17 +164,17 @@ struct AISettingsView: View {
                     version: getEngineVersion(engineType),
                     isCurrentEngine: isCurrent
                 )
-                
+
                 statuses[engineType.rawValue] = status
             }
-            
+
             await MainActor.run {
                 engineStatuses = statuses
                 isRefreshingStatus = false
             }
         }
     }
-    
+
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
         case .openAI:
@@ -215,7 +215,7 @@ struct AISettingsView: View {
             #if targetEnvironment(simulator)
             return isEnabled
             #else
-            return isEnabled && DeviceCapabilities.supportsOnDeviceLLM
+            return isEnabled && DeviceCapabilities.supportsMLX
             #endif
         case .appleNative:
             return AppleNativeEngine.modelAvailable
@@ -255,25 +255,19 @@ struct AISettingsView: View {
             return "Foundation Models"
         }
     }
-    
+
     var body: some View {
         NavigationStack {
-            Form {
-                selectedEngineConfigurationSection
-                engineSelectionSection
-                timeoutConfigurationSection
-                summaryManagementSection
-            }
-            .navigationTitle("AI Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
+            settingsContent
+                .navigationTitle("AI Settings")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") {
+                            dismiss()
+                        }
                     }
                 }
-            }
-
         }
         .alert("Regeneration Complete", isPresented: $viewModel.regenerationManager.showingRegenerationAlert) {
             Button("OK") { viewModel.regenerationManager.regenerationResults = nil }
@@ -295,7 +289,7 @@ struct AISettingsView: View {
             )
             // Align regeneration manager with the user's currently selected engine instead of forcing OpenAI
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ??
-                AIEngineType.onDeviceLLM.rawValue
+                AIEngineType.mlxSwift.rawValue
             viewModel.regenerationManager.setEngine(currentEngine)
             self.refreshEngineStatuses()
         }
@@ -335,45 +329,170 @@ struct AISettingsView: View {
             AWSBedrockSettingsView()
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
-            #if targetEnvironment(macCatalyst)
-            VStack(spacing: 0) {
-                HStack {
-                    Text("On-Device AI").font(.headline)
-                    Spacer()
-                    Button("Done") { showingOnDeviceLLMSettings = false }.buttonStyle(.bordered)
-                }
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                Divider()
-                OnDeviceLLMSettingsView()
-            }
-            #else
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
-            #endif
         }
         .sheet(isPresented: $showingMLXSwiftSettings) {
-            #if targetEnvironment(macCatalyst)
-            VStack(spacing: 0) {
-                HStack {
-                    Text("MLX Swift").font(.headline)
-                    Spacer()
-                    Button("Done") { showingMLXSwiftSettings = false }.buttonStyle(.bordered)
-                }
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                Divider()
-                MLXSwiftSettingsView()
-            }
-            #else
             NavigationStack {
                 MLXSwiftSettingsView()
             }
-            #endif
         }
         .fullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
                 refreshEngineStatuses()
             })
+        }
+    }
+
+    @ViewBuilder
+    private var settingsContent: some View {
+        modernSettingsContent
+    }
+
+    private var modernSettingsContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                modernHeader
+                modernCurrentEngineSection
+                modernEngineLibrarySection
+                modernTimeoutSection
+                modernSummaryManagementSection
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 36)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private var modernHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("AI Settings")
+                .font(.largeTitle.weight(.bold))
+                .foregroundColor(.primary)
+
+            Text("Choose the engine that turns transcripts into summaries, tasks, and reminders.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var modernCurrentEngineSection: some View {
+        AISettingsCard(title: "Current Engine", systemImage: currentEngineType.map { iconName(for: $0) } ?? "sparkles", tint: currentEngineType.map { engineColor(for: $0) } ?? .accentColor) {
+            if let currentEngine = currentEngineType {
+                let status = engineStatuses[currentEngine.rawValue]
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(currentEngine.displayName)
+                                .font(.headline)
+                                .foregroundColor(.primary)
+
+                            Text(currentEngine.description)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Spacer()
+
+                        AIStatusPill(
+                            text: (status?.isAvailable ?? false) ? "Ready" : "Needs Setup",
+                            tint: (status?.isAvailable ?? false) ? .green : .orange
+                        )
+                    }
+
+                    if let version = status?.version, !version.isEmpty {
+                        AIInfoRow(title: "Model", value: version)
+                    }
+
+                    if let requirement = currentEngine.requirements.first {
+                        AIInfoRow(title: "Needs", value: requirement)
+                    }
+
+                    if currentEngine != .appleNative {
+                        Button {
+                            openSettings(for: currentEngine)
+                        } label: {
+                            Label("Configure \(currentEngine.displayName)", systemImage: "gear")
+                                .font(.caption.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(engineColor(for: currentEngine))
+                    }
+                }
+            }
+        }
+    }
+
+    private var modernEngineLibrarySection: some View {
+        AISettingsCard(title: "Engine Library", systemImage: "square.grid.2x2", tint: .blue) {
+            VStack(alignment: .leading, spacing: 12) {
+                modernEngineGroupHeader("On-Device", systemImage: "iphone")
+                ForEach(engines(in: .onDevice), id: \.self) { engine in
+                    modernEngineOptionRow(for: engine)
+                }
+
+                Divider()
+
+                modernEngineGroupHeader("Cloud / Self-Hosted", systemImage: "cloud")
+                ForEach(engines(in: .cloud) + engines(in: .selfHosted), id: \.self) { engine in
+                    modernEngineOptionRow(for: engine)
+                }
+            }
+        }
+    }
+
+    private var modernTimeoutSection: some View {
+        let effectiveTimeout = SummarizationTimeouts.clamp(
+            summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
+        )
+        let isUnlimitedEngine = currentEngineType == .onDeviceLLM || currentEngineType == .appleNative
+
+        return AISettingsCard(title: "Request Timeout", systemImage: "timer", tint: .orange) {
+            if isUnlimitedEngine {
+                Label("No timeout - runs fully on-device.", systemImage: "infinity")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                Slider(
+                    value: Binding(
+                        get: { effectiveTimeout },
+                        set: { summarizationTimeout = SummarizationTimeouts.clamp($0) }
+                    ),
+                    in: SummarizationTimeouts.minimumTimeout...SummarizationTimeouts.maximumTimeout,
+                    step: 10
+                )
+
+                HStack {
+                    Text("\(Int(effectiveTimeout)) sec")
+                    Spacer()
+                    Text("\(String(format: "%.1f", effectiveTimeout / 60)) min")
+                        .foregroundColor(.secondary)
+                }
+                .font(.caption)
+            }
+        }
+    }
+
+    private var modernSummaryManagementSection: some View {
+        AISettingsCard(title: "Summary Management", systemImage: "arrow.clockwise", tint: .purple) {
+            Button {
+                showingRegenerateConfirmation = true
+            } label: {
+                Label(viewModel.regenerationManager.isRegenerating ? "Processing..." : "Regenerate All Summaries", systemImage: "arrow.clockwise")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!viewModel.regenerationManager.canRegenerate)
+
+            RegenerationProgressView(regenerationManager: viewModel.regenerationManager)
         }
     }
 }
@@ -383,7 +502,55 @@ struct AISettingsView: View {
 private extension AISettingsView {
 
     var selectedEngineName: String {
-        UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.onDeviceLLM.rawValue
+        UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
+    }
+
+    func modernEngineGroupHeader(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .foregroundColor(.secondary)
+    }
+
+    func modernEngineOptionRow(for engine: AIEngineType) -> some View {
+        let status = engineStatuses[engine.rawValue]
+        let isSelected = selectedEngineName == engine.rawValue
+        let tint = engineColor(for: engine)
+
+        return Button {
+            viewModel.selectEngine(engine, recorderVM: recorderVM)
+            refreshEngineStatuses()
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: iconName(for: engine))
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(tint)
+                    .frame(width: 38, height: 38)
+                    .background(tint.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 11))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(engine.displayName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.primary)
+
+                    Text(shortDescription(for: engine))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                engineBadge(for: engine, status: status)
+
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundColor(isSelected ? tint : .secondary)
+            }
+            .padding(14)
+            .background(isSelected ? tint.opacity(0.12) : Color(.tertiarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 15))
+        }
+        .buttonStyle(.plain)
     }
 
     var timeoutConfigurationSection: some View {
@@ -391,7 +558,7 @@ private extension AISettingsView {
             summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
         )
         let isUnlimitedEngine = currentEngineType == .onDeviceLLM || currentEngineType == .appleNative
-        
+
         return Section("Request Timeout") {
             if isUnlimitedEngine {
                 Label("No timeout — runs fully on-device.", systemImage: "infinity")
@@ -440,7 +607,7 @@ private extension AISettingsView {
                 let status = engineStatuses[currentEngine.rawValue]
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Label(currentEngine.rawValue, systemImage: iconName(for: currentEngine))
+                        Label(currentEngine.displayName, systemImage: iconName(for: currentEngine))
                             .font(.subheadline.weight(.semibold))
                             .foregroundColor(engineColor(for: currentEngine))
                         Spacer()
@@ -469,7 +636,7 @@ private extension AISettingsView {
                         Button {
                             openSettings(for: currentEngine)
                         } label: {
-                            Label("Configure \(currentEngine.rawValue)", systemImage: "gear")
+                            Label("Configure \(currentEngine.displayName)", systemImage: "gear")
                                 .font(.caption.weight(.semibold))
                         }
                         .buttonStyle(.borderedProminent)
@@ -508,7 +675,6 @@ private extension AISettingsView {
 
     func engines(in category: EngineCategory) -> [AIEngineType] {
         AIEngineType.availableCases.filter { engine in
-            if engine == .mlxSwift && !enableExperimentalModels { return false }
             switch category {
             case .onDevice:
                 return [.onDeviceLLM, .mlxSwift, .appleNative].contains(engine)
@@ -532,7 +698,7 @@ private extension AISettingsView {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .foregroundColor(isSelected ? engineColor(for: engine) : .secondary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(engine.rawValue)
+                    Text(engine.displayName)
                         .font(.subheadline)
                     Text(shortDescription(for: engine))
                         .font(.caption)
@@ -548,7 +714,7 @@ private extension AISettingsView {
     func shortDescription(for engine: AIEngineType) -> String {
         switch engine {
         case .onDeviceLLM: return "Private, no internet after download"
-        case .mlxSwift: return "Experimental MLX local summaries"
+        case .mlxSwift: return "On-device MLX summaries"
         case .appleNative: return "Apple Foundation Models, fully on-device"
         case .openAI: return "High quality summaries"
         case .googleAIStudio: return "Gemini model support"
@@ -582,7 +748,7 @@ private extension AISettingsView {
             guard DeviceCapabilities.supportsOnDeviceLLM else { return }
             showingOnDeviceLLMSettings = true
         case .mlxSwift:
-            guard enableExperimentalModels else { return }
+            guard DeviceCapabilities.supportsMLX else { return }
             showingMLXSwiftSettings = true
         case .appleNative:
             break // No separate settings sheet — configured via Apple Intelligence system settings
@@ -612,10 +778,6 @@ private extension AISettingsView {
             Text("Not Supported")
                 .font(.caption2.weight(.medium))
                 .foregroundColor(.secondary)
-        } else if engine == .mlxSwift {
-            Text((status?.isAvailable ?? false) ? "Experimental" : "Setup")
-                .font(.caption2.weight(.medium))
-                .foregroundColor((status?.isAvailable ?? false) ? .orange : .secondary)
         } else if engine == .mistralAI && !(status?.isAvailable ?? false) {
             HStack(spacing: 4) {
                 Text("Free")
@@ -648,6 +810,78 @@ private extension AISettingsView {
         case .openAICompatible: return .green
         case .localLLM: return .teal
         }
+    }
+}
+
+private struct AISettingsCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    let tint: Color
+    @ViewBuilder let content: Content
+
+    init(title: String, systemImage: String, tint: Color, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.systemImage = systemImage
+        self.tint = tint
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(tint)
+                    .frame(width: 30, height: 30)
+                    .background(tint.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+            }
+
+            content
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+private struct AIStatusPill: View {
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.bold))
+            .foregroundColor(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.14))
+            .clipShape(Capsule())
+    }
+}
+
+private struct AIInfoRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .foregroundColor(.primary)
+                .multilineTextAlignment(.trailing)
+        }
+        .font(.caption)
+        .padding(12)
+        .background(Color(.tertiarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 

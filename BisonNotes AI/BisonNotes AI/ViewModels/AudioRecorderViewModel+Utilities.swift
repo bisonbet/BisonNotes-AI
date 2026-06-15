@@ -346,21 +346,3 @@ extension AudioRecorderViewModel {
 	}
 }
 
-// MARK: - Supporting Types
-
-enum AudioIntegrationError: LocalizedError {
-	case formatCreationFailed
-	case bufferCreationFailed
-	case fileCreationFailed(String)
-
-	var errorDescription: String? {
-		switch self {
-		case .formatCreationFailed:
-			return "Failed to create audio format"
-		case .bufferCreationFailed:
-			return "Failed to create audio buffer"
-		case .fileCreationFailed(let details):
-			return "Failed to create audio file: \(details)"
-		}
-	}
-}

@@ -171,8 +171,8 @@ extension String {
         // Remove link syntax [text](url) → text
         result = result.replacingOccurrences(of: "\\[(.+?)\\]\\(.+?\\)", with: "$1", options: .regularExpression)
 
-        // Remove headers (# at start of line)
-        result = result.replacingOccurrences(of: "^#{1,6}\\s*", with: "", options: .regularExpression)
+        // Remove headers (# at start of any line - (?m) makes ^ match line starts)
+        result = result.replacingOccurrences(of: "(?m)^#{1,6}\\s*", with: "", options: .regularExpression)
 
         return result
     }

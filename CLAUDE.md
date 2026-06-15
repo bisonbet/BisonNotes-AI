@@ -9,17 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build and Development Commands
 
-**CRITICAL: DO NOT BUILD OR RUN WITHOUT EXPLICIT USER REQUEST**
-
-Never run `xcodebuild`, build commands, or any compilation/execution commands unless the user explicitly asks you to do so. This includes:
-- Do NOT run `xcodebuild` to verify fixes
-- Do NOT compile to check for errors
-- Do NOT run tests automatically
-- Do NOT execute the app to verify functionality
-
-If you make code changes, explain what you fixed and let the user verify by building themselves.
-
-This is an iOS application built with Xcode. When explicitly requested by the user, use standard Xcode commands:
+This is an iOS application built with Xcode. Use standard Xcode commands to build, run, test, and verify changes when working in a macOS/Xcode environment:
 
 - **Build**: Open `BisonNotes AI.xcodeproj` in Xcode and build (⌘+B)
 - **Run**: Build and run on simulator or device (⌘+R)
@@ -125,6 +115,12 @@ The app includes comprehensive AWS Bedrock integration (`AWS/AWSBedrockModels.sw
 
 The `MacOS-Catalyst` branch adds Mac Catalyst support. Several manual steps were required for the vendored `llama.xcframework` and must be repeated any time the framework is rebuilt or updated:
 
+#### Archive-only failures (do not regress these)
+
+- **aws-sdk-swift is pinned to exact 1.6.113 — do not bump past it until the smithy plugin issue is resolved.** smithy-swift ≥ 0.206 (pulled in by aws-sdk-swift ≥ 1.7.0) ships a `SmithyCodeGeneratorPlugin` build-tool plugin. Xcode builds plugin host tools (`SmithyCodegenCLI` + its deps: `Logging`, `Smithy`, `SmithySerialization`, `ArgumentParser`) for native macOS even though the plugin is only applied to smithy's internal test targets. In a Mac Catalyst archive, the native-macOS (`SDK_VARIANT:macos`) and Catalyst (`SDK_VARIANT:iosmac`) builds of those targets both stage to the same `ArchiveIntermediates/.../UninstalledProducts/macosx/<Target>.o` path → `error: Multiple commands produce`. This is an Xcode staging-path bug (SDK_VARIANT is not part of the path); it only manifests in archives, never in regular builds, and not in iOS archives (host=macosx vs app=iphoneos don't collide). Verified via the XCBuildData manifest of a failed archive. Before bumping aws-sdk-swift, check whether smithy-swift's `Package.swift` still declares the plugin, or whether Xcode has fixed the staging collision.
+- **Keep `EXCLUDED_ARCHS = x86_64` at the project level.** The app is Apple Silicon-only by design: the hand-built llama Catalyst slice is arm64-only and MLX-Swift requires Apple Silicon. Archives build Release without `ONLY_ACTIVE_ARCH`, so Catalyst would otherwise build x86_64 too. Note this setting does NOT propagate to SPM packages (verified in the build manifest — packages still compile x86_64 in GUI archives); only an xcodebuild command-line override reaches packages, which is what `Scripts/archive-catalyst.sh` does. Prefer that script over Product > Archive for Catalyst archives. arm64-only Catalyst apps are accepted by the Mac App Store ("Requires Apple silicon").
+- `ALLOW_TARGET_PLATFORM_SPECIALIZATION` was removed from the app target (2026-06-10). It was a hack to borrow the native macOS llama slice before the Catalyst slice existed and is obsolete now. It was NOT the cause of the "Multiple commands produce" archive failure (initially suspected, disproven via build manifest).
+
 #### llama.xcframework Catalyst Slice
 
 The upstream llama.cpp xcframework does not ship a Mac Catalyst slice. The `ios-arm64-maccatalyst` slice in `Frameworks/llama.xcframework/` was created manually:
@@ -168,6 +164,12 @@ ln -s Versions/Current/Resources $CATALYST/Resources
 Then add the `ios-arm64-maccatalyst` entry to `Frameworks/llama.xcframework/Info.plist` (see existing entry in that file for the format).
 
 Step 5 is critical — without the `vtool` patch, the linker warns "built for macOS" and may fail codesigning.
+
+#### Remove `link "c++"` from llama modulemaps
+
+Each slice's `Modules/module.modulemap` (e.g. `ios-arm64/llama.framework/Modules/module.modulemap`) ships with a `link "c++"` directive. Another SPM dependency (MLX-Swift) already links libc++, so leaving this in causes a `Ignoring duplicate libraries: '-lc++'` warning at link time. Delete the `link "c++"` line from every slice's modulemap. The framework binary itself records libc++ as a load dependency, so dyld still resolves it at runtime.
+
+If the xcframework is rebuilt or updated from upstream, reapply this removal across all slices.
 
 #### textual (MarkdownUI) Catalyst Fix
 

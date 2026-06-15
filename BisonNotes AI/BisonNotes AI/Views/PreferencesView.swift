@@ -11,16 +11,22 @@ struct PreferencesView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var userPreferences = UserPreferences.shared
     @State private var showingTimeFormatExample = false
-    
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 22) {
                     headerSection
                     timeFormatSection
                 }
-                .padding()
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 36)
+                .frame(maxWidth: 700)
+                .frame(maxWidth: .infinity)
             }
+            .scrollIndicators(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -32,55 +38,54 @@ struct PreferencesView: View {
             }
         }
     }
-    
+
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Preferences")
-                .font(.largeTitle)
-                .fontWeight(.bold)
+                .font(.largeTitle.weight(.bold))
                 .foregroundColor(.primary)
-            
+
             Text("Customize how BisonNotes AI displays information")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
         }
     }
-    
+
     private var timeFormatSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Section header
-            HStack {
+            HStack(spacing: 10) {
                 Image(systemName: "clock")
-                    .font(.headline)
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(.blue)
+                    .frame(width: 30, height: 30)
+                    .background(Color.blue.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+
                 Text("Time Format")
                     .font(.headline)
                     .foregroundColor(.primary)
             }
-            
-            // Description
+
             Text("Choose how time is displayed in summaries, transcripts, and recording lists")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            
-            // Time format options
+
             VStack(spacing: 12) {
                 ForEach(TimeFormat.allCases) { format in
                     timeFormatOption(format: format)
                 }
             }
-            
-            // Example preview section
+
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("Preview")
                         .font(.subheadline)
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
-                    
+
                     Spacer()
-                    
+
                     Button(action: {
                         showingTimeFormatExample.toggle()
                     }) {
@@ -89,155 +94,119 @@ struct PreferencesView: View {
                             Image(systemName: showingTimeFormatExample ? "chevron.up" : "chevron.down")
                         }
                         .font(.caption)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.accentColor)
                     }
                 }
-                
+
                 if showingTimeFormatExample {
                     examplePreview
                 }
             }
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color(.systemGray5), lineWidth: 0.5)
-                )
-        )
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
     }
-    
+
     private func timeFormatOption(format: TimeFormat) -> some View {
         Button(action: {
             userPreferences.timeFormat = format
         }) {
-            HStack(spacing: 16) {
-                // Selection indicator
-                Image(systemName: userPreferences.timeFormat == format ? "largecircle.fill.circle" : "circle")
-                    .font(.title2)
-                    .foregroundColor(userPreferences.timeFormat == format ? .blue : .gray)
-                
+            HStack(spacing: 14) {
+                Image(systemName: format == .twelveHour ? "clock" : "clock.badge")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.blue)
+                    .frame(width: 38, height: 38)
+                    .background(Color.blue.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 11))
+
                 VStack(alignment: .leading, spacing: 4) {
-                    // Format name
                     Text(format.displayName)
-                        .font(.body)
-                        .fontWeight(.medium)
+                        .font(.subheadline.weight(.semibold))
                         .foregroundColor(.primary)
-                    
-                    // Format description
+
                     Text(format.description)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    
-                    // Live example
+
                     Text("Example: \(userPreferences.formatDate(Date(), dateStyle: .medium, includeTime: true))")
                         .font(.caption2)
                         .foregroundColor(.blue)
                         .opacity(userPreferences.timeFormat == format ? 1.0 : 0.6)
                 }
-                
+
                 Spacer()
+
+                Image(systemName: userPreferences.timeFormat == format ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundColor(userPreferences.timeFormat == format ? .blue : .secondary)
             }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(userPreferences.timeFormat == format ? Color.blue.opacity(0.1) : Color(.systemGray6))
-            )
+            .padding(14)
+            .background(userPreferences.timeFormat == format ? Color.blue.opacity(0.12) : Color(.tertiarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 15))
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(.plain)
     }
-    
+
     private var examplePreview: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Example dates
             let sampleDate1 = Date()
             let sampleDate2 = Calendar.current.date(byAdding: .hour, value: -3, to: Date()) ?? Date()
             let sampleDate3 = Calendar.current.date(byAdding: .day, value: -2, to: Date()) ?? Date()
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Summary Header:")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.secondary)
-                
-                Text(userPreferences.formatFullDateTime(sampleDate1))
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(.systemGray6))
-                    )
-            }
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Recording List:")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.secondary)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(userPreferences.formatMediumDateTime(sampleDate1))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("• 5:23")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    HStack {
-                        Text(userPreferences.formatMediumDateTime(sampleDate2))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("• 12:45")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    HStack {
-                        Text(userPreferences.formatMediumDateTime(sampleDate3))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("• 8:12")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+
+            previewBlock(
+                title: "Summary Header",
+                value: userPreferences.formatFullDateTime(sampleDate1)
+            )
+
+            previewBlock(title: "Recording List") {
+                VStack(alignment: .leading, spacing: 5) {
+                    previewLine(userPreferences.formatMediumDateTime(sampleDate1), duration: "5:23")
+                    previewLine(userPreferences.formatMediumDateTime(sampleDate2), duration: "12:45")
+                    previewLine(userPreferences.formatMediumDateTime(sampleDate3), duration: "8:12")
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(.systemGray6))
-                )
             }
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Metadata:")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.secondary)
-                
-                Text("Generation Time: \(userPreferences.formatShortDateTime(sampleDate2))")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(.systemGray6))
-                    )
-            }
+
+            previewBlock(
+                title: "Metadata",
+                value: "Generation Time: \(userPreferences.formatShortDateTime(sampleDate2))"
+            )
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(.systemGray5).opacity(0.5))
-        )
+        .padding(14)
+        .background(Color(.tertiarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func previewBlock(title: String, value: String) -> some View {
+        previewBlock(title: title) {
+            Text(value)
+                .font(.subheadline.weight(.medium))
+                .foregroundColor(.primary)
+        }
+    }
+
+    private func previewBlock<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+
+            content()
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    private func previewLine(_ dateText: String, duration: String) -> some View {
+        HStack(spacing: 6) {
+            Text(dateText)
+            Text("- \(duration)")
+        }
+        .font(.caption)
+        .foregroundColor(.secondary)
     }
 }

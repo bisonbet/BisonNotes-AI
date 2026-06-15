@@ -85,13 +85,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var recordingStartedAt: (url: URL, date: Date)?
 
 	#if targetEnvironment(macCatalyst)
-	// On Mac Catalyst, AVAudioRecorder cannot reliably encode without an
-	// AVAudioSession. We use AVAudioEngine + AVAudioFile instead — input node
-	// taps deliver PCM buffers we can write directly to a single file with
-	// pause/resume implemented by removing/re-installing the tap.
+	// On Mac Catalyst, AVAudioRecorder cannot reliably encode to the app's
+	// M4A target. AVAudioEngine taps deliver PCM buffers to a scratch file that
+	// is exported to M4A when recording stops; AVAudioSession is only used as a
+	// fallback if the direct engine path cannot start.
 	var catalystAudioEngine: AVAudioEngine?
 	var catalystAudioFile: AVAudioFile?
 	var catalystEngineFormat: AVAudioFormat?
+	var catalystScratchRecordingURL: URL?
+	var catalystAudioSessionActivated = false
 	#endif
 	let checkpointInterval: TimeInterval = 30.0 // Try to checkpoint every 30 seconds
 	let forceCheckpointInterval: TimeInterval = 90.0 // Force checkpoint after 90 seconds even without silence
@@ -591,7 +593,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			startRecordingTimer()
 
 			// Notify watch of recording state change
-			notifyWatchOfRecordingStateChange()
 
 		} catch {
 			#if targetEnvironment(simulator)
@@ -632,7 +633,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		stopRecordingTimer()
 		recordingState = .paused
 		AppLog.shared.recording("Recording paused at \(Int(recordingTime))s")
-		notifyWatchOfRecordingStateChange()
 	}
 
 	/// Resume a paused recording. Continues writing to the same file on both
@@ -661,7 +661,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		recordingState = .recording
 		startRecordingTimer()
 		AppLog.shared.recording("Recording resumed at \(Int(recordingTime))s")
-		notifyWatchOfRecordingStateChange()
 	}
 
 	func stopRecording() {
@@ -684,7 +683,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 			stopBackgroundTimeMonitoring()
 			endBackgroundTask()
-			notifyWatchOfRecordingStateChange()
 			return
 		}
 
@@ -744,7 +742,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		endBackgroundTask()
 
 		// Notify watch of recording state change
-		notifyWatchOfRecordingStateChange()
 	}
 
 	/// Saves a recording and optional transcript created via live transcription mode.
@@ -813,7 +810,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				self.recordingTime = 0
 				self.lastCheckpointTime = Date()
 				self.startRecordingTimer()
-				self.notifyWatchOfRecordingStateChange()
 				AppLog.shared.recording("Live transcription recording started")
 			} catch {
 				self.isUsingLiveTranscription = false
@@ -831,7 +827,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					self.recordingTime = 0
 					self.lastCheckpointTime = Date()
 					self.startRecordingTimer()
-					self.notifyWatchOfRecordingStateChange()
 				} catch {
 					self.errorMessage = "Failed to start recording: \(error.localizedDescription)"
 				}

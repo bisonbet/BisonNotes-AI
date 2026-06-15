@@ -34,21 +34,21 @@ struct DataMigrationView: View {
     @State private var confirmRecoverCloud = false
     @State private var confirmFullSyncToCloud = false
     @State private var confirmCloudKitReset = false
-    
+
     // Orphaned audio file cleanup
     @State private var orphanedAudioFiles: [URL] = []
     @State private var showingOrphanedFilesCleanup = false
     @State private var showingOrphanedFilesResults = false
     @State private var orphanedFilesResults: (deleted: Int, totalSize: Int64, errors: [String])? = nil
     @State private var totalOrphanedSize: Int64 = 0
-    
+
     // Background Processing
     @State private var showingBackgroundProcessing = false
-    
+
     // iCloud Sync Verification
     @State private var showingSyncVerification = false
     @State private var syncVerificationResult: SyncVerificationResult?
-    
+
     private struct SyncVerificationResult {
         let localCount: Int
         let cloudCount: Int
@@ -56,17 +56,19 @@ struct DataMigrationView: View {
         let unsyncedLocalCount: Int
         let cloudOnlyCount: Int
     }
-    
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 30) {
+                VStack(spacing: 18) {
                     headerSection
-                    
+
+                    modePickerSection
+
                     if migrationManager.migrationProgress > 0 {
                         progressSection
                     }
-                    
+
                     switch currentMode {
                     case .migration:
                         migrationSection
@@ -75,15 +77,18 @@ struct DataMigrationView: View {
                     case .repair:
                         repairSection
                     }
-                    
+
                     if integrityReport != nil || repairResults != nil {
                         resultsSection
                     }
-                    
+
                     Spacer()
                 }
-                .padding()
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 28)
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -157,38 +162,71 @@ struct DataMigrationView: View {
             }
         }
     }
-    
+
     private var headerSection: some View {
-        VStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             Image(systemName: headerIcon)
-                .font(.system(size: 60))
+                .font(.title2)
                 .foregroundColor(.accentColor)
-            
+                .frame(width: 46, height: 46)
+                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
             Text(headerTitle)
-                .font(.largeTitle)
+                .font(.title2)
                 .fontWeight(.bold)
-            
+
             Text(headerDescription)
-                .font(.body)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
-    
+
+    private var modePickerSection: some View {
+        HStack(spacing: 8) {
+            modeButton(.migration, title: "Tools", systemImage: "externaldrive.badge.gearshape")
+            modeButton(.integrityCheck, title: "Check", systemImage: "checkmark.shield")
+            modeButton(.repair, title: "Repair", systemImage: "wrench.and.screwdriver")
+        }
+        .padding(6)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func modeButton(_ mode: MigrationMode, title: String, systemImage: String) -> some View {
+        Button {
+            currentMode = mode
+        } label: {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundColor(currentMode == mode ? .white : .secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    currentMode == mode ? Color.accentColor : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
     private var progressSection: some View {
         VStack(spacing: 16) {
             ProgressView(value: migrationManager.migrationProgress)
                 .progressViewStyle(LinearProgressViewStyle(tint: .accentColor))
-            
+
             Text(migrationManager.migrationStatus)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
         }
-        .padding(.horizontal)
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
-    
+
     private var migrationSection: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             Group {
                 // Primary action - Check for issues
                 Button(action: {
@@ -203,9 +241,9 @@ struct DataMigrationView: View {
                     .padding()
                     .frame(maxWidth: .infinity)
                     .background(Color.accentColor)
-                    .cornerRadius(12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                
+
                 // iCloud Recovery
                 Button(action: {
                     confirmRecoverCloud = true
@@ -223,10 +261,10 @@ struct DataMigrationView: View {
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(Color.purple, lineWidth: 1)
                     )
-                    .cornerRadius(12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-                
+
                 // Full sync to cloud (manual upload all)
                 Button(action: {
                     confirmFullSyncToCloud = true
@@ -244,10 +282,10 @@ struct DataMigrationView: View {
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(Color.blue, lineWidth: 1)
                     )
-                    .cornerRadius(12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-                
+
                 // Full CloudKit reset and fresh sync
                 Button(action: {
                     confirmCloudKitReset = true
@@ -265,11 +303,11 @@ struct DataMigrationView: View {
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(Color.orange, lineWidth: 1)
                     )
-                    .cornerRadius(12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
             }
-            
+
             Group {
                 // Orphaned audio files cleanup
                 Button(action: {
@@ -290,31 +328,31 @@ struct DataMigrationView: View {
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(Color.orange, lineWidth: 1)
                     )
-                    .cornerRadius(12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
-                
+
                 // Show orphaned files if found
                 if !orphanedAudioFiles.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundColor(.orange)
-                            
+
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("\(orphanedAudioFiles.count) orphaned audio files found")
                                     .font(.body)
                                     .fontWeight(.medium)
                                     .foregroundColor(.orange)
-                                
+
                                 Text("Total size: \(formatFileSize(totalOrphanedSize))")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
-                            
+
                             Spacer()
                         }
-                        
+
                         Button("Delete Orphaned Audio Files") {
                             showingOrphanedFilesCleanup = true
                         }
@@ -338,7 +376,7 @@ struct DataMigrationView: View {
                             )
                     )
                 }
-                
+
                 // Repair orphaned summaries
                 Button(action: {
                     Task {
@@ -357,7 +395,7 @@ struct DataMigrationView: View {
                     .padding()
                     .frame(maxWidth: .infinity)
                     .background(Color.orange)
-                    .cornerRadius(12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
 
@@ -374,7 +412,7 @@ struct DataMigrationView: View {
                     .padding()
                     .frame(maxWidth: .infinity)
                     .background(Color.purple)
-                    .cornerRadius(12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
 
@@ -415,9 +453,9 @@ struct DataMigrationView: View {
                     .padding()
                     .frame(maxWidth: .infinity)
                     .background(Color.blue)
-                    .cornerRadius(12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                
+
                 // Verify iCloud Sync
                 Button(action: {
                     Task {
@@ -433,7 +471,7 @@ struct DataMigrationView: View {
                     .padding()
                     .frame(maxWidth: .infinity)
                     .background(Color.green)
-                    .cornerRadius(12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
             }
@@ -473,26 +511,26 @@ struct DataMigrationView: View {
                     }
                     .disabled(isPerformingCleanup)
                 }
-                
+
                 if let results = cleanupResults {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Last Cleanup Results:")
                             .font(.caption)
                             .fontWeight(.medium)
                             .foregroundColor(.secondary)
-                        
+
                         Text("• Removed \(results.orphanedSummaries) orphaned summaries")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        
+
                         Text("• Removed \(results.orphanedTranscripts) orphaned transcripts")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        
+
                         Text("• Removed \(results.orphanedRecordings) orphaned recordings")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        
+
                         Text("• Freed \(results.freedSpaceMB, specifier: "%.1f") MB of space")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -502,9 +540,9 @@ struct DataMigrationView: View {
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 12)
-            .background(Color(.systemGray6).opacity(0.5))
-            .cornerRadius(8)
-            
+            .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
             // Debug info
             Button(action: {
                 Task {
@@ -524,9 +562,9 @@ struct DataMigrationView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color.blue, lineWidth: 1)
                 )
-                .cornerRadius(12)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            
+
             // Destructive action - Clear database
             Button(action: {
                 showingClearDatabaseAlert = true
@@ -544,10 +582,11 @@ struct DataMigrationView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color.red, lineWidth: 1)
                 )
-                .cornerRadius(12)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
-        .padding(.horizontal)
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         // MARK: - Safety Alerts
         .alert("Recover from iCloud", isPresented: $confirmRecoverCloud) {
             Button("Cancel", role: .cancel) { }
@@ -605,7 +644,7 @@ struct DataMigrationView: View {
                 Local Summaries: \(result.localCount)
                 iCloud Summaries: \(result.cloudCount)
                 Synced (in both): \(result.syncedCount)
-                
+
                 \(result.unsyncedLocalCount > 0 ? "⚠️ \(result.unsyncedLocalCount) local summaries not in iCloud" : "✅ All local summaries are synced")
                 \(result.cloudOnlyCount > 0 ? "ℹ️ \(result.cloudOnlyCount) summaries only in iCloud" : "")
                 """)
@@ -614,9 +653,9 @@ struct DataMigrationView: View {
             }
         }
     }
-    
+
     private var integrityCheckSection: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             Button(action: {
                 Task {
                     integrityReport = await migrationManager.performDataIntegrityCheck()
@@ -631,10 +670,10 @@ struct DataMigrationView: View {
                 .padding()
                 .frame(maxWidth: .infinity)
                 .background(Color.orange)
-                .cornerRadius(12)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .disabled(migrationManager.migrationProgress > 0 && migrationManager.migrationProgress < 1.0)
-            
+
             Button(action: {
                 currentMode = .migration
                 integrityReport = nil
@@ -652,14 +691,15 @@ struct DataMigrationView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color.blue, lineWidth: 1)
                 )
-                .cornerRadius(12)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
-        .padding(.horizontal)
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
-    
+
     private var repairSection: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             if let report = integrityReport {
                 Button(action: {
                     Task {
@@ -675,11 +715,11 @@ struct DataMigrationView: View {
                     .padding()
                     .frame(maxWidth: .infinity)
                     .background(Color.green)
-                    .cornerRadius(12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .disabled(migrationManager.migrationProgress > 0 && migrationManager.migrationProgress < 1.0)
             }
-            
+
             Button(action: {
                 currentMode = .integrityCheck
                 repairResults = nil
@@ -697,19 +737,19 @@ struct DataMigrationView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color.blue, lineWidth: 1)
                 )
-                .cornerRadius(12)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
-        .padding(.horizontal)
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
-    
+
     private var resultsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let report = integrityReport {
                 Text("Integrity Check Results")
                     .font(.headline)
-                    .padding(.horizontal)
-                
+
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Image(systemName: report.hasIssues ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
@@ -718,7 +758,7 @@ struct DataMigrationView: View {
                             .font(.subheadline)
                             .fontWeight(.medium)
                     }
-                    
+
                     if report.hasIssues {
                         VStack(alignment: .leading, spacing: 4) {
                             if !report.orphanedRecordings.isEmpty {
@@ -748,7 +788,7 @@ struct DataMigrationView: View {
                             }
                         }
                         .padding(.leading)
-                        
+
                         Button(action: {
                             currentMode = .repair
                         }) {
@@ -761,22 +801,19 @@ struct DataMigrationView: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
                             .background(Color.green)
-                            .cornerRadius(8)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                         .padding(.top, 8)
                     }
                 }
                 .padding()
-                .background(Color(.systemGray6))
-                .cornerRadius(12)
-                .padding(.horizontal)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
-            
+
             if let results = repairResults {
                 Text("Repair Results")
                     .font(.headline)
-                    .padding(.horizontal)
-                
+
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Image(systemName: "checkmark.circle.fill")
@@ -785,7 +822,7 @@ struct DataMigrationView: View {
                             .font(.subheadline)
                             .fontWeight(.medium)
                     }
-                    
+
                     if results.totalRepairs > 0 {
                         VStack(alignment: .leading, spacing: 4) {
                             if results.repairedOrphanedRecordings > 0 {
@@ -813,13 +850,11 @@ struct DataMigrationView: View {
                     }
                 }
                 .padding()
-                .background(Color(.systemGray6))
-                .cornerRadius(12)
-                .padding(.horizontal)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
         }
     }
-    
+
     private var navigationTitle: String {
         switch currentMode {
         case .migration:
@@ -830,7 +865,7 @@ struct DataMigrationView: View {
             return "Data Repair"
         }
     }
-    
+
     private var headerIcon: String {
         switch currentMode {
         case .migration:
@@ -841,7 +876,7 @@ struct DataMigrationView: View {
             return "wrench.and.screwdriver"
         }
     }
-    
+
     private var headerTitle: String {
         switch currentMode {
         case .migration:
@@ -852,7 +887,7 @@ struct DataMigrationView: View {
             return "Data Repair"
         }
     }
-    
+
     private var headerDescription: String {
         switch currentMode {
         case .migration:
@@ -863,24 +898,24 @@ struct DataMigrationView: View {
             return "Automatically repair the data integrity issues found during the scan to restore missing transcripts and summaries."
         }
     }
-    
-    
+
+
     // MARK: - Cleanup Functions
-    
+
     // MARK: - Orphaned Audio Files Functions
-    
+
     private func scanForOrphanedAudioFiles() async {
         await MainActor.run {
             let files = EnhancedFileManager.shared.findOrphanedAudioFiles(coordinator: appCoordinator)
             orphanedAudioFiles = files
-            
+
             // Calculate total size
             totalOrphanedSize = files.reduce(0) { total, file in
                 total + getFileSize(file)
             }
         }
     }
-    
+
     private func performOrphanedFilesCleanup() async {
         await MainActor.run {
             let results = EnhancedFileManager.shared.cleanupOrphanedAudioFiles(
@@ -891,7 +926,7 @@ struct DataMigrationView: View {
             showingOrphanedFilesResults = true
         }
     }
-    
+
     private func getFileSize(_ url: URL) -> Int64 {
         do {
             let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -900,7 +935,7 @@ struct DataMigrationView: View {
             return 0
         }
     }
-    
+
     private func formatFileSize(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useKB, .useMB, .useGB]
@@ -910,7 +945,7 @@ struct DataMigrationView: View {
 
     private func performCleanup() async {
         isPerformingCleanup = true
-        
+
         do {
             let results = try await cleanupOrphanedData()
             await MainActor.run {
@@ -924,40 +959,40 @@ struct DataMigrationView: View {
             }
         }
     }
-    
+
     private func cleanupOrphanedData() async throws -> CleanupResults {
         AppLog.shared.dataMigration("Starting orphaned data cleanup...", level: .debug)
 
         // Get all recordings from Core Data
         let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
         AppLog.shared.dataMigration("Found \(allRecordings.count) recordings in Core Data", level: .debug)
-        
+
         // Get all transcripts and summaries from Core Data
         let allTranscripts = appCoordinator.getAllTranscripts()
         let allSummaries = appCoordinator.getAllSummaries()
-        
+
         AppLog.shared.dataMigration("Found \(allSummaries.count) stored summaries and \(allTranscripts.count) stored transcripts", level: .debug)
-        
+
         var orphanedSummaries = 0
         var orphanedTranscripts = 0
         var orphanedRecordings = 0
         var freedSpaceBytes: Int64 = 0
-        
+
         // Create a set of valid recording IDs for quick lookup
         let validRecordingIds = Set(allRecordings.compactMap { $0.id })
-        
+
         AppLog.shared.dataMigration("Valid recording IDs: \(validRecordingIds.count)", level: .debug)
-        
+
         // Check for orphaned summaries
         for summary in allSummaries {
             let recordingId = summary.recordingId
-            
+
             // Check if the recording ID exists in Core Data
             let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
-            
+
             if !hasValidID {
                 AppLog.shared.dataMigration("Found orphaned summary for recording ID: \(recordingId?.uuidString ?? "nil")", level: .debug)
-                
+
                 // Delete the orphaned summary
                 if let summaryId = summary.id {
                     do {
@@ -969,26 +1004,26 @@ struct DataMigrationView: View {
                 } else {
                     AppLog.shared.dataMigration("Cannot delete summary with nil ID", level: .error)
                 }
-                
+
                 // Calculate freed space (rough estimate)
                 freedSpaceBytes += Int64(summary.summary?.count ?? 0 * 2) // Approximate UTF-8 bytes
             }
         }
-        
+
         // Check for orphaned transcripts
         for transcript in allTranscripts {
             let recordingId = transcript.recordingId
-            
+
             // Check if the recording ID exists in Core Data
             let hasValidID = recordingId != nil && validRecordingIds.contains(recordingId!)
-            
+
             if !hasValidID {
                 AppLog.shared.dataMigration("Found orphaned transcript for recording ID: \(recordingId?.uuidString ?? "nil")", level: .debug)
-                
+
                 // Delete the orphaned transcript
                 appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
                 orphanedTranscripts += 1
-                
+
                 // Calculate freed space
                 let transcriptText = transcript.segments ?? ""
                 freedSpaceBytes += Int64(transcriptText.count * 2) // Approximate UTF-8 bytes
@@ -997,7 +1032,7 @@ struct DataMigrationView: View {
                 AppLog.shared.dataMigration("Found valid transcript for recording ID: \(recordingId?.uuidString ?? "nil")", level: .debug)
             }
         }
-        
+
         // Check for transcripts where the recording file doesn't exist on disk
         for transcript in allTranscripts {
             guard let recordingId = transcript.recordingId,
@@ -1006,21 +1041,21 @@ struct DataMigrationView: View {
                   let recordingURL = URL(string: recordingURLString) else {
                 continue
             }
-            
+
             // Check if the recording file exists on disk
             let fileExists = FileManager.default.fileExists(atPath: recordingURL.path)
-            
+
             // Check if the recording exists in Core Data
             let hasValidID = validRecordingIds.contains(recordingId)
-            
+
             // Only remove if the file doesn't exist AND it's not in Core Data
             if !fileExists && !hasValidID {
                 AppLog.shared.dataMigration("Found transcript for non-existent recording file: \(recordingURL.lastPathComponent)", level: .debug)
-                
+
                 // Delete the orphaned transcript
                 appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
                 orphanedTranscripts += 1
-                
+
                 // Calculate freed space
                 let transcriptText = transcript.segments ?? ""
                 freedSpaceBytes += Int64(transcriptText.count * 2) // Approximate UTF-8 bytes
@@ -1029,7 +1064,7 @@ struct DataMigrationView: View {
                 AppLog.shared.dataMigration("File not found on disk but recording exists in Core Data: \(recordingURL.lastPathComponent)", level: .debug)
             }
         }
-        
+
         // Check for orphaned recordings (recordings without files on disk and no data)
         AppLog.shared.dataMigration("Checking for orphaned recordings (missing audio files)...", level: .debug)
         for recording in allRecordings {
@@ -1038,19 +1073,19 @@ struct DataMigrationView: View {
                 AppLog.shared.dataMigration("Recording has invalid URL", level: .debug)
                 continue
             }
-            
+
             // Check if the audio file exists on disk
             let fileExists = FileManager.default.fileExists(atPath: recordingURL.path)
-            
+
             if !fileExists {
                 // Check if this recording has any associated transcripts or summaries
                 let hasTranscript = recording.transcript != nil
                 let hasSummary = recording.summary != nil
-                
+
                 if !hasTranscript && !hasSummary {
                     // Safe to delete - no transcript, no summary, and no file
                     AppLog.shared.dataMigration("Found orphaned recording (no file, no transcript, no summary)", level: .debug)
-                    
+
                     // Delete the orphaned recording
                     if let recordingId = recording.id {
                         appCoordinator.coreDataManager.deleteRecording(id: recordingId)
@@ -1063,11 +1098,11 @@ struct DataMigrationView: View {
                 }
             }
         }
-        
+
         let freedSpaceMB = Double(freedSpaceBytes) / (1024 * 1024)
-        
+
         AppLog.shared.dataMigration("Cleanup complete: removed \(orphanedSummaries) summaries, \(orphanedTranscripts) transcripts, \(orphanedRecordings) recordings, freed \(String(format: "%.1f", freedSpaceMB)) MB")
-        
+
         return CleanupResults(
             orphanedSummaries: orphanedSummaries,
             orphanedTranscripts: orphanedTranscripts,
@@ -1075,24 +1110,24 @@ struct DataMigrationView: View {
             freedSpaceMB: freedSpaceMB
         )
     }
-    
+
     // MARK: - iCloud Sync Verification
-    
+
     private func verifyiCloudSync() async {
         do {
             // Fetch local summaries
             let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
             let localSummaryIds = Set(localSummaries.compactMap { $0.id })
-            
+
             // Fetch cloud summaries
             let cloudSummaries = try await legacyiCloudManager.fetchSummariesFromiCloud(forRecovery: true)
             let cloudSummaryIds = Set(cloudSummaries.compactMap { $0.id })
-            
+
             // Calculate statistics
             let syncedIds = localSummaryIds.intersection(cloudSummaryIds)
             let unsyncedLocalIds = localSummaryIds.subtracting(cloudSummaryIds)
             let cloudOnlyIds = cloudSummaryIds.subtracting(localSummaryIds)
-            
+
             let result = SyncVerificationResult(
                 localCount: localSummaries.count,
                 cloudCount: cloudSummaries.count,
@@ -1100,14 +1135,14 @@ struct DataMigrationView: View {
                 unsyncedLocalCount: unsyncedLocalIds.count,
                 cloudOnlyCount: cloudOnlyIds.count
             )
-            
+
             await MainActor.run {
                 syncVerificationResult = result
                 showingSyncVerification = true
             }
-            
+
             AppLog.shared.dataMigration("Sync verification complete: local=\(result.localCount), cloud=\(result.cloudCount), synced=\(result.syncedCount), unsynced=\(result.unsyncedLocalCount), cloudOnly=\(result.cloudOnlyCount)")
-            
+
         } catch {
             AppLog.shared.dataMigration("Failed to verify iCloud sync: \(error)", level: .error)
             await MainActor.run {
@@ -1117,7 +1152,7 @@ struct DataMigrationView: View {
                     preferredStyle: .alert
                 )
                 alert.addAction(UIAlertAction(title: "OK", style: .default))
-                
+
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                    let rootViewController = windowScene.windows.first?.rootViewController {
                     rootViewController.present(alert, animated: true)
@@ -1125,12 +1160,12 @@ struct DataMigrationView: View {
             }
         }
     }
-    
+
     private func syncMissingSummaries() async {
         do {
             // Get all local summaries
             let localSummaryEntries = appCoordinator.coreDataManager.getAllSummaries()
-            
+
             // Convert to EnhancedSummaryData using getSummaryData
             var enhancedSummaries: [EnhancedSummaryData] = []
             for summaryEntry in localSummaryEntries {
@@ -1139,15 +1174,15 @@ struct DataMigrationView: View {
                     enhancedSummaries.append(enhancedSummary)
                 }
             }
-            
+
             // Sync all of them to iCloud
             try await legacyiCloudManager.syncAllSummaries(enhancedSummaries)
-            
+
             AppLog.shared.dataMigration("Successfully synced \(enhancedSummaries.count) summaries to iCloud")
-            
+
             // Re-verify after syncing
             await verifyiCloudSync()
-            
+
         } catch {
             AppLog.shared.dataMigration("Failed to sync missing summaries: \(error)", level: .error)
             await MainActor.run {
@@ -1157,7 +1192,7 @@ struct DataMigrationView: View {
                     preferredStyle: .alert
                 )
                 alert.addAction(UIAlertAction(title: "OK", style: .default))
-                
+
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                    let rootViewController = windowScene.windows.first?.rootViewController {
                     rootViewController.present(alert, animated: true)
@@ -1187,7 +1222,7 @@ struct CompactDebugButtonStyle: ButtonStyle {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(.systemGray6))
+                    .fill(Color(.secondarySystemGroupedBackground))
                     .opacity(configuration.isPressed ? 0.8 : 1.0)
             )
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
