@@ -32,6 +32,15 @@ struct FluidAudioModelInfo {
                 return 350_000_000 // ~350 MB
             }
         }
+
+        var modelFolderName: String {
+            switch self {
+            case .v2:
+                return "parakeet-tdt-0.6b-v2"
+            case .v3:
+                return "parakeet-tdt-0.6b-v3"
+            }
+        }
     }
 
     enum SettingsKeys {

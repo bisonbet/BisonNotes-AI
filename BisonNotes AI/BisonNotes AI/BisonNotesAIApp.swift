@@ -11,6 +11,7 @@ import BackgroundTasks
 import UserNotifications
 import AppIntents
 import WidgetKit
+import Network
 #if DEBUG
 import Darwin
 #endif
@@ -21,6 +22,7 @@ struct BisonNotesAIApp: App {
     @StateObject private var appCoordinator = AppDataCoordinator()
     @StateObject private var fileImportManager = FileImportManager()
     @StateObject private var transcriptImportManager = TranscriptImportManager()
+    @State private var hasQueuedParakeetStartupRepair = false
 
     // Phase 6: Register AppDelegate for notification handling
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -445,6 +447,80 @@ struct BisonNotesAIApp: App {
         AppLog.shared.general(DeviceCapabilities.getCapabilityReport())
         AppLog.shared.general(String(repeating: "=", count: 50))
     }
+
+    private func queueParakeetStartupRepairIfNeeded() {
+        guard !hasQueuedParakeetStartupRepair else { return }
+        hasQueuedParakeetStartupRepair = true
+
+        Task { @MainActor in
+            let selectedEngineRaw = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine")
+            guard selectedEngineRaw == TranscriptionEngine.fluidAudio.rawValue else {
+                AppLog.shared.transcription(
+                    "Parakeet startup repair skipped: selected transcription engine is \(selectedEngineRaw ?? "nil")",
+                    level: .debug
+                )
+                return
+            }
+
+            guard TranscriptionEngine.fluidAudio.isAvailable else {
+                AppLog.shared.transcription(
+                    "Parakeet startup repair skipped: FluidAudio is not available on this device/build",
+                    level: .debug
+                )
+                return
+            }
+
+            let manager = FluidAudioManager.shared
+            guard !manager.isModelReady else {
+                AppLog.shared.transcription(
+                    "Parakeet startup repair skipped: selected model is already ready",
+                    level: .debug
+                )
+                return
+            }
+
+            guard !manager.isDownloading else {
+                AppLog.shared.transcription(
+                    "Parakeet startup repair skipped: download already in progress",
+                    level: .debug
+                )
+                return
+            }
+
+            guard await Self.isOnWiFiForStartupModelDownload() else {
+                AppLog.shared.transcription(
+                    "Parakeet startup repair skipped: Wi-Fi is not available",
+                    level: .debug
+                )
+                return
+            }
+
+            do {
+                AppLog.shared.transcription(
+                    "Parakeet startup repair: selected model is missing or incomplete; starting Wi-Fi background download"
+                )
+                try await manager.downloadAndPrepareModel()
+                AppLog.shared.transcription("Parakeet startup repair completed")
+            } catch {
+                AppLog.shared.transcription(
+                    "Parakeet startup repair failed: \(error.localizedDescription)",
+                    level: .error
+                )
+            }
+        }
+    }
+
+    private static func isOnWiFiForStartupModelDownload() async -> Bool {
+        let monitor = NWPathMonitor()
+        let queue = DispatchQueue(label: "ParakeetStartupRepairNetworkMonitor")
+        monitor.start(queue: queue)
+        try? await Task.sleep(nanoseconds: 750_000_000)
+        let path = monitor.currentPath
+        monitor.cancel()
+        return path.status == .satisfied
+            && path.usesInterfaceType(.wifi)
+            && !path.isExpensive
+    }
     
     var body: some Scene {
         WindowGroup {
@@ -461,6 +537,7 @@ struct BisonNotesAIApp: App {
                     // Note: Notification permission is now requested when first needed (in BackgroundProcessingManager)
                     // Initialize download monitor for on-device AI models
                     _ = OnDeviceAIDownloadMonitor.shared
+                    queueParakeetStartupRepairIfNeeded()
                     TemporaryFileCleanupService.shared.cleanupStaleFiles()
                 }
                 .onOpenURL(perform: handleOpenURL)

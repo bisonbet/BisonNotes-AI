@@ -2,7 +2,7 @@ import SwiftUI
 
 struct FluidAudioSettingsView: View {
     @AppStorage(FluidAudioModelInfo.SettingsKeys.enableFluidAudio) private var enableFluidAudio = false
-    @AppStorage(FluidAudioModelInfo.SettingsKeys.selectedModelVersion) private var selectedModelVersion = FluidAudioModelInfo.ModelVersion.v3.rawValue
+    @AppStorage(FluidAudioModelInfo.SettingsKeys.selectedModelVersion) private var selectedModelVersion = FluidAudioModelInfo.ModelVersion.v2.rawValue
 
     @ObservedObject private var manager = FluidAudioManager.shared
     @Environment(\.dismiss) private var dismiss
