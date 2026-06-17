@@ -237,7 +237,7 @@ Google AI Studio provides access to Gemini models:
 
 ### On-Device AI
 
-The on-device AI feature enables completely private, offline AI processing. v2.0 uses MLX Swift as the default local summarization engine and keeps the original llama.cpp engine as a legacy option for higher-memory devices.
+The on-device AI feature enables completely private, offline AI processing. v2.1 uses MLX Swift as the default local summarization engine and keeps the original llama.cpp engine as a legacy option for higher-memory devices.
 
 #### MLX Swift (Default)
 

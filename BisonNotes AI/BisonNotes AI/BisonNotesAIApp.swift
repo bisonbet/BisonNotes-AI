@@ -461,6 +461,7 @@ struct BisonNotesAIApp: App {
                     // Note: Notification permission is now requested when first needed (in BackgroundProcessingManager)
                     // Initialize download monitor for on-device AI models
                     _ = OnDeviceAIDownloadMonitor.shared
+                    TemporaryFileCleanupService.shared.cleanupStaleFiles()
                 }
                 .onOpenURL(perform: handleOpenURL)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
@@ -479,6 +480,7 @@ struct BisonNotesAIApp: App {
                     appDelegate.clearAppBadge(reason: "activation")
                     // Repair any files left at .complete protection by v1.11.0.
                     migrateFileProtectionForExistingFiles()
+                    TemporaryFileCleanupService.shared.cleanupStaleFiles()
                     // Scan for files placed by the Share Extension (Voice Memos, etc.)
                     scanSharedContainerForImports(trigger: .pendingToken)
                     // Also scan Documents/Inbox/ for files from "Open In" / document interaction.

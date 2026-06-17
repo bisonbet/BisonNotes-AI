@@ -855,6 +855,7 @@ class BackgroundProcessingManager: ObservableObject {
                 await refreshBackgroundTask()
             } else {
                 await endBackgroundTask()
+                TemporaryFileCleanupService.shared.cleanupStaleFiles(maxAge: 30 * 60)
             }
 
             // Process next queued job

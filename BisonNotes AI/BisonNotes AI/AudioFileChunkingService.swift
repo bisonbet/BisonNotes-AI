@@ -352,9 +352,9 @@ class AudioFileChunkingService: ObservableObject {
         // Only delete if directory is empty or only contains our chunk files
         let contents = try fileManager.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
         
-        // Check if all files are chunk files (contain "_chunk_" in name)
+        // Check if all files are chunk files
         let allChunkFiles = contents.allSatisfy { url in
-            url.lastPathComponent.contains("_chunk_")
+            url.lastPathComponent.hasPrefix("chunk_") && url.pathExtension.lowercased() == "m4a"
         }
         
         if contents.isEmpty || allChunkFiles {

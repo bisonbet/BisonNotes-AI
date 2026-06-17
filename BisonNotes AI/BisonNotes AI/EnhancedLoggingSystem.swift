@@ -58,9 +58,20 @@ class AppLog {
         return dir.appendingPathComponent("persistent_error_log.txt")
     }()
 
+    /// Rolling breadcrumb log that persists recent app activity across crashes.
+    /// This intentionally stores all levels, but keeps only a small tail so a
+    /// post-crash export has useful previous-process context without growing forever.
+    private let persistentBreadcrumbURL: URL = {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("persistent_breadcrumb_log.txt")
+    }()
+
     private let bufferQueue = DispatchQueue(label: "com.bisonnotes.logbuffer", qos: .utility)
     private static let maxBufferLines = 500
+    private static let maxBreadcrumbLines = 750
     private static let cleanShutdownKey = "AppLog_CleanShutdown"
+    private let sessionId = UUID().uuidString
 
     /// Captured at launch before the flag is reset so the value survives the whole session.
     private(set) var previousSessionCrashed: Bool = false
@@ -74,17 +85,21 @@ class AppLog {
         previousSessionCrashed = hasKey && !UserDefaults.standard.bool(forKey: Self.cleanShutdownKey)
         // Reset for this session — if we crash, it stays false
         UserDefaults.standard.set(false, forKey: Self.cleanShutdownKey)
+
+        lifecycleBreadcrumb("launch session=\(sessionId) previousSessionCrashed=\(previousSessionCrashed)")
     }
 
     /// Call when app becomes active. A later foreground crash should not inherit a
     /// previous clean background transition from the same launch.
     func markSessionActive() {
         UserDefaults.standard.set(false, forKey: Self.cleanShutdownKey)
+        lifecycleBreadcrumb("active session=\(sessionId)")
     }
 
     /// Call when app enters background or terminates — marks this session as clean.
     func markCleanShutdown() {
         UserDefaults.standard.set(true, forKey: Self.cleanShutdownKey)
+        lifecycleBreadcrumb("clean-shutdown-marker session=\(sessionId)")
     }
 
     /// Returns the contents of the persistent error log (survives crashes).
@@ -92,18 +107,36 @@ class AppLog {
         (try? String(contentsOf: persistentLogURL, encoding: .utf8)) ?? ""
     }
 
-    private func persistToBuffer(_ line: String) {
-        bufferQueue.async { [url = persistentLogURL] in
+    /// Returns recent app breadcrumbs from the current and previous process.
+    func persistedBreadcrumbLog() -> String {
+        (try? String(contentsOf: persistentBreadcrumbURL, encoding: .utf8)) ?? ""
+    }
+
+    private func persistLine(_ line: String, to url: URL, maxLines: Int) {
+        bufferQueue.async {
             let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
             var lines = existing.components(separatedBy: "\n").filter { !$0.isEmpty }
             lines.append(line)
             // Keep only the last N lines
-            if lines.count > Self.maxBufferLines {
-                lines = Array(lines.suffix(Self.maxBufferLines))
+            if lines.count > maxLines {
+                lines = Array(lines.suffix(maxLines))
             }
             try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
             AppFileProtection.apply(to: url)
         }
+    }
+
+    private func persistErrorLine(_ line: String) {
+        persistLine(line, to: persistentLogURL, maxLines: Self.maxBufferLines)
+    }
+
+    private func persistBreadcrumbLine(_ line: String) {
+        persistLine(line, to: persistentBreadcrumbURL, maxLines: Self.maxBreadcrumbLines)
+    }
+
+    private func lifecycleBreadcrumb(_ message: String) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        persistBreadcrumbLine("[\(timestamp)] [LIFECYCLE] [General] \(message)")
     }
 
     // MARK: - Core Logging
@@ -119,10 +152,27 @@ class AppLog {
         }
 
         // Persist .error and .fault to rolling buffer file (survives crashes)
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let levelStr = Self.levelString(level)
+        persistBreadcrumbLine("[\(timestamp)] [\(levelStr)] [\(category.rawValue)] \(message)")
+
         if level == .error || level == .fault {
-            let timestamp = ISO8601DateFormatter().string(from: Date())
-            let levelStr = level == .fault ? "FAULT" : "ERROR"
-            persistToBuffer("[\(timestamp)] [\(levelStr)] [\(category.rawValue)] \(message)")
+            persistErrorLine("[\(timestamp)] [\(levelStr)] [\(category.rawValue)] \(message)")
+        }
+    }
+
+    private static func levelString(_ level: OSLogType) -> String {
+        switch level {
+        case .fault:
+            return "FAULT"
+        case .error:
+            return "ERROR"
+        case .debug:
+            return "DEBUG"
+        case .info:
+            return "INFO"
+        default:
+            return "NOTICE"
         }
     }
 

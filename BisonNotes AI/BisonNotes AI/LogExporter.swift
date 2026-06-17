@@ -20,8 +20,9 @@ struct LogExporter {
 
     /// Builds a comprehensive diagnostic file containing:
     /// 1. Current session OSLog entries
-    /// 2. Persistent error buffer (survives crashes)
-    /// 3. MetricKit crash/hang diagnostics (if any)
+    /// 2. Persistent breadcrumb buffer (survives crashes)
+    /// 3. Persistent error buffer (survives crashes)
+    /// 4. MetricKit crash/hang diagnostics (if any)
     static func exportLogs() async throws -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
@@ -67,14 +68,21 @@ struct LogExporter {
             sections.append("\n" + sectionHeader("CURRENT SESSION LOGS") + "\nFailed to fetch: \(error.localizedDescription)")
         }
 
-        // ── Section 2: Persistent Error Buffer (survives crashes) ──
+        // ── Section 2: Persistent Breadcrumb Buffer (survives crashes) ──
+        let breadcrumbLog = AppLog.shared.persistedBreadcrumbLog()
+        if !breadcrumbLog.isEmpty {
+            let breadcrumbLines = breadcrumbLog.components(separatedBy: "\n").filter { !$0.isEmpty }
+            sections.append("\n" + sectionHeader("PERSISTENT BREADCRUMBS (\(breadcrumbLines.count) entries, survives crashes)") + "\n" + breadcrumbLog)
+        }
+
+        // ── Section 3: Persistent Error Buffer (survives crashes) ──
         let errorLog = AppLog.shared.persistedErrorLog()
         if !errorLog.isEmpty {
             let errorLines = errorLog.components(separatedBy: "\n").filter { !$0.isEmpty }
             sections.append("\n" + sectionHeader("PERSISTENT ERROR LOG (\(errorLines.count) entries, survives crashes)") + "\n" + errorLog)
         }
 
-        // ── Section 3: MetricKit Crash/Hang Diagnostics ──
+        // ── Section 4: MetricKit Crash/Hang Diagnostics ──
         let metricKitURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("metrickit_diagnostics.json")
         if let data = try? Data(contentsOf: metricKitURL),
@@ -82,6 +90,8 @@ struct LogExporter {
            let prettyData = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted),
            let prettyString = String(data: prettyData, encoding: .utf8) {
             sections.append("\n" + sectionHeader("METRICKIT CRASH/HANG DIAGNOSTICS") + "\n" + prettyString)
+        } else {
+            sections.append("\n" + sectionHeader("METRICKIT CRASH/HANG DIAGNOSTICS") + "\nNo MetricKit diagnostics available yet. iOS may deliver crash and hang payloads on a later launch.")
         }
 
         // ── Write to file ──

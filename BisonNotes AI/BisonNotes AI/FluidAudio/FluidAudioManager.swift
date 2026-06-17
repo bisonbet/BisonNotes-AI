@@ -1,5 +1,5 @@
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 import Network
 
 #if canImport(FluidAudio)
@@ -9,6 +9,10 @@ import FluidAudio
 @MainActor
 final class FluidAudioManager: ObservableObject {
     static let shared = FluidAudioManager()
+
+    private static let targetSampleRate: Double = 16_000
+    private static let targetChannelCount: AVAudioChannelCount = 1
+    private static let minimumPreparedDuration: TimeInterval = 0.3
 
     @Published var isModelReady = false
     @Published var isDownloading = false
@@ -285,33 +289,209 @@ final class FluidAudioManager: ObservableObject {
             throw TranscriptionError.fluidAudioNotReady
         }
 
-        currentStatus = "Transcribing with Parakeet..."
+        currentStatus = "Preparing audio for Parakeet..."
         let start = Date()
+        let preparedInput = try prepareAudioForParakeet(audioURL)
+        defer {
+            if preparedInput.shouldDelete {
+                try? FileManager.default.removeItem(at: preparedInput.url)
+            }
+        }
+
+        currentStatus = "Transcribing with Parakeet..."
         var decoderState = TdtDecoderState.make(decoderLayers: await asrManager.decoderLayerCount)
-        let result = try await asrManager.transcribe(audioURL, decoderState: &decoderState)
+        do {
+            let result = try await asrManager.transcribe(preparedInput.url, decoderState: &decoderState)
 
-        // Determine audio duration for accurate segment end time
-        let asset = AVURLAsset(url: audioURL)
-        let duration = try await asset.load(.duration)
-        let durationSeconds = CMTimeGetSeconds(duration)
+            let segment = TranscriptSegment(
+                speaker: "",
+                text: result.text,
+                startTime: 0,
+                endTime: preparedInput.originalDuration > 0 ? preparedInput.originalDuration : 0
+            )
 
-        let segment = TranscriptSegment(
-            speaker: "",
-            text: result.text,
-            startTime: 0,
-            endTime: durationSeconds > 0 ? durationSeconds : 0
-        )
-
-        return TranscriptionResult(
-            fullText: result.text,
-            segments: [segment],
-            processingTime: Date().timeIntervalSince(start),
-            chunkCount: 1,
-            success: true,  // success reflects engine completion without error, not output length
-            error: nil
-        )
+            return TranscriptionResult(
+                fullText: result.text,
+                segments: [segment],
+                processingTime: Date().timeIntervalSince(start),
+                chunkCount: 1,
+                success: true,  // success reflects engine completion without error, not output length
+                error: nil
+            )
+        } catch {
+            throw TranscriptionError.fluidAudioTranscriptionFailed(error)
+        }
         #else
         throw TranscriptionError.fluidAudioNotAvailable
         #endif
+    }
+
+    private struct PreparedAudioInput {
+        let url: URL
+        let shouldDelete: Bool
+        let originalDuration: TimeInterval
+        let preparedDuration: TimeInterval
+    }
+
+    /// FluidAudio validates decoded 16 kHz PCM, not just the source container.
+    /// Convert app/imported audio first so playable AAC/M4A files do not fail
+    /// ASR with a misleading "under 300ms" decoded-buffer error.
+    private func prepareAudioForParakeet(_ sourceURL: URL) throws -> PreparedAudioInput {
+        let sourceFile: AVAudioFile
+        do {
+            sourceFile = try AVAudioFile(forReading: sourceURL)
+        } catch {
+            throw TranscriptionError.fluidAudioTranscriptionFailed(error)
+        }
+
+        let sourceFormat = sourceFile.processingFormat
+        let originalDuration = sourceFormat.sampleRate > 0
+            ? Double(sourceFile.length) / sourceFormat.sampleRate
+            : 0
+
+        guard originalDuration >= Self.minimumPreparedDuration else {
+            throw TranscriptionError.fluidAudioTranscriptionFailed(Self.audioPreparationError(
+                "Audio file decodes to only \(String(format: "%.2f", originalDuration))s. At least 0.30s is required."
+            ))
+        }
+
+        guard let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Self.targetSampleRate,
+            channels: Self.targetChannelCount,
+            interleaved: false
+        ) else {
+            throw TranscriptionError.fluidAudioTranscriptionFailed(Self.audioPreparationError(
+                "Could not create 16 kHz mono PCM format."
+            ))
+        }
+
+        let preparedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fluidaudio_input_\(UUID().uuidString)")
+            .appendingPathExtension("caf")
+
+        do {
+            try convert(sourceFile: sourceFile, to: preparedURL, targetFormat: targetFormat)
+
+            let preparedFile = try AVAudioFile(forReading: preparedURL)
+            let preparedFormat = preparedFile.processingFormat
+            let preparedDuration = preparedFormat.sampleRate > 0
+                ? Double(preparedFile.length) / preparedFormat.sampleRate
+                : 0
+
+            guard preparedDuration >= Self.minimumPreparedDuration else {
+                try? FileManager.default.removeItem(at: preparedURL)
+                throw TranscriptionError.fluidAudioTranscriptionFailed(Self.audioPreparationError(
+                    "Prepared Parakeet input decodes to only \(String(format: "%.2f", preparedDuration))s. The source may be damaged or unsupported."
+                ))
+            }
+
+            AppLog.shared.transcription(
+                "Prepared Parakeet input: source=\(String(format: "%.2f", originalDuration))s @ \(Int(sourceFormat.sampleRate))Hz/\(sourceFormat.channelCount)ch, prepared=\(String(format: "%.2f", preparedDuration))s @ \(Int(preparedFormat.sampleRate))Hz/\(preparedFormat.channelCount)ch",
+                level: .debug
+            )
+
+            return PreparedAudioInput(
+                url: preparedURL,
+                shouldDelete: true,
+                originalDuration: originalDuration,
+                preparedDuration: preparedDuration
+            )
+        } catch let error as TranscriptionError {
+            throw error
+        } catch {
+            try? FileManager.default.removeItem(at: preparedURL)
+            throw TranscriptionError.fluidAudioTranscriptionFailed(error)
+        }
+    }
+
+    private func convert(sourceFile: AVAudioFile, to outputURL: URL, targetFormat: AVAudioFormat) throws {
+        let sourceFormat = sourceFile.processingFormat
+        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+            throw Self.audioPreparationError("Could not create audio converter for Parakeet input.")
+        }
+
+        try? FileManager.default.removeItem(at: outputURL)
+        let outputFile = try AVAudioFile(
+            forWriting: outputURL,
+            settings: targetFormat.settings,
+            commonFormat: targetFormat.commonFormat,
+            interleaved: targetFormat.isInterleaved
+        )
+
+        guard let inputBuffer = AVAudioPCMBuffer(
+            pcmFormat: sourceFormat,
+            frameCapacity: 4_096
+        ) else {
+            throw Self.audioPreparationError("Could not allocate source audio buffer.")
+        }
+
+        guard let outputBuffer = AVAudioPCMBuffer(
+            pcmFormat: targetFormat,
+            frameCapacity: 4_096
+        ) else {
+            throw Self.audioPreparationError("Could not allocate prepared audio buffer.")
+        }
+
+        var reachedEndOfSource = false
+        var readError: Error?
+
+        while true {
+            outputBuffer.frameLength = 0
+
+            var conversionError: NSError?
+            let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+                if reachedEndOfSource {
+                    outStatus.pointee = .endOfStream
+                    return nil
+                }
+
+                do {
+                    try sourceFile.read(into: inputBuffer, frameCount: inputBuffer.frameCapacity)
+                    if inputBuffer.frameLength == 0 {
+                        reachedEndOfSource = true
+                        outStatus.pointee = .endOfStream
+                        return nil
+                    }
+                    outStatus.pointee = .haveData
+                    return inputBuffer
+                } catch {
+                    readError = error
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
+            }
+
+            if let readError {
+                throw readError
+            }
+
+            if let conversionError {
+                throw conversionError
+            }
+
+            if outputBuffer.frameLength > 0 {
+                try outputFile.write(from: outputBuffer)
+            }
+
+            switch status {
+            case .haveData, .inputRanDry:
+                continue
+            case .endOfStream:
+                return
+            case .error:
+                throw Self.audioPreparationError("Audio conversion failed for Parakeet input.")
+            @unknown default:
+                throw Self.audioPreparationError("Audio conversion ended with an unknown status.")
+            }
+        }
+    }
+
+    private static func audioPreparationError(_ message: String) -> NSError {
+        NSError(
+            domain: "FluidAudioManager.AudioPreparation",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
     }
 }
