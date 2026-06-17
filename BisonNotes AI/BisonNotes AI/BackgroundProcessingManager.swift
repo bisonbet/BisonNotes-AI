@@ -356,6 +356,7 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - Singleton
     
     static let shared = BackgroundProcessingManager()
+    private static let fluidAudioMinimumTranscribableDuration: TimeInterval = 0.3
     
     private init() {
         loadJobsFromCoreData()
@@ -944,6 +945,17 @@ class BackgroundProcessingManager: ObservableObject {
             if index == 0 || index == totalChunks / 2 || index == totalChunks - 1 {
                 await sendProgressNotification(for: chunkProgressJob)
             }
+
+            if engine == .fluidAudio,
+               index == totalChunks - 1,
+               chunk.chunkURL != chunk.originalURL,
+               chunk.duration < Self.fluidAudioMinimumTranscribableDuration {
+                AppLog.shared.backgroundProcessing(
+                    "Skipping final FluidAudio chunk under SDK minimum: seq=\(chunk.sequenceNumber), duration=\(chunk.duration)s",
+                    level: .debug
+                )
+                continue
+            }
             
             // Transcribe the chunk
             let transcriptResult = try await transcribeChunk(chunk, engine: engine)
@@ -995,11 +1007,6 @@ class BackgroundProcessingManager: ObservableObject {
             
             // Save the complete transcript
             await saveTranscript(reassemblyResult.transcriptData)
-            
-            // Clean up chunk files if they were created
-            if chunks.count > 1 && chunks.first?.chunkURL != job.recordingURL {
-                try await chunkingService.cleanupChunks(chunks)
-            }
         } else if let firstChunk = transcriptChunks.first {
             // Single chunk, save directly
             // Get the recording ID first
@@ -1033,6 +1040,14 @@ class BackgroundProcessingManager: ObservableObject {
             )
             
             await saveTranscript(transcriptData)
+        }
+
+        if chunks.contains(where: { $0.chunkURL != $0.originalURL }) {
+            do {
+                try await chunkingService.cleanupChunks(chunks)
+            } catch {
+                AppLog.shared.backgroundProcessing("Chunk cleanup failed after transcription: \(error.localizedDescription)", level: .error)
+            }
         }
         
         // Complete the job - but validate we actually have transcript content
