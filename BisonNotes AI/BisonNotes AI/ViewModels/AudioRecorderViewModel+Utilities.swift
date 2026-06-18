@@ -169,9 +169,10 @@ extension AudioRecorderViewModel {
 				try await enhancedAudioSessionManager.configureMixedAudioSession()
 				try await enhancedAudioSessionManager.setPreferredInput(input)
 				UserDefaults.standard.set(input.uid, forKey: preferredInputDefaultsKey)
-				// Keep session active for now since user likely will record soon
+				try await enhancedAudioSessionManager.deactivateSession()
 			} catch {
 				errorMessage = "Failed to set preferred input: \(error.localizedDescription)"
+				try? await enhancedAudioSessionManager.deactivateSession()
 			}
 		}
 	}
@@ -345,4 +346,3 @@ extension AudioRecorderViewModel {
 		return "importedfile-\(truncatedName)"
 	}
 }
-

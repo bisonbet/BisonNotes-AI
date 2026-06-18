@@ -63,10 +63,14 @@ extension AudioRecorderViewModel {
 						audioPlayer = nil
 						isPlaying = false
 						errorMessage = "Failed to play recording: The audio file could not be started."
+						Task {
+							try? await enhancedAudioSessionManager.deactivateSession()
+						}
 					}
 				}
 
 			} catch {
+				try? await enhancedAudioSessionManager.deactivateSession()
 				await MainActor.run {
 					errorMessage = "Failed to play recording: \(error.localizedDescription)"
 				}
@@ -76,6 +80,7 @@ extension AudioRecorderViewModel {
 
 	func stopPlaying() {
 		audioPlayer?.stop()
+		audioPlayer = nil
 		isPlaying = false
 		stopPlayingTimer()
 
@@ -116,6 +121,7 @@ extension AudioRecorderViewModel: AVAudioPlayerDelegate {
 		Task {
 			await MainActor.run {
 				isPlaying = false
+				audioPlayer = nil
 				stopPlayingTimer()
 
 				// Deactivate audio session when playback finishes to restore other audio apps

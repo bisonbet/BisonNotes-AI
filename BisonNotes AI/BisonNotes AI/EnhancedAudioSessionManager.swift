@@ -9,7 +9,7 @@ import Foundation
 import AVFoundation
 import UIKit
 
-/// Enhanced audio session manager that supports mixed audio recording and background operations
+/// Enhanced audio session manager for recording, playback, and background operations.
 class EnhancedAudioSessionManager: NSObject, ObservableObject {
     
     // MARK: - Published Properties
@@ -42,9 +42,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         
         static let backgroundRecording = AudioSessionConfig(
             category: .playAndRecord,
-            mode: .default,  // Use .default instead of .voiceChat to preserve music quality
-            options: [.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker],
-            allowMixedAudio: true,
+            mode: .default,  // Use .default instead of .voiceChat to preserve recording quality
+            options: [.allowBluetoothHFP, .defaultToSpeaker],
+            allowMixedAudio: false,
             backgroundRecording: true
         )
         
@@ -101,7 +101,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
     }
     
-    /// Configure audio session for background recording with mixed audio support
+    /// Configure audio session for active recording.
+    /// Recording should interrupt other audio so device playback does not bleed
+    /// into the captured note, then deactivation lets other apps resume.
     func configureBackgroundRecording() async throws {
         // First check if background audio permission is available
         guard await checkBackgroundAudioPermission() else {
@@ -114,12 +116,12 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             let config = AudioSessionConfig.backgroundRecording
             try await applyConfiguration(config)
             
-            isMixedAudioEnabled = true
+            isMixedAudioEnabled = false
             isBackgroundRecordingEnabled = true
             currentConfiguration = config
             isConfigured = true
             
-            AppLog.shared.audioSession("Background recording session configured successfully")
+            AppLog.shared.audioSession("Exclusive background recording session configured successfully")
 
             // Prefer Bluetooth HFP if available for recording input
             await autoSelectBestInput()
@@ -139,8 +141,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         return
         #else
         guard let config = currentConfiguration else {
-            // Default to mixed audio if no previous configuration
-            try await configureMixedAudioSession()
+            AppLog.shared.audioSession("No audio session configuration to restore; leaving session inactive", level: .debug)
             return
         }
 
@@ -202,14 +203,43 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
     }
     
-    /// Configure audio session for playback (with mixWithOthers to avoid interfering with music)
+    /// Configure audio session for in-app recording playback.
+    /// Do not mix with other apps here: recording playback should take over,
+    /// then `deactivateSession()` notifies interrupted audio apps to resume.
     func configurePlaybackSession() async throws {
         #if !targetEnvironment(macCatalyst)
+        do {
+            try session.setCategory(.playback, mode: .default, options: [])
+            try session.setActive(true)
+        } catch {
+            let audioError = AudioProcessingError.audioSessionConfigurationFailed("Playback configuration failed: \(error.localizedDescription)")
+            lastError = audioError
+            throw audioError
+        }
+        #endif
+        isMixedAudioEnabled = false
+        isBackgroundRecordingEnabled = false
+        currentConfiguration = nil
+        isConfigured = true
+        AppLog.shared.audioSession("Playback session configured for exclusive in-app audio")
+    }
+
+    /// Configure audio session for silent background processing keep-alive.
+    /// Uses playback instead of playAndRecord so background jobs do not force
+    /// microphone/HFP routing that degrades music from other apps.
+    func configureBackgroundProcessingSession() async throws {
+        #if !targetEnvironment(macCatalyst)
+        guard await checkBackgroundAudioPermission() else {
+            let error = AudioProcessingError.backgroundRecordingNotPermitted
+            lastError = error
+            throw error
+        }
+
         do {
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
         } catch {
-            let audioError = AudioProcessingError.audioSessionConfigurationFailed("Playback configuration failed: \(error.localizedDescription)")
+            let audioError = AudioProcessingError.audioSessionConfigurationFailed("Background processing configuration failed: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
         }
@@ -218,7 +248,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         isBackgroundRecordingEnabled = false
         currentConfiguration = nil
         isConfigured = true
-        AppLog.shared.audioSession("Playback session configured successfully with mixWithOthers")
+        AppLog.shared.audioSession("Background processing session configured with playback mixWithOthers")
     }
     
     /// Set preferred audio input device

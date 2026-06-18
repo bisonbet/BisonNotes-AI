@@ -336,6 +336,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					return
 				}
 
+				guard self.isRecording else {
+					AppLog.shared.recording("App foregrounded without active recording - leaving audio session inactive", level: .debug)
+					if !self.isPlaying {
+						try? await self.enhancedAudioSessionManager.deactivateSession()
+					}
+					self.endBackgroundTask()
+					return
+				}
+
 				// Restore the session and try to resume
 				EnhancedLogger.shared.logAudioSession("Recorder stopped during background, restoring audio session")
 				try? await self.enhancedAudioSessionManager.restoreAudioSession()

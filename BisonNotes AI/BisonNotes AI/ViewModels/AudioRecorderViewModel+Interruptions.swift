@@ -454,8 +454,9 @@ extension AudioRecorderViewModel {
 			UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
 			selectedInput = nil
 
-			// Ensure audio session is still configured
-			try await enhancedAudioSessionManager.configureMixedAudioSession()
+			// Ensure recording resumes with exclusive audio so device playback
+			// does not bleed into the new segment.
+			try await enhancedAudioSessionManager.configureBackgroundRecording()
 
 			// Start new recording with default microphone
 			AppLog.shared.audioSession("Restarting recording with default microphone")
