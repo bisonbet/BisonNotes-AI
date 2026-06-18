@@ -28,6 +28,7 @@ struct SettingsView: View {
     @State private var logExportError: String?
     @State private var isPreparingLogs = false
     @State private var showingICloudComplianceNotice = false
+    @State private var showingCloudReview = false
 
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = "On Device"
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "On-Device AI"
@@ -78,6 +79,10 @@ struct SettingsView: View {
             }
         } message: {
             Text("BisonNotes AI and uploads to iCloud are not HIPAA-compliant. When iCloud Sync is enabled, eligible recordings, transcripts, summaries, and selected settings may be uploaded to your private iCloud account. To exclude an item from BisonNotes iCloud sync and backup, mark it Keep on This Device from its recording row or audio player.")
+        }
+        .sheet(isPresented: $showingCloudReview) {
+            CloudReviewItemsView(includeAudioFiles: iCloudBackupIncludeAudioFiles)
+                .environmentObject(appCoordinator)
         }
         .onAppear {
             refreshEngineStatuses()
@@ -354,6 +359,15 @@ struct SettingsView: View {
                     .tint(.green)
                     .disabled(isRunningCloudBackupAction)
                 }
+
+                Button {
+                    showingCloudReview = true
+                } label: {
+                    Label("Review iCloud Items", systemImage: "tray.full")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isRunningCloudBackupAction)
 
                 if isRunningCloudBackupAction {
                     ModernInlineStatus(
@@ -724,6 +738,13 @@ struct SettingsView: View {
                 } label: {
                     Label("Restore From iCloud", systemImage: "arrow.down.doc")
                         .foregroundColor(.green)
+                }
+                .disabled(isRunningCloudBackupAction)
+
+                Button {
+                    showingCloudReview = true
+                } label: {
+                    Label("Review iCloud Items", systemImage: "tray.full")
                 }
                 .disabled(isRunningCloudBackupAction)
 
@@ -1189,8 +1210,11 @@ struct SettingsView: View {
             }
 
             await MainActor.run {
+                let reviewText = result.itemsHeldForReview > 0
+                    ? ", \(result.itemsHeldForReview) held for review"
+                    : ""
                 cloudBackupActionMessage =
-                    "Restore complete: \(result.recordingsRestored) recordings, \(result.transcriptsRestored) transcripts, \(result.summariesRestored) summaries, \(result.audioFilesRestored) audio files, \(settingsText)."
+                    "Restore complete: \(result.recordingsRestored) recordings, \(result.transcriptsRestored) transcripts, \(result.summariesRestored) summaries, \(result.audioFilesRestored) audio files, \(settingsText)\(reviewText)."
                 cloudBackupActionIsError = false
                 isRunningCloudBackupAction = false
             }
@@ -1328,6 +1352,186 @@ struct SettingsView: View {
 }
 
 // MARK: - Supporting Structures
+
+private struct CloudReviewItemsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appCoordinator: AppDataCoordinator
+    @ObservedObject private var iCloudManager = iCloudStorageManager.shared
+
+    let includeAudioFiles: Bool
+
+    @State private var actionMessage = ""
+    @State private var actionIsError = false
+    @State private var workingItemId: String?
+    @State private var itemPendingDelete: CloudReviewItem?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if iCloudManager.isScanningCloudReviewItems {
+                    HStack {
+                        ProgressView()
+                        Text("Scanning iCloud...")
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                if !actionMessage.isEmpty {
+                    Text(actionMessage)
+                        .font(.caption)
+                        .foregroundColor(actionIsError ? .red : .secondary)
+                }
+
+                if let error = iCloudManager.cloudReviewError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+
+                if iCloudManager.pendingCloudReviewItems.isEmpty,
+                   !iCloudManager.isScanningCloudReviewItems {
+                    Text("No iCloud review items found.")
+                        .foregroundColor(.secondary)
+                }
+
+                ForEach(iCloudManager.pendingCloudReviewItems) { item in
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.title)
+                                    .font(.headline)
+                                Text(item.contentsDescription.capitalized)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                if let date = item.date {
+                                    Text(date.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            Spacer()
+                            if workingItemId == item.id {
+                                ProgressView()
+                            }
+                        }
+
+                        HStack {
+                            Button {
+                                Task { await restore(item) }
+                            } label: {
+                                Label("Restore", systemImage: "arrow.down.doc")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(workingItemId != nil || iCloudManager.isScanningCloudReviewItems)
+
+                            Button(role: .destructive) {
+                                itemPendingDelete = item
+                            } label: {
+                                Label("Delete from iCloud", systemImage: "trash")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(workingItemId != nil || iCloudManager.isScanningCloudReviewItems)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
+            .navigationTitle("iCloud Items Review")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        Task { await refresh() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(iCloudManager.isScanningCloudReviewItems || workingItemId != nil)
+                }
+            }
+            .confirmationDialog(
+                "Delete this item from iCloud?",
+                isPresented: Binding(
+                    get: { itemPendingDelete != nil },
+                    set: { if !$0 { itemPendingDelete = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Delete from iCloud", role: .destructive) {
+                    if let item = itemPendingDelete {
+                        Task { await delete(item) }
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    itemPendingDelete = nil
+                }
+            } message: {
+                Text("This removes app-created iCloud sync records for the selected item. It does not delete anything already stored locally on this device.")
+            }
+            .task {
+                await refresh()
+            }
+        }
+    }
+
+    private func refresh() async {
+        await iCloudManager.refreshCloudReviewItems(appCoordinator: appCoordinator)
+    }
+
+    private func restore(_ item: CloudReviewItem) async {
+        await MainActor.run {
+            workingItemId = item.id
+            actionMessage = ""
+            actionIsError = false
+        }
+
+        do {
+            let result = try await iCloudManager.restoreCloudReviewItem(
+                item,
+                appCoordinator: appCoordinator,
+                includeAudioFiles: includeAudioFiles
+            )
+            appCoordinator.syncRecordingURLs()
+            await MainActor.run {
+                actionMessage = "Restored \(result.recordingsRestored) recordings, \(result.transcriptsRestored) transcripts, \(result.summariesRestored) summaries."
+                actionIsError = false
+                workingItemId = nil
+            }
+        } catch {
+            await MainActor.run {
+                actionMessage = "Restore failed: \(error.localizedDescription)"
+                actionIsError = true
+                workingItemId = nil
+            }
+        }
+    }
+
+    private func delete(_ item: CloudReviewItem) async {
+        await MainActor.run {
+            workingItemId = item.id
+            actionMessage = ""
+            actionIsError = false
+            itemPendingDelete = nil
+        }
+
+        do {
+            let deletedCount = try await iCloudManager.deleteCloudReviewItem(item)
+            await MainActor.run {
+                actionMessage = "Deleted \(deletedCount) iCloud records."
+                actionIsError = false
+                workingItemId = nil
+            }
+        } catch {
+            await MainActor.run {
+                actionMessage = "Delete failed: \(error.localizedDescription)"
+                actionIsError = true
+                workingItemId = nil
+            }
+        }
+    }
+}
 
 private struct ModernSettingsCard<Content: View, Trailing: View>: View {
     let title: String
