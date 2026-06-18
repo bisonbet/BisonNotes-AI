@@ -190,6 +190,8 @@ class iCloudStorageManager: ObservableObject {
     @Published var pendingSyncCount: Int = 0
     @Published var lastSyncDate: Date?
     @Published var pendingConflicts: [SyncConflict] = []
+    @Published var lastMaintenanceMessage: String?
+    @Published var isAutomaticReconcileRunning = false
     
     // MARK: - Sync State Management
     
@@ -210,6 +212,7 @@ class iCloudStorageManager: ObservableObject {
 
     /// Prevents periodic/queued sync work from competing with manual backup/restore operations.
     private var isManualCloudTransferInProgress = false
+    private var isAutomaticCloudReconcileInProgress = false
 
     /// Maximum number of summaries to sync in a single batch
     private let maxBatchSize = 10
@@ -405,6 +408,11 @@ class iCloudStorageManager: ObservableObject {
             AppLog.shared.iCloudSync("iCloud sync is disabled, skipping summary sync", level: .debug)
             return
         }
+
+        guard !isCloudSyncDisabled(for: summary) else {
+            AppLog.shared.iCloudSync("Summary belongs to a recording marked Keep on This Device, skipping iCloud sync", level: .debug)
+            return
+        }
         
         // Check if this summary is already being synced
         if syncingSummaries.contains(summary.id) {
@@ -442,6 +450,7 @@ class iCloudStorageManager: ObservableObject {
     
     /// Performs batch sync of queued summaries
     private func performBatchSync() async {
+        pendingSyncQueue.removeAll { isCloudSyncDisabled(for: $0) }
         guard !pendingSyncQueue.isEmpty else { return }
         
         // Take up to maxBatchSize summaries from the queue
@@ -627,18 +636,19 @@ class iCloudStorageManager: ObservableObject {
             AppLog.shared.iCloudSync("iCloud sync is disabled, skipping batch sync", level: .debug)
             return
         }
+        let syncableSummaries = summaries.filter { !isCloudSyncDisabled(for: $0) }
 
         await updateSyncStatus(.syncing)
         await MainActor.run {
-            self.pendingSyncCount = summaries.count
+            self.pendingSyncCount = syncableSummaries.count
         }
 
-        AppLog.shared.iCloudSync("Starting batch sync of \(summaries.count) summaries", level: .debug)
+        AppLog.shared.iCloudSync("Starting batch sync of \(syncableSummaries.count) summaries", level: .debug)
 
         var syncedCount = 0
         var failedCount = 0
 
-        for summary in summaries {
+        for summary in syncableSummaries {
             do {
                 try await syncSummary(summary)
                 syncedCount += 1
@@ -648,7 +658,7 @@ class iCloudStorageManager: ObservableObject {
             }
 
             await MainActor.run {
-                self.pendingSyncCount = summaries.count - syncedCount - failedCount
+                self.pendingSyncCount = syncableSummaries.count - syncedCount - failedCount
             }
         }
 
@@ -803,14 +813,15 @@ class iCloudStorageManager: ObservableObject {
             let cloudSummaries = try await fetchSummariesFromiCloud()
             
             // Create lookup dictionaries
-            let localLookup = Dictionary(uniqueKeysWithValues: localSummaries.map { ($0.id, $0) })
+            let syncableLocalSummaries = localSummaries.filter { !isCloudSyncDisabled(for: $0) }
+            let localLookup = Dictionary(uniqueKeysWithValues: syncableLocalSummaries.map { ($0.id, $0) })
             let cloudLookup = Dictionary(uniqueKeysWithValues: cloudSummaries.map { ($0.id, $0) })
             
             var syncedCount = 0
             var conflictCount = 0
             
             // Process local summaries
-            for localSummary in localSummaries {
+            for localSummary in syncableLocalSummaries {
                 if let cloudSummary = cloudLookup[localSummary.id] {
                     // Summary exists in both - check for conflicts
                     if localSummary.summary != cloudSummary.summary ||
@@ -1428,6 +1439,12 @@ class iCloudStorageManager: ObservableObject {
     private func createCoreDataSummary(from cloudSummary: EnhancedSummaryData, appCoordinator: AppDataCoordinator) async throws -> Bool {
         var didPersist = false
 
+        if let recordingId = cloudSummary.recordingId,
+           appCoordinator.coreDataManager.getRecording(id: recordingId)?.isCloudSyncDisabled == true {
+            AppLog.shared.iCloudSync("Skipping cloud summary for a recording marked Keep on This Device", level: .debug)
+            return false
+        }
+
         // First, try to link to existing local recording/transcript if they exist
         if let recordingId = cloudSummary.recordingId,
            let transcriptId = cloudSummary.transcriptId,
@@ -1808,6 +1825,17 @@ class iCloudStorageManager: ObservableObject {
         }
         
         return false
+    }
+
+    private func isCloudSyncDisabled(for summary: EnhancedSummaryData) -> Bool {
+        guard let recordingId = summary.recordingId else {
+            return false
+        }
+        let context = PersistenceController.shared.container.viewContext
+        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", recordingId as CVarArg)
+        fetchRequest.fetchLimit = 1
+        return ((try? context.fetch(fetchRequest).first)?.isCloudSyncDisabled) == true
     }
     
     private func performBatteryAwareSync() async throws {
@@ -2421,6 +2449,13 @@ struct CloudRestoreResult {
     var includedSensitiveSettings: Bool = false
 }
 
+struct CloudReconcileResult {
+    var backupResult = CloudBackupResult()
+    var restoreResult = CloudRestoreResult()
+    var deletedLocalRecordings: Int = 0
+    var deletedCloudRecords: Int = 0
+}
+
 private struct CodableSettingsBackupPayload: Codable {
     let createdAt: Date
     let includesSensitiveValues: Bool
@@ -2456,6 +2491,7 @@ extension iCloudStorageManager {
     private static let backupSummaryRecordType = "CD_BackupSummary"
     private static let backupSettingsRecordType = "CD_BackupSettings"
     private static let backupContentIndexRecordType = "CD_BackupContentIndex"
+    private static let backupDeletionRecordType = "CD_BackupDeletion"
     private static let backupSettingsRecordName = "settings"
     private static let backupContentIndexRecordName = "content_index"
     private static let backupSchemaVersion = 1
@@ -2463,6 +2499,7 @@ extension iCloudStorageManager {
     private static let backupRecordingRecordPrefix = "backup_recording_"
     private static let backupTranscriptRecordPrefix = "backup_transcript_"
     private static let backupSummaryRecordPrefix = "backup_summary_"
+    private static let backupDeletionRecordPrefix = "backup_deletion_"
 
     private static let fieldRecordingName = "recordingName"
     private static let fieldRecordingDate = "recordingDate"
@@ -2514,6 +2551,7 @@ extension iCloudStorageManager {
     private static let fieldIndexRecordingRecordNames = "recordingRecordNames"
     private static let fieldIndexTranscriptRecordNames = "transcriptRecordNames"
     private static let fieldIndexSummaryRecordNames = "summaryRecordNames"
+    private static let fieldDeletedAt = "deletedAt"
 
     private static let backedUpSettingsKeys: [String] = [
         "SelectedAIEngine",
@@ -2641,12 +2679,27 @@ extension iCloudStorageManager {
             var transcriptRecordNames = Set<String>()
             var summaryRecordNames = Set<String>()
             let fileManager = FileManager.default
-            let recordings = appCoordinator.coreDataManager.getAllRecordings()
-            let transcripts = appCoordinator.coreDataManager.getAllTranscripts()
-            let summaries = appCoordinator.coreDataManager.getAllSummaries()
+            let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
+            let excludedRecordingIds = Set(allRecordings.compactMap { recording in
+                recording.isCloudSyncDisabled ? recording.id : nil
+            })
+            let recordings = allRecordings.filter { recording in
+                guard let recordingId = recording.id else { return true }
+                return !excludedRecordingIds.contains(recordingId)
+            }
+            let transcripts = appCoordinator.coreDataManager.getAllTranscripts().filter { transcript in
+                guard let recordingId = transcript.recordingId else { return true }
+                return !excludedRecordingIds.contains(recordingId)
+            }
+            let summaries = appCoordinator.coreDataManager.getAllSummaries().filter { summary in
+                let recordingId = summary.recordingId ?? summary.recording?.id
+                guard let recordingId else { return true }
+                return !excludedRecordingIds.contains(recordingId)
+            }
             AppLog.shared.iCloudSync(
                 "Backup source counts - recordings: \(recordings.count), " +
-                "transcripts: \(transcripts.count), summaries: \(summaries.count)",
+                "transcripts: \(transcripts.count), summaries: \(summaries.count), " +
+                "local-only recordings skipped: \(excludedRecordingIds.count)",
                 level: .debug
             )
 
@@ -2694,7 +2747,17 @@ extension iCloudStorageManager {
                 recordNamePrefix: Self.backupRecordingRecordPrefix,
                 database: database
             )
-            recordingRecordNames.formUnion(existingRecordingRecordsById.values.map { $0.recordID.recordName })
+            let excludedRecordingRecordIDs = existingRecordingRecordsById.compactMap { recordingId, record in
+                excludedRecordingIds.contains(recordingId) ? record.recordID : nil
+            }
+            if !excludedRecordingRecordIDs.isEmpty {
+                try await deleteBackupRecords(excludedRecordingRecordIDs, database: database)
+            }
+            recordingRecordNames.formUnion(
+                existingRecordingRecordsById.compactMap { recordingId, record in
+                    excludedRecordingIds.contains(recordingId) ? nil : record.recordID.recordName
+                }
+            )
 
             for recording in recordings {
                 guard let recordingId = recording.id else { continue }
@@ -2768,7 +2831,21 @@ extension iCloudStorageManager {
                 recordNamePrefix: Self.backupTranscriptRecordPrefix,
                 database: database
             )
-            transcriptRecordNames.formUnion(existingTranscriptRecordsById.values.map { $0.recordID.recordName })
+            let excludedTranscriptRecordIDs = existingTranscriptRecordsById.compactMap { _, record in
+                backupRecordBelongsToExcludedRecording(record, excludedRecordingIds: excludedRecordingIds)
+                    ? record.recordID
+                    : nil
+            }
+            if !excludedTranscriptRecordIDs.isEmpty {
+                try await deleteBackupRecords(excludedTranscriptRecordIDs, database: database)
+            }
+            transcriptRecordNames.formUnion(
+                existingTranscriptRecordsById.compactMap { _, record in
+                    backupRecordBelongsToExcludedRecording(record, excludedRecordingIds: excludedRecordingIds)
+                        ? nil
+                        : record.recordID.recordName
+                }
+            )
             for transcript in transcripts {
                 guard let transcriptId = transcript.id else { continue }
 
@@ -2806,7 +2883,21 @@ extension iCloudStorageManager {
                 recordType: Self.backupTranscriptRecordType,
                 database: database
             )) ?? []
-            transcriptRecordNames.formUnion(transcriptQueryRecords.map { $0.recordID.recordName })
+            let excludedTranscriptQueryRecordIDs = transcriptQueryRecords.compactMap { record in
+                backupRecordBelongsToExcludedRecording(record, excludedRecordingIds: excludedRecordingIds)
+                    ? record.recordID
+                    : nil
+            }
+            if !excludedTranscriptQueryRecordIDs.isEmpty {
+                try await deleteBackupRecords(excludedTranscriptQueryRecordIDs, database: database)
+            }
+            transcriptRecordNames.formUnion(
+                transcriptQueryRecords.compactMap { record in
+                    backupRecordBelongsToExcludedRecording(record, excludedRecordingIds: excludedRecordingIds)
+                        ? nil
+                        : record.recordID.recordName
+                }
+            )
             let transcriptCandidateRecords = try await fetchBackupRecordsByRecordNames(
                 Array(transcriptRecordNames),
                 expectedRecordType: Self.backupTranscriptRecordType,
@@ -2828,7 +2919,21 @@ extension iCloudStorageManager {
                 recordNamePrefix: Self.backupSummaryRecordPrefix,
                 database: database
             )
-            summaryRecordNames.formUnion(existingSummaryRecordsById.values.map { $0.recordID.recordName })
+            let excludedSummaryRecordIDs = existingSummaryRecordsById.compactMap { _, record in
+                backupRecordBelongsToExcludedRecording(record, excludedRecordingIds: excludedRecordingIds)
+                    ? record.recordID
+                    : nil
+            }
+            if !excludedSummaryRecordIDs.isEmpty {
+                try await deleteBackupRecords(excludedSummaryRecordIDs, database: database)
+            }
+            summaryRecordNames.formUnion(
+                existingSummaryRecordsById.compactMap { _, record in
+                    backupRecordBelongsToExcludedRecording(record, excludedRecordingIds: excludedRecordingIds)
+                        ? nil
+                        : record.recordID.recordName
+                }
+            )
             for summary in summaries {
                 guard let summaryId = summary.id else { continue }
 
@@ -2877,7 +2982,21 @@ extension iCloudStorageManager {
                 recordType: Self.backupSummaryRecordType,
                 database: database
             )) ?? []
-            summaryRecordNames.formUnion(summaryQueryRecords.map { $0.recordID.recordName })
+            let excludedSummaryQueryRecordIDs = summaryQueryRecords.compactMap { record in
+                backupRecordBelongsToExcludedRecording(record, excludedRecordingIds: excludedRecordingIds)
+                    ? record.recordID
+                    : nil
+            }
+            if !excludedSummaryQueryRecordIDs.isEmpty {
+                try await deleteBackupRecords(excludedSummaryQueryRecordIDs, database: database)
+            }
+            summaryRecordNames.formUnion(
+                summaryQueryRecords.compactMap { record in
+                    backupRecordBelongsToExcludedRecording(record, excludedRecordingIds: excludedRecordingIds)
+                        ? nil
+                        : record.recordID.recordName
+                }
+            )
             let summaryCandidateRecords = try await fetchBackupRecordsByRecordNames(
                 Array(summaryRecordNames),
                 expectedRecordType: Self.backupSummaryRecordType,
@@ -3000,6 +3119,27 @@ extension iCloudStorageManager {
                         "transcripts: \(transcriptRecords.count), summaries: \(summaryRecords.count)",
                         level: .debug
                     )
+                }
+            }
+
+            let locallyExcludedRecordingIds = Set(appCoordinator.coreDataManager.getAllRecordings().compactMap { recording in
+                recording.isCloudSyncDisabled ? recording.id : nil
+            })
+            if !locallyExcludedRecordingIds.isEmpty {
+                recordingRecords = recordingRecords.filter { record in
+                    guard let recordingId = decodeBackupRecordUUID(
+                        recordName: record.recordID.recordName,
+                        prefix: Self.backupRecordingRecordPrefix
+                    ) else {
+                        return true
+                    }
+                    return !locallyExcludedRecordingIds.contains(recordingId)
+                }
+                transcriptRecords = transcriptRecords.filter {
+                    !backupRecordBelongsToExcludedRecording($0, excludedRecordingIds: locallyExcludedRecordingIds)
+                }
+                summaryRecords = summaryRecords.filter {
+                    !backupRecordBelongsToExcludedRecording($0, excludedRecordingIds: locallyExcludedRecordingIds)
                 }
             }
 
@@ -3321,6 +3461,340 @@ extension iCloudStorageManager {
         return restoredCount
     }
 
+    func reconcileAllDataWithiCloud(
+        appCoordinator: AppDataCoordinator,
+        reason: String
+    ) async throws -> CloudReconcileResult {
+        guard isEnabled else {
+            return CloudReconcileResult()
+        }
+        guard !isManualCloudTransferInProgress,
+              !isAutomaticCloudReconcileInProgress else {
+            return CloudReconcileResult()
+        }
+        guard networkStatus.canSync else {
+            throw NSError(
+                domain: "iCloudStorageManager",
+                code: 4010,
+                userInfo: [NSLocalizedDescriptionKey: "Network unavailable."]
+            )
+        }
+
+        isAutomaticCloudReconcileInProgress = true
+        isAutomaticReconcileRunning = true
+        defer {
+            isAutomaticCloudReconcileInProgress = false
+            isAutomaticReconcileRunning = false
+        }
+
+        let options = currentCloudBackupOptions()
+        var result = CloudReconcileResult()
+        let deletionResult = try await applyiCloudDeletionMarkers(appCoordinator: appCoordinator)
+        result.deletedLocalRecordings = deletionResult.local
+        result.deletedCloudRecords = deletionResult.cloud
+        result.backupResult = try await backupAllDataToiCloud(appCoordinator: appCoordinator, options: options)
+        result.restoreResult = try await restoreAllDataFromiCloud(
+            appCoordinator: appCoordinator,
+            includeAudioFiles: options.includeAudioFiles,
+            restoreSettings: options.includeSettings
+        )
+
+        let restoredCount = result.restoreResult.recordingsRestored +
+            result.restoreResult.transcriptsRestored +
+            result.restoreResult.summariesRestored
+        let message =
+            "iCloud sync finished (\(reason)): " +
+            "\(result.backupResult.recordingsBackedUp) local recordings checked, " +
+            "\(restoredCount) cloud items restored, " +
+            "\(result.deletedLocalRecordings) deleted items applied, " +
+            "\(result.deletedCloudRecords) cloud records cleaned."
+        await MainActor.run {
+            self.lastMaintenanceMessage = message
+            self.lastSyncDate = Date()
+            UserDefaults.standard.set(self.lastSyncDate, forKey: "lastSyncDate")
+        }
+        return result
+    }
+
+    func markRecordingDeletedIniCloud(
+        recordingId: UUID,
+        transcriptIds: [UUID],
+        summaryIds: [UUID]
+    ) async throws {
+        guard isEnabled else { return }
+
+        let container = CKContainer.default()
+        let database = container.privateCloudDatabase
+        try await validateiCloudAccountAvailability(using: container)
+
+        let deletedAt = Date()
+        let recordID = CKRecord.ID(recordName: makeBackupRecordName(prefix: Self.backupDeletionRecordPrefix, id: recordingId))
+        let record = try await fetchOrCreateRecord(
+            recordType: Self.backupDeletionRecordType,
+            recordID: recordID,
+            database: database
+        )
+        record[Self.fieldRecordingId] = recordingId.uuidString
+        record[Self.fieldDeletedAt] = deletedAt
+        record[Self.fieldDeviceIdentifier] = deviceIdentifier
+        try await saveBackupRecord(record, database: database)
+
+        let deletedCloudRecords = try await deleteCloudContentRecords(
+            recordingId: recordingId,
+            transcriptIds: transcriptIds,
+            summaryIds: summaryIds,
+            database: database
+        )
+        UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        await MainActor.run {
+            self.lastMaintenanceMessage = "Deleted item removed from iCloud sync records."
+        }
+        AppLog.shared.iCloudSync("Recorded iCloud deletion marker for \(recordingId.uuidString); removed \(deletedCloudRecords) cloud content records", level: .debug)
+    }
+
+    func removeSummaryContentFromiCloud(summaryId: UUID) async throws {
+        guard isEnabled else { return }
+
+        let container = CKContainer.default()
+        let database = container.privateCloudDatabase
+        try await validateiCloudAccountAvailability(using: container)
+
+        let recordIDs = [
+            CKRecord.ID(recordName: summaryId.uuidString),
+            CKRecord.ID(recordName: makeBackupRecordName(prefix: Self.backupSummaryRecordPrefix, id: summaryId))
+        ]
+        try await deleteBackupRecords(recordIDs, database: database)
+        UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        await MainActor.run {
+            self.lastMaintenanceMessage = "Deleted summary removed from iCloud sync records."
+        }
+    }
+
+    func removeContentFromiCloud(
+        recordingId: UUID,
+        appCoordinator: AppDataCoordinator
+    ) async throws {
+        guard isEnabled else { return }
+
+        let container = CKContainer.default()
+        let database = container.privateCloudDatabase
+        try await validateiCloudAccountAvailability(using: container)
+
+        let transcripts = appCoordinator.coreDataManager.getAllTranscripts().filter {
+            $0.recordingId == recordingId
+        }
+        let summaries = appCoordinator.coreDataManager.getAllSummaries().filter {
+            ($0.recordingId ?? $0.recording?.id) == recordingId
+        }
+
+        let recordingBackupRecordName = makeBackupRecordName(prefix: Self.backupRecordingRecordPrefix, id: recordingId)
+        let transcriptBackupRecordNames = transcripts.compactMap { transcript in
+            transcript.id.map { makeBackupRecordName(prefix: Self.backupTranscriptRecordPrefix, id: $0) }
+        }
+        let summaryBackupRecordNames = summaries.compactMap { summary in
+            summary.id.map { makeBackupRecordName(prefix: Self.backupSummaryRecordPrefix, id: $0) }
+        }
+        let backupRecordIDs =
+            [CKRecord.ID(recordName: recordingBackupRecordName)] +
+            transcriptBackupRecordNames.map { CKRecord.ID(recordName: $0) } +
+            summaryBackupRecordNames.map { CKRecord.ID(recordName: $0) }
+
+        if !backupRecordIDs.isEmpty {
+            try await deleteBackupRecords(backupRecordIDs, database: database)
+        }
+
+        let summarySyncRecordIDs = summaries.compactMap { $0.id }.map { CKRecord.ID(recordName: $0.uuidString) }
+        if !summarySyncRecordIDs.isEmpty {
+            try await deleteBackupRecords(summarySyncRecordIDs, database: database)
+        }
+
+        try await removeBackupRecordNamesFromContentIndex(
+            database: database,
+            recordingRecordNames: [recordingBackupRecordName],
+            transcriptRecordNames: transcriptBackupRecordNames,
+            summaryRecordNames: summaryBackupRecordNames
+        )
+
+        UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        AppLog.shared.iCloudSync("Removed iCloud records for local-only recording \(recordingId.uuidString)", level: .debug)
+    }
+
+    private func currentCloudBackupOptions() -> CloudBackupOptions {
+        let defaults = UserDefaults.standard
+        let includeAudio = defaults.object(forKey: "iCloudBackupIncludeAudioFiles") != nil
+            ? defaults.bool(forKey: "iCloudBackupIncludeAudioFiles")
+            : false
+        let includeSettings = defaults.object(forKey: "iCloudBackupIncludeSettings") != nil
+            ? defaults.bool(forKey: "iCloudBackupIncludeSettings")
+            : true
+        let includeSensitive = defaults.object(forKey: "iCloudBackupIncludeSensitiveSettings") != nil
+            ? defaults.bool(forKey: "iCloudBackupIncludeSensitiveSettings")
+            : false
+
+        return CloudBackupOptions(
+            includeAudioFiles: includeAudio,
+            includeSettings: includeSettings,
+            includeSensitiveSettings: includeSettings && includeSensitive
+        )
+    }
+
+    private func applyiCloudDeletionMarkers(appCoordinator: AppDataCoordinator) async throws -> (local: Int, cloud: Int) {
+        let container = CKContainer.default()
+        let database = container.privateCloudDatabase
+        try await validateiCloudAccountAvailability(using: container)
+
+        let deletionRecords = try await fetchBackupRecords(
+            recordType: Self.backupDeletionRecordType,
+            database: database
+        )
+        guard !deletionRecords.isEmpty else { return (0, 0) }
+
+        var deletedLocalCount = 0
+        var deletedCloudCount = 0
+        for record in deletionRecords {
+            let recordingId = (record[Self.fieldRecordingId] as? String).flatMap { UUID(uuidString: $0) }
+                ?? decodeBackupRecordUUID(recordName: record.recordID.recordName, prefix: Self.backupDeletionRecordPrefix)
+            guard let recordingId else {
+                continue
+            }
+
+            deletedCloudCount += try await deleteCloudContentRecords(
+                recordingId: recordingId,
+                transcriptIds: [],
+                summaryIds: [],
+                database: database
+            )
+
+            guard let recording = appCoordinator.coreDataManager.getRecording(id: recordingId),
+                  recording.isCloudSyncDisabled == false else {
+                continue
+            }
+            let deletedAt = record[Self.fieldDeletedAt] as? Date ?? Date.distantPast
+            if localRecordingTimestamp(recording) <= deletedAt {
+                appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+                deletedLocalCount += 1
+            }
+        }
+
+        if deletedLocalCount > 0 || deletedCloudCount > 0 {
+            await MainActor.run {
+                self.lastMaintenanceMessage = "Applied \(deletedLocalCount) iCloud deletion\(deletedLocalCount == 1 ? "" : "s") to this device and cleaned \(deletedCloudCount) cloud record\(deletedCloudCount == 1 ? "" : "s")."
+            }
+            NotificationCenter.default.post(name: NSNotification.Name("iCloudReconcileCompleted"), object: nil)
+        }
+        return (deletedLocalCount, deletedCloudCount)
+    }
+
+    private func localRecordingTimestamp(_ recording: RecordingEntry) -> Date {
+        return recording.lastModified
+            ?? recording.createdAt
+            ?? recording.recordingDate
+            ?? Date.distantPast
+    }
+
+    private func deleteCloudContentRecords(
+        recordingId: UUID,
+        transcriptIds: [UUID],
+        summaryIds: [UUID],
+        database: CKDatabase
+    ) async throws -> Int {
+        let recordingBackupRecordName = makeBackupRecordName(prefix: Self.backupRecordingRecordPrefix, id: recordingId)
+        var backupRecordIDs = [CKRecord.ID(recordName: recordingBackupRecordName)]
+
+        let knownTranscriptRecordNames = transcriptIds.map {
+            makeBackupRecordName(prefix: Self.backupTranscriptRecordPrefix, id: $0)
+        }
+        let knownSummaryRecordNames = summaryIds.map {
+            makeBackupRecordName(prefix: Self.backupSummaryRecordPrefix, id: $0)
+        }
+        backupRecordIDs.append(contentsOf: knownTranscriptRecordNames.map { CKRecord.ID(recordName: $0) })
+        backupRecordIDs.append(contentsOf: knownSummaryRecordNames.map { CKRecord.ID(recordName: $0) })
+
+        let transcriptRecords = (try? await fetchBackupRecords(recordType: Self.backupTranscriptRecordType, database: database)) ?? []
+        let summaryRecords = (try? await fetchBackupRecords(recordType: Self.backupSummaryRecordType, database: database)) ?? []
+        backupRecordIDs.append(contentsOf: transcriptRecords.compactMap { record in
+            backupRecordBelongsToRecording(record, recordingId: recordingId) ? record.recordID : nil
+        })
+        backupRecordIDs.append(contentsOf: summaryRecords.compactMap { record in
+            backupRecordBelongsToRecording(record, recordingId: recordingId) ? record.recordID : nil
+        })
+
+        let legacySummaryRecordIDs = try await legacySummarySyncRecordIDs(
+            recordingId: recordingId,
+            summaryIds: summaryIds,
+            database: database
+        )
+
+        let deletedRecordCount = try await deleteExistingCloudRecords(
+            backupRecordIDs + legacySummaryRecordIDs,
+            database: database
+        )
+        try await removeBackupRecordNamesFromContentIndex(
+            database: database,
+            recordingRecordNames: [recordingBackupRecordName],
+            transcriptRecordNames: knownTranscriptRecordNames,
+            summaryRecordNames: knownSummaryRecordNames
+        )
+        return deletedRecordCount
+    }
+
+    private func deleteExistingCloudRecords(_ recordIDs: [CKRecord.ID], database: CKDatabase) async throws -> Int {
+        var deletedCount = 0
+        var seenRecordNames = Set<String>()
+
+        for recordID in recordIDs where !seenRecordNames.contains(recordID.recordName) {
+            seenRecordNames.insert(recordID.recordName)
+            do {
+                _ = try await database.record(for: recordID)
+                try await deleteBackupRecord(recordID, database: database)
+                deletedCount += 1
+            } catch let error as CKError where error.code == .unknownItem {
+                continue
+            }
+        }
+
+        return deletedCount
+    }
+
+    private func legacySummarySyncRecordIDs(
+        recordingId: UUID,
+        summaryIds: [UUID],
+        database: CKDatabase
+    ) async throws -> [CKRecord.ID] {
+        let summaryIdStrings = Set(summaryIds.map { $0.uuidString })
+        let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: NSPredicate(value: true))
+        var recordsToDelete: [CKRecord.ID] = summaryIds.map { CKRecord.ID(recordName: $0.uuidString) }
+
+        do {
+            var fetchResult = try await database.records(matching: query)
+            while true {
+                for (_, result) in fetchResult.matchResults {
+                    guard case .success(let record) = result else { continue }
+                    let recordRecordingId = record[CloudKitSummaryRecord.recordingIdField] as? String
+                    if recordRecordingId == recordingId.uuidString ||
+                        summaryIdStrings.contains(record.recordID.recordName) {
+                        recordsToDelete.append(record.recordID)
+                    }
+                }
+
+                guard let cursor = fetchResult.queryCursor else { break }
+                fetchResult = try await database.records(continuingMatchFrom: cursor)
+            }
+        } catch {
+            AppLog.shared.iCloudSync("Could not scan legacy summary sync records for deletion cleanup: \(error.localizedDescription)", level: .error)
+        }
+
+        return Array(Dictionary(grouping: recordsToDelete, by: { $0.recordName }).compactMap { $0.value.first })
+    }
+
+    private func backupRecordBelongsToRecording(_ record: CKRecord, recordingId: UUID) -> Bool {
+        guard let recordingIdValue = record[Self.fieldRecordingId] as? String,
+              let recordRecordingId = UUID(uuidString: recordingIdValue) else {
+            return false
+        }
+        return recordRecordingId == recordingId
+    }
+
     private func makeBackupRecordName(prefix: String, id: UUID) -> String {
         return "\(prefix)\(id.uuidString)"
     }
@@ -3346,7 +3820,7 @@ extension iCloudStorageManager {
         options: CloudBackupOptions
     ) -> String {
         var hashBuilder = StableHashBuilder()
-        hashBuilder.combine("v2")
+        hashBuilder.combine("v3")
         hashBuilder.combine(options.includeAudioFiles ? "audio:on" : "audio:off")
         hashBuilder.combine(options.includeSettings ? "settings:on" : "settings:off")
         hashBuilder.combine(options.includeSensitiveSettings ? "sensitive:on" : "sensitive:off")
@@ -3430,6 +3904,17 @@ extension iCloudStorageManager {
         }
 
         return hashBuilder.hexDigest
+    }
+
+    private func backupRecordBelongsToExcludedRecording(
+        _ record: CKRecord,
+        excludedRecordingIds: Set<UUID>
+    ) -> Bool {
+        guard let recordingIdValue = record[Self.fieldRecordingId] as? String,
+              let recordingId = UUID(uuidString: recordingIdValue) else {
+            return false
+        }
+        return excludedRecordingIds.contains(recordingId)
     }
 
     private func dateToken(_ date: Date?) -> String {
@@ -3886,6 +4371,35 @@ extension iCloudStorageManager {
             return BackupContentRecordsFromIndex()
         } catch {
             throw error
+        }
+    }
+
+    private func removeBackupRecordNamesFromContentIndex(
+        database: CKDatabase,
+        recordingRecordNames: [String],
+        transcriptRecordNames: [String],
+        summaryRecordNames: [String]
+    ) async throws {
+        let recordID = CKRecord.ID(recordName: Self.backupContentIndexRecordName)
+
+        do {
+            let indexRecord = try await database.record(for: recordID)
+            let recordingNamesToRemove = Set(recordingRecordNames)
+            let transcriptNamesToRemove = Set(transcriptRecordNames)
+            let summaryNamesToRemove = Set(summaryRecordNames)
+
+            let currentRecordingNames = indexRecord[Self.fieldIndexRecordingRecordNames] as? [String] ?? []
+            let currentTranscriptNames = indexRecord[Self.fieldIndexTranscriptRecordNames] as? [String] ?? []
+            let currentSummaryNames = indexRecord[Self.fieldIndexSummaryRecordNames] as? [String] ?? []
+
+            try await saveBackupContentIndex(
+                database: database,
+                recordingRecordNames: currentRecordingNames.filter { !recordingNamesToRemove.contains($0) },
+                transcriptRecordNames: currentTranscriptNames.filter { !transcriptNamesToRemove.contains($0) },
+                summaryRecordNames: currentSummaryNames.filter { !summaryNamesToRemove.contains($0) }
+            )
+        } catch let error as CKError where error.code == .unknownItem {
+            return
         }
     }
 

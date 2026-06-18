@@ -310,6 +310,14 @@ struct RecordingsListView: View {
             loadRecordings()
             refreshFileRelationships()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingCloudSyncPreferenceChanged"))) { _ in
+            loadRecordings()
+            refreshFileRelationships()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("iCloudReconcileCompleted"))) { _ in
+            loadRecordings()
+            refreshFileRelationships()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingAdded"))) { _ in
             loadRecordings()
             refreshFileRelationships()
@@ -684,6 +692,15 @@ struct RecordingsListView: View {
 
                         recordingStatusView(for: recording)
 
+                        if recording.isCloudSyncDisabled {
+                            Label("Keep on This Device", systemImage: "iphone")
+                                .font(.caption.weight(.medium))
+                                .foregroundColor(.indigo)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.indigo.opacity(0.12), in: Capsule())
+                        }
+
                         if let locationData = recording.locationData {
                             Button(action: {
                                 showLocationDetails(locationData)
@@ -796,9 +813,24 @@ struct RecordingsListView: View {
             }
         }
 
+        cloudSyncPreferenceButton(for: recording)
+
         recordingIconButton("Delete Recording", systemImage: "trash", tint: .red) {
             deletionData.recordingToDelete = recording
             deleteRecording(recording)
+        }
+    }
+
+    @ViewBuilder
+    private func cloudSyncPreferenceButton(for recording: AudioRecordingFile) -> some View {
+        if recording.recordingId != nil {
+            recordingIconButton(
+                recording.isCloudSyncDisabled ? "Allow iCloud Sync" : "Keep on This Device",
+                systemImage: recording.isCloudSyncDisabled ? "iphone" : "icloud",
+                tint: recording.isCloudSyncDisabled ? .indigo : .blue
+            ) {
+                toggleCloudSyncPreference(for: recording)
+            }
         }
     }
 
@@ -989,7 +1021,8 @@ struct RecordingsListView: View {
                 archivedAt: recording.archivedAt,
                 archiveNote: recording.archiveNote,
                 recordingId: recording.id,
-                storedFileSize: recording.fileSize
+                storedFileSize: recording.fileSize,
+                isCloudSyncDisabled: recording.isCloudSyncDisabled
             )
         }
         .sorted { $0.date > $1.date }
@@ -1025,6 +1058,27 @@ struct RecordingsListView: View {
 
     private func showLocationDetails(_ locationData: LocationData) {
         selectedLocationData = locationData
+    }
+
+    private func toggleCloudSyncPreference(for recording: AudioRecordingFile) {
+        guard let recordingId = recording.recordingId else { return }
+
+        Task {
+            do {
+                try await appCoordinator.setCloudSyncDisabled(
+                    for: recordingId,
+                    disabled: !recording.isCloudSyncDisabled
+                )
+                await MainActor.run {
+                    loadRecordings()
+                    refreshFileRelationships()
+                }
+            } catch {
+                await MainActor.run {
+                    archiveRestoreError = "Could not update iCloud sync preference: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     private func loadLocationAddressesBatch(for recordings: [AudioRecordingFile]) {

@@ -17,11 +17,13 @@ struct RecordingFile: Identifiable, Equatable {
     let archiveNote: String?
     let recordingId: UUID?
     let storedFileSize: Int64
+    let isCloudSyncDisabled: Bool
 
     init(url: URL, name: String, date: Date, duration: TimeInterval,
          locationData: LocationData? = nil, isArchived: Bool = false,
          archivedAt: Date? = nil, archiveNote: String? = nil,
-         recordingId: UUID? = nil, storedFileSize: Int64 = 0) {
+         recordingId: UUID? = nil, storedFileSize: Int64 = 0,
+         isCloudSyncDisabled: Bool = false) {
         self.url = url
         self.name = name
         self.date = date
@@ -32,6 +34,7 @@ struct RecordingFile: Identifiable, Equatable {
         self.archiveNote = archiveNote
         self.recordingId = recordingId
         self.storedFileSize = storedFileSize
+        self.isCloudSyncDisabled = isCloudSyncDisabled
     }
 
     var dateString: String {

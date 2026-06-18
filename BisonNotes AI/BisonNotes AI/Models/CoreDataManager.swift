@@ -1176,6 +1176,23 @@ class CoreDataManager: ObservableObject {
             throw error
         }
     }
+
+    func updateCloudSyncDisabled(for recordingId: UUID, disabled: Bool) throws {
+        guard let recording = getRecording(id: recordingId) else {
+            throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found with ID: \(recordingId)"])
+        }
+
+        recording.isCloudSyncDisabled = disabled
+        recording.lastModified = Date()
+
+        do {
+            try context.save()
+            AppLog.shared.coreData("Updated iCloud exclusion for recording ID: \(recordingId)")
+        } catch {
+            AppLog.shared.coreData("Failed to save iCloud exclusion update: \(error)", level: .error)
+            throw error
+        }
+    }
     
     // MARK: - Location File Helpers
     

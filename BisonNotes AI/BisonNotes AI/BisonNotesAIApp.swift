@@ -539,6 +539,7 @@ struct BisonNotesAIApp: App {
                     _ = OnDeviceAIDownloadMonitor.shared
                     queueParakeetStartupRepairIfNeeded()
                     TemporaryFileCleanupService.shared.cleanupStaleFiles()
+                    appCoordinator.reconcileiCloudIfEnabled(reason: "app launch", force: true)
                 }
                 .onOpenURL(perform: handleOpenURL)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
@@ -562,6 +563,7 @@ struct BisonNotesAIApp: App {
                     scanSharedContainerForImports(trigger: .pendingToken)
                     // Also scan Documents/Inbox/ for files from "Open In" / document interaction.
                     scanInboxForImportableFiles()
+                    appCoordinator.reconcileiCloudIfEnabled(reason: "app active")
                 }
                 .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShareExtensionDidSaveFile"))) { _ in
                     NSLog("📎 Darwin notification received from Share Extension")

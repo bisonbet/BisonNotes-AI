@@ -27,6 +27,7 @@ struct SettingsView: View {
     @State private var showingTroubleshootingWarning = false
     @State private var logExportError: String?
     @State private var isPreparingLogs = false
+    @State private var showingICloudComplianceNotice = false
 
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = "On Device"
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "On-Device AI"
@@ -69,6 +70,14 @@ struct SettingsView: View {
             }
         } message: {
             Text("Regeneration completed successfully")
+        }
+        .alert("iCloud Sync Notice", isPresented: $showingICloudComplianceNotice) {
+            Button("Cancel", role: .cancel) { }
+            Button("Enable iCloud Sync") {
+                iCloudManager.isEnabled = true
+            }
+        } message: {
+            Text("BisonNotes AI and uploads to iCloud are not HIPAA-compliant. When iCloud Sync is enabled, eligible recordings, transcripts, summaries, and selected settings may be uploaded to your private iCloud account. To exclude an item from BisonNotes iCloud sync and backup, mark it Keep on This Device from its recording row or audio player.")
         }
         .onAppear {
             refreshEngineStatuses()
@@ -297,7 +306,7 @@ struct SettingsView: View {
                 ModernStatusPill(text: iCloudManager.isEnabled ? "Enabled" : "Disabled", tint: iCloudManager.isEnabled ? .green : .secondary)
             }
         ) {
-            Toggle("Enable iCloud Sync", isOn: $iCloudManager.isEnabled)
+            Toggle("Enable iCloud Sync", isOn: iCloudSyncToggleBinding)
 
             if iCloudManager.isEnabled {
                 Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
@@ -309,6 +318,21 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if iCloudManager.isAutomaticReconcileRunning {
+                    ModernInlineStatus(
+                        title: "Syncing with iCloud...",
+                        subtitle: "Applying eligible changes and cleanup across devices",
+                        systemImage: "arrow.triangle.2.circlepath",
+                        tint: .blue,
+                        showsProgress: true
+                    )
+                } else if let message = iCloudManager.lastMaintenanceMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 HStack(spacing: 10) {
                     Button {
@@ -662,7 +686,7 @@ struct SettingsView: View {
 
     private var iCloudSyncSection: some View {
         Section {
-            Toggle("Enable iCloud Sync", isOn: $iCloudManager.isEnabled)
+            Toggle("Enable iCloud Sync", isOn: iCloudSyncToggleBinding)
 
             if iCloudManager.isEnabled {
                 Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
@@ -672,6 +696,21 @@ struct SettingsView: View {
                 Text("API keys and AWS credentials stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+
+                if iCloudManager.isAutomaticReconcileRunning {
+                    HStack {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .scaleEffect(0.8)
+                        Text("Syncing with iCloud...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else if let message = iCloudManager.lastMaintenanceMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
 
                 Button {
                     Task { await backupAllDataToiCloud() }
@@ -817,6 +856,19 @@ struct SettingsView: View {
         } footer: {
             Text("Sync summaries, transcripts, and settings across your devices")
         }
+    }
+
+    private var iCloudSyncToggleBinding: Binding<Bool> {
+        Binding(
+            get: { iCloudManager.isEnabled },
+            set: { newValue in
+                if newValue {
+                    showingICloudComplianceNotice = true
+                } else {
+                    iCloudManager.isEnabled = false
+                }
+            }
+        )
     }
 
     private var comedyModeSection: some View {
