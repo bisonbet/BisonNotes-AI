@@ -153,6 +153,8 @@ When iCloud Sync is enabled, BisonNotes automatically reconciles eligible record
 
 iOS, iPadOS, and Mac Catalyst builds use the shared iCloud container `iCloud.Bison-Networking.BisonNotes-AI` for app-managed CloudKit sync. Devices must be signed into the same Apple ID and use the same CloudKit environment to see the same records. A local Debug build uses the CloudKit development environment, while TestFlight and App Store builds use production, so a Debug Mac Catalyst install will not see records created by a production iPhone or iPad build until the build channel/environment matches.
 
+Production iCloud sync requires the CloudKit production schema for `iCloud.Bison-Networking.BisonNotes-AI` to include the app-managed backup record types `CD_BackupRecording`, `CD_BackupTranscript`, `CD_BackupSummary`, `CD_BackupSettings`, `CD_BackupContentIndex`, and `CD_BackupDeletion`. Before shipping TestFlight or App Store builds that use these records, create/verify them in the development environment and deploy the CloudKit schema changes to production from CloudKit Dashboard. Production clients cannot create new record types themselves.
+
 Current app versions mark synced content as active before it is automatically restored on other devices. Older cloud-only items that are not marked active are held in **Settings > iCloud Sync > Review iCloud Items**, where they can be restored or deleted from BisonNotes iCloud sync records.
 
 ## Transcription Engines
@@ -287,6 +289,7 @@ The on-device AI feature enables completely private, offline AI processing. v2.1
 - AWS process-environment credentials (`AWS_ACCESS_KEY_ID` etc.) are cleared at launch; Bedrock, Transcribe, and background jobs use explicit credential resolvers from `AWSCredentialsManager`.
 - User-configurable AI endpoints (OpenAI/OpenAI-Compatible/Ollama/Whisper) are validated via `EndpointSecurityPolicy` — public cleartext destinations are blocked unless the per-service Development Mode override is enabled.
 - Enable required capabilities in Xcode (Microphone, Background Modes, iCloud if used). Keep `Info.plist` and `.entitlements` aligned with features. `APS_ENVIRONMENT` is set per-configuration so Debug uses `development` and Release uses `production`.
+- Before distributing iCloud sync changes through TestFlight or the App Store, deploy CloudKit development schema changes for `iCloud.Bison-Networking.BisonNotes-AI` to production. Production builds cannot create new CloudKit record types at runtime.
 - For On Device transcription, Parakeet is the only on-device engine (WhisperKit was removed in v1.8). Download the model in Setup → Transcription Settings → On Device.
 - For on-device AI, device capability checks ensure your device meets requirements (4 GB+ RAM for MLX Swift, 6 GB+ RAM for legacy llama.cpp models, iOS 26+ and an Apple Intelligence-capable device for Apple Native) before allowing downloads.
 

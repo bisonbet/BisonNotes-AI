@@ -2575,6 +2575,7 @@ extension iCloudStorageManager {
     private static let backupSettingsRecordType = "CD_BackupSettings"
     private static let backupContentIndexRecordType = "CD_BackupContentIndex"
     private static let backupDeletionRecordType = "CD_BackupDeletion"
+    private static let missingProductionSchemaErrorCode = 4011
     private static let backupSettingsRecordName = "settings"
     private static let backupContentIndexRecordName = "content_index"
     private static let backupSchemaVersion = 1
@@ -5227,6 +5228,11 @@ extension iCloudStorageManager {
             } catch let ckError as CKError {
                 attempt += 1
 
+                if let schemaError = cloudBackupProductionSchemaError(from: ckError, recordType: record.recordType) {
+                    AppLog.shared.iCloudSync(schemaError.localizedDescription, level: .error)
+                    throw schemaError
+                }
+
                 if isRecordAlreadyExistsConflict(ckError), attempt < maxRetryAttempts {
                     do {
                         let serverRecord = try await database.record(for: record.recordID)
@@ -5258,6 +5264,27 @@ extension iCloudStorageManager {
                 throw error
             }
         }
+    }
+
+    private func cloudBackupProductionSchemaError(from error: CKError, recordType: String) -> NSError? {
+        let diagnosticText = "\(error.localizedDescription) \(String(describing: error))".lowercased()
+        let isMissingTypeInProduction =
+            diagnosticText.contains("cannot create new type") &&
+            diagnosticText.contains("production schema")
+
+        guard isMissingTypeInProduction else {
+            return nil
+        }
+
+        return NSError(
+            domain: "iCloudStorageManager",
+            code: Self.missingProductionSchemaErrorCode,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "iCloud sync needs a CloudKit production schema update before this build can save \(recordType). " +
+                    "Deploy the development CloudKit schema for \(Self.sharedContainerIdentifier) to production, then try syncing again."
+            ]
+        )
     }
 
     private func mergeBackupRecordFields(from source: CKRecord, into destination: CKRecord) {
