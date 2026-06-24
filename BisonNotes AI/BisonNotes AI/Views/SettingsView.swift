@@ -242,6 +242,28 @@ struct SettingsView: View {
                 systemImage: "mic.fill",
                 tint: .green
             )
+
+            Toggle(isOn: Binding(
+                get: { recorderVM.isMacSystemAudioCaptureEnabled },
+                set: { recorderVM.setMacSystemAudioCaptureEnabled($0) }
+            )) {
+                ModernSettingsLabel(
+                    title: "Record Meeting Audio",
+                    subtitle: "Capture audio playing from other Mac apps while recording",
+                    systemImage: "macwindow.on.rectangle",
+                    tint: .purple
+                )
+            }
+            .disabled(recorderVM.isRecording)
+
+            if recorderVM.isMacSystemAudioCaptureEnabled {
+                ModernInlineStatus(
+                    title: "Mac screen recording permission may be required",
+                    subtitle: "If macOS denies capture, BisonNotes saves microphone audio only.",
+                    systemImage: "rectangle.dashed.badge.record",
+                    tint: .orange
+                )
+            }
             #else
             if recorderVM.availableInputs.isEmpty {
                 ModernInlineStatus(

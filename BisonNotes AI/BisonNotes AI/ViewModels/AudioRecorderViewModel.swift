@@ -33,6 +33,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	@Published var currentLocationData: LocationData?
 	@Published var isLocationTrackingEnabled: Bool = false
 	@Published var recordingState: RecordingState = .idle
+	@Published var isMacSystemAudioCaptureEnabled: Bool = false
 
 	// MARK: - Internal Properties (accessed by extensions)
 
@@ -93,6 +94,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var catalystAudioFile: AVAudioFile?
 	var catalystEngineFormat: AVAudioFormat?
 	var catalystScratchRecordingURL: URL?
+	var catalystSystemAudioCapture: CatalystSystemAudioCapture?
+	var catalystSystemAudioURL: URL?
 	var catalystAudioSessionActivated = false
 	#endif
 	let checkpointInterval: TimeInterval = 30.0 // Try to checkpoint every 30 seconds
@@ -185,6 +188,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 		// Load location tracking setting from UserDefaults
 		self.isLocationTrackingEnabled = UserDefaults.standard.bool(forKey: "isLocationTrackingEnabled")
+		self.isMacSystemAudioCaptureEnabled = UserDefaults.standard.bool(forKey: Self.macSystemAudioCaptureEnabledKey)
 
 		setupLocationObservers()
 
@@ -230,6 +234,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		// Don't configure audio session immediately - wait until user starts recording
 		// This prevents interference with other audio apps on app launch
 		AppLog.shared.recording("AudioRecorderViewModel initialized without configuring audio session")
+	}
+
+	static let macSystemAudioCaptureEnabledKey = "MacSystemAudioCaptureEnabled"
+
+	func setMacSystemAudioCaptureEnabled(_ enabled: Bool) {
+		isMacSystemAudioCaptureEnabled = enabled
+		UserDefaults.standard.set(enabled, forKey: Self.macSystemAudioCaptureEnabledKey)
 	}
 
 	deinit {
@@ -550,8 +561,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		// Capture current location before starting recording
 		captureCurrentLocation()
 
-		// Check if live transcription mode is enabled
-		let useLiveTranscription = UserDefaults.standard.bool(forKey: "enableLiveTranscription")
+		// Check if live transcription mode is enabled. Catalyst meeting audio
+		// capture records system output first, so live mic-only transcription is
+		// disabled for that mode and transcription runs from the saved file.
+		var useLiveTranscription = UserDefaults.standard.bool(forKey: "enableLiveTranscription")
+		#if targetEnvironment(macCatalyst)
+		if isMacSystemAudioCaptureEnabled {
+			useLiveTranscription = false
+		}
+		#endif
 
 		if useLiveTranscription {
 			setupLiveTranscriptionRecording(url: audioFilename)
@@ -560,10 +578,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 		do {
 			#if targetEnvironment(macCatalyst)
-			// Catalyst: drive recording with AVAudioEngine + AVAudioFile so we
-			// bypass AVAudioRecorder's broken converter setup. The file is AAC
-			// from the start — no post-stop transcode needed.
-			try startCatalystEngineRecording(at: audioFilename)
+			Task { @MainActor in
+				await self.setupCatalystRecording(at: audioFilename)
+			}
+			return
 			#else
 			// Use Whisper-optimized quality for all recordings
 			let selectedQuality = AudioQuality.whisperOptimized
@@ -583,25 +601,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			// No background task needed here - audio background mode keeps recording alive
 			audioRecorder?.record()
 			AppFileProtection.apply(to: audioFilename)
+
+			markRecordingStarted()
 			#endif
-
-			isRecording = true
-			recordingState = .recording
-			recordingTime = 0
-			lastCheckpointTime = Date() // Initialize checkpoint time to now
-
-			// Phase 3: Reset warning flags for new recording session
-			hasShownDurationWarning = false
-			hasShownStorageWarning = false
-			hasShownBatteryWarning = false
-
-			// Phase 4: Background task is started when the app enters background
-			// (see didEnterBackgroundNotification observer), not at recording start.
-			// Starting it here would trigger iOS warnings about long-lived background tasks.
-
-			startRecordingTimer()
-
-			// Notify watch of recording state change
 
 		} catch {
 			#if targetEnvironment(simulator)
@@ -611,6 +613,26 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			errorMessage = "Failed to start recording: \(error.localizedDescription)"
 			#endif
 		}
+	}
+
+	func markRecordingStarted() {
+		isRecording = true
+		recordingState = .recording
+		recordingTime = 0
+		lastCheckpointTime = Date()
+
+		// Phase 3: Reset warning flags for new recording session
+		hasShownDurationWarning = false
+		hasShownStorageWarning = false
+		hasShownBatteryWarning = false
+
+		// Phase 4: Background task is started when the app enters background
+		// (see didEnterBackgroundNotification observer), not at recording start.
+		// Starting it here would trigger iOS warnings about long-lived background tasks.
+
+		startRecordingTimer()
+
+		// Notify watch of recording state change
 	}
 
 	/// True when an active recording has been paused via `pauseRecording()`.
@@ -731,6 +753,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			if let url = catalystFinalURL {
 				AppLog.shared.recording("Recording finished successfully (Catalyst engine)")
 				Task { @MainActor in
+					_ = await self.stopCatalystSystemAudioCapture()
 					await self.finalizeCatalystRecording(at: url)
 				}
 			} else {
