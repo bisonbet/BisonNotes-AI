@@ -1,0 +1,38 @@
+{
+  "configurations" : [
+    {
+      "id" : "D746A729-F20B-436D-B6DD-B7B6869FF688",
+      "name" : "Test Scheme Action",
+      "options" : {
+        "language" : "en",
+        "region" : "US"
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:BisonNotes AI.xcodeproj",
+      "identifier" : "1485FEA42E526FB10044121F",
+      "name" : "BisonNotes AI Watch App"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:BisonNotes AI.xcodeproj",
+        "identifier" : "1485FEB02E526FB30044121F",
+        "name" : "BisonNotes AI Watch AppTests"
+      }
+    },
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:BisonNotes AI.xcodeproj",
+        "identifier" : "1485FEBA2E526FB30044121F",
+        "name" : "BisonNotes AI Watch AppUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

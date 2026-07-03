@@ -15,10 +15,10 @@ class AppDataCoordinator: ObservableObject {
     private var lastAutomaticiCloudReconcileDate: Date?
     private let automaticiCloudReconcileMinInterval: TimeInterval = 300
     
-    init() {
+    init(persistenceController: PersistenceController = PersistenceController.shared) {
         // Initialize Core Data system
-        self.coreDataManager = CoreDataManager()
-        self.workflowManager = RecordingWorkflowManager()
+        self.coreDataManager = CoreDataManager(persistenceController: persistenceController)
+        self.workflowManager = RecordingWorkflowManager(persistenceController: persistenceController)
         
         // Set up the circular reference after initialization
         self.workflowManager.setAppCoordinator(self)

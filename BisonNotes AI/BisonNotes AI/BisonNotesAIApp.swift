@@ -400,6 +400,7 @@ struct BisonNotesAIApp: App {
     init() {
 #if DEBUG
         Self.configureCoverageOutputIfNeeded()
+        BisonNotesUITestSupport.configureProcessDefaults()
 #endif
         KeychainSecretStore.shared.migrateLegacySecretsFromUserDefaults()
 

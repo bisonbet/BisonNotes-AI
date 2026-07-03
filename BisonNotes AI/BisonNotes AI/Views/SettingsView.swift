@@ -188,6 +188,7 @@ struct SettingsView: View {
         }
         .scrollIndicators(.hidden)
         .background(Color(.systemGroupedBackground))
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsScroll)
     }
 
     private var modernHeader: some View {
@@ -334,6 +335,7 @@ struct SettingsView: View {
             }
         ) {
             Toggle("Enable iCloud Sync", isOn: iCloudSyncToggleBinding)
+                .accessibilityIdentifier(BisonNotesAccessibilityID.iCloudEnableToggle)
 
             if iCloudManager.isEnabled {
                 Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
@@ -390,6 +392,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(isRunningCloudBackupAction)
+                .accessibilityIdentifier(BisonNotesAccessibilityID.iCloudReviewItemsButton)
 
                 if isRunningCloudBackupAction {
                     ModernInlineStatus(
@@ -448,6 +451,7 @@ struct SettingsView: View {
                     .foregroundColor(.red)
             }
         }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.iCloudSection)
     }
 
     private var modernBehaviorSection: some View {

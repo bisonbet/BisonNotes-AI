@@ -15,6 +15,12 @@ import CoreLocation
 class CoreDataManager: ObservableObject {
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
+
+    #if DEBUG
+    var contextForTesting: NSManagedObjectContext {
+        context
+    }
+    #endif
     
     init(persistenceController: PersistenceController = PersistenceController.shared) {
         self.persistenceController = persistenceController

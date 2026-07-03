@@ -30,6 +30,7 @@ class WatchRecordingStorage: ObservableObject {
     private let fileManager = FileManager.default
     private let recordingsDirectoryName = "WatchRecordings"
     private let metadataFileName = "metadata.json"
+    private let baseDirectoryURL: URL?
     // A max-length recording (2h at 64kbps AAC) is ~58MB, so the cap must
     // comfortably exceed that or a single long offline recording wedges the
     // storage check and blocks all new recordings until a sync succeeds.
@@ -38,7 +39,10 @@ class WatchRecordingStorage: ObservableObject {
     
     // Directory URLs
     private var documentsURL: URL {
-        fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+        if let baseDirectoryURL {
+            return baseDirectoryURL
+        }
+        return fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
     }
     
     private var recordingsDirectoryURL: URL {
@@ -55,7 +59,8 @@ class WatchRecordingStorage: ObservableObject {
     
     // MARK: - Initialization
     
-    init() {
+    init(baseDirectoryURL: URL? = nil) {
+        self.baseDirectoryURL = baseDirectoryURL
         setupStorageDirectories()
         loadRecordingsMetadata()
         updateStorageInfo()

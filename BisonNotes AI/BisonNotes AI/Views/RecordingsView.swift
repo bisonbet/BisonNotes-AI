@@ -90,6 +90,7 @@ struct RecordingsView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(BisonNotesAccessibilityID.startRecordingButton)
     }
 
     private func recordingActionButton(
@@ -181,6 +182,7 @@ struct RecordingsView: View {
                             ) {
                                 showingRecordingsList = true
                             }
+                            .accessibilityIdentifier(BisonNotesAccessibilityID.viewRecordingsButton)
 
                             homeActionButton(
                                 title: "Import Audio Files",

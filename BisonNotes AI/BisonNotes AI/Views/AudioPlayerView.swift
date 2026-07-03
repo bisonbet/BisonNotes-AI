@@ -73,6 +73,7 @@ struct AudioPlayerView: View {
                         .frame(maxWidth: .infinity)
 
                         localOnlyPreferenceRow
+                            .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayerKeepOnThisDevice)
 
                         transcriptActionRow
                     }

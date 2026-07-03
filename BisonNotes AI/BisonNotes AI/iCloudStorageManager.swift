@@ -2566,6 +2566,13 @@ private struct LatestPerRecordingResolution {
     var loserRecordIDs: [CKRecord.ID] = []
 }
 
+struct CloudBackupSourceSelection {
+    let recordings: [RecordingEntry]
+    let transcripts: [TranscriptEntry]
+    let summaries: [SummaryEntry]
+    let excludedRecordingIds: Set<UUID>
+}
+
 // MARK: - Robust iCloud Backup Extension
 
 extension iCloudStorageManager {
@@ -2646,7 +2653,7 @@ extension iCloudStorageManager {
     private static let fieldDeletedAt = "deletedAt"
     private static let syncLifecycleActive = "active"
 
-    private static let backedUpSettingsKeys: [String] = [
+    static let backedUpSettingsKeys: [String] = [
         "SelectedAIEngine",
         "selectedTranscriptionEngine",
         "showTranscriptionProgress",
@@ -2776,23 +2783,11 @@ extension iCloudStorageManager {
             var activeTranscriptRecordNames = trustedActiveManifest.transcripts
             var activeSummaryRecordNames = trustedActiveManifest.summaries
             let fileManager = FileManager.default
-            let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
-            let excludedRecordingIds = Set(allRecordings.compactMap { recording in
-                recording.isCloudSyncDisabled ? recording.id : nil
-            })
-            let recordings = allRecordings.filter { recording in
-                guard let recordingId = recording.id else { return true }
-                return !excludedRecordingIds.contains(recordingId)
-            }
-            let transcripts = appCoordinator.coreDataManager.getAllTranscripts().filter { transcript in
-                guard let recordingId = transcript.recordingId else { return true }
-                return !excludedRecordingIds.contains(recordingId)
-            }
-            let summaries = appCoordinator.coreDataManager.getAllSummaries().filter { summary in
-                let recordingId = summary.recordingId ?? summary.recording?.id
-                guard let recordingId else { return true }
-                return !excludedRecordingIds.contains(recordingId)
-            }
+            let backupSourceSelection = Self.backupSourceSelection(from: appCoordinator.coreDataManager)
+            let excludedRecordingIds = backupSourceSelection.excludedRecordingIds
+            let recordings = backupSourceSelection.recordings
+            let transcripts = backupSourceSelection.transcripts
+            let summaries = backupSourceSelection.summaries
             AppLog.shared.iCloudSync(
                 "Backup source counts - recordings: \(recordings.count), " +
                 "transcripts: \(transcripts.count), summaries: \(summaries.count), " +
@@ -5266,17 +5261,52 @@ extension iCloudStorageManager {
         }
     }
 
+    static func backupSourceSelection(from coreDataManager: CoreDataManager) -> CloudBackupSourceSelection {
+        let allRecordings = coreDataManager.getAllRecordings()
+        let excludedRecordingIds = Set(allRecordings.compactMap { recording in
+            recording.isCloudSyncDisabled ? recording.id : nil
+        })
+        let recordings = allRecordings.filter { recording in
+            guard let recordingId = recording.id else { return true }
+            return !excludedRecordingIds.contains(recordingId)
+        }
+        let transcripts = coreDataManager.getAllTranscripts().filter { transcript in
+            guard let recordingId = transcript.recordingId else { return true }
+            return !excludedRecordingIds.contains(recordingId)
+        }
+        let summaries = coreDataManager.getAllSummaries().filter { summary in
+            let recordingId = summary.recordingId ?? summary.recording?.id
+            guard let recordingId else { return true }
+            return !excludedRecordingIds.contains(recordingId)
+        }
+
+        return CloudBackupSourceSelection(
+            recordings: recordings,
+            transcripts: transcripts,
+            summaries: summaries,
+            excludedRecordingIds: excludedRecordingIds
+        )
+    }
+
     private func cloudBackupProductionSchemaError(from error: CKError, recordType: String) -> NSError? {
         let diagnosticText = "\(error.localizedDescription) \(String(describing: error))".lowercased()
-        let isMissingTypeInProduction =
-            diagnosticText.contains("cannot create new type") &&
-            diagnosticText.contains("production schema")
+        let isMissingTypeInProduction = Self.isMissingProductionSchemaDiagnostic(diagnosticText)
 
         guard isMissingTypeInProduction else {
             return nil
         }
 
-        return NSError(
+        return Self.cloudBackupProductionSchemaError(recordType: recordType)
+    }
+
+    static func isMissingProductionSchemaDiagnostic(_ diagnosticText: String) -> Bool {
+        let normalized = diagnosticText.lowercased()
+        return normalized.contains("cannot create new type") &&
+            normalized.contains("production schema")
+    }
+
+    static func cloudBackupProductionSchemaError(recordType: String) -> NSError {
+        NSError(
             domain: "iCloudStorageManager",
             code: Self.missingProductionSchemaErrorCode,
             userInfo: [
@@ -5448,7 +5478,7 @@ extension iCloudStorageManager {
         }
     }
 
-    private func isSensitiveSettingKey(_ key: String) -> Bool {
+    func isSensitiveSettingKey(_ key: String) -> Bool {
         let lowercase = key.lowercased()
         // Substring match for unambiguous credential fragments (e.g. "apikey", "secret")
         if Self.sensitiveSettingKeyFragments.contains(where: { lowercase.contains($0) }) {

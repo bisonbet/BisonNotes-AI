@@ -113,6 +113,18 @@ struct ContentView: View {
                     .environmentObject(appCoordinator)
             }
         }
+        .overlay(alignment: .topLeading) {
+            #if DEBUG
+            if BisonNotesUITestSupport.isUITesting {
+                Text("Ready")
+                    .font(.caption2)
+                    .opacity(0.01)
+                    .frame(width: 1, height: 1)
+                    .accessibilityIdentifier(BisonNotesAccessibilityID.appReady)
+                    .allowsHitTesting(false)
+            }
+            #endif
+        }
         .alert("Enable Location Services", isPresented: $showingLocationPermission) {
             Button("Continue") {
                 recorderVM.locationManager.requestLocationPermission()
@@ -201,6 +213,7 @@ struct ContentView: View {
             RecordingsView()
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
+                .accessibilityIdentifier(BisonNotesAccessibilityID.tabRecord)
                 .tabItem {
                     Image(systemName: "mic.fill")
                     Text("Record")
@@ -210,6 +223,7 @@ struct ContentView: View {
             TranscriptsView()
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
+                .accessibilityIdentifier(BisonNotesAccessibilityID.tabTranscripts)
                 .tabItem {
                     Image(systemName: "text.bubble.fill")
                     Text("Transcripts")
@@ -219,6 +233,7 @@ struct ContentView: View {
             SummariesView()
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
+                .accessibilityIdentifier(BisonNotesAccessibilityID.tabSummaries)
                 .tabItem {
                     Image(systemName: "doc.text.magnifyingglass")
                     Text("Summaries")
@@ -228,6 +243,7 @@ struct ContentView: View {
             SimpleSettingsView()
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
+                .accessibilityIdentifier(BisonNotesAccessibilityID.tabSetup)
                 .tabItem {
                     Image(systemName: "gearshape.fill")
                     Text("Setup")
@@ -256,6 +272,10 @@ struct ContentView: View {
 
     @MainActor
     private func initializeApp() {
+        #if DEBUG
+        BisonNotesUITestSupport.prepareLaunchDataIfNeeded(appCoordinator: appCoordinator)
+        #endif
+
         // Check if this is first launch
         let hasCompletedSetup = UserDefaults.standard.bool(forKey: "hasCompletedFirstSetup")
         isFirstLaunch = !hasCompletedSetup

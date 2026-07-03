@@ -1,0 +1,38 @@
+{
+  "configurations" : [
+    {
+      "id" : "6C20E9D4-9676-42EE-8437-68A5DCC6B523",
+      "name" : "Test Scheme Action",
+      "options" : {
+        "language" : "en",
+        "region" : "US"
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:BisonNotes AI.xcodeproj",
+      "identifier" : "14DBC83C2E34F7B500DAD442",
+      "name" : "BisonNotes AI"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:BisonNotes AI.xcodeproj",
+        "identifier" : "14DBC84E2E34F7B600DAD442",
+        "name" : "BisonNotes AITests"
+      }
+    },
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:BisonNotes AI.xcodeproj",
+        "identifier" : "14DBC8582E34F7B600DAD442",
+        "name" : "BisonNotes AIUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

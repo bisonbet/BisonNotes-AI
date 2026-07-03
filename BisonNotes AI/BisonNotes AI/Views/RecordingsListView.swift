@@ -642,6 +642,7 @@ struct RecordingsListView: View {
         }
         .background(Color(.systemGroupedBackground))
         .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        .accessibilityIdentifier(BisonNotesAccessibilityID.recordingsList)
     }
 
     private func recordingRow(for recording: AudioRecordingFile) -> some View {
@@ -737,6 +738,7 @@ struct RecordingsListView: View {
         }
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityIdentifier(BisonNotesAccessibilityID.recordingRowPrefix + (recording.recordingId?.uuidString ?? recording.url.lastPathComponent))
     }
 
     private func recordingMetaLabel(systemImage: String, text: String) -> some View {
@@ -844,6 +846,7 @@ struct RecordingsListView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier(forRecordingIconLabel: label))
     }
 
     /// Labeled "Generate Transcript" action shown beneath each recording row.
@@ -895,7 +898,19 @@ struct RecordingsListView: View {
             .buttonStyle(.plain)
             .disabled(isProcessing)
             .accessibilityLabel("Generate Transcript")
+            .accessibilityIdentifier(BisonNotesAccessibilityID.generateTranscriptPrefix + recordingId.uuidString)
             .id("transcript-\(recordingId)-\(isProcessing)-\(transcriptStateRefresh)")
+        }
+    }
+
+    private func identifier(forRecordingIconLabel label: String) -> String {
+        switch label {
+        case "Keep on This Device", "Allow iCloud Sync":
+            return BisonNotesAccessibilityID.keepOnThisDevicePrefix
+        default:
+            return "bisonnotes.recording.action." + label
+                .lowercased()
+                .replacingOccurrences(of: " ", with: "-")
         }
     }
 
