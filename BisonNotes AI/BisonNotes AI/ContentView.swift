@@ -407,8 +407,8 @@ struct ContentView: View {
         selectedTab = 0
 
         DispatchQueue.main.async {
-            AppLog.shared.log("Action button: isRecording=\(recorderVM.isRecording)", level: .debug, category: .general)
-            if !recorderVM.isRecording {
+            AppLog.shared.log("Action button: isRecording=\(recorderVM.isRecording), isStartingRecording=\(recorderVM.isStartingRecording)", level: .debug, category: .general)
+            if !recorderVM.isRecording && !recorderVM.isStartingRecording {
                 recorderVM.startRecording()
             }
         }

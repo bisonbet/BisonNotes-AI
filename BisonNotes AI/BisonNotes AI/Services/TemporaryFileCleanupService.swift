@@ -118,6 +118,9 @@ final class TemporaryFileCleanupService {
         if name.hasPrefix("fluidaudio_input_") && ext == "caf" { return true }
         if name.hasPrefix("cleaned_") && ext == "m4a" { return true }
         if name.hasPrefix("catalyst_export_") && ext == "m4a" { return true }
+        if name.hasPrefix("catalyst_mic_export_") && ext == "m4a" { return true }
+        if name.hasPrefix("catalyst_meeting_mix_") && ext == "m4a" { return true }
+        if name.hasSuffix("-system.m4a") { return true }
         if name.hasPrefix("temp_merge_") && ext == "m4a" { return true }
 
         return false

@@ -77,19 +77,25 @@ struct RecordingsView: View {
     private var startRecordingButton: some View {
         Button(action: { recorderVM.startRecording() }) {
             HStack(spacing: 12) {
-                Image(systemName: "mic.fill")
-                    .font(.title3.weight(.semibold))
-                Text("Start Recording")
+                if recorderVM.isStartingRecording {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: "mic.fill")
+                        .font(.title3.weight(.semibold))
+                }
+                Text(recorderVM.isStartingRecording ? "Starting..." : "Start Recording")
                     .font(.headline)
                     .fontWeight(.bold)
             }
             .foregroundColor(.white)
             .frame(height: 56)
             .frame(maxWidth: .infinity)
-            .background(Color.accentColor)
+            .background(recorderVM.isStartingRecording ? Color.gray : Color.accentColor)
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
+        .disabled(recorderVM.isStartingRecording)
         .accessibilityIdentifier(BisonNotesAccessibilityID.startRecordingButton)
     }
 

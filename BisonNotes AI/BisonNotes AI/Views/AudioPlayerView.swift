@@ -284,6 +284,9 @@ struct AudioPlayerView: View {
                 }
             ))
             .labelsHidden()
+            .accessibilityLabel("Keep on This Device")
+            .accessibilityHint("Excludes this recording, transcript, and summary from BisonNotes iCloud sync and backup.")
+            .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayerKeepOnThisDevice)
             .disabled(isUpdatingCloudSyncPreference || recording.recordingId == nil)
         }
     }

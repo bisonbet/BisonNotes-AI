@@ -17,9 +17,13 @@ final class ICloudBackupRegressionTests: XCTestCase {
         persistenceController = PersistenceController(inMemory: true)
         appCoordinator = AppDataCoordinator(persistenceController: persistenceController)
         tempDirectory = try TestHelpers.createTemporaryDirectory()
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+        iCloudManager.isEnabled = false
+        iCloudManager.clearPendingCloudMutationsForTesting()
     }
 
     override func tearDownWithError() throws {
+        SummaryManager.shared.getiCloudManager().clearPendingCloudMutationsForTesting()
         if let tempDirectory {
             try? TestHelpers.cleanupTemporaryDirectory(tempDirectory)
         }
@@ -62,6 +66,31 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(error.domain, "iCloudStorageManager")
         XCTAssertTrue(error.localizedDescription.contains("CloudKit production schema update"))
         XCTAssertTrue(error.localizedDescription.contains("iCloud.Bison-Networking.BisonNotes-AI"))
+    }
+
+    func testDeletingRecordingQueuesPendingiCloudTombstoneWhenSyncIsUnavailable() throws {
+        let recordingId = try createCompleteRecording(named: "Delete Me")
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+
+        appCoordinator.deleteRecording(id: recordingId)
+
+        XCTAssertNil(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertEqual(iCloudManager.pendingCloudDeletionCountForTesting, 1)
+    }
+
+    func testLocalOnlyToggleQueuesAndClearsPendingCloudRemovalWhenSyncIsUnavailable() async throws {
+        let recordingId = try createCompleteRecording(named: "Local Only Pending Removal")
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+
+        try await appCoordinator.setCloudSyncDisabled(for: recordingId, disabled: true)
+
+        XCTAssertEqual(appCoordinator.coreDataManager.getRecording(id: recordingId)?.isCloudSyncDisabled, true)
+        XCTAssertEqual(iCloudManager.pendingLocalOnlyRemovalCountForTesting, 1)
+
+        try await appCoordinator.setCloudSyncDisabled(for: recordingId, disabled: false)
+
+        XCTAssertEqual(appCoordinator.coreDataManager.getRecording(id: recordingId)?.isCloudSyncDisabled, false)
+        XCTAssertEqual(iCloudManager.pendingLocalOnlyRemovalCountForTesting, 0)
     }
 
     private func createCompleteRecording(named name: String) throws -> UUID {

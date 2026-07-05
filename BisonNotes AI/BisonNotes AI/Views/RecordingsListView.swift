@@ -829,14 +829,19 @@ struct RecordingsListView: View {
             recordingIconButton(
                 recording.isCloudSyncDisabled ? "Allow iCloud Sync" : "Keep on This Device",
                 systemImage: recording.isCloudSyncDisabled ? "iphone" : "icloud",
-                tint: recording.isCloudSyncDisabled ? .indigo : .blue
+                tint: recording.isCloudSyncDisabled ? .indigo : .blue,
+                recordingId: recording.recordingId
             ) {
                 toggleCloudSyncPreference(for: recording)
             }
         }
     }
 
-    private func recordingIconButton(_ label: String, systemImage: String, tint: Color, action: @escaping () -> Void) -> some View {
+    private func recordingIconButton(_ label: String,
+                                     systemImage: String,
+                                     tint: Color,
+                                     recordingId: UUID? = nil,
+                                     action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.headline)
@@ -846,7 +851,7 @@ struct RecordingsListView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
-        .accessibilityIdentifier(identifier(forRecordingIconLabel: label))
+        .accessibilityIdentifier(identifier(forRecordingIconLabel: label, recordingId: recordingId))
     }
 
     /// Labeled "Generate Transcript" action shown beneath each recording row.
@@ -903,10 +908,10 @@ struct RecordingsListView: View {
         }
     }
 
-    private func identifier(forRecordingIconLabel label: String) -> String {
+    private func identifier(forRecordingIconLabel label: String, recordingId: UUID? = nil) -> String {
         switch label {
         case "Keep on This Device", "Allow iCloud Sync":
-            return BisonNotesAccessibilityID.keepOnThisDevicePrefix
+            return BisonNotesAccessibilityID.keepOnThisDevicePrefix + (recordingId?.uuidString ?? "unknown")
         default:
             return "bisonnotes.recording.action." + label
                 .lowercased()

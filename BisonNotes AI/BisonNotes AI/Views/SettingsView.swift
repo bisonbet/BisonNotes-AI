@@ -8,6 +8,9 @@
 import SwiftUI
 import AVFoundation
 import CoreLocation
+#if targetEnvironment(macCatalyst)
+import CoreGraphics
+#endif
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -29,6 +32,7 @@ struct SettingsView: View {
     @State private var isPreparingLogs = false
     @State private var showingICloudComplianceNotice = false
     @State private var showingCloudReview = false
+    @State private var macSystemAudioPermissionAlert: MacSystemAudioPermissionAlert?
 
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = "On Device"
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "On-Device AI"
@@ -79,6 +83,32 @@ struct SettingsView: View {
             }
         } message: {
             Text("BisonNotes AI and uploads to iCloud are not HIPAA-compliant. When iCloud Sync is enabled, eligible recordings, transcripts, summaries, and selected settings may be uploaded to your private iCloud account. To exclude an item from BisonNotes iCloud sync and backup, mark it Keep on This Device from its recording row or audio player.")
+        }
+        .alert(item: $macSystemAudioPermissionAlert) { alert in
+            switch alert {
+            case .rationale:
+                Alert(
+                    title: Text("Allow Meeting Audio Capture?"),
+                    message: Text("BisonNotes needs macOS Screen Recording permission to capture audio playing from other Mac apps during a recording. BisonNotes records audio only and does not save screen video."),
+                    primaryButton: .default(Text("Continue")) {
+                        requestMacSystemAudioCapturePermissionAndEnable()
+                    },
+                    secondaryButton: .cancel(Text("Not Now")) {
+                        recorderVM.setMacSystemAudioCaptureEnabled(false)
+                    }
+                )
+            case .denied:
+                Alert(
+                    title: Text("Screen Recording Permission Needed"),
+                    message: Text("macOS did not grant Screen Recording permission, so BisonNotes will keep recording microphone audio only. Enable BisonNotes in System Settings > Privacy & Security > Screen & System Audio Recording, then return to BisonNotes. You may need to restart the app after changing this setting."),
+                    primaryButton: .default(Text("Open System Settings")) {
+                        openMacScreenCapturePrivacySettings()
+                    },
+                    secondaryButton: .cancel(Text("OK")) {
+                        recorderVM.setMacSystemAudioCaptureEnabled(false)
+                    }
+                )
+            }
         }
         .sheet(isPresented: $showingCloudReview) {
             CloudReviewItemsView(includeAudioFiles: iCloudBackupIncludeAudioFiles)
@@ -246,7 +276,7 @@ struct SettingsView: View {
 
             Toggle(isOn: Binding(
                 get: { recorderVM.isMacSystemAudioCaptureEnabled },
-                set: { recorderVM.setMacSystemAudioCaptureEnabled($0) }
+                set: { handleMacSystemAudioCaptureToggle($0) }
             )) {
                 ModernSettingsLabel(
                     title: "Record Meeting Audio",
@@ -259,8 +289,8 @@ struct SettingsView: View {
 
             if recorderVM.isMacSystemAudioCaptureEnabled {
                 ModernInlineStatus(
-                    title: "Mac screen recording permission may be required",
-                    subtitle: "If macOS denies capture, BisonNotes saves microphone audio only.",
+                    title: "Meeting audio capture is enabled",
+                    subtitle: "If macOS permission changes later, BisonNotes saves microphone audio only.",
                     systemImage: "rectangle.dashed.badge.record",
                     tint: .orange
                 )
@@ -1142,6 +1172,43 @@ struct SettingsView: View {
         }
     }
 
+    private func handleMacSystemAudioCaptureToggle(_ enabled: Bool) {
+        #if targetEnvironment(macCatalyst)
+        guard enabled else {
+            recorderVM.setMacSystemAudioCaptureEnabled(false)
+            return
+        }
+
+        if CGPreflightScreenCaptureAccess() {
+            recorderVM.setMacSystemAudioCaptureEnabled(true)
+        } else {
+            recorderVM.setMacSystemAudioCaptureEnabled(false)
+            macSystemAudioPermissionAlert = .rationale
+        }
+        #else
+        recorderVM.setMacSystemAudioCaptureEnabled(enabled)
+        #endif
+    }
+
+    private func requestMacSystemAudioCapturePermissionAndEnable() {
+        #if targetEnvironment(macCatalyst)
+        let granted = CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()
+        recorderVM.setMacSystemAudioCaptureEnabled(granted)
+        if !granted {
+            macSystemAudioPermissionAlert = .denied
+        }
+        #endif
+    }
+
+    private func openMacScreenCapturePrivacySettings() {
+        #if targetEnvironment(macCatalyst)
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else {
+            return
+        }
+        UIApplication.shared.open(url)
+        #endif
+    }
+
     private func clearAllSummaries() {
         // This function is no longer needed as summaries are managed by the coordinator
     }
@@ -1378,6 +1445,20 @@ struct SettingsView: View {
 }
 
 // MARK: - Supporting Structures
+
+private enum MacSystemAudioPermissionAlert: Identifiable {
+    case rationale
+    case denied
+
+    var id: String {
+        switch self {
+        case .rationale:
+            return "rationale"
+        case .denied:
+            return "denied"
+        }
+    }
+}
 
 private struct CloudReviewItemsView: View {
     @Environment(\.dismiss) private var dismiss

@@ -34,6 +34,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	@Published var isLocationTrackingEnabled: Bool = false
 	@Published var recordingState: RecordingState = .idle
 	@Published var isMacSystemAudioCaptureEnabled: Bool = false
+	@Published var isStartingRecording = false
 
 	// MARK: - Internal Properties (accessed by extensions)
 
@@ -437,7 +438,22 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	// MARK: - Core Recording
 
+	@discardableResult
+	private func beginRecordingStartup() -> Bool {
+		guard !isRecording, !isStartingRecording else {
+			AppLog.shared.recording("Recording start ignored because a recording is already active or starting", level: .debug)
+			return false
+		}
+		isStartingRecording = true
+		return true
+	}
+
+	func finishRecordingStartup() {
+		isStartingRecording = false
+	}
+
 	func startRecording() {
+		guard beginRecordingStartup() else { return }
 		AppLog.shared.recording("startRecording: requesting microphone permission")
 		#if targetEnvironment(macCatalyst)
 		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
@@ -456,6 +472,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
 							await MainActor.run {
 								self.errorMessage = "Failed to set up audio: \(error.localizedDescription)"
+								self.finishRecordingStartup()
 							}
 							return
 						}
@@ -466,6 +483,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				} else {
 					AppLog.shared.recording("startRecording: microphone permission denied", level: .error)
 					self.errorMessage = "Microphone permission denied"
+					self.finishRecordingStartup()
 				}
 			}
 		}
@@ -490,6 +508,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		case .denied:
 			AppLog.shared.recording("Mac mic permission denied", level: .error)
 			errorMessage = "Microphone access is denied. Open System Settings → Privacy & Security → Microphone and enable BisonNotes AI, then try again."
+			finishRecordingStartup()
 		@unknown default:
 			AVAudioApplication.requestRecordPermission { [weak self] granted in
 				Task { @MainActor [weak self] in
@@ -503,6 +522,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	private func didReceiveMicrophonePermission(granted: Bool) {
 		guard granted else {
 			errorMessage = "Microphone permission denied"
+			finishRecordingStartup()
 			return
 		}
 		AppLog.shared.recording("startRecording: microphone permission granted")
@@ -514,6 +534,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	#endif
 
 	func startBackgroundRecording() {
+		guard beginRecordingStartup() else { return }
 		AppLog.shared.recording("startBackgroundRecording: requesting microphone permission")
 		#if targetEnvironment(macCatalyst)
 		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
@@ -529,6 +550,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 							await self.applySelectedInputToSession()
 						} catch {
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
+							await MainActor.run {
+								self.finishRecordingStartup()
+							}
 							return
 						}
 						await MainActor.run {
@@ -538,6 +562,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				} else {
 					AppLog.shared.recording("startBackgroundRecording: microphone permission denied", level: .error)
 					self.errorMessage = "Microphone permission denied"
+					self.finishRecordingStartup()
 				}
 			}
 		}
@@ -606,6 +631,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			#endif
 
 		} catch {
+			finishRecordingStartup()
 			#if targetEnvironment(simulator)
 			errorMessage = "Recording failed on simulator. Enable Device → Microphone → Internal Microphone in simulator menu, or test on a physical device."
 			AppLog.shared.recording("Simulator audio error: \(error.localizedDescription)", level: .error)
@@ -616,6 +642,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	func markRecordingStarted() {
+		finishRecordingStartup()
 		isRecording = true
 		recordingState = .recording
 		recordingTime = 0
@@ -695,6 +722,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	func stopRecording() {
+		finishRecordingStartup()
 		// Handle live transcription path
 		if isUsingLiveTranscription, let service = liveTranscriptionService {
 			isUsingLiveTranscription = false
@@ -838,10 +866,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 			do {
 				try service.start(finalURL: url)
-				self.isRecording = true
-				self.recordingTime = 0
-				self.lastCheckpointTime = Date()
-				self.startRecordingTimer()
+				self.markRecordingStarted()
 				AppLog.shared.recording("Live transcription recording started")
 			} catch {
 				self.isUsingLiveTranscription = false
@@ -855,11 +880,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					self.audioRecorder?.delegate = self
 					self.audioRecorder?.isMeteringEnabled = true
 					self.audioRecorder?.record()
-					self.isRecording = true
-					self.recordingTime = 0
-					self.lastCheckpointTime = Date()
-					self.startRecordingTimer()
+					self.markRecordingStarted()
 				} catch {
+					self.finishRecordingStartup()
 					self.errorMessage = "Failed to start recording: \(error.localizedDescription)"
 				}
 			}

@@ -156,17 +156,19 @@ class AppDataCoordinator: ObservableObject {
     func deleteRecording(id: UUID) {
         let transcriptIds = coreDataManager.getTranscript(for: id).flatMap { $0.id }.map { [$0] } ?? []
         let summaryIds = coreDataManager.getSummary(for: id).flatMap { $0.id }.map { [$0] } ?? []
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+        iCloudManager.enqueueRecordingDeletionForiCloud(
+            recordingId: id,
+            transcriptIds: transcriptIds,
+            summaryIds: summaryIds
+        )
         coreDataManager.deleteRecording(id: id)
 
         Task {
             do {
-                try await SummaryManager.shared.getiCloudManager().markRecordingDeletedIniCloud(
-                    recordingId: id,
-                    transcriptIds: transcriptIds,
-                    summaryIds: summaryIds
-                )
+                try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
             } catch {
-                AppLog.shared.coreData("Deleted local recording but failed to update iCloud deletion marker: \(error)", level: .error)
+                AppLog.shared.coreData("Deleted local recording and queued iCloud deletion marker for retry: \(error)", level: .error)
             }
         }
     }
@@ -188,20 +190,28 @@ class AppDataCoordinator: ObservableObject {
     }
 
     func setCloudSyncDisabled(for recordingId: UUID, disabled: Bool) async throws {
-        try coreDataManager.updateCloudSyncDisabled(for: recordingId, disabled: disabled)
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+        if disabled {
+            iCloudManager.enqueueLocalOnlyCloudRemoval(recordingId: recordingId)
+        }
 
-        var cloudRemovalError: Error?
+        do {
+            try coreDataManager.updateCloudSyncDisabled(for: recordingId, disabled: disabled)
+        } catch {
+            if disabled {
+                iCloudManager.clearPendingLocalOnlyCloudRemoval(recordingId: recordingId)
+            }
+            throw error
+        }
+
         if disabled {
             do {
-                try await SummaryManager.shared.getiCloudManager().removeContentFromiCloud(
-                    recordingId: recordingId,
-                    appCoordinator: self
-                )
+                try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
             } catch {
-                cloudRemovalError = error
-                AppLog.shared.coreData("Marked recording local-only but failed to remove existing iCloud records: \(error)", level: .error)
+                AppLog.shared.coreData("Marked recording local-only and queued iCloud removal for retry: \(error)", level: .error)
             }
         } else {
+            iCloudManager.clearPendingLocalOnlyCloudRemoval(recordingId: recordingId)
             scheduleAutoBackupIfEnabled()
         }
 
@@ -211,10 +221,6 @@ class AppDataCoordinator: ObservableObject {
             userInfo: ["recordingId": recordingId, "disabled": disabled]
         )
         objectWillChange.send()
-
-        if let cloudRemovalError {
-            throw cloudRemovalError
-        }
     }
     
     func syncRecordingURLs() {
