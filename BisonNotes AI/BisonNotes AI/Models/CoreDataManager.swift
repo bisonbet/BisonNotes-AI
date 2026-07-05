@@ -15,6 +15,12 @@ import CoreLocation
 class CoreDataManager: ObservableObject {
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
+
+    #if DEBUG
+    var contextForTesting: NSManagedObjectContext {
+        context
+    }
+    #endif
     
     init(persistenceController: PersistenceController = PersistenceController.shared) {
         self.persistenceController = persistenceController
@@ -1173,6 +1179,23 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Updated recording name for ID: \(recordingId)")
         } catch {
             AppLog.shared.coreData("Failed to save recording name update: \(error)", level: .error)
+            throw error
+        }
+    }
+
+    func updateCloudSyncDisabled(for recordingId: UUID, disabled: Bool) throws {
+        guard let recording = getRecording(id: recordingId) else {
+            throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found with ID: \(recordingId)"])
+        }
+
+        recording.isCloudSyncDisabled = disabled
+        recording.lastModified = Date()
+
+        do {
+            try context.save()
+            AppLog.shared.coreData("Updated iCloud exclusion for recording ID: \(recordingId)")
+        } catch {
+            AppLog.shared.coreData("Failed to save iCloud exclusion update: \(error)", level: .error)
             throw error
         }
     }

@@ -69,7 +69,7 @@ enum ChunkingStrategy {
     static let openAI = ChunkingStrategy.combined(maxBytes: 24 * 1024 * 1024, maxSeconds: 1300) // 24MB and 1300 seconds (21.67 minutes)
     static let whisper = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let aws = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
-    static let onDeviceAI = ChunkingStrategy.duration(maxSeconds: 15 * 60) // 15 minutes
+    static let onDeviceAI = ChunkingStrategy.duration(maxSeconds: 10 * 60) // 10 minutes
     static let mistralAI = ChunkingStrategy.combined(maxBytes: 24 * 1024 * 1024, maxSeconds: 1300) // 24MB and 1300 seconds
     
     var description: String {
@@ -77,6 +77,9 @@ enum ChunkingStrategy {
         case .fileSize(let maxBytes):
             return "File size limit: \(maxBytes / 1024 / 1024) MB"
         case .duration(let maxSeconds):
+            if maxSeconds < 60 {
+                return "Duration limit: \(Int(maxSeconds)) seconds"
+            }
             return "Duration limit: \(Int(maxSeconds / 60)) minutes"
         case .combined(let maxBytes, let maxSeconds):
             return "Combined limits: \(maxBytes / 1024 / 1024) MB and \(Int(maxSeconds / 60)) minutes"

@@ -8,6 +8,9 @@
 import SwiftUI
 import AVFoundation
 import CoreLocation
+#if targetEnvironment(macCatalyst)
+import CoreGraphics
+#endif
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -27,6 +30,9 @@ struct SettingsView: View {
     @State private var showingTroubleshootingWarning = false
     @State private var logExportError: String?
     @State private var isPreparingLogs = false
+    @State private var showingICloudComplianceNotice = false
+    @State private var showingCloudReview = false
+    @State private var macSystemAudioPermissionAlert: MacSystemAudioPermissionAlert?
 
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = "On Device"
     @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "On-Device AI"
@@ -69,6 +75,44 @@ struct SettingsView: View {
             }
         } message: {
             Text("Regeneration completed successfully")
+        }
+        .alert("iCloud Sync Notice", isPresented: $showingICloudComplianceNotice) {
+            Button("Cancel", role: .cancel) { }
+            Button("Enable iCloud Sync") {
+                iCloudManager.isEnabled = true
+            }
+        } message: {
+            Text("BisonNotes AI and uploads to iCloud are not HIPAA-compliant. When iCloud Sync is enabled, eligible recordings, transcripts, summaries, and selected settings may be uploaded to your private iCloud account. To exclude an item from BisonNotes iCloud sync and backup, mark it Keep on This Device from its recording row or audio player.")
+        }
+        .alert(item: $macSystemAudioPermissionAlert) { alert in
+            switch alert {
+            case .rationale:
+                Alert(
+                    title: Text("Allow Meeting Audio Capture?"),
+                    message: Text("BisonNotes needs macOS Screen Recording permission to capture audio playing from other Mac apps during a recording. BisonNotes records audio only and does not save screen video."),
+                    primaryButton: .default(Text("Continue")) {
+                        requestMacSystemAudioCapturePermissionAndEnable()
+                    },
+                    secondaryButton: .cancel(Text("Not Now")) {
+                        recorderVM.setMacSystemAudioCaptureEnabled(false)
+                    }
+                )
+            case .denied:
+                Alert(
+                    title: Text("Screen Recording Permission Needed"),
+                    message: Text("macOS did not grant Screen Recording permission, so BisonNotes will keep recording microphone audio only. Enable BisonNotes in System Settings > Privacy & Security > Screen & System Audio Recording, then return to BisonNotes. You may need to restart the app after changing this setting."),
+                    primaryButton: .default(Text("Open System Settings")) {
+                        openMacScreenCapturePrivacySettings()
+                    },
+                    secondaryButton: .cancel(Text("OK")) {
+                        recorderVM.setMacSystemAudioCaptureEnabled(false)
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showingCloudReview) {
+            CloudReviewItemsView(includeAudioFiles: iCloudBackupIncludeAudioFiles)
+                .environmentObject(appCoordinator)
         }
         .onAppear {
             refreshEngineStatuses()
@@ -174,6 +218,7 @@ struct SettingsView: View {
         }
         .scrollIndicators(.hidden)
         .background(Color(.systemGroupedBackground))
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsScroll)
     }
 
     private var modernHeader: some View {
@@ -228,6 +273,28 @@ struct SettingsView: View {
                 systemImage: "mic.fill",
                 tint: .green
             )
+
+            Toggle(isOn: Binding(
+                get: { recorderVM.isMacSystemAudioCaptureEnabled },
+                set: { handleMacSystemAudioCaptureToggle($0) }
+            )) {
+                ModernSettingsLabel(
+                    title: "Record Meeting Audio",
+                    subtitle: "Capture audio playing from other Mac apps while recording",
+                    systemImage: "macwindow.on.rectangle",
+                    tint: .purple
+                )
+            }
+            .disabled(recorderVM.isRecording)
+
+            if recorderVM.isMacSystemAudioCaptureEnabled {
+                ModernInlineStatus(
+                    title: "Meeting audio capture is enabled",
+                    subtitle: "If macOS permission changes later, BisonNotes saves microphone audio only.",
+                    systemImage: "rectangle.dashed.badge.record",
+                    tint: .orange
+                )
+            }
             #else
             if recorderVM.availableInputs.isEmpty {
                 ModernInlineStatus(
@@ -297,7 +364,8 @@ struct SettingsView: View {
                 ModernStatusPill(text: iCloudManager.isEnabled ? "Enabled" : "Disabled", tint: iCloudManager.isEnabled ? .green : .secondary)
             }
         ) {
-            Toggle("Enable iCloud Sync", isOn: $iCloudManager.isEnabled)
+            Toggle("Enable iCloud Sync", isOn: iCloudSyncToggleBinding)
+                .accessibilityIdentifier(BisonNotesAccessibilityID.iCloudEnableToggle)
 
             if iCloudManager.isEnabled {
                 Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
@@ -309,6 +377,21 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if iCloudManager.isAutomaticReconcileRunning {
+                    ModernInlineStatus(
+                        title: "Syncing with iCloud...",
+                        subtitle: "Applying eligible changes and cleanup across devices",
+                        systemImage: "arrow.triangle.2.circlepath",
+                        tint: .blue,
+                        showsProgress: true
+                    )
+                } else if let message = iCloudManager.lastMaintenanceMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 HStack(spacing: 10) {
                     Button {
@@ -330,6 +413,16 @@ struct SettingsView: View {
                     .tint(.green)
                     .disabled(isRunningCloudBackupAction)
                 }
+
+                Button {
+                    showingCloudReview = true
+                } label: {
+                    Label("Review iCloud Items", systemImage: "tray.full")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isRunningCloudBackupAction)
+                .accessibilityIdentifier(BisonNotesAccessibilityID.iCloudReviewItemsButton)
 
                 if isRunningCloudBackupAction {
                     ModernInlineStatus(
@@ -388,6 +481,7 @@ struct SettingsView: View {
                     .foregroundColor(.red)
             }
         }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.iCloudSection)
     }
 
     private var modernBehaviorSection: some View {
@@ -662,7 +756,7 @@ struct SettingsView: View {
 
     private var iCloudSyncSection: some View {
         Section {
-            Toggle("Enable iCloud Sync", isOn: $iCloudManager.isEnabled)
+            Toggle("Enable iCloud Sync", isOn: iCloudSyncToggleBinding)
 
             if iCloudManager.isEnabled {
                 Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
@@ -672,6 +766,21 @@ struct SettingsView: View {
                 Text("API keys and AWS credentials stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+
+                if iCloudManager.isAutomaticReconcileRunning {
+                    HStack {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .scaleEffect(0.8)
+                        Text("Syncing with iCloud...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else if let message = iCloudManager.lastMaintenanceMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
 
                 Button {
                     Task { await backupAllDataToiCloud() }
@@ -685,6 +794,13 @@ struct SettingsView: View {
                 } label: {
                     Label("Restore From iCloud", systemImage: "arrow.down.doc")
                         .foregroundColor(.green)
+                }
+                .disabled(isRunningCloudBackupAction)
+
+                Button {
+                    showingCloudReview = true
+                } label: {
+                    Label("Review iCloud Items", systemImage: "tray.full")
                 }
                 .disabled(isRunningCloudBackupAction)
 
@@ -817,6 +933,19 @@ struct SettingsView: View {
         } footer: {
             Text("Sync summaries, transcripts, and settings across your devices")
         }
+    }
+
+    private var iCloudSyncToggleBinding: Binding<Bool> {
+        Binding(
+            get: { iCloudManager.isEnabled },
+            set: { newValue in
+                if newValue {
+                    showingICloudComplianceNotice = true
+                } else {
+                    iCloudManager.isEnabled = false
+                }
+            }
+        )
     }
 
     private var comedyModeSection: some View {
@@ -1043,6 +1172,43 @@ struct SettingsView: View {
         }
     }
 
+    private func handleMacSystemAudioCaptureToggle(_ enabled: Bool) {
+        #if targetEnvironment(macCatalyst)
+        guard enabled else {
+            recorderVM.setMacSystemAudioCaptureEnabled(false)
+            return
+        }
+
+        if CGPreflightScreenCaptureAccess() {
+            recorderVM.setMacSystemAudioCaptureEnabled(true)
+        } else {
+            recorderVM.setMacSystemAudioCaptureEnabled(false)
+            macSystemAudioPermissionAlert = .rationale
+        }
+        #else
+        recorderVM.setMacSystemAudioCaptureEnabled(enabled)
+        #endif
+    }
+
+    private func requestMacSystemAudioCapturePermissionAndEnable() {
+        #if targetEnvironment(macCatalyst)
+        let granted = CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()
+        recorderVM.setMacSystemAudioCaptureEnabled(granted)
+        if !granted {
+            macSystemAudioPermissionAlert = .denied
+        }
+        #endif
+    }
+
+    private func openMacScreenCapturePrivacySettings() {
+        #if targetEnvironment(macCatalyst)
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else {
+            return
+        }
+        UIApplication.shared.open(url)
+        #endif
+    }
+
     private func clearAllSummaries() {
         // This function is no longer needed as summaries are managed by the coordinator
     }
@@ -1137,8 +1303,11 @@ struct SettingsView: View {
             }
 
             await MainActor.run {
+                let reviewText = result.itemsHeldForReview > 0
+                    ? ", \(result.itemsHeldForReview) held for review"
+                    : ""
                 cloudBackupActionMessage =
-                    "Restore complete: \(result.recordingsRestored) recordings, \(result.transcriptsRestored) transcripts, \(result.summariesRestored) summaries, \(result.audioFilesRestored) audio files, \(settingsText)."
+                    "Restore complete: \(result.recordingsRestored) recordings, \(result.transcriptsRestored) transcripts, \(result.summariesRestored) summaries, \(result.audioFilesRestored) audio files, \(settingsText)\(reviewText)."
                 cloudBackupActionIsError = false
                 isRunningCloudBackupAction = false
             }
@@ -1276,6 +1445,200 @@ struct SettingsView: View {
 }
 
 // MARK: - Supporting Structures
+
+private enum MacSystemAudioPermissionAlert: Identifiable {
+    case rationale
+    case denied
+
+    var id: String {
+        switch self {
+        case .rationale:
+            return "rationale"
+        case .denied:
+            return "denied"
+        }
+    }
+}
+
+private struct CloudReviewItemsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appCoordinator: AppDataCoordinator
+    @ObservedObject private var iCloudManager = iCloudStorageManager.shared
+
+    let includeAudioFiles: Bool
+
+    @State private var actionMessage = ""
+    @State private var actionIsError = false
+    @State private var workingItemId: String?
+    @State private var itemPendingDelete: CloudReviewItem?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if iCloudManager.isScanningCloudReviewItems {
+                    HStack {
+                        ProgressView()
+                        Text("Scanning iCloud...")
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                if !actionMessage.isEmpty {
+                    Text(actionMessage)
+                        .font(.caption)
+                        .foregroundColor(actionIsError ? .red : .secondary)
+                }
+
+                if let error = iCloudManager.cloudReviewError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+
+                if iCloudManager.pendingCloudReviewItems.isEmpty,
+                   !iCloudManager.isScanningCloudReviewItems {
+                    Text("No iCloud review items found.")
+                        .foregroundColor(.secondary)
+                }
+
+                ForEach(iCloudManager.pendingCloudReviewItems) { item in
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.title)
+                                    .font(.headline)
+                                Text(item.contentsDescription.capitalized)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                if let date = item.date {
+                                    Text(date.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            Spacer()
+                            if workingItemId == item.id {
+                                ProgressView()
+                            }
+                        }
+
+                        HStack {
+                            Button {
+                                Task { await restore(item) }
+                            } label: {
+                                Label("Restore", systemImage: "arrow.down.doc")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(workingItemId != nil || iCloudManager.isScanningCloudReviewItems)
+
+                            Button(role: .destructive) {
+                                itemPendingDelete = item
+                            } label: {
+                                Label("Delete from iCloud", systemImage: "trash")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(workingItemId != nil || iCloudManager.isScanningCloudReviewItems)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
+            .navigationTitle("iCloud Items Review")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        Task { await refresh() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(iCloudManager.isScanningCloudReviewItems || workingItemId != nil)
+                }
+            }
+            .confirmationDialog(
+                "Delete this item from iCloud?",
+                isPresented: Binding(
+                    get: { itemPendingDelete != nil },
+                    set: { if !$0 { itemPendingDelete = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Delete from iCloud", role: .destructive) {
+                    if let item = itemPendingDelete {
+                        Task { await delete(item) }
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    itemPendingDelete = nil
+                }
+            } message: {
+                Text("This removes app-created iCloud sync records for the selected item. It does not delete anything already stored locally on this device.")
+            }
+            .task {
+                await refresh()
+            }
+        }
+    }
+
+    private func refresh() async {
+        await iCloudManager.refreshCloudReviewItems(appCoordinator: appCoordinator)
+    }
+
+    private func restore(_ item: CloudReviewItem) async {
+        await MainActor.run {
+            workingItemId = item.id
+            actionMessage = ""
+            actionIsError = false
+        }
+
+        do {
+            let result = try await iCloudManager.restoreCloudReviewItem(
+                item,
+                appCoordinator: appCoordinator,
+                includeAudioFiles: includeAudioFiles
+            )
+            appCoordinator.syncRecordingURLs()
+            await MainActor.run {
+                actionMessage = "Restored \(result.recordingsRestored) recordings, \(result.transcriptsRestored) transcripts, \(result.summariesRestored) summaries."
+                actionIsError = false
+                workingItemId = nil
+            }
+        } catch {
+            await MainActor.run {
+                actionMessage = "Restore failed: \(error.localizedDescription)"
+                actionIsError = true
+                workingItemId = nil
+            }
+        }
+    }
+
+    private func delete(_ item: CloudReviewItem) async {
+        await MainActor.run {
+            workingItemId = item.id
+            actionMessage = ""
+            actionIsError = false
+            itemPendingDelete = nil
+        }
+
+        do {
+            let deletedCount = try await iCloudManager.deleteCloudReviewItem(item)
+            await MainActor.run {
+                actionMessage = "Deleted \(deletedCount) iCloud records."
+                actionIsError = false
+                workingItemId = nil
+            }
+        } catch {
+            await MainActor.run {
+                actionMessage = "Delete failed: \(error.localizedDescription)"
+                actionIsError = true
+                workingItemId = nil
+            }
+        }
+    }
+}
 
 private struct ModernSettingsCard<Content: View, Trailing: View>: View {
     let title: String

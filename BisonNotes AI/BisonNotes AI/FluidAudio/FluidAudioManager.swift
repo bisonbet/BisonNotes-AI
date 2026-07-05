@@ -1,5 +1,5 @@
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 import Network
 
 #if canImport(FluidAudio)
@@ -16,11 +16,13 @@ final class FluidAudioManager: ObservableObject {
     @Published var currentStatus = ""
 
     private var loadedModelVersion: FluidAudioModelInfo.ModelVersion?
-    private var downloadTask: Task<Void, Error>?
     private var networkMonitor: NWPathMonitor?
 
     #if canImport(FluidAudio)
+    private var downloadTask: Task<AsrModels, Error>?
     private var asrManager: AsrManager?
+    #else
+    private var downloadTask: Task<Void, Error>?
     #endif
 
     private init() {
@@ -28,14 +30,13 @@ final class FluidAudioManager: ObservableObject {
         guard downloaded else {
             // UserDefaults says not downloaded — but check if files exist on disk anyway
             // (handles case where UserDefaults was reset but model files survived an update)
-            if Self.modelFilesExistOnDisk() {
+            if Self.modelFilesExistOnDisk(for: FluidAudioModelInfo.selectedModelVersion) {
                 isModelReady = true
                 UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.modelDownloaded)
-                // We don't know which version, so check both
                 let selectedVersion = FluidAudioModelInfo.selectedModelVersion.rawValue
                 UserDefaults.standard.set(selectedVersion, forKey: FluidAudioModelInfo.SettingsKeys.downloadedModelVersion)
-                startNetworkMonitoring()
             }
+            startNetworkMonitoring()
             return
         }
 
@@ -43,35 +44,121 @@ final class FluidAudioManager: ObservableObject {
         let selectedVersion = FluidAudioModelInfo.selectedModelVersion.rawValue
 
         if let dv = downloadedVersion {
-            if dv == selectedVersion {
+            if dv == selectedVersion, Self.modelFilesExistOnDisk(for: FluidAudioModelInfo.selectedModelVersion) {
                 isModelReady = true
-            } else {
-                // Selected version changed — but the downloaded version's files may still be on disk.
+            } else if let downloadedModelVersion = FluidAudioModelInfo.ModelVersion(rawValue: dv),
+                      Self.modelFilesExistOnDisk(for: downloadedModelVersion) {
+                // Selected version changed, but the downloaded version is valid on disk.
                 // Keep the downloaded version available rather than forcing a re-download.
-                // Update the selected version to match what's actually on disk.
                 UserDefaults.standard.set(dv, forKey: FluidAudioModelInfo.SettingsKeys.selectedModelVersion)
                 isModelReady = true
                 AppLog.shared.transcription("FluidAudio: kept downloaded \(dv) model (selected was \(selectedVersion))")
+            } else {
+                clearDownloadedModelDefaults()
             }
-        } else {
-            // Legacy install without version tracking: trust the downloaded flag
+        } else if Self.modelFilesExistOnDisk(for: FluidAudioModelInfo.selectedModelVersion) {
+            // Legacy install without version tracking: trust only verified files.
             isModelReady = true
+            UserDefaults.standard.set(selectedVersion, forKey: FluidAudioModelInfo.SettingsKeys.downloadedModelVersion)
+        } else if let availableVersion = Self.firstAvailableModelVersionOnDisk() {
+            UserDefaults.standard.set(availableVersion.rawValue, forKey: FluidAudioModelInfo.SettingsKeys.selectedModelVersion)
+            UserDefaults.standard.set(availableVersion.rawValue, forKey: FluidAudioModelInfo.SettingsKeys.downloadedModelVersion)
+            isModelReady = true
+        } else {
+            clearDownloadedModelDefaults()
         }
 
         startNetworkMonitoring()
     }
 
-    /// Check if FluidAudio model files exist on disk regardless of UserDefaults state.
-    private static func modelFilesExistOnDisk() -> Bool {
+    private static func fluidAudioDirectory() -> URL? {
         guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return false
+            return nil
         }
-        let modelsDir = appSupport.appendingPathComponent("FluidAudio").appendingPathComponent("Models")
-        // Check for any version subdirectory with contents
-        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: modelsDir.path) else {
+        return appSupport.appendingPathComponent("FluidAudio")
+    }
+
+    private static func firstAvailableModelVersionOnDisk() -> FluidAudioModelInfo.ModelVersion? {
+        FluidAudioModelInfo.ModelVersion.allCases.first { modelFilesExistOnDisk(for: $0) }
+    }
+
+    /// Check if the selected FluidAudio model files exist on disk regardless of UserDefaults state.
+    private static func modelFilesExistOnDisk(for version: FluidAudioModelInfo.ModelVersion) -> Bool {
+        #if canImport(FluidAudio)
+        let asrVersion = asrModelVersion(for: version)
+        let cacheDir = AsrModels.defaultCacheDirectory(for: asrVersion)
+        return AsrModels.modelsExist(at: cacheDir, version: asrVersion)
+        #else
+        guard let modelsDir = fluidAudioDirectory()?.appendingPathComponent("Models") else { return false }
+        let modelDir = modelsDir.appendingPathComponent(version.modelFolderName)
+        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: modelDir.path) else {
             return false
         }
         return !contents.isEmpty
+        #endif
+    }
+
+    private static func deleteModelFiles(for version: FluidAudioModelInfo.ModelVersion) {
+        #if canImport(FluidAudio)
+        let modelDir = AsrModels.defaultCacheDirectory(for: asrModelVersion(for: version))
+        try? FileManager.default.removeItem(at: modelDir)
+        #else
+        guard let modelsDir = fluidAudioDirectory()?.appendingPathComponent("Models") else { return }
+        try? FileManager.default.removeItem(at: modelsDir.appendingPathComponent(version.modelFolderName))
+        #endif
+    }
+
+    #if canImport(FluidAudio)
+    private static func asrModelVersion(for version: FluidAudioModelInfo.ModelVersion) -> AsrModelVersion {
+        switch version {
+        case .v2:
+            return .v2
+        case .v3:
+            return .v3
+        }
+    }
+
+    private static var parakeetASRConfig: ASRConfig {
+        ASRConfig(
+            parallelChunkConcurrency: 1,
+            streamingEnabled: true,
+            streamingThreshold: 480_000
+        )
+    }
+
+    nonisolated private static func makeDownloadProgressHandler() -> DownloadUtils.ProgressHandler {
+        { progress in
+            Task { @MainActor in
+                let manager = FluidAudioManager.shared
+                guard manager.isDownloading else { return }
+
+                manager.downloadProgress = Float(progress.fractionCompleted)
+                manager.currentStatus = downloadStatusMessage(for: progress)
+            }
+        }
+    }
+
+    private static func downloadStatusMessage(for progress: DownloadUtils.DownloadProgress) -> String {
+        switch progress.phase {
+        case .listing:
+            return "Checking Parakeet model files..."
+        case .downloading(let completedFiles, let totalFiles):
+            if totalFiles > 0 {
+                return "Downloading Parakeet model files... \(completedFiles)/\(totalFiles)"
+            }
+            return "Downloading Parakeet model files..."
+        case .compiling(let modelName):
+            if modelName.isEmpty {
+                return "Preparing Parakeet model..."
+            }
+            return "Preparing \(modelName)..."
+        }
+    }
+    #endif
+
+    private func clearDownloadedModelDefaults() {
+        UserDefaults.standard.set(false, forKey: FluidAudioModelInfo.SettingsKeys.modelDownloaded)
+        UserDefaults.standard.removeObject(forKey: FluidAudioModelInfo.SettingsKeys.downloadedModelVersion)
     }
 
     /// Whether the FluidAudio SDK is linked in this build. Compile-time constant, safe to access from any isolation domain.
@@ -115,8 +202,7 @@ final class FluidAudioManager: ObservableObject {
         loadedModelVersion = nil
         isModelReady = false
         currentStatus = "Model version changed. Please re-download."
-        UserDefaults.standard.set(false, forKey: FluidAudioModelInfo.SettingsKeys.modelDownloaded)
-        UserDefaults.standard.removeObject(forKey: FluidAudioModelInfo.SettingsKeys.downloadedModelVersion)
+        clearDownloadedModelDefaults()
     }
 
     // MARK: - Download & Prepare
@@ -139,51 +225,29 @@ final class FluidAudioManager: ObservableObject {
         }
 
         let selectedVersion = FluidAudioModelInfo.selectedModelVersion
+        if !isModelReady {
+            Self.deleteModelFiles(for: selectedVersion)
+        }
 
         // Wrap in a Task so we can support cancellation
         let task = Task { () -> AsrModels in
+            let progressHandler = Self.makeDownloadProgressHandler()
             let models: AsrModels
             switch selectedVersion {
             case .v2:
-                models = try await AsrModels.downloadAndLoad(version: .v2)
+                models = try await AsrModels.downloadAndLoad(version: .v2, progressHandler: progressHandler)
             case .v3:
-                models = try await AsrModels.downloadAndLoad(version: .v3)
+                models = try await AsrModels.downloadAndLoad(version: .v3, progressHandler: progressHandler)
             }
             try Task.checkCancellation()
             return models
         }
-        // Store an erased reference for cancellation
-        let cancellationTask = Task<Void, Error> {
-            _ = try await task.value
-        }
-        downloadTask = cancellationTask
-
-        // Update progress while downloading (poll-based since FluidAudio SDK doesn't expose progress callbacks)
-        // Uses asymptotic formula that never reaches 100% until download completes:
-        // progress = 0.95 * (1 - e^(-tick/40)) approaches 95% smoothly over time
-        let progressTask = Task {
-            var tick: Float = 0
-            while !Task.isCancelled {
-                try await Task.sleep(nanoseconds: 500_000_000) // 0.5s
-                tick += 1
-                // Asymptotic progress: smoothly approaches 95% without stalling
-                // At tick 20 (10s): ~39%, tick 40 (20s): ~63%, tick 80 (40s): ~86%, tick 120 (60s): ~95%
-                let progress = 0.95 * (1.0 - exp(-tick / 40.0))
-                await MainActor.run {
-                    if self.isDownloading {
-                        self.downloadProgress = progress
-                        self.currentStatus = "Downloading Parakeet model... (\(Int(progress * 100))%)"
-                    }
-                }
-            }
-        }
+        downloadTask = task
 
         let models: AsrModels
         do {
             models = try await task.value
-            progressTask.cancel()
         } catch {
-            progressTask.cancel()
             downloadTask = nil
             downloadProgress = 0
             throw error
@@ -193,7 +257,7 @@ final class FluidAudioManager: ObservableObject {
         downloadProgress = 0.95
         currentStatus = "Initializing model..."
 
-        let manager = AsrManager(config: .default, models: models)
+        let manager = AsrManager(config: Self.parakeetASRConfig, models: models)
 
         asrManager = manager
         loadedModelVersion = selectedVersion
@@ -232,8 +296,7 @@ final class FluidAudioManager: ObservableObject {
         isModelReady = false
         downloadProgress = 0
         currentStatus = "Model deleted"
-        UserDefaults.standard.set(false, forKey: FluidAudioModelInfo.SettingsKeys.modelDownloaded)
-        UserDefaults.standard.removeObject(forKey: FluidAudioModelInfo.SettingsKeys.downloadedModelVersion)
+        clearDownloadedModelDefaults()
     }
 
     /// Unload the model from memory without deleting files on disk
@@ -275,8 +338,7 @@ final class FluidAudioManager: ObservableObject {
             } catch {
                 // Cached model files are gone; clear stale state so the UI reflects this
                 isModelReady = false
-                UserDefaults.standard.set(false, forKey: FluidAudioModelInfo.SettingsKeys.modelDownloaded)
-                UserDefaults.standard.removeObject(forKey: FluidAudioModelInfo.SettingsKeys.downloadedModelVersion)
+                clearDownloadedModelDefaults()
                 throw TranscriptionError.fluidAudioNotReady
             }
         }
@@ -285,33 +347,69 @@ final class FluidAudioManager: ObservableObject {
             throw TranscriptionError.fluidAudioNotReady
         }
 
-        currentStatus = "Transcribing with Parakeet..."
-        let start = Date()
-        var decoderState = TdtDecoderState.make(decoderLayers: await asrManager.decoderLayerCount)
-        let result = try await asrManager.transcribe(audioURL, decoderState: &decoderState)
+        do {
+            currentStatus = "Transcribing with Parakeet..."
+            let start = Date()
+            let originalDuration = await Self.audioDuration(for: audioURL)
+            var decoderState = TdtDecoderState.make(decoderLayers: await asrManager.decoderLayerCount)
+            let result = try await asrManager.transcribe(audioURL, decoderState: &decoderState)
 
-        // Determine audio duration for accurate segment end time
-        let asset = AVURLAsset(url: audioURL)
-        let duration = try await asset.load(.duration)
-        let durationSeconds = CMTimeGetSeconds(duration)
+            let segment = TranscriptSegment(
+                speaker: "",
+                text: result.text,
+                startTime: 0,
+                endTime: originalDuration > 0 ? originalDuration : 0
+            )
 
-        let segment = TranscriptSegment(
-            speaker: "",
-            text: result.text,
-            startTime: 0,
-            endTime: durationSeconds > 0 ? durationSeconds : 0
-        )
-
-        return TranscriptionResult(
-            fullText: result.text,
-            segments: [segment],
-            processingTime: Date().timeIntervalSince(start),
-            chunkCount: 1,
-            success: true,  // success reflects engine completion without error, not output length
-            error: nil
-        )
+            return TranscriptionResult(
+                fullText: result.text,
+                segments: [segment],
+                processingTime: Date().timeIntervalSince(start),
+                chunkCount: 1,
+                success: true,  // success reflects engine completion without error, not output length
+                error: nil
+            )
+        } catch {
+            let detailedError = Self.detailedFluidAudioError(
+                error,
+                originalURL: audioURL
+            )
+            AppLog.shared.transcription(
+                "FluidAudio Parakeet transcription failed: \(detailedError.localizedDescription)",
+                level: .error
+            )
+            throw TranscriptionError.fluidAudioTranscriptionFailed(detailedError)
+        }
         #else
         throw TranscriptionError.fluidAudioNotAvailable
         #endif
+    }
+
+    private static func audioDuration(for url: URL) async -> TimeInterval {
+        let asset = AVURLAsset(url: url)
+        do {
+            let duration = try await asset.load(.duration).seconds
+            return duration.isFinite && duration > 0 ? duration : 0
+        } catch {
+            AppLog.shared.transcription("Could not read Parakeet input duration: \(error.localizedDescription)", level: .debug)
+            return 0
+        }
+    }
+
+    private static func detailedFluidAudioError(
+        _ error: Error,
+        originalURL: URL
+    ) -> NSError {
+        let nsError = error as NSError
+        let message = "Parakeet SDK transcription failed for \(originalURL.lastPathComponent): \(nsError.domain) \(nsError.code) - \(nsError.localizedDescription)"
+        return NSError(
+            domain: "FluidAudioManager.Transcription",
+            code: nsError.code,
+            userInfo: [
+                NSLocalizedDescriptionKey: message,
+                NSUnderlyingErrorKey: nsError,
+                "originalPath": originalURL.path
+            ]
+        )
     }
 }

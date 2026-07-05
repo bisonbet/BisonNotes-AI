@@ -159,6 +159,10 @@ struct TranscriptsView: View {
             AppLog.shared.transcription("Received recording renamed notification, refreshing list", level: .debug)
             loadRecordings()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("iCloudReconcileCompleted"))) { _ in
+            loadRecordings()
+            refreshTrigger.toggle()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionCompleted"))) { _ in
             // Refresh recordings list when transcription completes
             AppLog.shared.transcription("Received transcription completed notification, refreshing list", level: .debug)

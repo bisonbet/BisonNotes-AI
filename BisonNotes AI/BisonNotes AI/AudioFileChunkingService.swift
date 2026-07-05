@@ -21,6 +21,7 @@ class AudioFileChunkingService: ObservableObject {
     
     private let fileManager = FileManager.default
     private let performanceOptimizer = PerformanceOptimizer.shared
+    private let minimumStandaloneChunkDuration: TimeInterval = 1.0
     
     // MARK: - Public Methods
     
@@ -352,9 +353,9 @@ class AudioFileChunkingService: ObservableObject {
         // Only delete if directory is empty or only contains our chunk files
         let contents = try fileManager.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
         
-        // Check if all files are chunk files (contain "_chunk_" in name)
+        // Check if all files are chunk files
         let allChunkFiles = contents.allSatisfy { url in
-            url.lastPathComponent.contains("_chunk_")
+            url.lastPathComponent.hasPrefix("chunk_") && url.pathExtension.lowercased() == "m4a"
         }
         
         if contents.isEmpty || allChunkFiles {
@@ -380,6 +381,26 @@ class AudioFileChunkingService: ObservableObject {
         }
         
         return uniqueSegments
+    }
+
+    private func chunkEndTime(
+        startTime: TimeInterval,
+        maxDuration: TimeInterval,
+        totalDuration: TimeInterval,
+        sequenceNumber: Int
+    ) -> TimeInterval {
+        var endTime = min(startTime + maxDuration, totalDuration)
+        let remainingDuration = totalDuration - endTime
+
+        if remainingDuration > 0 && remainingDuration < minimumStandaloneChunkDuration {
+            AppLog.shared.chunking(
+                "Absorbing short final tail into chunk \(sequenceNumber): \(remainingDuration)s remaining",
+                level: .debug
+            )
+            endTime = totalDuration
+        }
+
+        return endTime
     }
     
     // MARK: - Streaming Chunking Methods
@@ -481,7 +502,12 @@ class AudioFileChunkingService: ObservableObject {
         
         while currentTime < duration {
             let chunkStartTime = currentTime
-            let chunkEndTime = min(currentTime + maxSeconds, duration)
+            let chunkEndTime = chunkEndTime(
+                startTime: currentTime,
+                maxDuration: maxSeconds,
+                totalDuration: duration,
+                sequenceNumber: sequenceNumber
+            )
             
             currentStatus = "Creating chunk \(sequenceNumber + 1)..."
             progress = 0.3 + (0.6 * (currentTime / duration))

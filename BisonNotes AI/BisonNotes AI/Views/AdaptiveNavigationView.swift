@@ -73,6 +73,7 @@ struct AdaptiveNavigationView: View {
                 ForEach(SidebarItem.allCases) { item in
                     Label(item.rawValue, systemImage: item.icon)
                         .tag(item)
+                        .accessibilityIdentifier("bisonnotes.sidebar.\(item.rawValue.lowercased())")
                 }
             }
             .navigationTitle("BisonNotes AI")

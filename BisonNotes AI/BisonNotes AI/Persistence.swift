@@ -23,10 +23,7 @@ struct PersistenceController {
         do {
             try viewContext.save()
         } catch {
-            // Replace this implementation with code to handle the error appropriately.
-            // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-            let nsError = error as NSError
-            fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
+            AppLog.shared.coreData("Preview Core Data save failed: \(error.localizedDescription)", level: .error)
         }
         return result
     }()
@@ -34,11 +31,11 @@ struct PersistenceController {
     let container: NSPersistentContainer
 
     init(inMemory: Bool = false) {
-        		container = NSPersistentContainer(name: "BisonNotes_AI")
+        let persistentContainer = NSPersistentContainer(name: "BisonNotes_AI")
         if inMemory {
-            container.persistentStoreDescriptions.first!.url = URL(fileURLWithPath: "/dev/null")
+            persistentContainer.persistentStoreDescriptions.first!.url = URL(fileURLWithPath: "/dev/null")
         }
-        container.persistentStoreDescriptions.forEach { description in
+        persistentContainer.persistentStoreDescriptions.forEach { description in
             description.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
             description.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
             description.setOption(
@@ -46,20 +43,10 @@ struct PersistenceController {
                 forKey: NSPersistentStoreFileProtectionKey
             )
         }
-        container.loadPersistentStores(completionHandler: { (storeDescription, error) in
+        persistentContainer.loadPersistentStores(completionHandler: { (storeDescription, error) in
             if let error = error as NSError? {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-
-                /*
-                 Typical reasons for an error here include:
-                 * The parent directory does not exist, cannot be created, or disallows writing.
-                 * The persistent store is not accessible, due to permissions or data protection when the device is locked.
-                 * The device is out of space.
-                 * The store could not be migrated to the current model version.
-                 Check the error message to determine what the actual problem was.
-                 */
-                fatalError("Unresolved error \(error), \(error.userInfo)")
+                Self.handlePersistentStoreLoadFailure(error, container: persistentContainer, inMemory: inMemory)
+                return
             }
 
             if let storeURL = storeDescription.url, !inMemory {
@@ -68,6 +55,36 @@ struct PersistenceController {
                 AppFileProtection.apply(to: URL(fileURLWithPath: storeURL.path + "-shm"))
             }
         })
+        container = persistentContainer
         container.viewContext.automaticallyMergesChangesFromParent = true
+    }
+
+    private static func handlePersistentStoreLoadFailure(_ error: NSError,
+                                                         container: NSPersistentContainer,
+                                                         inMemory: Bool) {
+        AppLog.shared.coreData(
+            "Core Data persistent store failed to load: \(error.localizedDescription) userInfo=\(error.userInfo)",
+            level: .fault
+        )
+
+        guard !inMemory else { return }
+
+        do {
+            try container.persistentStoreCoordinator.addPersistentStore(
+                ofType: NSInMemoryStoreType,
+                configurationName: nil,
+                at: nil,
+                options: nil
+            )
+            AppLog.shared.coreData(
+                "Loaded temporary in-memory Core Data fallback after persistent store failure. Existing recordings may be unavailable until the app restarts successfully.",
+                level: .error
+            )
+        } catch {
+            AppLog.shared.coreData(
+                "Failed to load in-memory Core Data fallback after persistent store failure: \(error.localizedDescription)",
+                level: .fault
+            )
+        }
     }
 }

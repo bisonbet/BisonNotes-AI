@@ -116,7 +116,7 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - **Combine Recordings**: Merge two separate recordings into a single continuous audio file
 - **PDF Export**: Professional PDF reports with three-pane header (metadata, local map, regional map), pagination, and dedicated tasks/reminders sections
 - **Background Processing**: Long recordings and complex processing handled automatically in the background with intelligent stale job detection and automatic recovery
-- **iCloud Backup & Sync**: Automatic backup on recording creation, CloudKit summary sync with paginated queries and schema-safe fallback, deferred auto-backup. Sensitive settings (API keys, AWS credentials) are excluded from iCloud settings backups by default.
+- **iCloud Backup & Sync**: Automatic backup and cross-device reconcile on app activation, CloudKit summary sync with paginated queries and schema-safe fallback, deferred auto-backup, and a per-recording **Keep on This Device** tag that excludes a recording, transcript, and summary from BisonNotes iCloud sync and backup. Sensitive settings (API keys, AWS credentials) are excluded from iCloud settings backups by default.
 - **Search Functionality**: Powerful search across recordings, transcripts, and summaries. Search by recording name, transcript text, summary content, tasks, reminders, and titles.
 - **Date Filters**: Filter recordings, transcripts, and summaries by date range. Select start and end dates to quickly find content from specific time periods.
 
@@ -142,6 +142,20 @@ Audio archive is different from deleting an audio file. When a recording is arch
 Archived recordings show their saved iCloud Drive location and a download button when local audio has been offloaded. Restoring copies the audio back into the app, validates that it is playable audio, clears the archive state, and removes the archived iCloud Drive copy so there is not a second stale file left behind. If the app cannot save a trackable iCloud location, it leaves the local audio in place and does not mark the recording archived.
 
 For now, archive destinations are intentionally limited to iCloud Drive. Dropbox, Google Drive, Proton Drive, and other iOS File Provider extensions can appear in Files, but they have not been reliable enough for batch export, restore, and post-restore deletion.
+
+## iCloud Sync Notice
+
+When iCloud Sync is enabled, BisonNotes shows a confirmation notice that BisonNotes AI and uploads to iCloud are not HIPAA-compliant. If enabled, eligible recordings, transcripts, summaries, and selected settings may be uploaded to the user's private iCloud account.
+
+To keep a specific item out of BisonNotes iCloud sync and backup, mark its recording **Keep on This Device** from the recording row or audio player. The tag applies to the recording's audio, transcript, and summary together. When the tag is turned on, BisonNotes skips future app-managed iCloud summary sync and backup for that item and removes known app-created iCloud records for that recording when iCloud is available.
+
+When iCloud Sync is enabled, BisonNotes automatically reconciles eligible recordings, transcripts, and summaries when the app launches or becomes active. The **Include audio files in backup** checkbox controls whether audio files are uploaded and restored; transcripts and summaries are included in app-managed iCloud sync unless the recording is marked **Keep on This Device**. Deleting a recording writes an iCloud deletion marker and removes known app-created iCloud records so other devices on the same iCloud account can apply the deletion before they upload their local state. The app only cleans up records it can prove were deleted or explicitly excluded; active cloud-only records without a deletion marker are restored, while older untrusted cloud-only records are held for review.
+
+iOS, iPadOS, and Mac Catalyst builds use the shared iCloud container `iCloud.Bison-Networking.BisonNotes-AI` for app-managed CloudKit sync. Devices must be signed into the same Apple ID and use the same CloudKit environment to see the same records. A local Debug build uses the CloudKit development environment, while TestFlight and App Store builds use production, so a Debug Mac Catalyst install will not see records created by a production iPhone or iPad build until the build channel/environment matches.
+
+Production iCloud sync requires the CloudKit production schema for `iCloud.Bison-Networking.BisonNotes-AI` to include the app-managed backup record types `CD_BackupRecording`, `CD_BackupTranscript`, `CD_BackupSummary`, `CD_BackupSettings`, `CD_BackupContentIndex`, and `CD_BackupDeletion`. Before shipping TestFlight or App Store builds that use these records, create/verify them in the development environment and deploy the CloudKit schema changes to production from CloudKit Dashboard. Production clients cannot create new record types themselves.
+
+Current app versions mark synced content as active before it is automatically restored on other devices. Older cloud-only items that are not marked active are held in **Settings > iCloud Sync > Review iCloud Items**, where they can be restored or deleted from BisonNotes iCloud sync records.
 
 ## Transcription Engines
 
@@ -237,7 +251,7 @@ Google AI Studio provides access to Gemini models:
 
 ### On-Device AI
 
-The on-device AI feature enables completely private, offline AI processing. v2.0 uses MLX Swift as the default local summarization engine and keeps the original llama.cpp engine as a legacy option for higher-memory devices.
+The on-device AI feature enables completely private, offline AI processing. v2.1 uses MLX Swift as the default local summarization engine and keeps the original llama.cpp engine as a legacy option for higher-memory devices.
 
 #### MLX Swift (Default)
 
@@ -275,6 +289,7 @@ The on-device AI feature enables completely private, offline AI processing. v2.0
 - AWS process-environment credentials (`AWS_ACCESS_KEY_ID` etc.) are cleared at launch; Bedrock, Transcribe, and background jobs use explicit credential resolvers from `AWSCredentialsManager`.
 - User-configurable AI endpoints (OpenAI/OpenAI-Compatible/Ollama/Whisper) are validated via `EndpointSecurityPolicy` — public cleartext destinations are blocked unless the per-service Development Mode override is enabled.
 - Enable required capabilities in Xcode (Microphone, Background Modes, iCloud if used). Keep `Info.plist` and `.entitlements` aligned with features. `APS_ENVIRONMENT` is set per-configuration so Debug uses `development` and Release uses `production`.
+- Before distributing iCloud sync changes through TestFlight or the App Store, deploy CloudKit development schema changes for `iCloud.Bison-Networking.BisonNotes-AI` to production. Production builds cannot create new CloudKit record types at runtime.
 - For On Device transcription, Parakeet is the only on-device engine (WhisperKit was removed in v1.8). Download the model in Setup → Transcription Settings → On Device.
 - For on-device AI, device capability checks ensure your device meets requirements (4 GB+ RAM for MLX Swift, 6 GB+ RAM for legacy llama.cpp models, iOS 26+ and an Apple Intelligence-capable device for Apple Native) before allowing downloads.
 

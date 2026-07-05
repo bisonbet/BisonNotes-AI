@@ -22,6 +22,9 @@ struct AudioPlayerView: View {
     @State private var audioExportURL: URL?
     @State private var audioExportError: String?
     @State private var audioLoadError: String?
+    @State private var isCloudSyncDisabled = false
+    @State private var isUpdatingCloudSyncPreference = false
+    @State private var cloudSyncPreferenceError: String?
 
     // Transcript-from-recording flow
     @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
@@ -68,6 +71,9 @@ struct AudioPlayerView: View {
                             onSave: updateRecordingTitle
                         )
                         .frame(maxWidth: .infinity)
+
+                        localOnlyPreferenceRow
+                            .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayerKeepOnThisDevice)
 
                         transcriptActionRow
                     }
@@ -228,11 +234,60 @@ struct AudioPlayerView: View {
         } message: {
             Text(audioExportError ?? "Unknown error")
         }
+        .alert("Unable to Update iCloud Sync", isPresented: Binding(
+            get: { cloudSyncPreferenceError != nil },
+            set: { if !$0 { cloudSyncPreferenceError = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                cloudSyncPreferenceError = nil
+            }
+        } message: {
+            Text(cloudSyncPreferenceError ?? "Unknown error")
+        }
+        .onAppear {
+            refreshCloudSyncPreference()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingCloudSyncPreferenceChanged"))) { _ in
+            refreshCloudSyncPreference()
+        }
         .onDisappear {
             AppLog.shared.recording("AudioPlayerView disappeared", level: .debug)
             if recorderVM.isPlaying {
                 recorderVM.stopPlaying()
             }
+        }
+    }
+
+    private var localOnlyPreferenceRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: isCloudSyncDisabled ? "iphone" : "icloud")
+                .font(.headline)
+                .foregroundColor(isCloudSyncDisabled ? .indigo : .blue)
+                .frame(width: 34, height: 34)
+                .background((isCloudSyncDisabled ? Color.indigo : Color.blue).opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Keep on This Device")
+                    .font(.subheadline.weight(.semibold))
+                Text("Excludes this recording, transcript, and summary from BisonNotes iCloud sync and backup.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            Toggle("", isOn: Binding(
+                get: { isCloudSyncDisabled },
+                set: { newValue in
+                    updateCloudSyncPreference(disabled: newValue)
+                }
+            ))
+            .labelsHidden()
+            .accessibilityLabel("Keep on This Device")
+            .accessibilityHint("Excludes this recording, transcript, and summary from BisonNotes iCloud sync and backup.")
+            .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayerKeepOnThisDevice)
+            .disabled(isUpdatingCloudSyncPreference || recording.recordingId == nil)
         }
     }
 
@@ -386,6 +441,44 @@ struct AudioPlayerView: View {
                 await MainActor.run {
                     isUpdatingTitle = false
                     titleUpdateError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func refreshCloudSyncPreference() {
+        if let recordingId = recording.recordingId,
+           let entry = appCoordinator.getRecording(id: recordingId) {
+            isCloudSyncDisabled = entry.isCloudSyncDisabled
+        } else if let entry = appCoordinator.getRecording(url: recording.url) {
+            isCloudSyncDisabled = entry.isCloudSyncDisabled
+        } else {
+            isCloudSyncDisabled = recording.isCloudSyncDisabled
+        }
+    }
+
+    private func updateCloudSyncPreference(disabled: Bool) {
+        guard !isUpdatingCloudSyncPreference else { return }
+
+        guard let recordingId = recording.recordingId ?? appCoordinator.getRecording(url: recording.url)?.id else {
+            cloudSyncPreferenceError = "Could not find this recording in storage."
+            return
+        }
+
+        isUpdatingCloudSyncPreference = true
+
+        Task {
+            do {
+                try await appCoordinator.setCloudSyncDisabled(for: recordingId, disabled: disabled)
+                await MainActor.run {
+                    isCloudSyncDisabled = disabled
+                    isUpdatingCloudSyncPreference = false
+                }
+            } catch {
+                await MainActor.run {
+                    isUpdatingCloudSyncPreference = false
+                    cloudSyncPreferenceError = error.localizedDescription
+                    refreshCloudSyncPreference()
                 }
             }
         }

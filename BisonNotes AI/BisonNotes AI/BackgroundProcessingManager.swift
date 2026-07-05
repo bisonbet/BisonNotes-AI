@@ -352,10 +352,12 @@ class BackgroundProcessingManager: ObservableObject {
     private let audioSessionManager = EnhancedAudioSessionManager()
     private let coreDataManager = CoreDataManager()
     private var keepAlivePlayer: AVAudioPlayer?
+    private var backgroundAudioKeepAliveActive = false
     
     // MARK: - Singleton
     
     static let shared = BackgroundProcessingManager()
+    private static let fluidAudioMinimumTranscribableDuration: TimeInterval = 0.3
     
     private init() {
         loadJobsFromCoreData()
@@ -855,6 +857,7 @@ class BackgroundProcessingManager: ObservableObject {
                 await refreshBackgroundTask()
             } else {
                 await endBackgroundTask()
+                TemporaryFileCleanupService.shared.cleanupStaleFiles(maxAge: 30 * 60)
             }
 
             // Process next queued job
@@ -943,6 +946,17 @@ class BackgroundProcessingManager: ObservableObject {
             if index == 0 || index == totalChunks / 2 || index == totalChunks - 1 {
                 await sendProgressNotification(for: chunkProgressJob)
             }
+
+            if engine == .fluidAudio,
+               index == totalChunks - 1,
+               chunk.chunkURL != chunk.originalURL,
+               chunk.duration < Self.fluidAudioMinimumTranscribableDuration {
+                AppLog.shared.backgroundProcessing(
+                    "Skipping final FluidAudio chunk under SDK minimum: seq=\(chunk.sequenceNumber), duration=\(chunk.duration)s",
+                    level: .debug
+                )
+                continue
+            }
             
             // Transcribe the chunk
             let transcriptResult = try await transcribeChunk(chunk, engine: engine)
@@ -994,11 +1008,6 @@ class BackgroundProcessingManager: ObservableObject {
             
             // Save the complete transcript
             await saveTranscript(reassemblyResult.transcriptData)
-            
-            // Clean up chunk files if they were created
-            if chunks.count > 1 && chunks.first?.chunkURL != job.recordingURL {
-                try await chunkingService.cleanupChunks(chunks)
-            }
         } else if let firstChunk = transcriptChunks.first {
             // Single chunk, save directly
             // Get the recording ID first
@@ -1032,6 +1041,14 @@ class BackgroundProcessingManager: ObservableObject {
             )
             
             await saveTranscript(transcriptData)
+        }
+
+        if chunks.contains(where: { $0.chunkURL != $0.originalURL }) {
+            do {
+                try await chunkingService.cleanupChunks(chunks)
+            } catch {
+                AppLog.shared.backgroundProcessing("Chunk cleanup failed after transcription: \(error.localizedDescription)", level: .error)
+            }
         }
         
         // Complete the job - but validate we actually have transcript content
@@ -1757,8 +1774,12 @@ class BackgroundProcessingManager: ObservableObject {
         AppLog.shared.backgroundProcessing("Handling app backgrounding")
 
         // If there's an active job, ensure background task is running
-        if currentJob != nil && backgroundTaskID == .invalid {
-            await beginBackgroundTask()
+        if currentJob != nil {
+            if backgroundTaskID == .invalid {
+                await beginBackgroundTask()
+            } else {
+                await enableBackgroundAudioKeepAliveIfNeeded()
+            }
         }
 
         // Schedule background processing task if there are queued jobs
@@ -1806,6 +1827,8 @@ class BackgroundProcessingManager: ObservableObject {
     
     private func handleAppForegrounding() async {
         AppLog.shared.backgroundProcessing("Handling app foregrounding")
+
+        await disableBackgroundAudioKeepAliveIfNeeded()
 
         // Clear notification badge
         await clearNotificationBadge()
@@ -2162,8 +2185,60 @@ class BackgroundProcessingManager: ObservableObject {
         }
     }
 
+    private func enableBackgroundAudioKeepAliveIfNeeded() async {
+        #if targetEnvironment(macCatalyst)
+        return
+        #else
+        guard UIApplication.shared.applicationState != .active else {
+            AppLog.shared.backgroundProcessing("Skipping keep-alive audio while app is active", level: .debug)
+            return
+        }
+
+        guard !backgroundAudioKeepAliveActive else { return }
+
+        do {
+            try await audioSessionManager.configureBackgroundProcessingSession()
+
+            // Wait a moment for the audio session to be fully configured.
+            try await Task.sleep(nanoseconds: 100_000_000)
+
+            backgroundAudioKeepAliveActive = true
+            AppLog.shared.backgroundProcessing("Playback audio session configured for background processing")
+
+            let backgroundTime = UIApplication.shared.backgroundTimeRemaining
+            if backgroundTime != Double.greatestFiniteMagnitude {
+                AppLog.shared.backgroundProcessing("After audio session config: \(Int(backgroundTime))s background time", level: .debug)
+            } else {
+                AppLog.shared.backgroundProcessing("After audio session config: Unlimited background time", level: .debug)
+            }
+
+            startKeepAliveAudio()
+        } catch {
+            AppLog.shared.backgroundProcessing("CRITICAL: Could not configure background audio session: \(error.localizedDescription). This will severely limit background processing time.", level: .error)
+        }
+        #endif
+    }
+
+    private func disableBackgroundAudioKeepAliveIfNeeded() async {
+        #if targetEnvironment(macCatalyst)
+        return
+        #else
+        guard backgroundAudioKeepAliveActive || keepAlivePlayer != nil else { return }
+
+        stopKeepAliveAudio()
+        backgroundAudioKeepAliveActive = false
+
+        do {
+            try await audioSessionManager.deactivateSession()
+            AppLog.shared.backgroundProcessing("Audio session deactivated after background keep-alive")
+        } catch {
+            AppLog.shared.backgroundProcessing("Could not deactivate audio session: \(error.localizedDescription)", level: .error)
+        }
+        #endif
+    }
+
     // MARK: - Background Task Management
-    
+
     private func beginBackgroundTask() async {
         #if targetEnvironment(macCatalyst)
         // Mac apps don't get suspended by the OS, so the iOS background-task
@@ -2178,28 +2253,6 @@ class BackgroundProcessingManager: ObservableObject {
             return
         }
 
-        // Configure audio session for background processing to get extended time
-        // This is CRITICAL for getting more than 30 seconds of background time
-        do {
-            try await audioSessionManager.configureBackgroundRecording()
-            
-            // Wait a moment for the audio session to be fully configured
-            try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-            
-            AppLog.shared.backgroundProcessing("Audio session configured for background processing")
-
-            // Verify we actually got extended background time
-            let backgroundTime = UIApplication.shared.backgroundTimeRemaining
-            if backgroundTime != Double.greatestFiniteMagnitude {
-                AppLog.shared.backgroundProcessing("After audio session config: \(Int(backgroundTime))s background time", level: .debug)
-            } else {
-                AppLog.shared.backgroundProcessing("After audio session config: Unlimited background time", level: .debug)
-            }
-        } catch {
-            AppLog.shared.backgroundProcessing("CRITICAL: Could not configure background audio session: \(error.localizedDescription). This will severely limit background processing time.", level: .error)
-            // Continue anyway, we'll still get some background time
-        }
-        
         // Create descriptive task name based on current job
         let taskName = if let currentJob = currentJob {
             "AudioProcessing-\(currentJob.type.displayName.replacingOccurrences(of: " ", with: ""))-\(currentJob.recordingName.prefix(20))"
@@ -2240,8 +2293,9 @@ class BackgroundProcessingManager: ObservableObject {
             // Start monitoring background time for long operations
             startBackgroundTimeMonitoring()
 
-            // Start keep-alive audio to prevent app suspension during long tasks (like On-Device LLM)
-            startKeepAliveAudio()
+            // Start keep-alive audio only when actually backgrounded. Foreground
+            // processing should not claim or reroute system audio.
+            await enableBackgroundAudioKeepAliveIfNeeded()
         }
         #endif
     }
@@ -2252,8 +2306,7 @@ class BackgroundProcessingManager: ObservableObject {
         // beginBackgroundTask is a no-op on Catalyst; nothing to tear down.
         return
         #else
-        // Stop keep-alive audio
-        stopKeepAliveAudio()
+        await disableBackgroundAudioKeepAliveIfNeeded()
 
         // Cancel background time monitor first
         backgroundTimeMonitor?.cancel()
@@ -2265,15 +2318,7 @@ class BackgroundProcessingManager: ObservableObject {
             backgroundTaskID = .invalid
             backgroundTaskStartTime = nil
 
-            // Clean up audio session when background task ends
-            Task {
-                do {
-                    try await audioSessionManager.deactivateSession()
-                    AppLog.shared.backgroundProcessing("Audio session deactivated after background task")
-                } catch {
-                    AppLog.shared.backgroundProcessing("Could not deactivate audio session: \(error.localizedDescription)", level: .error)
-                }
-            }
+            AppLog.shared.backgroundProcessing("Background task ended")
         }
         #endif
     }

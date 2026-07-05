@@ -230,6 +230,7 @@ struct SimpleSettingsView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Additional Settings")
+            .accessibilityIdentifier(BisonNotesAccessibilityID.setupAdditionalSettingsButton)
         }
     }
 

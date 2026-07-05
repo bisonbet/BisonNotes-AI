@@ -8,28 +8,76 @@
 import XCTest
 
 final class BisonNotesAIUITests: XCTestCase {
-
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
+        continueAfterFailure = false
     }
 
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
+    @MainActor
+    func testSeededRecordingNavigationAndICloudNotice() throws {
+        let app = launchSeededApp()
+
+        app.buttons["bisonnotes.record.view-recordings"].tap()
+        XCTAssertTrue(app.staticTexts["UI Test Recording"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Keep on This Device"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Play Audio"].waitForExistence(timeout: 5))
+
+        app.buttons["Done"].tap()
+        app.tabBars.buttons["Setup"].tap()
+        app.buttons["bisonnotes.setup.additional-settings"].tap()
+
+        let iCloudToggle = findICloudToggle(in: app)
+        XCTAssertTrue(iCloudToggle.exists)
+        iCloudToggle.tap()
+
+        XCTAssertTrue(app.alerts["iCloud Sync Notice"].waitForExistence(timeout: 5))
+        app.alerts["iCloud Sync Notice"].buttons["Cancel"].tap()
     }
 
-    func testExample() throws {
-        // This is an example of a functional test case.
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // Any test you write for XCTest can be annotated as throws and async.
-        // Mark your test throws to produce an unexpected failure when your test encounters an uncaught error.
-        // Mark your test async to allow awaiting for asynchronous code to complete. Check the results with assertions afterwards.
-    }
-
-    func testPerformanceExample() throws {
-        // This is an example of a performance test case.
-        self.measure {
-            // Put the code you want to measure the time of here.
+    @MainActor
+    func testLaunchPerformance() throws {
+        measure {
+            let app = XCUIApplication()
+            app.launchArguments = [
+                "--ui-testing",
+                "--reset-test-data",
+                "--seed-sample-recording",
+                "--disable-cloud-services"
+            ]
+            app.launch()
         }
     }
 
+    @MainActor
+    private func launchSeededApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-testing",
+            "--reset-test-data",
+            "--seed-sample-recording",
+            "--disable-cloud-services"
+        ]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["bisonnotes.app.ready"].waitForExistence(timeout: 20))
+        return app
+    }
+
+    @MainActor
+    private func findICloudToggle(in app: XCUIApplication) -> XCUIElement {
+        let settingsScroll = app.scrollViews["bisonnotes.settings.scroll"]
+        XCTAssertTrue(settingsScroll.waitForExistence(timeout: 8))
+
+        let identifierToggle = app.descendants(matching: .any)["bisonnotes.settings.icloud.enable"]
+        let labelToggle = app.switches["Enable iCloud Sync"]
+        for _ in 0..<4 {
+            if identifierToggle.exists {
+                return identifierToggle
+            }
+            if labelToggle.exists {
+                return labelToggle
+            }
+            settingsScroll.swipeUp()
+        }
+
+        return identifierToggle.exists ? identifierToggle : labelToggle
+    }
 }

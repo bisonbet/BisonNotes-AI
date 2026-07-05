@@ -81,6 +81,9 @@ struct SummariesView: View {
                     // Refresh when app comes to foreground
                     loadRecordings()
                 }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("iCloudReconcileCompleted"))) { _ in
+                    loadRecordings()
+                }
                 .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SummaryDeleted"))) { _ in
                     // Refresh when a summary is deleted
                     AppLog.shared.summarization("Received summary deletion notification, refreshing...", level: .debug)
