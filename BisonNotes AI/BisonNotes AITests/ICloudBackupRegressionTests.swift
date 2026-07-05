@@ -78,6 +78,18 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(iCloudManager.pendingCloudDeletionCountForTesting, 1)
     }
 
+    func testDeletingSummaryQueuesPendingiCloudRemovalWhenSyncIsUnavailable() async throws {
+        let recordingId = try createCompleteRecording(named: "Delete Summary")
+        let summaryId = try XCTUnwrap(appCoordinator.getSummary(for: recordingId)?.id)
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+
+        try await appCoordinator.deleteSummary(id: summaryId)
+
+        XCTAssertNotNil(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertNil(appCoordinator.getSummary(for: recordingId))
+        XCTAssertEqual(iCloudManager.pendingSummaryRemovalCountForTesting, 1)
+    }
+
     func testLocalOnlyToggleQueuesAndClearsPendingCloudRemovalWhenSyncIsUnavailable() async throws {
         let recordingId = try createCompleteRecording(named: "Local Only Pending Removal")
         let iCloudManager = SummaryManager.shared.getiCloudManager()
