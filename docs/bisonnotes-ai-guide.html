@@ -132,7 +132,7 @@ body.page .entry-header {
 <div class="bn-hero">
   <h1>BisonNotes AI</h1>
   <p>Complete User Guide &mdash; iPhone, iPad, Apple Watch, and Mac</p>
-  <span class="bn-ver">v2.0</span>
+  <span class="bn-ver">v2.1</span>
 </div>
 
 <!-- ===== TOC ===== -->
@@ -168,16 +168,16 @@ body.page .entry-header {
 </div>
 
 <!-- ============================================================ -->
-<!-- WHAT'S NEW IN V2.0                                             -->
+<!-- WHAT'S NEW IN V2.1                                             -->
 <!-- ============================================================ -->
 <div class="bn-ok">
-  <strong>What&rsquo;s new in v2.0:</strong>
+  <strong>What&rsquo;s new in v2.1:</strong>
   <ul>
-    <li><strong>Modernized interface.</strong> Recordings, Transcripts, Summaries, Setup, and Settings use refreshed layouts with clearer actions and better Mac/iPad navigation.</li>
-    <li><strong>Redesigned Apple Watch recorder.</strong> Tap once to record, tap again to stop, and use mute to pause/resume the same file. The watch records independently and syncs the finished file back to iPhone.</li>
-    <li><strong>On Device AI is now MLX-backed.</strong> Supported devices use MLX Swift and Ternary Bonsai models by default. Devices with 4GB+ RAM can run local summaries; devices below 4GB fall back to Mistral AI.</li>
-    <li><strong>Legacy local AI cleanup.</strong> The old llama.cpp engine remains available as On Device AI (Legacy) on 6GB+ devices. The removed LFM 2.5 model is deleted during migration and no longer appears in model lists.</li>
-    <li><strong>Mac Catalyst refinements.</strong> The Mac build is Apple Silicon only, with Catalyst-specific audio recording, sandbox/iCloud entitlements, and iCloud audio archive support.</li>
+    <li><strong>Mac meeting audio capture.</strong> On Apple Silicon Macs, BisonNotes can optionally record audio playing from other Mac apps and mix it with your microphone recording. Enable <em>Record Meeting Audio</em> in Settings &rarr; Recording and grant macOS Screen &amp; System Audio Recording permission.</li>
+    <li><strong>Stronger iCloud sync controls.</strong> iCloud Sync now shows a HIPAA notice, supports per-recording <em>Keep on This Device</em> exclusions, uses deletion markers, and provides Review iCloud Items for older cloud-only records.</li>
+    <li><strong>More reliable Parakeet transcription.</strong> BisonNotes recognizes cached Parakeet models after updates or settings resets, supports English v2 and multilingual v3 model choices, improves download/prepare status, and avoids tiny final tail chunks on long local transcriptions.</li>
+    <li><strong>Recording reliability cleanup.</strong> Audio session ownership, background interruption handling, crash recovery, and stale temporary audio cleanup were tightened for safer long recordings.</li>
+    <li><strong>Regression validation.</strong> App/watch test plans, seeded UI test launch modes, iCloud and transcription regression tests, and a documented release test regimen were added.</li>
   </ul>
 </div>
 
@@ -261,8 +261,9 @@ body.page .entry-header {
   <div class="dd">
     <div class="bn-info"><strong>When does this appear?</strong> After generating your first successful summary.</div>
     <ul>
-      <li><strong>"Enable iCloud Sync"</strong> — Summaries sync across all your devices. Uses your iCloud storage quota.</li>
-      <li><strong>"Keep Local Only"</strong> — Summaries stay on this device only. Better for privacy-sensitive content. Can be changed later.</li>
+      <li><strong>"Enable iCloud Sync"</strong> — Eligible recordings, transcripts, summaries, and selected settings sync across your devices through your private iCloud account. BisonNotes shows a HIPAA notice before enabling this.</li>
+      <li><strong>"Keep Local Only"</strong> — Content stays on this device only. Better for privacy-sensitive content. Can be changed later.</li>
+      <li><strong>Per-recording exclusions</strong> — Use <em>Keep on This Device</em> from a recording row or audio player to keep that recording, transcript, and summary out of BisonNotes iCloud sync and backup.</li>
     </ul>
   </div>
 </details>
@@ -287,14 +288,16 @@ body.page .entry-header {
 <!-- ============================================================ -->
 <h2 id="bn-recording">Recording Features</h2>
 
-<h3 id="bn-mac">Mac Catalyst (v2.0)</h3>
+<h3 id="bn-mac">Mac Catalyst (v2.1)</h3>
 <p>BisonNotes AI runs natively on Apple Silicon Macs as a Mac Catalyst app. The Mac build uses an <code>AVAudioEngine</code>-based recording pipeline tuned for desktop audio sessions:</p>
 <ul>
   <li><strong>Same Core Data store</strong> &mdash; Recordings, transcripts, and summaries sync with iPhone/iPad through iCloud (if enabled).</li>
   <li><strong>Pause &amp; Resume</strong> &mdash; Full pause/resume support, the same as on iOS.</li>
   <li><strong>Microphone selection</strong> &mdash; Choose your built-in mic, USB interface, or Bluetooth device from Transcription Settings.</li>
+  <li><strong>Record Meeting Audio</strong> &mdash; Optionally capture audio playing from other Mac apps while your microphone records your local speech. BisonNotes mixes both tracks into one M4A recording.</li>
+  <li><strong>macOS permission</strong> &mdash; Meeting audio capture requires Screen &amp; System Audio Recording permission. BisonNotes records audio only and does not save screen video. If permission changes or capture fails, the app saves microphone audio only.</li>
   <li><strong>Local AI</strong> &mdash; On Device AI uses MLX Swift by default. The legacy llama.cpp engine remains available for higher-memory devices.</li>
-  <li><strong>Archive support</strong> &mdash; The Mac build includes Catalyst sandbox, microphone, networking, calendar, file access, and iCloud entitlements for v2.0 archive workflows.</li>
+  <li><strong>Archive support</strong> &mdash; The Mac build includes Catalyst sandbox, microphone, networking, calendar, file access, and iCloud entitlements for archive workflows.</li>
   <li><strong>Settings and lists</strong> &mdash; Setup, Settings, Summaries, and Transcripts use Mac-friendly scrolling, navigation, and button hit targets.</li>
 </ul>
 
@@ -741,15 +744,17 @@ ollama pull mistral-small3.2</code></pre>
 <details>
   <summary>On Device Transcription (Parakeet) — Default</summary>
   <div class="dd">
-    <div class="bn-ok"><strong>v1.8:</strong> Parakeet is now the sole on-device transcription engine. WhisperKit has been removed. Users who had WhisperKit selected are automatically migrated to Parakeet on first launch.</div>
+    <div class="bn-ok"><strong>v2.1:</strong> Parakeet is the default on-device transcription path. BisonNotes now keeps valid cached model files across app updates or settings resets, clears stale download state when files are missing, and avoids tiny final tail chunks on long local transcriptions.</div>
 
     <h4>Initial Setup</h4>
     <ol class="bn-sl">
       <li><strong>Enable:</strong> Setup &rarr; Transcription Settings &rarr; select "On Device" &rarr; Parakeet is selected by default.</li>
-      <li><strong>Download the model:</strong> Tap "Download" to get the Parakeet model.</li>
+      <li><strong>Choose a model:</strong> Parakeet v2 is English-only with stronger long-form English recall. Parakeet v3 supports multilingual transcription across 25 European languages.</li>
+      <li><strong>Download the model:</strong> Tap "Download" to get the selected Parakeet model. Progress now shows checking, downloading, preparing, and ready states.</li>
       <li><strong>Requirements:</strong> iOS 17.0+, model download required.</li>
     </ol>
 
+    <div class="bn-info"><strong>Migration note:</strong> WhisperKit was removed in v1.8. Users who had WhisperKit selected are automatically migrated to Parakeet on first launch.</div>
     <div class="bn-ok"><strong>Benefits:</strong> Complete privacy, works offline, no API costs.</div>
   </div>
 </details>
@@ -968,6 +973,7 @@ docker run -d -p 9000:9000 \
       <li><strong>No Audio:</strong> Check microphone permissions in Settings &rarr; Privacy</li>
       <li><strong>Poor Quality:</strong> Adjust audio quality settings, ensure proper mic distance</li>
       <li><strong>Background Recording:</strong> Enable in app settings</li>
+      <li><strong>Mac meeting audio missing:</strong> Enable Record Meeting Audio in BisonNotes Settings &rarr; Recording, then grant BisonNotes access in macOS System Settings &rarr; Privacy &amp; Security &rarr; Screen &amp; System Audio Recording. If permission or mixing fails, the app still saves microphone audio.</li>
     </ul>
   </div>
 </details>
@@ -990,6 +996,7 @@ docker run -d -p 9000:9000 \
       <li><strong>No Transcription:</strong> Check engine configuration</li>
       <li><strong>Poor Quality:</strong> Try a different engine or model</li>
       <li><strong>Large File Issues:</strong> Enable chunking for files over 5 minutes</li>
+      <li><strong>Parakeet says a model is missing:</strong> Open Transcription Settings and re-download the selected Parakeet model. BisonNotes will reuse valid cached files when they exist, but clears stale settings if the files were removed.</li>
     </ul>
   </div>
 </details>
@@ -1031,6 +1038,7 @@ docker run -d -p 9000:9000 \
       <li><strong>Live Transcription</strong> (v1.8) &mdash; On-device speech-to-text streamed in real time during recording via SFSpeechRecognizer; transcript auto-saved when recording stops</li>
       <li><strong>Duplicate Summary Cleanup</strong> (v1.8) &mdash; Automatically detects and removes duplicate summaries; manual cleanup available in Database Tools</li>
       <li><strong>Explicit credential resolvers</strong> (v1.11) &mdash; Background AWS jobs always pull fresh credentials from the Keychain so stale process-environment values can&rsquo;t leak in</li>
+      <li><strong>Temporary audio cleanup</strong> (v2.1) &mdash; Conservative startup cleanup removes stale scratch, merge, and chunk files left by failed or interrupted audio workflows without touching active recordings.</li>
     </ul>
   </div>
 </details>
