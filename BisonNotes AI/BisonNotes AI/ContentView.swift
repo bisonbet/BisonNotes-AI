@@ -297,7 +297,7 @@ struct ContentView: View {
                         AppLog.shared.log("Migration completed", category: .general)
                     } else {
                         // Core Data has existing recordings
-                        
+
                         // Always run URL migration to ensure relative paths
                         AppLog.shared.log("Running URL migration to ensure relative paths...", level: .debug, category: .general)
                         appCoordinator.syncRecordingURLs()
@@ -307,17 +307,17 @@ struct ContentView: View {
                         AppLog.shared.log("Cleaning up orphaned records...", level: .debug, category: .general)
                         let cleanedCount = appCoordinator.cleanupOrphanedRecordings()
                         let fixedCount = appCoordinator.fixIncompletelyDeletedRecordings()
-                        
+
                         // Also clean up recordings that reference missing files
                         AppLog.shared.log("Cleaning up recordings with missing files...", level: .debug, category: .general)
                         let missingFileCount = appCoordinator.cleanupRecordingsWithMissingFiles()
-                        
+
                         let totalCleaned = cleanedCount + fixedCount + missingFileCount
-                        
+
                         if totalCleaned > 0 {
                             AppLog.shared.log("Cleaned up \(totalCleaned) orphaned records (\(cleanedCount) orphaned, \(fixedCount) incomplete deletions, \(missingFileCount) missing files)", category: .general)
                         }
-                        
+
                         // Check if any recordings have transcripts in Core Data
                         let recordingsWithTranscripts = coreDataRecordings.filter { $0.transcript != nil }
                         if recordingsWithTranscripts.isEmpty {
@@ -329,21 +329,21 @@ struct ContentView: View {
                             // Core Data has existing transcripts, no migration needed
                         }
                     }
-                    
+
                     // Initialize the recorder view model on main thread
                     await recorderVM.initialize()
-                    
+
                     // Set the app coordinator for the recorder
                     recorderVM.setAppCoordinator(appCoordinator)
-                    
+
                     // Set up the enhanced file manager with the coordinator
                     EnhancedFileManager.shared.setCoordinator(appCoordinator)
-                    
+
                     // Add a small delay to ensure everything is properly set up
                     try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
-                    
+
                     isInitialized = true
-                    
+
                     // Show location permission prompt after initialization (only if not first launch)
                     if !isFirstLaunch && !UserDefaults.standard.bool(forKey: "hasAskedLocationPermission") {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -351,7 +351,7 @@ struct ContentView: View {
                             UserDefaults.standard.set(true, forKey: "hasAskedLocationPermission")
                         }
                     }
-                    
+
                     // Check if we need to show Apple Intelligence migration alert
                     if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showAppleIntelligenceMigrationAlert") {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {

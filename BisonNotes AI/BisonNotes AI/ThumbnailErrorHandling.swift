@@ -13,8 +13,8 @@ extension Error {
     var isThumbnailGenerationError: Bool {
         let errorDescription = self.localizedDescription
         let nsError = self as NSError
-        
-        return errorDescription.contains("QLThumbnailErrorDomain") || 
+
+        return errorDescription.contains("QLThumbnailErrorDomain") ||
                errorDescription.contains("GSLibraryErrorDomain") ||
                errorDescription.contains("Generation not found") ||
                errorDescription.contains("_UIViewServiceErrorDomain") ||
@@ -26,4 +26,4 @@ extension Error {
                (nsError.domain == "GSLibraryErrorDomain" && nsError.code == 3) ||
                (nsError.domain == "_UIViewServiceErrorDomain" && nsError.code == 1)
     }
-} 
+}

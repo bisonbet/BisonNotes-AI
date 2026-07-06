@@ -415,7 +415,6 @@ struct OnDeviceLLMSettingsView: View {
                 .foregroundColor(.secondary)
         }
 
-
         // Repeat Penalty
         VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -468,7 +467,7 @@ struct OnDeviceLLMSettingsView: View {
 
     // MARK: - Helper Methods
 
-    private func testConnection() {
+    func testConnection() {
         isTestingConnection = true
         connectionTestResult = nil
 

@@ -78,13 +78,13 @@ class OpenAIPromptGenerator {
         case titles
         case complete
     }
-    
+
     // MARK: - System Prompt Generation
-    
+
     static func createSystemPrompt(for type: PromptType, contentType: ContentType) -> String {
         let basePrompt = """
         You are an AI assistant specialized in analyzing and summarizing audio transcripts and conversations. Your role is to provide clear, actionable insights from the content provided.
-        
+
         **Key Guidelines:**
         - Focus on extracting meaningful, actionable information
         - Maintain accuracy and relevance to the source material
@@ -92,9 +92,9 @@ class OpenAIPromptGenerator {
         - Structure responses logically and coherently
         - Prioritize the most important information first
         """
-        
+
         let contentTypePrompt = createContentTypeSpecificPrompt(contentType)
-        
+
         let comedyModifier = ComedyMode.current.promptModifier ?? ""
 
         switch type {
@@ -110,9 +110,9 @@ class OpenAIPromptGenerator {
             return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createCompletePrompt() + comedyModifier
         }
     }
-    
+
     // MARK: - Content Type Specific Prompts
-    
+
     private static func createContentTypeSpecificPrompt(_ contentType: ContentType) -> String {
         switch contentType {
         case .meeting:
@@ -153,9 +153,9 @@ class OpenAIPromptGenerator {
             """
         }
     }
-    
+
     // MARK: - Specific Prompt Generators
-    
+
     private static func createSummaryPrompt() -> String {
         return """
         **Summary Generation Guidelines:**
@@ -207,7 +207,7 @@ class OpenAIPromptGenerator {
         - If NO personal time-sensitive items are mentioned, return an empty array
         """
     }
-    
+
     private static func createTitlesPrompt() -> String {
         return """
         **Title Generation Guidelines:**
@@ -219,7 +219,7 @@ class OpenAIPromptGenerator {
         - Never end with punctuation marks
         - Make titles work well as file names or conversation titles
         - Be logical and sensical - make it clear what the content is about
-        
+
         **Examples of good titles:**
         - "Trump Scotland Visit"
         - "Hong Kong Arrest Warrants"
@@ -231,7 +231,7 @@ class OpenAIPromptGenerator {
         - "Product Launch Planning"
         """
     }
-    
+
     private static func createCompletePrompt() -> String {
         return """
         **Complete Analysis Guidelines:**
@@ -243,9 +243,9 @@ class OpenAIPromptGenerator {
         - Maintain consistency across all extracted elements
         """
     }
-    
+
     // MARK: - User Prompt Generation
-    
+
     static func createUserPrompt(for type: PromptType, text: String) -> String {
         switch type {
         case .summary:
@@ -260,7 +260,7 @@ class OpenAIPromptGenerator {
             return createCompleteUserPrompt(text)
         }
     }
-    
+
     private static func createSummaryUserPrompt(_ text: String) -> String {
         return """
         Please provide a comprehensive summary of the following content using proper Markdown formatting:
@@ -268,7 +268,7 @@ class OpenAIPromptGenerator {
         \(text)
         """
     }
-    
+
     private static func createTasksUserPrompt(_ text: String) -> String {
         return """
         Extract personal, actionable tasks from the following content. Focus only on tasks that are personal to the speaker or require their direct action. Avoid tasks related to national news, public figures, or general world events.
@@ -311,7 +311,7 @@ class OpenAIPromptGenerator {
         \(text)
         """
     }
-    
+
     private static func createTitlesUserPrompt(_ text: String) -> String {
         return """
         Analyze the following transcript and extract 4 high-quality titles or headlines. Focus on:
@@ -342,7 +342,7 @@ class OpenAIPromptGenerator {
         \(text)
         """
     }
-    
+
     private static func createCompleteUserPrompt(_ text: String) -> String {
         return """
         Please analyze the following content and provide a comprehensive response in VALID JSON format only. Do not include any text before or after the JSON. The response must be a single, well-formed JSON object with this exact structure:
@@ -391,4 +391,4 @@ class OpenAIPromptGenerator {
         \(text)
         """
     }
-} 
+}

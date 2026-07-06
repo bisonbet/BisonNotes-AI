@@ -220,7 +220,7 @@ struct AWSSettingsView: View {
         credentialsManager.credentials.isValid && !bucketName.isEmpty
     }
 
-    private func testConnection() {
+    func testConnection() {
         isTesting = true
         testResult = nil
 

@@ -6,35 +6,35 @@ import SwiftUI
 
 @MainActor
 class AppDataCoordinator: ObservableObject {
-    
+
     // Core Data system
     @Published var coreDataManager: CoreDataManager
     @Published var workflowManager: RecordingWorkflowManager
-    
+
     @Published var isInitialized = false
     private var lastAutomaticiCloudReconcileDate: Date?
     private let automaticiCloudReconcileMinInterval: TimeInterval = 300
-    
+
     init(persistenceController: PersistenceController = PersistenceController.shared) {
         // Initialize Core Data system
         self.coreDataManager = CoreDataManager(persistenceController: persistenceController)
         self.workflowManager = RecordingWorkflowManager(persistenceController: persistenceController)
-        
+
         // Set up the circular reference after initialization
         self.workflowManager.setAppCoordinator(self)
-        
+
         Task {
             await initializeSystem()
         }
     }
-    
+
     private func initializeSystem() async {
         // Core Data system initialization
         isInitialized = true
     }
-    
+
     // MARK: - Public Interface
-    
+
     func addRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
         let id = workflowManager.createRecording(
             url: url,
@@ -62,7 +62,7 @@ class AppDataCoordinator: ObservableObject {
         scheduleAutoBackupIfEnabled()
         return id
     }
-    
+
     func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {
         let result = workflowManager.createTranscript(
             for: recordingId,
@@ -77,7 +77,7 @@ class AppDataCoordinator: ObservableObject {
         }
         return result
     }
-    
+
     func addSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) -> UUID? {
         let result = workflowManager.createSummary(
             for: recordingId,
@@ -97,15 +97,15 @@ class AppDataCoordinator: ObservableObject {
         }
         return result
     }
-    
+
     func getRecording(id: UUID) -> RecordingEntry? {
         return coreDataManager.getRecording(id: id)
     }
-    
+
     func getRecording(url: URL) -> RecordingEntry? {
         return coreDataManager.getRecording(url: url)
     }
-    
+
     /// Gets the current absolute URL for a recording, handling container ID changes automatically
     func getAbsoluteURL(for recording: RecordingEntry) -> URL? {
         return coreDataManager.getAbsoluteURL(for: recording)
@@ -115,44 +115,44 @@ class AppDataCoordinator: ObservableObject {
     func getStoredURL(for recording: RecordingEntry) -> URL? {
         return coreDataManager.getStoredURL(for: recording)
     }
-    
+
     /// Gets transcript entry for a recording
     func getTranscript(for recordingId: UUID) -> TranscriptEntry? {
         return coreDataManager.getTranscript(for: recordingId)
     }
-    
+
     /// Gets transcript data for a recording
     func getTranscriptData(for recordingId: UUID) -> TranscriptData? {
         return coreDataManager.getTranscriptData(for: recordingId)
     }
-    
+
     /// Gets all transcripts
     func getAllTranscripts() -> [TranscriptEntry] {
         return coreDataManager.getAllTranscripts()
     }
-    
+
     /// Gets summary entry for a recording
     func getSummary(for recordingId: UUID) -> SummaryEntry? {
         return coreDataManager.getSummary(for: recordingId)
     }
-    
+
     /// Gets all summaries
     func getAllSummaries() -> [SummaryEntry] {
         return coreDataManager.getAllSummaries()
     }
-    
+
     func getCompleteRecordingData(id: UUID) -> (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)? {
         return coreDataManager.getCompleteRecordingData(id: id)
     }
-    
+
     func getAllRecordingsWithData() -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
         return coreDataManager.getAllRecordingsWithData()
     }
-    
+
     func getRecordingsWithTranscripts() -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
         return coreDataManager.getRecordingsWithTranscripts()
     }
-    
+
     func deleteRecording(id: UUID) {
         let transcriptIds = coreDataManager.getTranscript(for: id).flatMap { $0.id }.map { [$0] } ?? []
         let summaryIds = coreDataManager.getSummary(for: id).flatMap { $0.id }.map { [$0] } ?? []
@@ -231,7 +231,7 @@ class AppDataCoordinator: ObservableObject {
         )
         objectWillChange.send()
     }
-    
+
     func syncRecordingURLs() {
         // First, migrate any remaining absolute URLs to relative paths
         coreDataManager.migrateURLsToRelativePaths()
@@ -245,14 +245,14 @@ class AppDataCoordinator: ObservableObject {
     func cleanupDuplicates() -> (summaries: Int, transcripts: Int) {
         return coreDataManager.cleanupDuplicates()
     }
-    
+
     // MARK: - Location Methods
-    
+
     /// Gets the absolute URL for a location file associated with a recording
     func getLocationFileURL(for recording: RecordingEntry) -> URL? {
         return coreDataManager.getLocationFileURL(for: recording)
     }
-    
+
     /// Loads location data for a recording using proper URL resolution
     /// First tries Core Data fields, then falls back to file-based storage
     func loadLocationData(for recording: RecordingEntry) -> LocationData? {
@@ -263,24 +263,24 @@ class AppDataCoordinator: ObservableObject {
         // Fallback to file-based location
         return coreDataManager.loadLocationData(for: recording)
     }
-    
+
     // MARK: - Cleanup Methods
-    
+
     /// Cleans up orphaned recordings that have no audio file and no meaningful content
     func cleanupOrphanedRecordings() -> Int {
         return coreDataManager.cleanupOrphanedRecordings()
     }
-    
+
     /// Fixes recordings that should have been deleted completely but still exist as orphans
     func fixIncompletelyDeletedRecordings() -> Int {
         return coreDataManager.fixIncompletelyDeletedRecordings()
     }
-    
+
     /// Cleans up recordings that reference missing files
     func cleanupRecordingsWithMissingFiles() -> Int {
         return coreDataManager.cleanupRecordingsWithMissingFiles()
     }
-    
+
     // MARK: - Auto-Backup
 
     /// Schedules a debounced auto-backup to iCloud when sync is enabled.

@@ -560,7 +560,6 @@ class WhisperService: ObservableObject {
             return result
         }
 
-
         guard let httpResponse = response as? HTTPURLResponse else {
             await MainActor.run {
                 self.isTranscribing = false
@@ -783,7 +782,6 @@ class WhisperService: ObservableObject {
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         request.httpBody = body
-
 
         // Send request with timeout
         let (data, response) = try await withTimeout(

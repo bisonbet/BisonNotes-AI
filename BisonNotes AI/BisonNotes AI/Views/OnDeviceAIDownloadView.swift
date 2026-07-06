@@ -222,7 +222,6 @@ struct OnDeviceAIDownloadView: View {
         isPresented = false
     }
 
-
     private func formatSize(_ bytes: Int64) -> String {
         let sizeInGB = Double(bytes) / 1_000_000_000.0
         if sizeInGB >= 1.0 {

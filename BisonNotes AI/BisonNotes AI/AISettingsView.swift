@@ -104,7 +104,6 @@ final class AISettingsViewModel: ObservableObject {
     }
 }
 
-
 struct AISettingsView: View {
     @StateObject private var viewModel: AISettingsViewModel
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
@@ -496,7 +495,6 @@ struct AISettingsView: View {
         }
     }
 }
-
 
 // MARK: - View Components
 private extension AISettingsView {

@@ -1157,8 +1157,6 @@ struct TranscriptsView: View {
         }
     }
 
-
-
     private func generateTranscript(for recording: RecordingEntry) {
         // Skip if this recording already has a queued or processing transcription job.
         guard !transcriptionStarter.hasActiveTranscriptionJob(for: recording, appCoordinator: appCoordinator) else { return }
@@ -1195,7 +1193,7 @@ struct TranscriptsView: View {
         }
 
         // Set up completion handler for BackgroundProcessingManager
-        backgroundProcessingManager.onTranscriptionCompleted = { transcriptData, job in
+        backgroundProcessingManager.onTranscriptionCompleted = { _, job in
             Task { @MainActor in
                 AppLog.shared.transcription("Background processing transcription completed for job")
 
@@ -1386,7 +1384,7 @@ struct EditableTranscriptView: View {
                     }
 
                     Section("Segments") {
-                        ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, segment in
+                        ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, _ in
                             TranscriptSegmentView(segment: $editedSegments[index], speakerMappings: speakerMappings)
                         }
                     }
@@ -1832,7 +1830,6 @@ struct EditableTranscriptView: View {
             // Get the selected transcription engine
             let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue
             let engine = TranscriptionEngine(rawValue: engineString) ?? .fluidAudio
-
 
             // Add the new transcript
             let transcriptId = coordinator.addTranscript(

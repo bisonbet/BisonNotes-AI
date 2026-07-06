@@ -15,29 +15,29 @@ import CloudKit
 
 @MainActor
 class EnhancedErrorHandler: ObservableObject {
-    
+
     @Published var currentError: EnhancedAppError?
     @Published var showingErrorAlert = false
     @Published var errorHistory: [EnhancedErrorLogEntry] = []
     @Published var recoverySuggestions: [RecoverySuggestion] = []
-    
+
     private let logger: os.Logger = os.Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "EnhancedErrorHandler")
     private let maxHistoryCount = 100
-    
+
     // MARK: - Error Handling Methods
-    
+
     func handle(_ error: Error, context: String = "", showToUser: Bool = true) {
         let enhancedError = EnhancedAppError.from(error, context: context)
-        
+
         // Log the error with enhanced context
         logError(enhancedError, context: context)
-        
+
         // Add to history
         addToHistory(enhancedError, context: context)
-        
+
         // Generate recovery suggestions
         generateRecoverySuggestions(for: enhancedError)
-        
+
         // Show to user if requested
         if showToUser {
             DispatchQueue.main.async {
@@ -46,39 +46,39 @@ class EnhancedErrorHandler: ObservableObject {
             }
         }
     }
-    
+
     func handleAudioProcessingError(_ error: AudioProcessingError, context: String = "", showToUser: Bool = true) {
         let enhancedContext = "Audio Processing - \(context)"
         handle(error, context: enhancedContext, showToUser: showToUser)
     }
-    
+
     func handleBackgroundProcessingError(_ error: BackgroundProcessingError, context: String = "", showToUser: Bool = true) {
         let enhancedContext = "Background Processing - \(context)"
         handle(error, context: enhancedContext, showToUser: showToUser)
     }
-    
+
     func handleChunkingError(_ error: AudioChunkingError, context: String = "", showToUser: Bool = true) {
         let enhancedContext = "Audio Chunking - \(context)"
         handle(error, context: enhancedContext, showToUser: showToUser)
     }
-    
+
     func handleiCloudSyncError(_ error: Error, context: String = "", showToUser: Bool = true) {
         let enhancedContext = "iCloud Sync - \(context)"
         handle(error, context: enhancedContext, showToUser: showToUser)
     }
-    
+
     func clearCurrentError() {
         currentError = nil
         showingErrorAlert = false
         recoverySuggestions.removeAll()
     }
-    
+
     func clearErrorHistory() {
         errorHistory.removeAll()
     }
-    
+
     // MARK: - Recovery Methods
-    
+
     func suggestRecoveryActions(for error: EnhancedAppError) -> [EnhancedRecoveryAction] {
         switch error {
         case .audioProcessing(let audioError):
@@ -95,13 +95,13 @@ class EnhancedErrorHandler: ObservableObject {
             return suggestSystemRecovery(systemError)
         }
     }
-    
+
     // MARK: - Private Helper Methods
-    
+
     private func logError(_ error: EnhancedAppError, context: String) {
         let logMessage = "[\(context)] \(error.localizedDescription)"
         let severity = error.severity
-        
+
         switch severity {
         case .low:
             logger.info("\(logMessage)")
@@ -112,11 +112,11 @@ class EnhancedErrorHandler: ObservableObject {
         case .critical:
             logger.fault("\(logMessage)")
         }
-        
+
         // Log additional context for debugging
         os.Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "EnhancedErrorHandler").debug("Error context: \(context), severity: \(severity.description), recovery suggestions: \(error.recoverySuggestion ?? "None")")
     }
-    
+
     private func addToHistory(_ error: EnhancedAppError, context: String) {
         let entry = EnhancedErrorLogEntry(
             error: error,
@@ -124,15 +124,15 @@ class EnhancedErrorHandler: ObservableObject {
             timestamp: Date(),
             deviceInfo: getDeviceInfo()
         )
-        
+
         errorHistory.insert(entry, at: 0)
-        
+
         // Limit history size
         if errorHistory.count > maxHistoryCount {
             errorHistory.removeLast()
         }
     }
-    
+
     private func generateRecoverySuggestions(for error: EnhancedAppError) {
         recoverySuggestions = suggestRecoveryActions(for: error).map { action in
             RecoverySuggestion(
@@ -143,7 +143,7 @@ class EnhancedErrorHandler: ObservableObject {
             )
         }
     }
-    
+
     private func getDeviceInfo() -> DeviceInfo {
         let device = UIDevice.current
         return DeviceInfo(
@@ -154,11 +154,11 @@ class EnhancedErrorHandler: ObservableObject {
             availableStorage: getAvailableStorage()
         )
     }
-    
+
     private func getAvailableMemory() -> String {
         var info = mach_task_basic_info()
         var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size)/4
-        
+
         let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) {
             $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
                 task_info(mach_task_self_,
@@ -167,15 +167,15 @@ class EnhancedErrorHandler: ObservableObject {
                          &count)
             }
         }
-        
+
         if kerr == KERN_SUCCESS {
             let usedMemoryMB = Double(info.resident_size) / 1024.0 / 1024.0
             return String(format: "%.1f MB", usedMemoryMB)
         }
-        
+
         return "Unknown"
     }
-    
+
     private func getAvailableStorage() -> String {
         do {
             let attributes = try FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory())
@@ -199,7 +199,7 @@ enum EnhancedAppError: LocalizedError, Identifiable {
     case iCloudSync(Error)
     case fileManagement(FileManagementError)
     case system(SystemError)
-    
+
     var id: String {
         switch self {
         case .audioProcessing(let error):
@@ -216,7 +216,7 @@ enum EnhancedAppError: LocalizedError, Identifiable {
             return "system_\(error.localizedDescription)"
         }
     }
-    
+
     var errorDescription: String? {
         switch self {
         case .audioProcessing(let error):
@@ -233,7 +233,7 @@ enum EnhancedAppError: LocalizedError, Identifiable {
             return error.localizedDescription
         }
     }
-    
+
     var recoverySuggestion: String? {
         switch self {
         case .audioProcessing(let error):
@@ -250,7 +250,7 @@ enum EnhancedAppError: LocalizedError, Identifiable {
             return error.recoverySuggestion
         }
     }
-    
+
     var severity: ErrorSeverity {
         switch self {
         case .audioProcessing(let error):
@@ -267,11 +267,11 @@ enum EnhancedAppError: LocalizedError, Identifiable {
             return getSystemSeverity(error)
         }
     }
-    
+
     var localizedDescription: String {
         return errorDescription ?? "Unknown error"
     }
-    
+
     static func from(_ error: Error, context: String = "") -> EnhancedAppError {
         if let audioError = error as? AudioProcessingError {
             return .audioProcessing(audioError)
@@ -317,7 +317,7 @@ struct EnhancedErrorLogEntry: Identifiable {
     let context: String
     let timestamp: Date
     let deviceInfo: DeviceInfo
-    
+
     var errorType: String {
         switch error {
         case .audioProcessing:
@@ -334,7 +334,7 @@ struct EnhancedErrorLogEntry: Identifiable {
             return "iCloud Sync"
         }
     }
-    
+
     var formattedTimestamp: String {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
@@ -463,7 +463,7 @@ private func getSystemSeverity(_ error: SystemError) -> ErrorSeverity {
 // MARK: - Recovery Strategy Implementations
 
 extension EnhancedErrorHandler {
-    
+
     private func suggestAudioProcessingRecovery(_ error: AudioProcessingError) -> [EnhancedRecoveryAction] {
         switch error {
         case .audioSessionConfigurationFailed:
@@ -481,7 +481,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .backgroundRecordingNotPermitted:
             return [
                 EnhancedRecoveryAction(
@@ -497,7 +497,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .chunkingFailed:
             return [
                 EnhancedRecoveryAction(
@@ -513,7 +513,7 @@ extension EnhancedErrorHandler {
                     priority: .high
                 )
             ]
-            
+
         case .iCloudSyncFailed:
             return [
                 EnhancedRecoveryAction(
@@ -529,7 +529,7 @@ extension EnhancedErrorHandler {
                     priority: .low
                 )
             ]
-            
+
         case .backgroundProcessingFailed:
             return [
                 EnhancedRecoveryAction(
@@ -545,7 +545,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .fileRelationshipError:
             return [
                 EnhancedRecoveryAction(
@@ -561,7 +561,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .recordingFailed:
             return [
                 EnhancedRecoveryAction(
@@ -577,7 +577,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .playbackFailed:
             return [
                 EnhancedRecoveryAction(
@@ -593,7 +593,7 @@ extension EnhancedErrorHandler {
                     priority: .low
                 )
             ]
-            
+
         case .formatConversionFailed:
             return [
                 EnhancedRecoveryAction(
@@ -609,7 +609,7 @@ extension EnhancedErrorHandler {
                     priority: .high
                 )
             ]
-            
+
         case .metadataExtractionFailed:
             return [
                 EnhancedRecoveryAction(
@@ -627,7 +627,7 @@ extension EnhancedErrorHandler {
             ]
         }
     }
-    
+
     private func suggestBackgroundProcessingRecovery(_ error: BackgroundProcessingError) -> [EnhancedRecoveryAction] {
         switch error {
         case .jobAlreadyRunning:
@@ -645,7 +645,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .noActiveJob:
             return [
                 EnhancedRecoveryAction(
@@ -655,7 +655,7 @@ extension EnhancedErrorHandler {
                     priority: .low
                 )
             ]
-            
+
         case .jobNotFound:
             return [
                 EnhancedRecoveryAction(
@@ -671,7 +671,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .processingFailed:
             return [
                 EnhancedRecoveryAction(
@@ -687,7 +687,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .timeoutError:
             return [
                 EnhancedRecoveryAction(
@@ -703,7 +703,7 @@ extension EnhancedErrorHandler {
                     priority: .high
                 )
             ]
-            
+
         case .resourceUnavailable:
             return [
                 EnhancedRecoveryAction(
@@ -719,7 +719,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .queueFull:
             return [
                 EnhancedRecoveryAction(
@@ -735,7 +735,7 @@ extension EnhancedErrorHandler {
                     priority: .high
                 )
             ]
-            
+
         case .invalidJobType:
             return [
                 EnhancedRecoveryAction(
@@ -751,7 +751,7 @@ extension EnhancedErrorHandler {
                     priority: .low
                 )
             ]
-            
+
         case .fileNotFound:
             return [
                 EnhancedRecoveryAction(
@@ -767,7 +767,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .invalidAudioFormat:
             return [
                 EnhancedRecoveryAction(
@@ -785,7 +785,7 @@ extension EnhancedErrorHandler {
             ]
         }
     }
-    
+
     private func suggestChunkingRecovery(_ error: AudioChunkingError) -> [EnhancedRecoveryAction] {
         switch error {
         case .fileNotFound:
@@ -803,7 +803,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .invalidAudioFile:
             return [
                 EnhancedRecoveryAction(
@@ -819,7 +819,7 @@ extension EnhancedErrorHandler {
                     priority: .high
                 )
             ]
-            
+
         case .chunkingFailed:
             return [
                 EnhancedRecoveryAction(
@@ -835,7 +835,7 @@ extension EnhancedErrorHandler {
                     priority: .high
                 )
             ]
-            
+
         case .reassemblyFailed:
             return [
                 EnhancedRecoveryAction(
@@ -851,7 +851,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .tempDirectoryCreationFailed:
             return [
                 EnhancedRecoveryAction(
@@ -867,7 +867,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .fileWriteFailed:
             return [
                 EnhancedRecoveryAction(
@@ -883,7 +883,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .cleanupFailed:
             return [
                 EnhancedRecoveryAction(
@@ -901,7 +901,7 @@ extension EnhancedErrorHandler {
             ]
         }
     }
-    
+
     private func suggestiCloudSyncRecovery(_ error: Error) -> [EnhancedRecoveryAction] {
         return [
             EnhancedRecoveryAction(
@@ -924,7 +924,7 @@ extension EnhancedErrorHandler {
             )
         ]
     }
-    
+
     private func suggestFileManagementRecovery(_ error: FileManagementError) -> [EnhancedRecoveryAction] {
         switch error {
         case .fileNotFound:
@@ -942,7 +942,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .permissionDenied:
             return [
                 EnhancedRecoveryAction(
@@ -958,7 +958,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .insufficientSpace:
             return [
                 EnhancedRecoveryAction(
@@ -974,7 +974,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .corruptedFile:
             return [
                 EnhancedRecoveryAction(
@@ -990,7 +990,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .relationshipError:
             return [
                 EnhancedRecoveryAction(
@@ -1006,7 +1006,7 @@ extension EnhancedErrorHandler {
                     priority: .low
                 )
             ]
-            
+
         case .relationshipNotFound:
             return [
                 EnhancedRecoveryAction(
@@ -1022,7 +1022,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .deletionFailed:
             return [
                 EnhancedRecoveryAction(
@@ -1038,7 +1038,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .persistenceError:
             return [
                 EnhancedRecoveryAction(
@@ -1056,7 +1056,7 @@ extension EnhancedErrorHandler {
             ]
         }
     }
-    
+
     private func suggestSystemRecovery(_ error: SystemError) -> [EnhancedRecoveryAction] {
         switch error {
         case .unknown:
@@ -1074,7 +1074,7 @@ extension EnhancedErrorHandler {
                     priority: .low
                 )
             ]
-            
+
         case .memoryError:
             return [
                 EnhancedRecoveryAction(
@@ -1090,7 +1090,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .networkError:
             return [
                 EnhancedRecoveryAction(
@@ -1106,7 +1106,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .storageError:
             return [
                 EnhancedRecoveryAction(
@@ -1122,7 +1122,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .memoryPressure:
             return [
                 EnhancedRecoveryAction(
@@ -1138,7 +1138,7 @@ extension EnhancedErrorHandler {
                     priority: .medium
                 )
             ]
-            
+
         case .configurationError:
             return [
                 EnhancedRecoveryAction(
@@ -1156,4 +1156,4 @@ extension EnhancedErrorHandler {
             ]
         }
     }
-} 
+}

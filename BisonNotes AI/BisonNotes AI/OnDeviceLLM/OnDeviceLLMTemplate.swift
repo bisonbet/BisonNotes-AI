@@ -89,7 +89,7 @@ public struct LLMTemplate {
 
     /// Legacy preprocess closure for compatibility with LLM class
     public var preprocess: (_ input: String, _ history: [LLMChat], _ llmInstance: OnDeviceLLM) -> String {
-        return { [self] input, history, llmInstance in
+        return { [self] input, _, llmInstance in
             // For summarization, we don't use history - single shot inference
             if llmInstance.savedState != nil {
                 var processed = prefix
@@ -299,7 +299,7 @@ Guidelines:
     public static let completeProcessingSystemPrompt = """
 You are an AI assistant specialized in processing audio transcripts. Analyze the ACTUAL CONTENT of the transcript and extract only what is explicitly mentioned.
 
-CRITICAL: 
+CRITICAL:
 - Extract ONLY information that appears in the transcript itself
 - Do NOT generate placeholder text, examples, or generic content
 - Do NOT include tasks, reminders, or titles unless they are actually mentioned

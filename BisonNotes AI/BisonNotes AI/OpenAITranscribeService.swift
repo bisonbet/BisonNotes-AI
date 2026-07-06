@@ -14,7 +14,7 @@ struct OpenAITranscribeConfig {
     let apiKey: String
     let model: OpenAITranscribeModel
     let baseURL: String
-    
+
     static let `default` = OpenAITranscribeConfig(
         apiKey: "",
         model: .gpt4oMiniTranscribe,
@@ -28,7 +28,7 @@ enum OpenAITranscribeModel: String, CaseIterable {
     case gpt4oTranscribe = "gpt-4o-transcribe"
     case gpt4oMiniTranscribe = "gpt-4o-mini-transcribe"
     case whisper1 = "whisper-1"
-    
+
     var displayName: String {
         switch self {
         case .gpt4oTranscribe:
@@ -39,7 +39,7 @@ enum OpenAITranscribeModel: String, CaseIterable {
             return "Whisper-1"
         }
     }
-    
+
     var description: String {
         switch self {
         case .gpt4oTranscribe:
@@ -50,7 +50,7 @@ enum OpenAITranscribeModel: String, CaseIterable {
             return "Legacy transcription with Whisper V2 model"
         }
     }
-    
+
     var supportsStreaming: Bool {
         switch self {
         case .gpt4oTranscribe, .gpt4oMiniTranscribe:
@@ -91,7 +91,7 @@ struct OpenAIUsage: Codable {
     let inputTokenDetails: OpenAIInputTokenDetails?
     let outputTokens: Int?
     let totalTokens: Int?
-    
+
     enum CodingKeys: String, CodingKey {
         case type
         case inputTokens = "input_tokens"
@@ -104,7 +104,7 @@ struct OpenAIUsage: Codable {
 struct OpenAIInputTokenDetails: Codable {
     let textTokens: Int?
     let audioTokens: Int?
-    
+
     enum CodingKeys: String, CodingKey {
         case textTokens = "text_tokens"
         case audioTokens = "audio_tokens"
@@ -136,37 +136,37 @@ struct OpenAITranscribeResult {
 
 @MainActor
 class OpenAITranscribeService: NSObject, ObservableObject {
-    
+
     // MARK: - Published Properties
-    
+
     @Published var isTranscribing = false
     @Published var currentStatus = ""
     @Published var progress: Double = 0.0
-    
+
     // MARK: - Private Properties
-    
+
     private let config: OpenAITranscribeConfig
     private let session: URLSession
     // Add chunking service
     private let chunkingService: AudioFileChunkingService
-    
+
     // MARK: - Initialization
-    
+
     init(config: OpenAITranscribeConfig = .default, chunkingService: AudioFileChunkingService) {
         self.config = config
-        
+
         // Create a custom URLSession with longer timeout for transcription requests
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.timeoutIntervalForRequest = 1800.0  // 30 minutes
         sessionConfig.timeoutIntervalForResource = 1800.0 // 30 minutes
         self.session = URLSession(configuration: sessionConfig)
         self.chunkingService = chunkingService
-        
+
         super.init()
     }
-    
+
     // MARK: - Public Methods
-    
+
     func testConnection() async throws {
         guard !config.apiKey.isEmpty else {
             throw OpenAITranscribeError.configurationMissing
@@ -175,45 +175,45 @@ class OpenAITranscribeService: NSObject, ObservableObject {
         if let message = EndpointSecurityPolicy.validationMessage(for: config.baseURL) {
             throw OpenAITranscribeError.invalidResponse(message)
         }
-        
+
         // Test the API key by making a simple request to the models endpoint
         let testURL = URL(string: "\(config.baseURL)/models")!
         var request = URLRequest(url: testURL)
         request.httpMethod = "GET"
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+
         AppLog.shared.transcription("Testing OpenAI API connection...")
-        
+
         let (_, response) = try await session.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw OpenAITranscribeError.invalidResponse("Not an HTTP response")
         }
-        
+
         guard httpResponse.statusCode == 200 else {
             throw OpenAITranscribeError.authenticationFailed("HTTP \(httpResponse.statusCode)")
         }
-        
+
     }
-    
+
     func transcribeAudioFile(at url: URL, recordingId: UUID? = nil) async throws -> OpenAITranscribeResult {
         guard !config.apiKey.isEmpty else {
             throw OpenAITranscribeError.configurationMissing
         }
-        
+
         isTranscribing = true
         currentStatus = "Preparing audio file..."
         progress = 0.0
-        
+
         AppLog.shared.transcription("Starting OpenAI transcription for: \(url.lastPathComponent)")
-        
+
         do {
             // Validate file
             guard url.isFileURL && FileManager.default.fileExists(atPath: url.path) else {
                 throw OpenAITranscribeError.fileNotFound
             }
-            
+
             // Use chunking service to check if chunking is needed
             let needsChunking = try await chunkingService.shouldChunkFile(url, for: .openAI)
             if needsChunking {
@@ -272,29 +272,29 @@ class OpenAITranscribeService: NSObject, ObservableObject {
                 let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
                 let fileSize = fileAttributes[.size] as? Int64 ?? 0
                 let maxSize: Int64 = 25 * 1024 * 1024 // 25MB
-                
+
                 guard fileSize <= maxSize else {
                     throw OpenAITranscribeError.fileTooLarge("File size \(fileSize / 1024 / 1024)MB exceeds 25MB limit")
                 }
-                
+
                 currentStatus = "Reading audio file..."
                 progress = 0.1
-                
+
                 let audioData = try Data(contentsOf: url)
                 AppLog.shared.transcription("Audio file size: \(audioData.count) bytes", level: .debug)
-                
+
                 currentStatus = "Sending to OpenAI..."
                 progress = 0.2
-                
+
                 let result = try await performTranscription(audioData: audioData, fileName: url.lastPathComponent)
-                
+
                 currentStatus = "Transcription complete"
                 progress = 1.0
                 isTranscribing = false
-                
+
                 return result
             }
-            
+
         } catch {
             isTranscribing = false
             currentStatus = "Transcription failed"
@@ -302,73 +302,73 @@ class OpenAITranscribeService: NSObject, ObservableObject {
             throw error
         }
     }
-    
+
     // MARK: - Private Methods
-    
+
     private func performTranscription(audioData: Data, fileName: String) async throws -> OpenAITranscribeResult {
         let startTime = Date()
 
         if let message = EndpointSecurityPolicy.validationMessage(for: config.baseURL) {
             throw OpenAITranscribeError.invalidResponse(message)
         }
-        
+
         // Create multipart form data
         let boundary = UUID().uuidString
         let url = URL(string: "\(config.baseURL)/audio/transcriptions")!
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        
+
         var body = Data()
-        
+
         // Add file data
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: \(getContentType(for: fileName))\r\n\r\n".data(using: .utf8)!)
         body.append(audioData)
         body.append("\r\n".data(using: .utf8)!)
-        
+
         // Add model
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"model\"\r\n\r\n".data(using: .utf8)!)
         body.append(config.model.rawValue.data(using: .utf8)!)
         body.append("\r\n".data(using: .utf8)!)
-        
+
         // Add response format (JSON for all models, but GPT models only support JSON anyway)
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n".data(using: .utf8)!)
         body.append("json".data(using: .utf8)!)
         body.append("\r\n".data(using: .utf8)!)
-        
+
         // Note: we intentionally do NOT send a `language` field here so that
         // OpenAI can auto-detect the spoken language from the audio input.
-        
+
         // Add temperature (0 for most deterministic results)
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"temperature\"\r\n\r\n".data(using: .utf8)!)
         body.append("0".data(using: .utf8)!)
         body.append("\r\n".data(using: .utf8)!)
-        
+
         // Close boundary
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-        
+
         request.httpBody = body
-        
+
         AppLog.shared.transcription("Using model: \(config.model.displayName), request size: \(body.count) bytes", level: .debug)
-        
+
         currentStatus = "Processing with \(config.model.displayName)..."
         progress = 0.5
-        
+
         let (data, response) = try await session.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw OpenAITranscribeError.invalidResponse("Not an HTTP response")
         }
-        
+
         AppLog.shared.transcription("HTTP response status: \(httpResponse.statusCode)", level: .debug)
-        
+
         guard httpResponse.statusCode == 200 else {
             AppLog.shared.transcription("OpenAI API error: HTTP \(httpResponse.statusCode), response size: \(data.count) bytes", level: .error)
 
@@ -379,13 +379,13 @@ class OpenAITranscribeService: NSObject, ObservableObject {
                 throw OpenAITranscribeError.apiError("HTTP \(httpResponse.statusCode)")
             }
         }
-        
+
         currentStatus = "Processing results..."
         progress = 0.8
-        
+
         // Parse response
         AppLog.shared.transcription("Response data length: \(data.count) bytes", level: .debug)
-        
+
         let transcribeResponse: OpenAITranscribeResponse
         do {
             transcribeResponse = try JSONDecoder().decode(OpenAITranscribeResponse.self, from: data)
@@ -393,15 +393,15 @@ class OpenAITranscribeService: NSObject, ObservableObject {
             AppLog.shared.transcription("Failed to parse JSON response: \(error)", level: .error)
             throw OpenAITranscribeError.invalidResponse("Failed to parse response: \(error.localizedDescription)")
         }
-        
+
         let processingTime = Date().timeIntervalSince(startTime)
-        
+
         AppLog.shared.transcription("Transcript length: \(transcribeResponse.text.count) chars, processing time: \(String(format: "%.1f", processingTime))s")
-        
+
         if let usage = transcribeResponse.usage {
             AppLog.shared.transcription("Token usage - Input: \(usage.inputTokens ?? 0), Output: \(usage.outputTokens ?? 0), Total: \(usage.totalTokens ?? 0)", level: .debug)
         }
-        
+
         // Create segments (OpenAI doesn't provide timestamps in basic response, so create one segment)
         let segments = [TranscriptSegment(
             speaker: "Speaker",
@@ -409,7 +409,7 @@ class OpenAITranscribeService: NSObject, ObservableObject {
             startTime: 0.0,
             endTime: 0.0
         )]
-        
+
         return OpenAITranscribeResult(
             transcriptText: transcribeResponse.text,
             segments: segments,
@@ -419,10 +419,10 @@ class OpenAITranscribeService: NSObject, ObservableObject {
             error: nil
         )
     }
-    
+
     private func getContentType(for fileName: String) -> String {
         let fileExtension = fileName.lowercased().components(separatedBy: ".").last ?? ""
-        
+
         switch fileExtension {
         case "mp3":
             return "audio/mpeg"
@@ -452,7 +452,7 @@ enum OpenAITranscribeError: LocalizedError {
     case apiError(String)
     case invalidResponse(String)
     case networkError(Error)
-    
+
     var errorDescription: String? {
         switch self {
         case .configurationMissing:

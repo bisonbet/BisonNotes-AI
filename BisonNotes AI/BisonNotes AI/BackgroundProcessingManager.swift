@@ -152,7 +152,7 @@ struct ProcessingJob: Identifiable, Codable {
 enum JobType: Codable {
     case transcription(engine: TranscriptionEngine)
     case summarization(engine: String)
-    
+
     var displayName: String {
         switch self {
         case .transcription(let engine):
@@ -161,7 +161,7 @@ enum JobType: Codable {
             return "Summarization (\(engine))"
         }
     }
-    
+
     var isTranscription: Bool {
         if case .transcription = self { return true }
         return false
@@ -180,23 +180,23 @@ enum JobType: Codable {
             return engine
         }
     }
-    
+
     // MARK: - Codable Implementation
-    
+
     private enum CodingKeys: String, CodingKey {
         case type
         case engine
     }
-    
+
     private enum JobTypeIdentifier: String, Codable {
         case transcription
         case summarization
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(JobTypeIdentifier.self, forKey: .type)
-        
+
         switch type {
         case .transcription:
             let engineRawValue = try container.decode(String.self, forKey: .engine)
@@ -209,10 +209,10 @@ enum JobType: Codable {
             self = .summarization(engine: engine)
         }
     }
-    
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        
+
         switch self {
         case .transcription(let engine):
             try container.encode(JobTypeIdentifier.transcription, forKey: .type)
@@ -328,11 +328,11 @@ class BackgroundProcessingManager: ObservableObject {
     @Published var activeJobs: [ProcessingJob] = []
     @Published var processingStatus: JobProcessingStatus = .ready
     @Published var currentJob: ProcessingJob?
-    
+
     // MARK: - Completion Handlers
-    
+
     var onTranscriptionCompleted: ((TranscriptData, ProcessingJob) -> Void)?
-    
+
     // MARK: - Private Properties
 
     private var currentTaskHandle: Task<Void, Never>?
@@ -353,12 +353,12 @@ class BackgroundProcessingManager: ObservableObject {
     private let coreDataManager = CoreDataManager()
     private var keepAlivePlayer: AVAudioPlayer?
     private var backgroundAudioKeepAliveActive = false
-    
+
     // MARK: - Singleton
-    
+
     static let shared = BackgroundProcessingManager()
     private static let fluidAudioMinimumTranscribableDuration: TimeInterval = 0.3
-    
+
     private init() {
         loadJobsFromCoreData()
         if AppLog.shared.previousSessionCrashed {
@@ -368,7 +368,7 @@ class BackgroundProcessingManager: ObservableObject {
         setupAppLifecycleObservers()
         setupPerformanceOptimization()
         startStaleJobMonitoring()
-        
+
         // Resume interrupted jobs and start processing queued jobs on initialization
         Task {
             guard !AppLog.shared.previousSessionCrashed else {
@@ -381,14 +381,14 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
     }
-    
+
     deinit {
         NotificationCenter.default.removeObserver(self)
         staleJobMonitor?.cancel() // Defensive: class is a singleton so deinit rarely fires
     }
-    
+
     // MARK: - Performance Optimization Setup
-    
+
     /// Starts a periodic monitor that reconciles stale/orphaned processing jobs every 60s.
     /// The initial 60s sleep is intentional — `init` already handles the first pass via `resumeInterruptedJobs()`.
     private func startStaleJobMonitoring() {
@@ -409,11 +409,11 @@ class BackgroundProcessingManager: ObservableObject {
             await performanceOptimizer.optimizeBackgroundProcessing()
             await performanceOptimizer.optimizeNetworkUsage()
         }
-        
+
         // Start background time monitoring
         startBackgroundTimeMonitoring()
     }
-    
+
     private func startBackgroundTimeMonitoring() {
         // Cancel any existing monitoring
         backgroundTimeMonitor?.cancel()
@@ -430,9 +430,9 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
     }
-    
+
     // MARK: - Job Management
-    
+
     func startTranscriptionJob(recordingURL: URL, recordingName: String, engine: TranscriptionEngine, modelName: String? = nil, sourceAudioURL: URL? = nil, chunks: [AudioChunk]? = nil) async throws {
         // Queue size limit
         let queuedCount = activeJobs.filter { $0.status == .queued }.count
@@ -491,7 +491,7 @@ class BackgroundProcessingManager: ObservableObject {
         await processNextJob()
         return job.id
     }
-    
+
     func cancelActiveJob() async {
         guard currentJob != nil else { return }
 
@@ -527,18 +527,18 @@ class BackgroundProcessingManager: ObservableObject {
         }
         return .failed("Job not found")
     }
-    
+
     func getJobProgress(_ jobId: UUID) -> Double {
         if let job = activeJobs.first(where: { $0.id == jobId }) {
             return job.progress
         }
         return 0.0
     }
-    
+
     func getCurrentJobProgress() -> Double {
         return currentJob?.progress ?? 0.0
     }
-    
+
     func debugJobStatus() {
         AppLog.shared.backgroundProcessing("Debug Status: activeJobs=\(activeJobs.count), currentJob=\(currentJob != nil), status=\(processingStatus), bgTaskID=\(backgroundTaskID.rawValue)", level: .debug)
 
@@ -546,7 +546,7 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Job \(index): status=\(job.status), progress=\(job.progress)", level: .debug)
         }
     }
-    
+
     func removeCompletedJobs() async {
         // Remove from Core Data
         coreDataManager.deleteCompletedProcessingJobs()
@@ -581,7 +581,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     // MARK: - Helper Methods
-    
+
     private func getEngineString(from jobType: JobType) -> String {
         switch jobType {
         case .transcription(let engine):
@@ -590,9 +590,9 @@ class BackgroundProcessingManager: ObservableObject {
             return engine
         }
     }
-    
+
     // MARK: - Private Job Management
-    
+
     private func addJob(_ job: ProcessingJob) async {
         // Check for existing jobs for the same recording to prevent duplicates
         let existingJobs = activeJobs.filter { existingJob in
@@ -616,35 +616,35 @@ class BackgroundProcessingManager: ObservableObject {
             recordingName: job.recordingName,
             modelName: job.modelName
         )
-        
+
         // Update the job entry with initial status
         jobEntry.status = job.status.displayName
         jobEntry.progress = job.progress
         coreDataManager.updateProcessingJob(jobEntry)
-        
+
         activeJobs.append(job)
     }
-    
+
     private func addTranscriptionJob(_ job: ProcessingJob) async {
         // For transcription jobs, we want to allow reruns by replacing existing completed/failed jobs
         let existingJobs = activeJobs.filter { existingJob in
             existingJob.recordingPath == job.recordingPath &&
             existingJob.type.isTranscription
         }
-        
+
         // Remove any existing transcription jobs for this recording (to allow reruns)
         for existingJob in existingJobs {
             if let index = activeJobs.firstIndex(where: { $0.id == existingJob.id }) {
                 AppLog.shared.backgroundProcessing("Removing existing transcription job to allow rerun")
                 activeJobs.remove(at: index)
-                
+
                 // Also remove from Core Data
                 if let jobEntry = coreDataManager.getProcessingJob(id: existingJob.id) {
                     coreDataManager.deleteProcessingJob(jobEntry)
                 }
             }
         }
-        
+
         // Create Core Data entry
         let jobEntry = coreDataManager.createProcessingJob(
             id: job.id,
@@ -663,7 +663,7 @@ class BackgroundProcessingManager: ObservableObject {
         activeJobs.append(job)
         AppLog.shared.backgroundProcessing("Added new transcription job (replacing existing job)")
     }
-    
+
     private func updateJob(_ updatedJob: ProcessingJob) async {
         if let index = activeJobs.firstIndex(where: { $0.id == updatedJob.id }) {
             activeJobs[index] = updatedJob
@@ -720,7 +720,7 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Marked \(failedCount) unfinished job(s) failed after crash to prevent automatic restart", level: .error)
         }
     }
-    
+
     func processNextJob() async {
         // Don't start a new job if one is already running
         guard currentJob == nil else { return }
@@ -864,17 +864,15 @@ class BackgroundProcessingManager: ObservableObject {
             await processNextJob()
         }
     }
-    
 
-    
     private func applyBatteryOptimization(for job: ProcessingJob) async {
         // Apply battery-aware settings based on current conditions
         if performanceOptimizer.batteryInfo.shouldOptimizeForBattery {
             AppLog.shared.backgroundProcessing("Applying battery optimization for job")
-            
+
             // Reduce processing frequency
             try? await Task.sleep(nanoseconds: 100_000_000) // 100ms delay
-            
+
             // Use lower quality settings for battery optimization
             if case .transcription(let engine) = job.type {
                 // Adjust engine settings for battery optimization
@@ -882,7 +880,7 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
     }
-    
+
     private func processTranscriptionJob(_ job: ProcessingJob, engine: TranscriptionEngine) async throws {
         EnhancedLogger.shared.logBackgroundJobStart(job)
 
@@ -924,24 +922,24 @@ class BackgroundProcessingManager: ObservableObject {
                 )]
             }
         }
-        
+
         // Update progress after chunking
         let chunkingProgressJob = job.withProgress(0.2)
         await updateJob(chunkingProgressJob)
-        
+
         // Process each chunk
         var transcriptChunks: [TranscriptChunk] = []
         let totalChunks = chunks.count
-        
+
         for (index, chunk) in chunks.enumerated() {
             try Task.checkCancellation()
             EnhancedLogger.shared.logChunkingProgress(index + 1, totalChunks: totalChunks, fileURL: job.recordingURL)
-            
+
             // Update progress for this chunk
             let chunkProgress = 0.2 + (0.7 * Double(index) / Double(totalChunks))
             let chunkProgressJob = job.withProgress(chunkProgress)
             await updateJob(chunkProgressJob)
-            
+
             // Send progress notification for significant progress updates
             if index == 0 || index == totalChunks / 2 || index == totalChunks - 1 {
                 await sendProgressNotification(for: chunkProgressJob)
@@ -957,34 +955,34 @@ class BackgroundProcessingManager: ObservableObject {
                 )
                 continue
             }
-            
+
             // Transcribe the chunk
             let transcriptResult = try await transcribeChunk(chunk, engine: engine)
-            
+
             // Create transcript chunk
             let transcriptChunk = chunkingService.createTranscriptChunk(
                 from: transcriptResult.fullText,
                 audioChunk: chunk,
                 segments: transcriptResult.segments
             )
-            
+
             transcriptChunks.append(transcriptChunk)
-            
+
             EnhancedLogger.shared.logBackgroundProcessing("Chunk \(index + 1) transcribed: \(transcriptResult.fullText.count) characters", level: .debug)
         }
-        
+
         // Reassemble transcript if multiple chunks
         if transcriptChunks.count > 1 {
             EnhancedLogger.shared.logBackgroundProcessing("Reassembling transcript from \(transcriptChunks.count) chunks", level: .info)
-            
+
             // Get the recording ID first
             let recordingId: UUID
             if let appCoordinator = enhancedFileManager.getCoordinator() {
                 // print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
                 // print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
-                
+
                 // Use the new Core Data system
-                
+
                 if let recordingEntry = appCoordinator.getRecording(url: job.recordingURL),
                    let entryId = recordingEntry.id {
                     recordingId = entryId
@@ -1005,7 +1003,7 @@ class BackgroundProcessingManager: ObservableObject {
                 recordingDate: Date(), // TODO: Get actual recording date
                 recordingId: recordingId
             )
-            
+
             // Save the complete transcript
             await saveTranscript(reassemblyResult.transcriptData)
         } else if let firstChunk = transcriptChunks.first {
@@ -1015,9 +1013,9 @@ class BackgroundProcessingManager: ObservableObject {
             if let appCoordinator = enhancedFileManager.getCoordinator() {
                 // print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
                 // print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
-                
+
                 // Use the new Core Data system
-                
+
                 if let recordingEntry = appCoordinator.getRecording(url: job.recordingURL),
                    let entryId = recordingEntry.id {
                     recordingId = entryId
@@ -1039,7 +1037,7 @@ class BackgroundProcessingManager: ObservableObject {
                 segments: firstChunk.segments,
                 engine: engine
             )
-            
+
             await saveTranscript(transcriptData)
         }
 
@@ -1050,57 +1048,57 @@ class BackgroundProcessingManager: ObservableObject {
                 AppLog.shared.backgroundProcessing("Chunk cleanup failed after transcription: \(error.localizedDescription)", level: .error)
             }
         }
-        
+
         // Complete the job - but validate we actually have transcript content
         let hasTranscriptContent = transcriptChunks.contains { !$0.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        
+
         if !hasTranscriptContent {
             AppLog.shared.backgroundProcessing("Transcription job completed but no transcript content found! Total chunks: \(transcriptChunks.count)", level: .error)
-            
+
             // Mark as failed instead of completed
             let failedJob = job.withStatus(.failed("No transcript content generated")).withProgress(1.0)
             await updateJob(failedJob)
-            
+
             await sendNotification(
                 title: "Transcription Failed",
                 body: "No transcript content was generated for \(job.recordingName)"
             )
-            
+
             throw BackgroundProcessingError.processingFailed("Transcription completed but generated no content")
         }
-        
+
         let completedJob = job.withStatus(.completed).withProgress(1.0)
         await updateJob(completedJob)
-        
+
         // Send completion notification
         await sendNotification(
             title: "Transcription Complete",
             body: "Successfully transcribed \(job.recordingName)"
         )
-        
+
         AppLog.shared.backgroundProcessing("Transcription job completed with valid content")
     }
-    
+
     private func transcribeChunk(_ chunk: AudioChunk, engine: TranscriptionEngine) async throws -> TranscriptionResult {
         AppLog.shared.backgroundProcessing("Starting transcription of chunk with engine: \(engine.rawValue)", level: .debug)
         AppLog.shared.backgroundProcessing("Chunk details: seq=\(chunk.sequenceNumber), duration=\(chunk.duration)s, size=\(chunk.fileSize) bytes, isWholeFile=\(chunk.originalURL == chunk.chunkURL)", level: .debug)
-        
+
         // Verify chunk file exists and has content
         guard FileManager.default.fileExists(atPath: chunk.chunkURL.path) else {
             let error = BackgroundProcessingError.fileNotFound("Chunk file not found: \(chunk.chunkURL.path)")
             AppLog.shared.backgroundProcessing("Chunk file missing: \(chunk.chunkURL.lastPathComponent)", level: .error)
             throw error
         }
-        
+
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: chunk.chunkURL.path)[.size] as? Int64) ?? 0
         if fileSize == 0 {
             let error = BackgroundProcessingError.invalidAudioFormat("Chunk file is empty: \(chunk.chunkURL.path)")
             AppLog.shared.backgroundProcessing("Chunk file is empty: \(chunk.chunkURL.lastPathComponent)", level: .error)
             throw error
         }
-        
+
         AppLog.shared.backgroundProcessing("Chunk file verified: \(fileSize) bytes, duration: \(chunk.duration)s", level: .debug)
-        
+
         // Get the recording ID for this chunk
         let recordingId: UUID
         if let appCoordinator = enhancedFileManager.getCoordinator(),
@@ -1112,11 +1110,11 @@ class BackgroundProcessingManager: ObservableObject {
             recordingId = UUID()
             AppLog.shared.backgroundProcessing("Recording not found in Core Data for chunk, using fallback UUID", level: .debug)
         }
-        
+
         let startTime = Date()
         do {
             let result: TranscriptionResult
-            
+
             switch engine {
             case .notConfigured:
                 throw BackgroundProcessingError.processingFailed("Transcription engine not configured. Please configure a transcription engine in Settings.")
@@ -1133,14 +1131,14 @@ class BackgroundProcessingManager: ObservableObject {
                     success: openAIResult.success,
                     error: openAIResult.error
                 )
-                
+
             case .whisper:
                 let config = getWhisperConfig()
                 let service = WhisperService(config: config, chunkingService: chunkingService)
-                
+
                 // CRITICAL: Disable Wyoming client background task management since we're already managing it
                 service.disableWyomingBackgroundTaskManagement()
-                
+
                 result = try await service.transcribeAudio(url: chunk.chunkURL, recordingId: recordingId)
 
             case .awsTranscribe:
@@ -1175,10 +1173,10 @@ class BackgroundProcessingManager: ObservableObject {
             case .openAIAPICompatible:
                 throw BackgroundProcessingError.processingFailed("OpenAI API Compatible integration not yet implemented")
             }
-            
+
             let processingTime = Date().timeIntervalSince(startTime)
             AppLog.shared.backgroundProcessing("Transcription completed in \(String(format: "%.1f", processingTime))s")
-            
+
             // Validate result
             if result.fullText.isEmpty {
                 AppLog.shared.backgroundProcessing("Transcription result is empty. Success: \(result.success), Segments: \(result.segments.count)\(result.error.map { ", error: \($0.localizedDescription)" } ?? "")")
@@ -1187,7 +1185,7 @@ class BackgroundProcessingManager: ObservableObject {
                 } else {
                     AppLog.shared.backgroundProcessing("Empty result may indicate processing error or invalid audio format", level: .error)
                 }
-                
+
                 // Return a result indicating no speech detected instead of empty transcription
                 return TranscriptionResult(
                     fullText: "[No speech detected in this audio segment]",
@@ -1200,9 +1198,9 @@ class BackgroundProcessingManager: ObservableObject {
             } else {
                 AppLog.shared.backgroundProcessing("Transcription successful: \(result.fullText.count) characters, \(result.segments.count) segments")
             }
-            
+
             return result
-            
+
         } catch is CancellationError {
             AppLog.shared.backgroundProcessing("Transcription cancelled for \(engine.rawValue)")
             throw CancellationError()
@@ -1216,21 +1214,21 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     // MARK: - Configuration Helpers
-    
+
     private func getOpenAIConfig() -> OpenAITranscribeConfig {
         let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAITranscribeModel.gpt4oMiniTranscribe.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
-        
+
         let model = OpenAITranscribeModel(rawValue: modelString) ?? .gpt4oMiniTranscribe
-        
+
         return OpenAITranscribeConfig(
             apiKey: apiKey,
             model: model,
             baseURL: baseURL
         )
     }
-    
+
     private func getMistralTranscribeConfig() -> MistralTranscribeConfig {
         let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.mistralAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "mistralTranscribeModel") ?? MistralTranscribeModel.voxtralMiniLatest.rawValue
@@ -1254,25 +1252,25 @@ class BackgroundProcessingManager: ObservableObject {
         let port = UserDefaults.standard.integer(forKey: "whisperPort")
         let protocolString = UserDefaults.standard.string(forKey: "whisperProtocol") ?? WhisperProtocol.rest.rawValue
         let selectedProtocol = WhisperProtocol(rawValue: protocolString) ?? .rest
-        
+
         AppLog.shared.backgroundProcessing("Whisper config: port=\(port), protocol=\(selectedProtocol.rawValue)", level: .debug)
-        
+
         // Use default port if not set (UserDefaults.integer returns 0 if key doesn't exist)
         let effectivePort = port > 0 ? port : (selectedProtocol == .wyoming ? 10300 : 9000)
-        
+
         // Ensure URL format matches protocol
         var processedServerURL = serverURL
         if selectedProtocol == .rest && !serverURL.hasPrefix("http://") && !serverURL.hasPrefix("https://") {
             processedServerURL = "http://" + serverURL
         }
-        
+
         return WhisperConfig(
             serverURL: processedServerURL,
             port: effectivePort,
             whisperProtocol: selectedProtocol
         )
     }
-    
+
     private func ensureRecordingExists(recordingURL: URL, recordingName: String) async {
         if let appCoordinator = enhancedFileManager.getCoordinator() {
             // Check if recording already exists
@@ -1280,14 +1278,14 @@ class BackgroundProcessingManager: ObservableObject {
                 AppLog.shared.backgroundProcessing("Recording already exists in Core Data")
                 return
             }
-            
+
             // Create recording entry if it doesn't exist
             AppLog.shared.backgroundProcessing("Creating recording entry in Core Data")
-            
+
             // Get file metadata
             let fileSize = getFileSize(url: recordingURL)
             let duration = await getAudioDuration(url: recordingURL)
-            
+
             await MainActor.run {
                 let recordingId = appCoordinator.addRecording(
                     url: recordingURL,
@@ -1298,14 +1296,14 @@ class BackgroundProcessingManager: ObservableObject {
                     quality: .whisperOptimized,
                     locationData: nil
                 )
-                
+
                 AppLog.shared.backgroundProcessing("Created recording entry with ID: \(recordingId)")
             }
         } else {
             AppLog.shared.backgroundProcessing("AppCoordinator not available for recording creation", level: .error)
         }
     }
-    
+
     private func getFileSize(url: URL) -> Int64 {
         do {
             let resourceValues = try url.resourceValues(forKeys: [.fileSizeKey])
@@ -1315,7 +1313,7 @@ class BackgroundProcessingManager: ObservableObject {
             return 0
         }
     }
-    
+
     private func getAudioDuration(url: URL) async -> TimeInterval {
         do {
             let asset = AVURLAsset(url: url)
@@ -1326,17 +1324,17 @@ class BackgroundProcessingManager: ObservableObject {
             return 0
         }
     }
-    
+
     private func saveTranscript(_ transcriptData: TranscriptData) async {
         // Save transcript using the Core Data coordinator
         await MainActor.run {
-            
+
             // Use the new Core Data system
             if let appCoordinator = enhancedFileManager.getCoordinator() {
                 // print("✅ DEBUG: AppCoordinator available")
-                
+
                 // Use the new Core Data system
-                
+
                 // Get the recording ID from the URL
                 guard let recordingEntry = appCoordinator.getRecording(url: transcriptData.recordingURL),
                       let recordingId = recordingEntry.id else {
@@ -1344,9 +1342,9 @@ class BackgroundProcessingManager: ObservableObject {
                     // print("❌ DEBUG: URL absoluteString: \(transcriptData.recordingURL.absoluteString)")
                     return
                 }
-                
+
                 AppLog.shared.backgroundProcessing("Found recording ID for transcript save", level: .debug)
-                
+
                 let transcriptId = appCoordinator.addTranscript(
                     for: recordingId,
                     segments: transcriptData.segments,
@@ -1365,7 +1363,7 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
         AppLog.shared.backgroundProcessing("Saved transcript: \(transcriptData.segments.count) segments, \(transcriptData.fullText.count) characters", level: .debug)
-        
+
         // Call completion handler if set
         if let completionHandler = onTranscriptionCompleted {
             await MainActor.run {
@@ -1376,7 +1374,7 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
     }
-    
+
     private func processSummarizationJob(_ job: ProcessingJob, engine: String) async throws {
         AppLog.shared.backgroundProcessing("Starting summarization job")
 
@@ -1508,31 +1506,31 @@ class BackgroundProcessingManager: ObservableObject {
 
         AppLog.shared.backgroundProcessing("Summarization job completed")
     }
-    
+
     private func generateSummary(_ transcriptText: String, engine: String, recordingURL: URL, recordingName: String) async throws -> EnhancedSummaryData {
         let startTime = Date()
-        
+
         // Determine content type
         let contentType = await classifyContent(transcriptText)
-        
+
         var summary: String
         var tasks: [TaskItem] = []
         var reminders: [ReminderItem] = []
         var titles: [TitleItem] = []
-        
+
         switch engine {
         case "OpenAI", "openai", "gpt-4", "gpt-3.5":
             let config = getOpenAISummarizationConfig()
             let service = OpenAISummarizationService(config: config)
-            
+
             // Generate summary
             summary = try await service.generateSummary(from: transcriptText, contentType: contentType)
-            
+
             // Extract tasks, reminders, and titles
             tasks = try await service.extractTasks(from: transcriptText)
             reminders = try await service.extractReminders(from: transcriptText)
             titles = try await service.extractTitles(from: transcriptText)
-            
+
         case "Local LLM (Ollama)", "ollama", "local":
             // TODO: Integrate with Ollama service when available
             summary = "Summary generated using local Ollama service (not yet implemented)"
@@ -1551,9 +1549,9 @@ class BackgroundProcessingManager: ObservableObject {
             reminders = result.reminders
             titles = result.titles
         }
-        
+
         let processingTime = Date().timeIntervalSince(startTime)
-        
+
         // Determine engine type for background processing
         let engineType: String
         let lowerEngine = engine.lowercased()
@@ -1572,7 +1570,7 @@ class BackgroundProcessingManager: ObservableObject {
         } else {
             engineType = "Background Service"
         }
-        
+
         return EnhancedSummaryData(
             recordingURL: recordingURL,
             recordingName: recordingName,
@@ -1588,14 +1586,14 @@ class BackgroundProcessingManager: ObservableObject {
             processingTime: processingTime
         )
     }
-    
+
     private func getOpenAISummarizationConfig() -> OpenAISummarizationConfig {
         let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
         let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
         let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
-        
+
         let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt41Mini
-        
+
         return OpenAISummarizationConfig(
             apiKey: apiKey,
             model: model,
@@ -1606,11 +1604,11 @@ class BackgroundProcessingManager: ObservableObject {
             dynamicModelId: nil
         )
     }
-    
+
     private func classifyContent(_ text: String) async -> ContentType {
         // Simple content classification based on keywords
         let lowercaseText = text.lowercased()
-        
+
         if lowercaseText.contains("meeting") || lowercaseText.contains("discussion") || lowercaseText.contains("agenda") {
             return .meeting
         } else if lowercaseText.contains("technical") || lowercaseText.contains("code") || lowercaseText.contains("api") {
@@ -1621,7 +1619,7 @@ class BackgroundProcessingManager: ObservableObject {
             return .general
         }
     }
-    
+
     private func performCleanupTasks(for job: ProcessingJob) async {
         AppLog.shared.backgroundProcessing("Performing cleanup tasks for job")
 
@@ -1665,9 +1663,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     // MARK: - Job Status Management
-    
 
-    
     private func saveErrorLog(for job: ProcessingJob, error: Error) async {
         let errorLog = """
         =================
@@ -1679,32 +1675,32 @@ class BackgroundProcessingManager: ObservableObject {
         Recording: \(job.recordingName)
         Recording URL: \(job.recordingURL)
         File Exists: \(FileManager.default.fileExists(atPath: job.recordingURL.path))
-        
+
         ERROR DETAILS:
         - Type: \(type(of: error))
         - Description: \(error.localizedDescription)
         - Full Error: \(error)
-        
+
         SYSTEM INFO:
         - Battery Level: \(Self.batteryLevelString)
         - Battery State: \(Self.batteryStateString)
         - Available Memory: \(ProcessInfo.processInfo.physicalMemory)
-        
+
         =================
         """
-        
+
         AppLog.shared.backgroundProcessing("Saving error log for job: \(job.id)", level: .error)
-        
+
         // Also log to the enhanced logger
         EnhancedLogger.shared.logBackgroundProcessing("Detailed error log:\n\(errorLog)", level: .error)
     }
-    
+
     private func handleJobFailure(_ job: ProcessingJob, error: Error) async {
         AppLog.shared.backgroundProcessing("Handling job failure: \(error.localizedDescription)", level: .error)
-        
+
         // Log the error for debugging
         EnhancedLogger.shared.logBackgroundProcessing("Job failed: \(error.localizedDescription)", level: .error)
-        
+
         // Attempt recovery based on error type
         if let processingError = error as? AudioProcessingError {
             switch processingError {
@@ -1721,9 +1717,9 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
     }
-    
+
     // MARK: - App Lifecycle Management
-    
+
     private func setupAppLifecycleObservers() {
         NotificationCenter.default.addObserver(
             self,
@@ -1731,14 +1727,14 @@ class BackgroundProcessingManager: ObservableObject {
             name: UIApplication.didEnterBackgroundNotification,
             object: nil
         )
-        
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appWillEnterForeground),
             name: UIApplication.willEnterForegroundNotification,
             object: nil
         )
-        
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appWillTerminate),
@@ -1746,30 +1742,28 @@ class BackgroundProcessingManager: ObservableObject {
             object: nil
         )
     }
-    
 
-    
     @objc private func appDidEnterBackground() {
         AppLog.shared.backgroundProcessing("App entered background")
         Task { @MainActor in
             await handleAppBackgrounding()
         }
     }
-    
+
     @objc private func appWillEnterForeground() {
         AppLog.shared.backgroundProcessing("App will enter foreground")
         Task { @MainActor in
             await handleAppForegrounding()
         }
     }
-    
+
     @objc private func appWillTerminate() {
         AppLog.shared.backgroundProcessing("App will terminate")
         Task { @MainActor in
             await handleAppTermination()
         }
     }
-    
+
     private func handleAppBackgrounding() async {
         AppLog.shared.backgroundProcessing("Handling app backgrounding")
 
@@ -1807,16 +1801,16 @@ class BackgroundProcessingManager: ObservableObject {
             )
         }
     }
-    
+
     /// Schedule background processing task for queued jobs
     private func scheduleBackgroundProcessingIfNeeded() async {
         guard !activeJobs.filter({ $0.status == .queued }).isEmpty else { return }
-        
+
         let request = BGProcessingTaskRequest(identifier: "com.bisonai.audio-processing")
         request.requiresNetworkConnectivity = true // For cloud-based transcription services
         request.requiresExternalPower = false // Can run on battery
         request.earliestBeginDate = Date(timeIntervalSinceNow: 10) // Start in 10 seconds
-        
+
         do {
             try BGTaskScheduler.shared.submit(request)
             AppLog.shared.backgroundProcessing("Scheduled background processing task for queued jobs")
@@ -1824,7 +1818,7 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Failed to schedule background processing: \(error.localizedDescription)", level: .error)
         }
     }
-    
+
     private func handleAppForegrounding() async {
         AppLog.shared.backgroundProcessing("Handling app foregrounding")
 
@@ -1853,7 +1847,7 @@ class BackgroundProcessingManager: ObservableObject {
             await processNextJob()
         }
     }
-    
+
     /// Resume jobs that were interrupted due to background limitations
     private func resumeInterruptedJobs(notify: Bool = true) async {
         guard !AppLog.shared.previousSessionCrashed else {
@@ -2023,7 +2017,7 @@ class BackgroundProcessingManager: ObservableObject {
             return (false, "\(engineName) server is not available. Start the server and reopen the app.")
         }
     }
-    
+
     private func handleAppTermination() async {
         AppLog.shared.backgroundProcessing("Handling app termination")
 
@@ -2052,28 +2046,28 @@ class BackgroundProcessingManager: ObservableObject {
         cancellationReason = nil
         await endBackgroundTask()
     }
-    
+
     private func checkForCompletedJobs() async {
         // Check for stale jobs that may have been abandoned
         await cleanupStaleJobs()
-        
+
         // This would check with external services (like AWS) for job completion
         // For now, we mainly focus on cleaning up stale local jobs
         AppLog.shared.backgroundProcessing("Checked for completed and stale background jobs", level: .debug)
     }
-    
+
     // MARK: - Core Data Persistence
-    
+
     private func loadJobsFromCoreData() {
         let jobEntries = coreDataManager.getAllProcessingJobs()
         activeJobs = jobEntries.compactMap { convertToProcessingJob(from: $0) }
-        
+
         // Clean up stale jobs on startup
         Task {
             await cleanupStaleJobs()
         }
     }
-    
+
     private func convertToProcessingJob(from jobEntry: ProcessingJobEntry) -> ProcessingJob? {
         guard let id = jobEntry.id,
               let recordingPath = jobEntry.recordingURL, // Now stored as relative path
@@ -2082,7 +2076,7 @@ class BackgroundProcessingManager: ObservableObject {
               let status = jobEntry.status else {
             return nil
         }
-        
+
         // Convert job type string back to JobType enum
         let type: JobType
         if jobType.contains("Transcription") {
@@ -2091,7 +2085,7 @@ class BackgroundProcessingManager: ObservableObject {
         } else {
             type = .summarization(engine: jobEntry.engine ?? AIEngineType.mlxSwift.rawValue)
         }
-        
+
         // Convert status string back to JobProcessingStatus enum
         let processingStatus: JobProcessingStatus
         switch status {
@@ -2127,46 +2121,46 @@ class BackgroundProcessingManager: ObservableObject {
             error: jobEntry.error
         )
     }
-    
+
     // MARK: - Keep Alive Audio
-    
+
     private func startKeepAliveAudio() {
         guard keepAlivePlayer == nil else { return }
-        
+
         AppLog.shared.backgroundProcessing("Starting keep-alive silent audio")
         do {
             // Create a temporary silent WAV file
             let tempDir = FileManager.default.temporaryDirectory
             let fileURL = tempDir.appendingPathComponent("keep_alive_silence.wav")
-            
+
             if !FileManager.default.fileExists(atPath: fileURL.path) {
                 // Create a 1-second silent buffer: 44.1kHz, 16-bit, mono
                 let sampleRate = 44100.0
                 let duration = 1.0
                 let frameCount = Int(sampleRate * duration)
-                
+
                 guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
                       let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)) else {
                     AppLog.shared.backgroundProcessing("Failed to create audio buffer for keep-alive", level: .error)
                     return
                 }
-                
+
                 buffer.frameLength = AVAudioFrameCount(frameCount)
                 // Buffer is initialized with zeros (silence) by default
-                
+
                 let audioFile = try AVAudioFile(forWriting: fileURL, settings: format.settings)
                 try audioFile.write(from: buffer)
             }
-            
+
             // Configure player
             keepAlivePlayer = try AVAudioPlayer(contentsOf: fileURL)
             keepAlivePlayer?.numberOfLoops = -1 // Infinite loop
             keepAlivePlayer?.volume = 0.0 // Silence
             keepAlivePlayer?.prepareToPlay()
-            
+
             // Ensure audio session is active before playing
             // (Handled by configureBackgroundRecording, but safe to verify/retry if needed? No, rely on existing flow)
-            
+
             if keepAlivePlayer?.play() == true {
                 AppLog.shared.backgroundProcessing("Keep-alive audio started")
             } else {
@@ -2176,7 +2170,7 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Failed to start keep-alive audio: \(error.localizedDescription)", level: .error)
         }
     }
-    
+
     private func stopKeepAliveAudio() {
         if keepAlivePlayer != nil {
             AppLog.shared.backgroundProcessing("Stopping keep-alive silent audio")
@@ -2259,14 +2253,14 @@ class BackgroundProcessingManager: ObservableObject {
         } else {
             "AudioProcessing-JobQueue"
         }
-        
+
         backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: taskName) { [weak self] in
             AppLog.shared.backgroundProcessing("Background task is about to expire", level: .error)
             Task { @MainActor in
                 await self?.handleBackgroundTaskExpiration()
             }
         }
-        
+
         if backgroundTaskID == .invalid {
             AppLog.shared.backgroundProcessing("Failed to start background task. Check background modes, device resources, or Background App Refresh setting.", level: .error)
             backgroundTaskStartTime = nil
@@ -2299,8 +2293,7 @@ class BackgroundProcessingManager: ObservableObject {
         }
         #endif
     }
-    
-    
+
     private func endBackgroundTask() async {
         #if targetEnvironment(macCatalyst)
         // beginBackgroundTask is a no-op on Catalyst; nothing to tear down.
@@ -2322,7 +2315,7 @@ class BackgroundProcessingManager: ObservableObject {
         }
         #endif
     }
-    
+
     private func handleBackgroundTaskExpiration() async {
         AppLog.shared.backgroundProcessing("Background task is expiring, attempting graceful shutdown", level: .error)
 
@@ -2332,7 +2325,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         AppLog.shared.backgroundProcessing("Background task expiration handled — Task catch block will complete cleanup")
     }
-    
+
     private func monitorBackgroundTime() {
         guard backgroundTaskID != .invalid else { return }
 
@@ -2402,20 +2395,20 @@ class BackgroundProcessingManager: ObservableObject {
             await beginBackgroundTask()
         }
     }
-    
+
     // MARK: - Notifications
-    
+
     private func setupNotifications() {
         // Set up notification center but don't request permission yet
         // Permission will be requested when we actually implement user notifications
         AppLog.shared.backgroundProcessing("Notification center configured (permission request deferred)")
     }
-    
+
     func sendNotification(title: String, body: String, identifier: String? = nil, userInfo: [String: Any] = [:]) async {
         // Check if we have notification permission first
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
-        
+
         // Request permission if not yet determined
         if settings.authorizationStatus == .notDetermined {
             do {
@@ -2436,25 +2429,25 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Notification not sent - permission denied or restricted")
             return
         }
-        
+
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
         let badgeCount = getActiveJobCount()
         content.badge = NSNumber(value: badgeCount)
-        
+
         // Add user info for handling notification taps
         var finalUserInfo = userInfo
         finalUserInfo["timestamp"] = Date().timeIntervalSince1970
         content.userInfo = finalUserInfo
-        
+
         let request = UNNotificationRequest(
             identifier: identifier ?? UUID().uuidString,
             content: content,
             trigger: nil // Immediate delivery
         )
-        
+
         do {
             try await UNUserNotificationCenter.current().add(request)
             AppLog.shared.backgroundProcessing("Sent notification: \(title)", level: .debug)
@@ -2462,12 +2455,12 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Failed to send notification: \(error.localizedDescription)", level: .error)
         }
     }
-    
+
     private func sendProgressNotification(for job: ProcessingJob) async {
         let progress = Int(job.progress * 100)
         let title = "Processing \(job.type.displayName)"
         let body = "\(job.recordingName) - \(progress)% complete"
-        
+
         await sendNotification(
             title: title,
             body: body,
@@ -2479,7 +2472,7 @@ class BackgroundProcessingManager: ObservableObject {
             ]
         )
     }
-    
+
     /// Returns the count used for the app icon badge.
     ///
     /// Only jobs that are actively pending work should contribute to the badge.
@@ -2495,7 +2488,7 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }.count
     }
-    
+
     private func clearNotificationBadge() async {
         do {
             try await UNUserNotificationCenter.current().setBadgeCount(0)
@@ -2503,9 +2496,9 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Failed to clear notification badge: \(error.localizedDescription)", level: .error)
         }
     }
-    
+
     // MARK: - Stale Job Cleanup
-    
+
     /// Reconciles jobs that are stuck in `processing` without a live task, or exceed timeout.
     func cleanupStaleJobs() async {
         guard !isCleaningUpStaleJobs else { return }
@@ -2572,7 +2565,7 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
     }
-    
+
     /// Updates job both in memory and Core Data
     private func updateJobInMemoryAndCoreData(_ updatedJob: ProcessingJob) async {
         // Update in memory
@@ -2601,9 +2594,9 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
     }
-    
+
     // MARK: - Manual Cleanup Functions
-    
+
     /// Manually cleanup all failed and completed jobs
     func cleanupCompletedJobs() async {
         let jobsToRemove = activeJobs.filter { job in
@@ -2621,15 +2614,15 @@ class BackgroundProcessingManager: ObservableObject {
         activeJobs.removeAll { job in
             job.status.isTerminal
         }
-        
+
         AppLog.shared.backgroundProcessing("Cleaned up \(jobsToRemove.count) completed/failed jobs")
-        
+
         // Update UI
         await MainActor.run {
             self.objectWillChange.send()
         }
     }
-    
+
     /// Cancel all processing and queued jobs
     func cancelAllJobs() async {
         // Cancel the running task handle — the Task's catch block will handle
@@ -2660,7 +2653,7 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Cancelling \(totalCancelled) jobs")
         }
     }
-    
+
     /// Force cleanup all jobs (nuclear option)
     func clearAllJobs() async {
         // Remove all jobs from Core Data
@@ -2668,13 +2661,13 @@ class BackgroundProcessingManager: ObservableObject {
         for jobEntry in allJobEntries {
             coreDataManager.deleteProcessingJob(jobEntry)
         }
-        
+
         // Clear from memory
         activeJobs.removeAll()
         currentJob = nil
-        
+
         AppLog.shared.backgroundProcessing("Cleared all background processing jobs")
-        
+
         // Update UI
         await MainActor.run {
             self.objectWillChange.send()
@@ -2695,7 +2688,7 @@ enum BackgroundProcessingError: LocalizedError {
     case invalidJobType
     case fileNotFound(String)
     case invalidAudioFormat(String)
-    
+
     var errorDescription: String? {
         switch self {
         case .jobAlreadyRunning:

@@ -672,7 +672,6 @@ struct SettingsView: View {
         }
     }
 
-
     private var aiEngineSection: some View {
         Section("AI Processing") {
             HStack {
@@ -731,8 +730,6 @@ struct SettingsView: View {
             .buttonStyle(.plain)
         }
     }
-
-
 
     private var locationSection: some View {
         Section {
@@ -1212,7 +1209,6 @@ struct SettingsView: View {
     private func clearAllSummaries() {
         // This function is no longer needed as summaries are managed by the coordinator
     }
-
 
     // MARK: - iCloud Sync Functions
 

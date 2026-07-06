@@ -72,7 +72,6 @@ struct DeviceCapabilities {
         let minimumRAM: Double = 4.0 // 4GB minimum for small models
         let deviceRAM = totalRAMInGB
 
-
         return deviceRAM >= minimumRAM
     }
 
@@ -82,7 +81,6 @@ struct DeviceCapabilities {
         let minimumRAM: Double = 6.0 // 6GB minimum for large models
         let deviceRAM = totalRAMInGB
 
-
         return deviceRAM >= minimumRAM
     }
 
@@ -91,7 +89,6 @@ struct DeviceCapabilities {
     static var supports8GBModels: Bool {
         let minimumRAM: Double = 8.0 // 8GB minimum for larger models
         let deviceRAM = totalRAMInGB
-
 
         return deviceRAM >= minimumRAM
     }

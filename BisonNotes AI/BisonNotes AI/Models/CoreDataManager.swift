@@ -21,25 +21,25 @@ class CoreDataManager: ObservableObject {
         context
     }
     #endif
-    
+
     init(persistenceController: PersistenceController = PersistenceController.shared) {
         self.persistenceController = persistenceController
         self.context = persistenceController.container.viewContext
     }
-    
+
     // MARK: - Context Management
-    
+
     /// Refreshes all objects in the Core Data context to ensure fresh data
     func refreshContext() {
         context.refreshAllObjects()
     }
-    
+
     // MARK: - Recording Operations
-    
+
     func getAllRecordings() -> [RecordingEntry] {
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \RecordingEntry.recordingDate, ascending: false)]
-        
+
         do {
             return try context.fetch(fetchRequest)
         } catch {
@@ -47,30 +47,30 @@ class CoreDataManager: ObservableObject {
             return []
         }
     }
-    
+
     // MARK: - URL Management Helpers
-    
+
     /// Migrates all existing absolute URL paths to relative paths for resilience
     func migrateURLsToRelativePaths() {
         let allRecordings = getAllRecordings()
         var updatedCount = 0
-        
+
         // Only show migration progress if there's work to do
         let needsMigration = allRecordings.contains { recording in
             guard let urlString = recording.recordingURL,
                   let url = URL(string: urlString) else { return false }
             return url.scheme != nil
         }
-        
+
         if needsMigration {
             AppLog.shared.coreData("Migrating absolute URLs to relative paths...")
         }
-        
+
         for recording in allRecordings {
             guard let urlString = recording.recordingURL,
                   let url = URL(string: urlString),
                   url.scheme != nil else { continue } // Skip if already relative
-            
+
             // Convert absolute URL to relative path
             if let relativePath = urlToRelativePath(url) {
                 recording.recordingURL = relativePath
@@ -78,7 +78,7 @@ class CoreDataManager: ObservableObject {
                 updatedCount += 1
             }
         }
-        
+
         if updatedCount > 0 {
             do {
                 try context.save()
@@ -90,60 +90,60 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("No URLs needed migration")
         }
     }
-    
+
     /// Converts an absolute URL to a relative path for storage
     func urlToRelativePath(_ url: URL) -> String? {
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             return nil
         }
-        
+
         // Check if URL is within documents directory
         let urlString = url.absoluteString
         let documentsString = documentsURL.absoluteString
-        
+
         if urlString.hasPrefix(documentsString) {
             // Remove the documents path prefix to get relative path
             let relativePath = String(urlString.dropFirst(documentsString.count))
             return relativePath.isEmpty ? nil : relativePath
         }
-        
+
         // If not in documents directory, store the filename only
         return url.lastPathComponent
     }
-    
+
     /// Converts a relative path back to an absolute URL
     private func relativePathToURL(_ relativePath: String) -> URL? {
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             return nil
         }
-        
+
         // Decode URL-encoded characters (like %20 for spaces)
         let decodedPath = relativePath.removingPercentEncoding ?? relativePath
-        
+
         // If it's just a filename, append directly to documents
         if !decodedPath.contains("/") {
             return documentsURL.appendingPathComponent(decodedPath)
         }
-        
+
         // If it's a relative path, construct the full URL using appendingPathComponent
         // This is more reliable than URL(string:relativeTo:) for file paths
         return documentsURL.appendingPathComponent(decodedPath)
     }
-    
+
     /// Gets the current absolute URL for a recording, handling container ID changes
     func getAbsoluteURL(for recording: RecordingEntry) -> URL? {
-        guard let urlString = recording.recordingURL else { 
+        guard let urlString = recording.recordingURL else {
             // Don't log anything - orphaned records are cleaned up at app startup
-            return nil 
+            return nil
         }
-        
+
         // First, try to parse as absolute URL (legacy format)
         if let url = URL(string: urlString), url.scheme != nil {
             // This is an absolute URL, check if file exists
             if FileManager.default.fileExists(atPath: url.path) {
                 return url
             }
-            
+
             // File doesn't exist at absolute path, try to find by filename
             if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
                 let filename = url.lastPathComponent
@@ -161,7 +161,7 @@ class CoreDataManager: ObservableObject {
                 if FileManager.default.fileExists(atPath: absoluteURL.path) {
                     return absoluteURL
                 }
-                
+
                 AppLog.shared.coreData("File not found at relative path, trying filename search", level: .debug)
                 // File doesn't exist, try to find by filename
                 if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
@@ -180,11 +180,11 @@ class CoreDataManager: ObservableObject {
                 AppLog.shared.coreData("Failed to convert relative path to absolute URL", level: .error)
             }
         }
-        
+
         AppLog.shared.coreData("File not found anywhere for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
         return nil
     }
-    
+
     /// Returns a URL derived from the stored recordingURL string without checking file existence.
     /// Used for archived recordings where the local file may have been intentionally removed.
     func getStoredURL(for recording: RecordingEntry) -> URL? {
@@ -205,13 +205,13 @@ class CoreDataManager: ObservableObject {
     }
 
     // MARK: - Location Data Helpers
-    
+
     func getLocationData(for recording: RecordingEntry) -> LocationData? {
         // Check if location data exists
         guard recording.locationLatitude != 0.0 || recording.locationLongitude != 0.0 else {
             return nil
         }
-        
+
         // Create LocationData from Core Data fields
         let location = CLLocation(
             coordinate: CLLocationCoordinate2D(
@@ -223,9 +223,9 @@ class CoreDataManager: ObservableObject {
             verticalAccuracy: 0,
             timestamp: recording.locationTimestamp ?? Date()
         )
-        
+
         var locationData = LocationData(location: location)
-        
+
         // Override address if stored
         if let storedAddress = recording.locationAddress {
             // Create a new LocationData with the stored address
@@ -238,14 +238,14 @@ class CoreDataManager: ObservableObject {
                 address: storedAddress
             )
         }
-        
+
         return locationData
     }
-    
+
     func getRecording(id: UUID) -> RecordingEntry? {
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-        
+
         do {
             return try context.fetch(fetchRequest).first
         } catch {
@@ -253,13 +253,13 @@ class CoreDataManager: ObservableObject {
             return nil
         }
     }
-    
+
     func getRecording(url: URL) -> RecordingEntry? {
         let filename = url.lastPathComponent
-        
+
         // Get all recordings and check if any resolve to this URL
         let allRecordings = getAllRecordings()
-        
+
         for recording in allRecordings {
             if let recordingURL = getAbsoluteURL(for: recording) {
                 if recordingURL.path == url.path || recordingURL.lastPathComponent == filename {
@@ -267,11 +267,11 @@ class CoreDataManager: ObservableObject {
                 }
             }
         }
-        
+
         // If no match found, try legacy URL matching for migration cases
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "recordingURL ENDSWITH %@", filename)
-        
+
         do {
             let results = try context.fetch(fetchRequest)
             if let recording = results.first {
@@ -283,14 +283,14 @@ class CoreDataManager: ObservableObject {
         } catch {
             AppLog.shared.coreData("Error fetching recording by URL: \(error)", level: .error)
         }
-        
+
         return nil
     }
-    
+
     func getRecording(name: String) -> RecordingEntry? {
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "recordingName == %@", name)
-        
+
         do {
             return try context.fetch(fetchRequest).first
         } catch {
@@ -298,15 +298,15 @@ class CoreDataManager: ObservableObject {
             return nil
         }
     }
-    
+
     // MARK: - Transcript Operations
-    
+
     func getTranscript(for recordingId: UUID) -> TranscriptEntry? {
         let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
         // Sort by lastModified to get the most recent transcript
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.lastModified, ascending: false)]
-        
+
         do {
             let results = try context.fetch(fetchRequest)
             return results.first
@@ -315,20 +315,20 @@ class CoreDataManager: ObservableObject {
             return nil
         }
     }
-    
+
     func getTranscriptData(for recordingId: UUID) -> TranscriptData? {
         guard let transcriptEntry = getTranscript(for: recordingId),
               let recordingEntry = getRecording(id: recordingId) else {
             return nil
         }
-        
+
         return convertToTranscriptData(transcriptEntry: transcriptEntry, recordingEntry: recordingEntry)
     }
-    
+
     func getAllTranscripts() -> [TranscriptEntry] {
         let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.createdAt, ascending: false)]
-        
+
         do {
             return try context.fetch(fetchRequest)
         } catch {
@@ -336,13 +336,13 @@ class CoreDataManager: ObservableObject {
             return []
         }
     }
-    
+
     func deleteTranscript(id: UUID?) {
         guard let id = id else { return }
-        
+
         let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-        
+
         do {
             let transcripts = try context.fetch(fetchRequest)
             for transcript in transcripts {
@@ -354,7 +354,7 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Error deleting transcript: \(error)", level: .error)
         }
     }
-    
+
     // MARK: - Repair Operations
 
     /// Repairs orphaned summaries by creating missing recording entries
@@ -516,7 +516,7 @@ class CoreDataManager: ObservableObject {
     }
 
     // MARK: - Summary Operations
-    
+
     func getSummary(for recordingId: UUID) -> SummaryEntry? {
         let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
@@ -540,20 +540,20 @@ class CoreDataManager: ObservableObject {
             return nil
         }
     }
-    
+
     func getSummaryData(for recordingId: UUID) -> EnhancedSummaryData? {
         guard let summaryEntry = getSummary(for: recordingId),
               let recordingEntry = getRecording(id: recordingId) else {
             return nil
         }
-        
+
         return convertToEnhancedSummaryData(summaryEntry: summaryEntry, recordingEntry: recordingEntry)
     }
-    
+
     func getAllSummaries() -> [SummaryEntry] {
         let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \SummaryEntry.generatedAt, ascending: false)]
-        
+
         do {
             return try context.fetch(fetchRequest)
         } catch {
@@ -561,28 +561,28 @@ class CoreDataManager: ObservableObject {
             return []
         }
     }
-    
+
     func deleteSummary(id: UUID?) throws {
-        guard let id = id else { 
+        guard let id = id else {
             AppLog.shared.coreData("Cannot delete summary: ID is nil", level: .error)
-            return 
+            return
         }
-        
+
         let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-        
+
         do {
             let summaries = try context.fetch(fetchRequest)
             if summaries.isEmpty {
                 AppLog.shared.coreData("No summary found with ID: \(id)", level: .debug)
                 return
             }
-            
+
             for summary in summaries {
                 AppLog.shared.coreData("Deleting summary with ID: \(id)", level: .debug)
                 context.delete(summary)
             }
-            
+
             // Properly handle save errors
             do {
                 try saveContext()
@@ -598,7 +598,7 @@ class CoreDataManager: ObservableObject {
             throw error
         }
     }
-    
+
     /// Get all summary IDs for a recording (used to capture IDs before creating new summary)
     func getAllSummaryIds(for recordingId: UUID) -> [UUID] {
         let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
@@ -646,29 +646,29 @@ class CoreDataManager: ObservableObject {
         guard let recording = getRecording(id: id) else {
             return nil
         }
-        
+
         let transcript = getTranscriptData(for: id)
         let summary = getSummaryData(for: id)
-        
+
         return (recording: recording, transcript: transcript, summary: summary)
     }
-    
+
     func getAllRecordingsWithData() -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
         let recordings = getAllRecordings()
-        
+
         return recordings.map { recording in
             let transcript = recording.id.flatMap { getTranscriptData(for: $0) }
             let summary = recording.id.flatMap { getSummaryData(for: $0) }
             return (recording: recording, transcript: transcript, summary: summary)
         }
     }
-    
+
     func getRecordingsWithTranscripts() -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
         return getAllRecordingsWithData().filter { $0.transcript != nil }
     }
-    
+
     // MARK: - Delete Operations
-    
+
     func deleteRecording(id: UUID) {
         guard let recording = getRecording(id: id) else {
             AppLog.shared.coreData("Recording not found for deletion: \(id)", level: .error)
@@ -690,13 +690,13 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Error deleting recording: \(error)", level: .error)
         }
     }
-    
+
     func saveContext() throws {
         try context.save()
     }
-    
+
     // MARK: - Conversion Helpers
-    
+
     private func convertToTranscriptData(transcriptEntry: TranscriptEntry, recordingEntry: RecordingEntry) -> TranscriptData? {
         guard let _ = transcriptEntry.id,
               let recordingId = recordingEntry.id else {
@@ -707,24 +707,24 @@ class CoreDataManager: ObservableObject {
         // The transcript is valid even when the audio file is gone. Use a
         // stable recording-scoped placeholder when no stored URL remains.
         let url = getAbsoluteURL(for: recordingEntry) ?? preservedContentURL(for: recordingEntry, recordingId: recordingId)
-        
+
         // Decode segments from JSON
         var segments: [TranscriptSegment] = []
         if let segmentsString = transcriptEntry.segments,
            let segmentsData = segmentsString.data(using: .utf8) {
             segments = (try? JSONDecoder().decode([TranscriptSegment].self, from: segmentsData)) ?? []
         }
-        
+
         // Decode speaker mappings from JSON
         var speakerMappings: [String: String] = [:]
         if let mappingsString = transcriptEntry.speakerMappings,
            let mappingsData = mappingsString.data(using: .utf8) {
             speakerMappings = (try? JSONDecoder().decode([String: String].self, from: mappingsData)) ?? [:]
         }
-        
+
         // Convert engine string to enum
         let engine = transcriptEntry.engine.flatMap { TranscriptionEngine(rawValue: $0) }
-        
+
         return TranscriptData(
             id: transcriptEntry.id ?? UUID(),
             recordingId: recordingId,
@@ -740,7 +740,7 @@ class CoreDataManager: ObservableObject {
             lastModified: transcriptEntry.lastModified
         )
     }
-    
+
     private func convertToEnhancedSummaryData(summaryEntry: SummaryEntry, recordingEntry: RecordingEntry) -> EnhancedSummaryData? {
         guard let _ = summaryEntry.id,
               let recordingId = recordingEntry.id else {
@@ -750,33 +750,33 @@ class CoreDataManager: ObservableObject {
         // Allow preserved summaries without an audio URL by using a stable
         // recording-scoped placeholder when no stored URL remains.
         let url = getAbsoluteURL(for: recordingEntry) ?? preservedContentURL(for: recordingEntry, recordingId: recordingId)
-        
+
         // Decode structured data from JSON
         var titles: [TitleItem] = []
         if let titlesString = summaryEntry.titles,
            let titlesData = titlesString.data(using: .utf8) {
             titles = (try? JSONDecoder().decode([TitleItem].self, from: titlesData)) ?? []
         }
-        
+
         var tasks: [TaskItem] = []
         if let tasksString = summaryEntry.tasks,
            let tasksData = tasksString.data(using: .utf8) {
             tasks = (try? JSONDecoder().decode([TaskItem].self, from: tasksData)) ?? []
         }
-        
+
         var reminders: [ReminderItem] = []
         if let remindersString = summaryEntry.reminders,
            let remindersData = remindersString.data(using: .utf8) {
             reminders = (try? JSONDecoder().decode([ReminderItem].self, from: remindersData)) ?? []
         }
-        
+
         // Convert content type string to enum
         let contentType = summaryEntry.contentType.flatMap { ContentType(rawValue: $0) } ?? .general
-        
+
         let method = summaryEntry.aiMethod ?? ""
         let decodedMetadata = SummaryMetadataCodec.decode(method)
         let engine = decodedMetadata.engine ?? SummaryMetadataCodec.inferredEngine(from: decodedMetadata.model)
-        
+
         return EnhancedSummaryData(
             id: summaryEntry.id ?? UUID(),
             recordingId: recordingId,
@@ -800,13 +800,13 @@ class CoreDataManager: ObservableObject {
             confidence: summaryEntry.confidence
         )
     }
-    
+
     // MARK: - Processing Job Operations
-    
+
     func getAllProcessingJobs() -> [ProcessingJobEntry] {
         let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \ProcessingJobEntry.startTime, ascending: false)]
-        
+
         do {
             return try context.fetch(fetchRequest)
         } catch {
@@ -814,11 +814,11 @@ class CoreDataManager: ObservableObject {
             return []
         }
     }
-    
+
     func getProcessingJob(id: UUID) -> ProcessingJobEntry? {
         let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-        
+
         do {
             return try context.fetch(fetchRequest).first
         } catch {
@@ -826,12 +826,12 @@ class CoreDataManager: ObservableObject {
             return nil
         }
     }
-    
+
     func getActiveProcessingJobs() -> [ProcessingJobEntry] {
         let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "status IN %@", ["queued", "processing"])
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \ProcessingJobEntry.startTime, ascending: true)]
-        
+
         do {
             return try context.fetch(fetchRequest)
         } catch {
@@ -839,7 +839,7 @@ class CoreDataManager: ObservableObject {
             return []
         }
     }
-    
+
     func createProcessingJob(
         id: UUID,
         jobType: String,
@@ -860,12 +860,12 @@ class CoreDataManager: ObservableObject {
         job.startTime = Date()
         job.completionTime = nil
         job.error = nil
-        
+
         // Link to recording if it exists
         if let recording = getRecording(url: recordingURL) {
             job.recording = recording
         }
-        
+
         do {
             try saveContext()
             AppLog.shared.coreData("Created processing job: \(id)")
@@ -874,22 +874,22 @@ class CoreDataManager: ObservableObject {
         }
         return job
     }
-    
+
     func updateProcessingJob(_ job: ProcessingJobEntry) {
         job.lastModified = Date()
         try? saveContext()
     }
-    
+
     func deleteProcessingJob(_ job: ProcessingJobEntry) {
         context.delete(job)
         try? saveContext()
         AppLog.shared.coreData("Deleted processing job: \(job.id?.uuidString ?? "nil")")
     }
-    
+
     func deleteCompletedProcessingJobs() {
         let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "status IN %@", ["completed", "failed"])
-        
+
         do {
             let completedJobs = try context.fetch(fetchRequest)
             for job in completedJobs {
@@ -901,20 +901,20 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Error deleting completed processing jobs: \(error)", level: .error)
         }
     }
-    
+
     // MARK: - Cleanup Operations
-    
+
     /// Cleans up orphaned recordings that have no audio file and no meaningful content
     func cleanupOrphanedRecordings() -> Int {
         let allRecordings = getAllRecordings()
         var cleanedCount = 0
-        
+
         for recording in allRecordings {
             // Check if this is an orphaned recording
             let hasNoURL = recording.recordingURL == nil
             let hasNoTranscript = recording.transcript == nil
             let hasNoSummary = recording.summary == nil
-            
+
             // Only clean up recordings that have absolutely no content
             if hasNoURL && hasNoTranscript && hasNoSummary {
                 AppLog.shared.coreData("Cleaning up orphaned recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
@@ -924,7 +924,7 @@ class CoreDataManager: ObservableObject {
             // For recordings with summaries but no audio, preserve them silently
             // (These are intentionally preserved summaries)
         }
-        
+
         if cleanedCount > 0 {
             do {
                 try context.save()
@@ -933,28 +933,28 @@ class CoreDataManager: ObservableObject {
                 AppLog.shared.coreData("Failed to save cleanup: \(error)", level: .error)
             }
         }
-        
+
         return cleanedCount
     }
-    
+
     /// Fixes recordings that should have been deleted completely but still exist as orphans
     func fixIncompletelyDeletedRecordings() -> Int {
         let allRecordings = getAllRecordings()
         var fixedCount = 0
-        
+
         for recording in allRecordings {
             // Look for recordings with no URL and no content that appear to be leftover from deletions
             let hasNoURL = recording.recordingURL == nil
             let hasNoTranscript = recording.transcript == nil
             let hasNoSummary = recording.summary == nil
-            
+
             if hasNoURL && hasNoTranscript && hasNoSummary {
                 // Delete this orphaned record
                 context.delete(recording)
                 fixedCount += 1
             }
         }
-        
+
         if fixedCount > 0 {
             do {
                 try context.save()
@@ -963,10 +963,10 @@ class CoreDataManager: ObservableObject {
                 AppLog.shared.coreData("Failed to save fixes: \(error)", level: .error)
             }
         }
-        
+
         return fixedCount
     }
-    
+
     /// Cleans up recordings that reference files that no longer exist
     func cleanupRecordingsWithMissingFiles() -> Int {
         let allRecordings = getAllRecordings()
@@ -984,16 +984,16 @@ class CoreDataManager: ObservableObject {
             if recording.summary != nil && urlString.isEmpty {
                 continue
             }
-            
+
             // Check if the file actually exists
             if let url = getAbsoluteURL(for: recording) {
                 if !FileManager.default.fileExists(atPath: url.path) {
                     AppLog.shared.coreData("Cleaning up recording with missing file: \(url.lastPathComponent)", level: .debug)
-                    
+
                     // Only delete if there's no transcript or summary to preserve
                     let hasTranscript = recording.transcript != nil
                     let hasSummary = recording.summary != nil
-                    
+
                     if !hasTranscript && !hasSummary {
                         // No valuable content to preserve, delete the record
                         context.delete(recording)
@@ -1008,10 +1008,10 @@ class CoreDataManager: ObservableObject {
             } else {
                 // Could not resolve URL at all
                 AppLog.shared.coreData("Recording with unresolvable URL, ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
-                
+
                 let hasTranscript = recording.transcript != nil
                 let hasSummary = recording.summary != nil
-                
+
                 if !hasTranscript && !hasSummary {
                     context.delete(recording)
                     cleanedCount += 1
@@ -1021,7 +1021,7 @@ class CoreDataManager: ObservableObject {
                 }
             }
         }
-        
+
         if cleanedCount > 0 {
             do {
                 try context.save()
@@ -1030,12 +1030,12 @@ class CoreDataManager: ObservableObject {
                 AppLog.shared.coreData("Failed to save missing file cleanup: \(error)", level: .error)
             }
         }
-        
+
         return cleanedCount
     }
-    
+
     // MARK: - Debug Operations
-    
+
     func debugDatabaseContents() {
         let recordings = getAllRecordings()
         AppLog.shared.coreData("Core Data contains \(recordings.count) recordings", level: .debug)
@@ -1047,14 +1047,14 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Recording ID: \(recording.id?.uuidString ?? "nil") | transcript: \(hasTranscript) | summary: \(hasSummary) | transcriptionStatus: \(recording.transcriptionStatus ?? "unknown") | summaryStatus: \(recording.summaryStatus ?? "unknown") | location: \(hasLocation)", level: .debug)
         }
     }
-    
+
     // MARK: - URL Synchronization
-    
+
     /// Syncs Core Data recording URLs with actual files on disk
     func syncRecordingURLs() {
         let allRecordings = getAllRecordings()
         var updatedCount = 0
-        
+
         // Pre-check if any work is needed to avoid unnecessary logging
         let needsWork = allRecordings.contains { recording in
             guard let urlString = recording.recordingURL else { return false }
@@ -1065,35 +1065,35 @@ class CoreDataManager: ObservableObject {
             guard let oldURL = URL(string: urlString), oldURL.scheme != nil else { return false }
             return !FileManager.default.fileExists(atPath: oldURL.path)
         }
-        
+
         if needsWork {
             AppLog.shared.coreData("Starting URL synchronization...")
         }
-        
+
         for recording in allRecordings {
             guard let urlString = recording.recordingURL else { continue }
-            
+
             // Skip relative paths (just filenames) - these are handled by getAbsoluteURL()
             if !urlString.contains("/") && !urlString.hasPrefix("file://") {
                 continue
             }
-            
+
             guard let oldURL = URL(string: urlString) else { continue }
-            
+
             // Only process absolute URLs that need fixing
             guard oldURL.scheme != nil else { continue }
-            
+
             // Check if the file exists at the stored URL
             if !FileManager.default.fileExists(atPath: oldURL.path) {
                 // File doesn't exist at stored URL, try to find it by name
                 let filename = oldURL.lastPathComponent
                 let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                
+
                 // Look for the file with the same name in documents directory
                 do {
                     let fileURLs = try FileManager.default.contentsOfDirectory(at: documentsPath, includingPropertiesForKeys: nil, options: [])
                     let matchingFiles = fileURLs.filter { $0.lastPathComponent == filename }
-                    
+
                     if let newURL = matchingFiles.first {
                         AppFileProtection.apply(to: newURL)
                         // Update the Core Data entry with the correct relative path
@@ -1115,7 +1115,7 @@ class CoreDataManager: ObservableObject {
                                 let fileName = url.deletingPathExtension().lastPathComponent
                                 return fileName == recordingName
                             }
-                            
+
                             if let newURL = matchingFilesByName.first {
                                 AppFileProtection.apply(to: newURL)
                                 // Update the Core Data entry with the correct relative path
@@ -1135,7 +1135,7 @@ class CoreDataManager: ObservableObject {
                 }
             }
         }
-        
+
         // Save changes if any updates were made
         if updatedCount > 0 {
             do {
@@ -1149,12 +1149,12 @@ class CoreDataManager: ObservableObject {
         }
         // If needsWork was false, we don't log anything to reduce console spam
     }
-    
+
     /// Updates a recording's URL when it's found by filename but the URL is outdated
     func updateRecordingURL(recording: RecordingEntry, newURL: URL) {
         recording.recordingURL = urlToRelativePath(newURL)
         recording.lastModified = Date()
-        
+
         do {
             try context.save()
             AppLog.shared.coreData("Updated recording URL for ID \(recording.id?.uuidString ?? "nil"): \(newURL.lastPathComponent)")
@@ -1162,18 +1162,18 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Failed to save URL update: \(error)", level: .error)
         }
     }
-    
+
     func updateRecordingName(for recordingId: UUID, newName: String) throws {
         guard let recording = getRecording(id: recordingId) else {
             throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found with ID: \(recordingId)"])
         }
-        
+
         // Clean any legacy [Watch] tags from the name
         let finalName = newName.replacingOccurrences(of: " [Watch]", with: "")
-        
+
         recording.recordingName = finalName
         recording.lastModified = Date()
-        
+
         do {
             try context.save()
             AppLog.shared.coreData("Updated recording name for ID: \(recordingId)")
@@ -1199,9 +1199,9 @@ class CoreDataManager: ObservableObject {
             throw error
         }
     }
-    
+
     // MARK: - Location File Helpers
-    
+
     /// Gets the absolute URL for a location file associated with a recording
     func getLocationFileURL(for recording: RecordingEntry) -> URL? {
         guard let recordingURL = getAbsoluteURL(for: recording) else {
@@ -1209,18 +1209,18 @@ class CoreDataManager: ObservableObject {
         }
         return recordingURL.deletingPathExtension().appendingPathExtension("location")
     }
-    
+
     /// Loads location data for a recording using proper URL resolution
     func loadLocationData(for recording: RecordingEntry) -> LocationData? {
         guard let locationURL = getLocationFileURL(for: recording) else {
             return nil
         }
-        
+
         guard let data = try? Data(contentsOf: locationURL),
               let locationData = try? JSONDecoder().decode(LocationData.self, from: data) else {
             return nil
         }
-        
+
         return locationData
     }
 }

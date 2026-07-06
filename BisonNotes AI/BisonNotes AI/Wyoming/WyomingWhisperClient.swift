@@ -466,7 +466,7 @@ class WyomingWhisperClient: ObservableObject {
 
         let totalTime = Date().timeIntervalSince(startTime)
         let avgRate = totalTime > 0 ? Double(totalChunks) / totalTime : 0
-        let _ = min(avgRate, Double(Int.max - 1))
+        _ = min(avgRate, Double(Int.max - 1))
 
         AppLog.shared.transcription("Audio streamed in \(String(format: "%.1f", totalTime))s")
     }

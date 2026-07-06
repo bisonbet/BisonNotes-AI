@@ -376,7 +376,7 @@ struct WhisperSettingsView: View {
         whisperService = WhisperService(config: config, chunkingService: AudioFileChunkingService())
     }
 
-    private func testConnection() {
+    func testConnection() {
         isTesting = true
         testResult = nil
 

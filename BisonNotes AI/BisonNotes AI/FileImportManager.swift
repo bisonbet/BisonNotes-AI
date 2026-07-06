@@ -15,48 +15,47 @@ import CoreData
 
 @MainActor
 class FileImportManager: NSObject, ObservableObject {
-    
+
     @Published var isImporting = false
     @Published var importProgress: Double = 0.0
     @Published var currentlyImporting: String = ""
     @Published var importResults: ImportResults?
     @Published var showingImportAlert = false
-    
+
     private let supportedExtensions = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
     private let supportedVideoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
-    
+
     override init() {
         self.persistenceController = PersistenceController.shared
         self.context = persistenceController.container.viewContext
         super.init()
     }
-    
+
     // MARK: - Import Methods
-    
-    
+
     func importAudioFiles(from urls: [URL]) async {
         guard !isImporting else { return }
-        
+
         isImporting = true
         importProgress = 0.0
         currentlyImporting = "Preparing..."
-        
+
         let totalCount = urls.count
         guard totalCount > 0 else {
             completeImport(with: ImportResults(total: 0, successful: 0, failed: 0, errors: []))
             return
         }
-        
+
         var successful = 0
         var failed = 0
         var errors: [String] = []
-        
+
         for (index, sourceURL) in urls.enumerated() {
             currentlyImporting = "Importing \(sourceURL.lastPathComponent)..."
             importProgress = Double(index) / Double(totalCount)
-            
+
             do {
                 try await importAudioFile(from: sourceURL)
                 successful += 1
@@ -64,24 +63,24 @@ class FileImportManager: NSObject, ObservableObject {
                 failed += 1
                 errors.append("\(sourceURL.lastPathComponent): \(error.localizedDescription)")
             }
-            
+
             // Small delay to show progress
             try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
         }
-        
+
         importProgress = 1.0
         currentlyImporting = "Complete"
-        
+
         let results = ImportResults(
             total: totalCount,
             successful: successful,
             failed: failed,
             errors: errors
         )
-        
+
         completeImport(with: results)
     }
-    
+
     private func importAudioFile(from sourceURL: URL) async throws {
         let fileExtension = sourceURL.pathExtension.lowercased()
 
@@ -247,7 +246,7 @@ class FileImportManager: NSObject, ObservableObject {
             AppLog.shared.fileManagement("Restored archived recording \(recording.recordingName ?? "unknown") from import \(sourceURL.lastPathComponent)")
         }
     }
-    
+
     private func importVideoFile(from sourceURL: URL) async throws {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let baseName = sourceURL.deletingPathExtension().lastPathComponent
@@ -287,40 +286,40 @@ class FileImportManager: NSObject, ObservableObject {
     private func generateUniqueFilename(for sourceURL: URL) -> String {
         let originalName = sourceURL.deletingPathExtension().lastPathComponent
         let fileExtension = sourceURL.pathExtension
-        
+
         // Generate timestamp
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = formatter.string(from: Date())
-        
+
         // Create base filename
         let baseFilename = "\(originalName)_\(timestamp).\(fileExtension)"
-        
+
         // Check if file exists and append number if needed
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let destinationURL = documentsPath.appendingPathComponent(baseFilename)
-        
+
         if FileManager.default.fileExists(atPath: destinationURL.path) {
             var counter = 1
             var newFilename = baseFilename
-            
+
             repeat {
                 let nameWithoutExt = originalName
                 newFilename = "\(nameWithoutExt)_\(timestamp)_\(counter).\(fileExtension)"
                 let newURL = documentsPath.appendingPathComponent(newFilename)
-                
+
                 if !FileManager.default.fileExists(atPath: newURL.path) {
                     break
                 }
                 counter += 1
             } while true
-            
+
             return newFilename
         }
-        
+
         return baseFilename
     }
-    
+
     private func validateAudioFile(at url: URL) throws {
         // Try to create an AVAudioPlayer to validate the file
         do {
@@ -332,8 +331,7 @@ class FileImportManager: NSObject, ObservableObject {
             throw ImportError.invalidAudioFile("Unable to read audio file: \(error.localizedDescription)")
         }
     }
-    
-    
+
     private func completeImport(with results: ImportResults) {
         importResults = results
         isImporting = false
@@ -342,30 +340,30 @@ class FileImportManager: NSObject, ObservableObject {
             NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
         }
     }
-    
+
     // MARK: - Progress Tracking
-    
+
     var progressText: String {
         if isImporting {
             return "\(Int(importProgress * 100))% - \(currentlyImporting)"
         }
         return ""
     }
-    
+
     var canImport: Bool {
         return !isImporting
     }
-    
+
     // MARK: - Core Data Integration
-    
+
     private func createRecordingEntryForImportedFile(at fileURL: URL) async throws {
         let originalName = fileURL.deletingPathExtension().lastPathComponent
         let recordingName = AudioRecorderViewModel.generateImportedFileName(originalName: originalName)
-        
+
         // Check if recording already exists
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "recordingName == %@", recordingName)
-        
+
         do {
             let existingRecordings = try context.fetch(fetchRequest)
             if !existingRecordings.isEmpty {
@@ -376,14 +374,14 @@ class FileImportManager: NSObject, ObservableObject {
             AppLog.shared.fileManagement("Error checking for existing recording: \(error)", level: .error)
             throw ImportError.copyFailed("Failed to check existing recordings: \(error.localizedDescription)")
         }
-        
+
         // Create new recording entry
         let recordingEntry = RecordingEntry(context: context)
         recordingEntry.id = UUID()
         recordingEntry.recordingName = recordingName
         // Store relative path instead of absolute URL for resilience across app launches
         recordingEntry.recordingURL = urlToRelativePath(fileURL)
-        
+
         // Get file metadata. Prefer the file's modification date as the recording
         // date: archives exported by this app stamp mtime with the original
         // recording date, and iCloud preserves mtime across round-trips (while
@@ -410,12 +408,12 @@ class FileImportManager: NSObject, ObservableObject {
             recordingEntry.fileSize = 0
             recordingEntry.duration = 0
         }
-        
+
         // Set default values
         recordingEntry.audioQuality = "high"
         recordingEntry.transcriptionStatus = "Not Started"
         recordingEntry.summaryStatus = "Not Started"
-        
+
         // Save the context
         do {
             try context.save()
@@ -425,7 +423,7 @@ class FileImportManager: NSObject, ObservableObject {
             throw ImportError.copyFailed("Failed to save to database: \(error.localizedDescription)")
         }
     }
-    
+
     private func getAudioDuration(url: URL) async -> TimeInterval {
         do {
             let asset = AVURLAsset(url: url)
@@ -436,23 +434,23 @@ class FileImportManager: NSObject, ObservableObject {
             return 0
         }
     }
-    
+
     /// Converts an absolute URL to a relative path for storage
     private func urlToRelativePath(_ url: URL) -> String? {
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             return nil
         }
-        
+
         // Check if URL is within documents directory
         let urlString = url.absoluteString
         let documentsString = documentsURL.absoluteString
-        
+
         if urlString.hasPrefix(documentsString) {
             // Remove the documents path prefix to get relative path
             let relativePath = String(urlString.dropFirst(documentsString.count))
             return relativePath.isEmpty ? nil : relativePath
         }
-        
+
         // If not in documents directory, store the filename only
         return url.lastPathComponent
     }
@@ -483,8 +481,6 @@ enum ImportError: LocalizedError {
     }
 }
 
-
-
 // MARK: - Supporting Structures
 
 struct ImportResults {
@@ -492,15 +488,15 @@ struct ImportResults {
     let successful: Int
     let failed: Int
     let errors: [String]
-    
+
     var successRate: Double {
         return total > 0 ? Double(successful) / Double(total) : 0.0
     }
-    
+
     var formattedSuccessRate: String {
         return String(format: "%.1f%%", successRate * 100)
     }
-    
+
     var summary: String {
         if total == 0 {
             return "No files selected for import"

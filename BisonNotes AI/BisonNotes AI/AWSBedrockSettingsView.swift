@@ -493,7 +493,7 @@ struct AWSBedrockSettingsView: View {
         }
     }
 
-    private func testConnection() {
+    func testConnection() {
         guard isConfigurationValid else { return }
 
         isTesting = true

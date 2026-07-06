@@ -271,7 +271,7 @@ public class OnDeviceLLMService: ObservableObject {
 
         // Parse the response
         let parsed = parseCompleteResponse(result)
-        
+
         // For non-small models, return full results
         return (
             summary: parsed.summary.isEmpty ? cleanupResponse(result) : parsed.summary,
@@ -341,7 +341,7 @@ public class OnDeviceLLMService: ObservableObject {
             let range = NSRange(cleaned.startIndex..., in: cleaned)
             cleaned = trailingRole.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
         }
-        
+
         // Remove common introductory phrases and thinking-style content that models sometimes add
         let introPhrases = [
             "and here's the analysis:",
@@ -372,14 +372,14 @@ public class OnDeviceLLMService: ObservableObject {
                 cleaned = String(cleaned.dropFirst(phrase.count)).trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        
+
         // Remove reasoning paragraphs that start with "Okay, let me try" or similar
         // Pattern: Paragraphs that contain meta-commentary about the task
         if let reasoningPattern = try? NSRegularExpression(pattern: #"(?i)^(okay, let me try|let me try to|the user wants|i need to make sure|let me check).*?(?=\n\n##|## Summary|$)"#, options: [.dotMatchesLineSeparators, .anchorsMatchLines]) {
             let range = NSRange(cleaned.startIndex..., in: cleaned)
             cleaned = reasoningPattern.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
         }
-        
+
         // Remove thinking-style paragraphs that start with meta-commentary
         // Pattern: "Alright, let me..." or "Let me break down..." followed by reasoning
         // This catches the entire thinking paragraph before the actual content
@@ -387,7 +387,7 @@ public class OnDeviceLLMService: ObservableObject {
             let range = NSRange(cleaned.startIndex..., in: cleaned)
             cleaned = thinkingPattern.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
         }
-        
+
         // Remove sentences that mention avoiding markdown or formatting (model confusion)
         cleaned = cleaned.replacingOccurrences(
             of: #"(?i)i should avoid any markdown.*?instructions?\."#,
@@ -412,7 +412,7 @@ public class OnDeviceLLMService: ObservableObject {
         // Calculate approx 15% target length in words (min 200 words) to encourage longer output
         let wordCount = text.split(separator: " ").count
         let targetWords = max(200, Int(Double(wordCount) * 0.15))
-        
+
         let comedyModifier = ComedyMode.current.promptModifier ?? ""
 
         return """
@@ -445,7 +445,7 @@ public class OnDeviceLLMService: ObservableObject {
         Structured Outline:
         """
     }
-    
+
     /// Prompt for small models (Qwen3-1.7B) with simplified structure
     private func createTaskExtractionPrompt(text: String) -> String {
         return """
@@ -459,7 +459,7 @@ public class OnDeviceLLMService: ObservableObject {
         Tasks:
         """
     }
-    
+
     private func createReminderExtractionPrompt(text: String) -> String {
         return """
         Extract all time-sensitive reminders and deadlines from the following transcript. Include dates, times, and deadlines mentioned.
@@ -472,7 +472,7 @@ public class OnDeviceLLMService: ObservableObject {
         Reminders:
         """
     }
-    
+
     private func createTitleExtractionPrompt(text: String) -> String {
         """
         Suggest 3-5 concise, descriptive titles for the following transcript. Each title should capture the main topic or theme.
@@ -543,11 +543,11 @@ public class OnDeviceLLMService: ObservableObject {
     }
 
     // MARK: - Response Parsing
-    
+
     /// Strip numbered prefixes like [Task 1], [Title 2], [Reminder 3] from text
     private func stripNumberedPrefixes(from text: String) -> String {
         var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        
+
         // Pattern: [Task 1], [Task 2], [Title 1], [Reminder 1], etc.
         let patterns = [
             #"\[Task\s+\d+\]\s*"#,
@@ -558,14 +558,14 @@ public class OnDeviceLLMService: ObservableObject {
             #"\[Key\s+point\s+\d+\]\s*"#,
             #"\[Note\s+\d+\]\s*"#
         ]
-        
+
         for pattern in patterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
                 let range = NSRange(cleaned.startIndex..., in: cleaned)
                 cleaned = regex.stringByReplacingMatches(in: cleaned, options: [], range: range, withTemplate: "")
             }
         }
-        
+
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -578,10 +578,10 @@ public class OnDeviceLLMService: ObservableObject {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") || trimmed.hasPrefix("*") {
                 var taskText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
-                
+
                 // Strip numbered prefixes like [Task 1], [Task 2], etc.
                 taskText = stripNumberedPrefixes(from: String(taskText))
-                
+
                 let cleaned = RecordingNameGenerator.cleanAIOutput(taskText.sanitizedPlainText())
                 if !cleaned.isEmpty && cleaned.count > 3 {
                     // Normalize for deduplication (lowercase, remove extra spaces)
@@ -606,10 +606,10 @@ public class OnDeviceLLMService: ObservableObject {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") || trimmed.hasPrefix("*") {
                 var reminderText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
-                
+
                 // Strip numbered prefixes like [Reminder 1], [Reminder 2], etc.
                 reminderText = stripNumberedPrefixes(from: String(reminderText))
-                
+
                 let cleaned = RecordingNameGenerator.cleanAIOutput(reminderText.sanitizedPlainText())
                 if !cleaned.isEmpty && cleaned.count > 3 {
                     // Normalize for deduplication (lowercase, remove extra spaces)
@@ -635,10 +635,10 @@ public class OnDeviceLLMService: ObservableObject {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("-") || trimmed.hasPrefix("•") || trimmed.hasPrefix("*") {
                 var titleText = trimmed.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
-                
+
                 // Strip numbered prefixes like [Title 1], [Title 2], etc.
                 titleText = stripNumberedPrefixes(from: String(titleText))
-                
+
                 // Use standardized cleaning
                 let cleaned = RecordingNameGenerator.cleanStandardizedTitleResponse(titleText.sanitizedForTitle())
                 if !cleaned.isEmpty && cleaned.count > 3 && cleaned.count < 100 {
@@ -660,7 +660,7 @@ public class OnDeviceLLMService: ObservableObject {
         var tasks: [TaskItem] = []
         var reminders: [ReminderItem] = []
         var titles: [TitleItem] = []
-        
+
         // Deduplication sets
         var seenTasks = Set<String>()
         var seenReminders = Set<String>()
@@ -707,7 +707,7 @@ public class OnDeviceLLMService: ObservableObject {
             }
             return (summary: "", tasks: [], reminders: [], titles: [])
         }
-        
+
         // Remove template tokens that might interfere with parsing
         let tokensToRemove = [
             "<end_of_turn>", "<start_of_turn>", "<eos>",
@@ -721,13 +721,13 @@ public class OnDeviceLLMService: ObservableObject {
             // Also try case variations
             sanitizedResponse = sanitizedResponse.replacingOccurrences(of: token.lowercased(), with: "", options: .caseInsensitive)
         }
-        
+
         // Remove any remaining patterns that look like stop tokens (aggressive cleanup)
         if let regex = try? NSRegularExpression(pattern: "</?\\|[^|]*\\|>", options: []) {
             let range = NSRange(sanitizedResponse.startIndex..., in: sanitizedResponse)
             sanitizedResponse = regex.stringByReplacingMatches(in: sanitizedResponse, options: [], range: range, withTemplate: "")
         }
-        
+
         // Remove thinking blocks <think>...</think> (Qwen3, etc.)
         if let thinkRegex = try? NSRegularExpression(pattern: "<think>.*?</think>", options: [.dotMatchesLineSeparators, .caseInsensitive]) {
             let range = NSRange(sanitizedResponse.startIndex..., in: sanitizedResponse)
@@ -737,7 +737,7 @@ public class OnDeviceLLMService: ObservableObject {
         sanitizedResponse = sanitizedResponse.replacingOccurrences(of: "<think>", with: "", options: .caseInsensitive)
         sanitizedResponse = sanitizedResponse.replacingOccurrences(of: "</think>", with: "", options: .caseInsensitive)
         sanitizedResponse = sanitizedResponse.replacingOccurrences(of: "<think/>", with: "", options: .caseInsensitive)
-        
+
         // Remove introductory phrases and thinking-style content
         let introPhrases = [
             "and here's the analysis:",
@@ -759,7 +759,7 @@ public class OnDeviceLLMService: ObservableObject {
                 sanitizedResponse = String(sanitizedResponse.dropFirst(phrase.count)).trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        
+
         // Remove thinking-style paragraphs that contain meta-commentary about the process
         // Pattern: Paragraphs starting with "Alright, let me..." or "Let me break down..." etc.
         // Also catch Qwen3-1.7B reasoning patterns like "Okay, let me try to summarize"
@@ -767,14 +767,14 @@ public class OnDeviceLLMService: ObservableObject {
             let range = NSRange(sanitizedResponse.startIndex..., in: sanitizedResponse)
             sanitizedResponse = thinkingPattern.stringByReplacingMatches(in: sanitizedResponse, options: [], range: range, withTemplate: "")
         }
-        
+
         // Remove sentences that explicitly mention avoiding markdown or formatting
         sanitizedResponse = sanitizedResponse.replacingOccurrences(
             of: #"(?i)i should avoid any markdown.*?instructions?\."#,
             with: "",
             options: .regularExpression
         )
-        
+
         let lines = sanitizedResponse.components(separatedBy: .newlines)
 
         for line in lines {
@@ -782,7 +782,7 @@ public class OnDeviceLLMService: ObservableObject {
             let lowercased = trimmed.lowercased()
 
             // Detect section headers - be more flexible with variations
-            if lowercased.contains("## summary") || lowercased.hasPrefix("summary:") || 
+            if lowercased.contains("## summary") || lowercased.hasPrefix("summary:") ||
                (lowercased.contains("summary") && lowercased.contains("##")) {
                 currentSection = "summary"
                 continue
@@ -794,7 +794,7 @@ public class OnDeviceLLMService: ObservableObject {
                       (lowercased.contains("reminder") && (lowercased.contains("##") || lowercased.hasPrefix("reminder"))) {
                 currentSection = "reminders"
                 continue
-            } else if lowercased.contains("## suggested titles") || lowercased.contains("## titles") || 
+            } else if lowercased.contains("## suggested titles") || lowercased.contains("## titles") ||
                       lowercased.contains("## title") ||  // Handle single "## Title" format for small models
                       lowercased.hasPrefix("titles:") || lowercased.hasPrefix("suggested titles:") ||
                       (lowercased.contains("title") && (lowercased.contains("##") || lowercased.hasPrefix("title"))) {
@@ -805,7 +805,7 @@ public class OnDeviceLLMService: ObservableObject {
             // Process based on current section
             switch currentSection {
             case "summary":
-                if !trimmed.isEmpty && !trimmed.hasPrefix("##") && !lowercased.contains("task") && 
+                if !trimmed.isEmpty && !trimmed.hasPrefix("##") && !lowercased.contains("task") &&
                    !lowercased.contains("reminder") && !lowercased.contains("title") {
                     summary += (summary.isEmpty ? "" : "\n") + trimmed
                 }
@@ -901,16 +901,16 @@ public class OnDeviceLLMService: ObservableObject {
                 }
             default:
                 // If no section detected yet, assume it's summary
-                if !trimmed.isEmpty && !trimmed.hasPrefix("##") && !lowercased.contains("task") && 
+                if !trimmed.isEmpty && !trimmed.hasPrefix("##") && !lowercased.contains("task") &&
                    !lowercased.contains("reminder") && !lowercased.contains("title") {
                     summary += (summary.isEmpty ? "" : "\n") + trimmed
                 }
             }
         }
-        
+
         // Clean up summary text - remove artifacts and introductory phrases
         summary = cleanupResponse(summary)
-        
+
         // If no titles were found, generate fallback titles from summary content
         if titles.isEmpty && !summary.isEmpty {
             // Extract key phrases from summary to create titles
@@ -920,9 +920,9 @@ public class OnDeviceLLMService: ObservableObject {
                     .replacingOccurrences(of: "- ", with: "")
                     .replacingOccurrences(of: "• ", with: "")
                     .replacingOccurrences(of: "* ", with: "")
-                
+
                 // Skip if too short or contains artifacts
-                if cleaned.count > 10 && cleaned.count < 80 && 
+                if cleaned.count > 10 && cleaned.count < 80 &&
                    !cleaned.contains("</") && !cleaned.contains("<|") {
                     let title = RecordingNameGenerator.cleanStandardizedTitleResponse(cleaned.sanitizedForTitle())
                     if !title.isEmpty && title.count > 3 && title.count < 100 {
@@ -930,7 +930,7 @@ public class OnDeviceLLMService: ObservableObject {
                     }
                 }
             }
-            
+
             // If still no titles, create a generic one from the first meaningful line
             if titles.isEmpty {
                 let firstLine = summaryLines.first(where: { line in
@@ -940,7 +940,7 @@ public class OnDeviceLLMService: ObservableObject {
                         .replacingOccurrences(of: "* ", with: "")
                     return cleaned.count > 10 && cleaned.count < 80
                 })
-                
+
                 if let firstLine = firstLine {
                     let cleaned = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
                         .replacingOccurrences(of: "- ", with: "")

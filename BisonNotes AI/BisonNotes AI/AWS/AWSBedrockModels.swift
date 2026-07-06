@@ -31,7 +31,7 @@ enum AWSBedrockModel: String, CaseIterable {
             return rawValue
         }
     }
-    
+
     var displayName: String {
         switch self {
         case .claude45Sonnet:
@@ -126,7 +126,7 @@ struct AWSBedrockConfig: Equatable {
     let timeout: TimeInterval
     let useProfile: Bool
     let profileName: String?
-    
+
     static var `default`: AWSBedrockConfig {
         return AWSBedrockConfig(
             region: "us-east-1",
@@ -141,7 +141,7 @@ struct AWSBedrockConfig: Equatable {
             profileName: nil
         )
     }
-    
+
     var isValid: Bool {
         if useProfile {
             return !region.isEmpty && profileName != nil && !profileName!.isEmpty
@@ -158,7 +158,7 @@ struct AWSBedrockInvokeRequest {
     let contentType: String
     let accept: String
     let body: Data
-    
+
     init(modelId: String, body: Data) {
         self.modelId = modelId
         self.contentType = "application/json"
@@ -188,7 +188,7 @@ struct Claude35Request: BedrockModelRequest {
     let stopSequences: [String]?
     let anthropicVersion: String
     let system: String?
-    
+
     enum CodingKeys: String, CodingKey {
         case messages
         case maxTokens = "max_tokens"
@@ -199,7 +199,7 @@ struct Claude35Request: BedrockModelRequest {
         case anthropicVersion = "anthropic_version"
         case system
     }
-    
+
     init(messages: [Claude35Message], maxTokens: Int, temperature: Double, system: String? = nil) {
         self.messages = messages
         self.maxTokens = maxTokens
@@ -215,7 +215,7 @@ struct Claude35Request: BedrockModelRequest {
 struct Claude35Message: Codable {
     let role: String
     let content: [Claude35Content]
-    
+
     init(role: String, text: String) {
         self.role = role
         self.content = [Claude35Content(type: "text", text: text)]
@@ -233,14 +233,14 @@ struct LlamaRequest: BedrockModelRequest {
     let maxGenLen: Int
     let temperature: Double
     let topP: Double
-    
+
     enum CodingKeys: String, CodingKey {
         case prompt
         case maxGenLen = "max_gen_len"
         case temperature
         case topP = "top_p"
     }
-    
+
     init(prompt: String, maxTokens: Int, temperature: Double) {
         self.prompt = prompt
         self.maxGenLen = maxTokens
@@ -264,11 +264,11 @@ struct Claude35Response: BedrockModelResponse {
     let stopReason: String?
     let stopSequence: String?
     let usage: Claude35Usage?
-    
+
     var content: String {
         return contentArray.compactMap { $0.text }.joined(separator: "")
     }
-    
+
     enum CodingKeys: String, CodingKey {
         case id, type, role, model
         case contentArray = "content"
@@ -286,7 +286,7 @@ struct Claude35ResponseContent: Codable {
 struct Claude35Usage: Codable {
     let inputTokens: Int?
     let outputTokens: Int?
-    
+
     enum CodingKeys: String, CodingKey {
         case inputTokens = "input_tokens"
         case outputTokens = "output_tokens"
@@ -298,9 +298,9 @@ struct LlamaResponse: BedrockModelResponse {
     let promptTokenCount: Int?
     let generationTokenCount: Int?
     let stopReason: String?
-    
+
     var content: String { return generation }
-    
+
     enum CodingKeys: String, CodingKey {
         case generation
         case promptTokenCount = "prompt_token_count"
@@ -315,11 +315,11 @@ struct AWSBedrockError: Codable, LocalizedError {
     let message: String
     let type: String?
     let code: String?
-    
+
     var errorDescription: String? {
         return message
     }
-    
+
     enum CodingKeys: String, CodingKey {
         case message
         case type = "__type"
@@ -374,16 +374,16 @@ class AWSBedrockModelFactory {
             return try decoder.decode(LlamaResponse.self, from: data)
         }
     }
-    
+
     private static func formatLlamaPrompt(prompt: String, systemPrompt: String?) -> String {
         let system = systemPrompt ?? "You are a helpful assistant."
         return """
         <|begin_of_text|><|start_header_id|>system<|end_header_id|>
-        
+
         \(system)<|eot_id|><|start_header_id|>user<|end_header_id|>
-        
+
         \(prompt)<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-        
+
         """
     }
 }

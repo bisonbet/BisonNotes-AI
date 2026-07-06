@@ -14,9 +14,9 @@ struct IntegrationSelectionView: View {
     let subtitle: String
     let onRemindersSelected: () -> Void
     let onCalendarSelected: () -> Void
-    var onGoogleCalendarSelected: (() -> Void)? = nil
+    var onGoogleCalendarSelected: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
-    
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
@@ -25,12 +25,12 @@ struct IntegrationSelectionView: View {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 48))
                         .foregroundColor(.accentColor)
-                    
+
                     Text(title)
                         .font(.title2)
                         .fontWeight(.semibold)
                         .multilineTextAlignment(.center)
-                    
+
                     Text(subtitle)
                         .font(.body)
                         .foregroundColor(.secondary)
@@ -38,9 +38,9 @@ struct IntegrationSelectionView: View {
                         .padding(.horizontal)
                 }
                 .padding(.top, 40)
-                
+
                 Spacer()
-                
+
                 // Selection Options
                 VStack(spacing: 16) {
                     // Reminders Option
@@ -53,20 +53,20 @@ struct IntegrationSelectionView: View {
                                 .font(.title2)
                                 .foregroundColor(.green)
                                 .frame(width: 32)
-                            
+
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Add to Reminders")
                                     .font(.headline)
                                     .fontWeight(.medium)
                                     .foregroundColor(.primary)
-                                
+
                                 Text("Create a reminder in the Reminders app")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
-                            
+
                             Spacer()
-                            
+
                             Image(systemName: "chevron.right")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -76,7 +76,7 @@ struct IntegrationSelectionView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(PlainButtonStyle())
-                    
+
                     // Calendar Option
                     Button(action: {
                         onCalendarSelected()
@@ -148,9 +148,9 @@ struct IntegrationSelectionView: View {
                     }
                 }
                 .padding(.horizontal)
-                
+
                 Spacer()
-                
+
                 // Cancel Button
                 Button("Cancel") {
                     dismiss()
@@ -183,4 +183,4 @@ struct IntegrationSelectionView_Previews: PreviewProvider {
             onCalendarSelected: {}
         )
     }
-} 
+}

@@ -50,7 +50,7 @@ open class OnDeviceLLM: ObservableObject {
     public var update: (_ outputDelta: String?) -> Void = { _ in }
 
     /// Template controlling model input/output formatting
-    public var template: LLMTemplate? = nil {
+    public var template: LLMTemplate? {
         didSet {
             guard let template else {
                 preprocess = { input, _, _ in return input }
@@ -113,37 +113,37 @@ open class OnDeviceLLM: ObservableObject {
     private let maxOutputTokens: Int32 // Hard limit on output tokens to prevent infinite generation
 
     // MARK: - Logging Configuration
-    
+
     /// Configure llama.cpp/GGML logging to reduce verbosity
     /// Only shows WARN and ERROR level messages, suppressing DEBUG, INFO, and CONT
     /// GGML log levels: 0=NONE, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR, 5=CONT
     private static var loggingConfigured = false
-    
+
     private static func configureLogging() {
         guard !loggingConfigured else { return }
         loggingConfigured = true
-        
+
         // Set up custom log callback BEFORE backend initialization
         // This ensures all logs (including GGML) are filtered
         // Only shows WARN (3) and ERROR (4) level messages
         // Suppresses DEBUG (1), INFO (2), and CONT (5) level messages
-        let logCallback: @convention(c) (ggml_log_level, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void = { level, text, userData in
+        let logCallback: @convention(c) (ggml_log_level, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void = { level, text, _ in
             // Only show WARN and ERROR level messages
             // GGML_LOG_LEVEL_WARN = 3, GGML_LOG_LEVEL_ERROR = 4
             // Convert enum to raw value (UInt32) for comparison
             let levelRaw = UInt32(level.rawValue)
             let warnRaw = UInt32(GGML_LOG_LEVEL_WARN.rawValue)
             let errorRaw = UInt32(GGML_LOG_LEVEL_ERROR.rawValue)
-            
+
             guard levelRaw >= warnRaw else {
                 // Suppress DEBUG (1), INFO (2), and CONT (5) level messages
                 // This includes: llama_kv_cache, llama_context, ggml_metal_library_compile_pipeline, etc.
                 return
             }
-            
+
             guard let text = text else { return }
             let message = String(cString: text)
-            
+
             // Print with appropriate prefix
             if levelRaw == warnRaw {
                 AppLog.shared.summarization("[llama.cpp WARN] \(message)", level: .error)
@@ -151,10 +151,10 @@ open class OnDeviceLLM: ObservableObject {
                 AppLog.shared.summarization("[llama.cpp ERROR] \(message)", level: .error)
             }
         }
-        
+
         // Set the callback BEFORE backend init - this affects both llama.cpp and GGML logging
         llama_log_set(logCallback, nil)
-        
+
         // Initialize backend after logging is configured
         llama_backend_init()
     }
@@ -180,7 +180,7 @@ open class OnDeviceLLM: ObservableObject {
     ) {
         // Configure logging before any llama.cpp operations
         Self.configureLogging()
-        
+
         self.path = path.cString(using: .utf8)!
         var modelParams = llama_model_default_params()
         #if targetEnvironment(simulator)
@@ -202,7 +202,7 @@ open class OnDeviceLLM: ObservableObject {
         self.params = llama_context_default_params()
         self.params.type_k = GGML_TYPE_Q8_0
         self.params.type_v = GGML_TYPE_Q8_0
-        
+
         let processorCount = Int32(ProcessInfo().processorCount)
         let modelTrainCtx = llama_model_n_ctx_train(model)
         self.maxTokenCount = Int(min(maxTokenCount, modelTrainCtx))
@@ -662,7 +662,7 @@ open class OnDeviceLLM: ObservableObject {
             AppLog.shared.summarization("[OnDeviceLLM] Cannot rollback - context is nil (likely already cleared)", level: .debug)
             return
         }
-        
+
         if response.isEmpty && self.inputTokenCount > 0 {
             let seq_id = Int32(0)
             let startIndex = self.nPast - self.inputTokenCount

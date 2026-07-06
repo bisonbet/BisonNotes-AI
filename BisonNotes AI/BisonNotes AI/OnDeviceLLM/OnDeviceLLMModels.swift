@@ -398,7 +398,7 @@ extension OnDeviceLLMModelInfo {
             return first.displayName < second.displayName
         }
     }
-    
+
     /// Check if experimental models are enabled
     public static var experimentalModelsEnabled: Bool {
         UserDefaults.standard.bool(forKey: SettingsKeys.enableExperimentalModels)
@@ -467,7 +467,7 @@ extension OnDeviceLLMModelInfo {
     /// Note: Qwen3.5 models (2B, 4B) are experimental
     public static var selectedModel: OnDeviceLLMModelInfo {
         let modelId = UserDefaults.standard.string(forKey: SettingsKeys.selectedModelId) ?? defaultSummarizationModel.id
-        
+
         // If the selected model is not in availableModels, migrate to default
         if let selected = model(withId: modelId) {
             if !availableModels.contains(where: { $0.id == selected.id }) {
@@ -483,7 +483,7 @@ extension OnDeviceLLMModelInfo {
             }
             return selected
         }
-        
+
         return defaultSummarizationModel
     }
 

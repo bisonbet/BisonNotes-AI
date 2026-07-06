@@ -103,7 +103,7 @@ struct BisonNotesAIApp: App {
         // Mark migration as complete
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
-    
+
     /// Migrates users off WhisperKit, which has been removed in v1.8.
     /// Deletes downloaded Whisper model files, clears settings, switches the engine to
     /// Parakeet (FluidAudio), sets the default Parakeet model to v2 (English), and
@@ -175,29 +175,29 @@ struct BisonNotesAIApp: App {
     private func migrateAppleIntelligenceToOnDeviceLLM() {
         let aiEngineKey = "SelectedAIEngine"
         let migrationKey = "appleIntelligenceToOnDeviceLLMMigrated_v1.4"
-        
+
         // Check if migration has already been performed
         guard !UserDefaults.standard.bool(forKey: migrationKey) else {
             return
         }
-        
+
         let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
-        
+
         // Check if user was using Apple Intelligence (check all possible variations)
         let appleIntelligenceVariants = [
             "Apple Intelligence",
             "Enhanced Apple Intelligence",
             "enhancedAppleIntelligence"
         ]
-        
+
         if let engine = currentAIEngine, appleIntelligenceVariants.contains(engine) {
             // Mark that we need to show the migration alert
             UserDefaults.standard.set(true, forKey: "showAppleIntelligenceMigrationAlert")
-            
+
             // Migrate to On-Device AI
             UserDefaults.standard.set("On-Device AI", forKey: aiEngineKey)
             UserDefaults.standard.set(true, forKey: "enableOnDeviceLLM")
-            
+
             // Also update transcription if it was using Apple Intelligence
             let transcriptionEngineKey = "selectedTranscriptionEngine"
             let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
@@ -206,14 +206,14 @@ struct BisonNotesAIApp: App {
                 UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
                 UserDefaults.standard.set(true, forKey: "showParakeetMigrationSettings")
             }
-            
+
             NSLog("✅ Migrated from Apple Intelligence (\(engine)) to On-Device AI")
         }
-        
+
         // Mark migration as complete
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
-    
+
     /// Migrates removed OpenAI summarization and Google AI Studio models to current defaults
     /// Handles users who had gpt-4.1, gpt-4.1-nano, gemini-2.5-flash, gemini-2.5-flash-lite,
     /// or gemini-3-pro-preview saved and would now get a nil/broken model selection
@@ -271,20 +271,20 @@ struct BisonNotesAIApp: App {
     private func migrateOnDeviceLLMNameToOnDeviceAI() {
         let aiEngineKey = "SelectedAIEngine"
         let migrationKey = "onDeviceLLMNameMigration_v1.5"
-        
+
         // Check if migration has already been performed
         guard !UserDefaults.standard.bool(forKey: migrationKey) else {
             return
         }
-        
+
         let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
-        
+
         // If the stored value is the old name, update it to the new name
         if currentAIEngine == "On-Device LLM" {
             UserDefaults.standard.set("On-Device AI", forKey: aiEngineKey)
             NSLog("✅ Migrated AI engine name from 'On-Device LLM' to 'On-Device AI'")
         }
-        
+
         // Mark migration as complete
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
@@ -522,7 +522,7 @@ struct BisonNotesAIApp: App {
             && path.usesInterfaceType(.wifi)
             && !path.isExpensive
     }
-    
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -862,24 +862,24 @@ struct BisonNotesAIApp: App {
               url.path.hasPrefix(inboxPath.path) else { return }
         try? FileManager.default.removeItem(at: url)
     }
-    
+
     private func setupBackgroundTasks() {
         // Register background task identifiers
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.bisonai.audio-processing", using: nil) { task in
             handleBackgroundProcessing(task: task as! BGProcessingTask)
         }
-        
+
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.bisonai.app-refresh", using: nil) { task in
             handleAppRefresh(task: task as! BGAppRefreshTask)
         }
     }
-    
+
     private func requestBackgroundAppRefreshPermission() {
         // Background app refresh is now handled via BGTaskScheduler in setupBackgroundTasks()
         // No need for the deprecated setMinimumBackgroundFetchInterval
         AppLog.shared.general("Background app refresh configured via BGTaskScheduler")
     }
-    
+
     private func handleBackgroundProcessing(task: BGProcessingTask) {
         AppLog.shared.general("Background processing task started: \(task.identifier)")
 
@@ -888,7 +888,7 @@ struct BisonNotesAIApp: App {
             AppLog.shared.general("Background processing task expired", level: .error)
             task.setTaskCompleted(success: false)
         }
-        
+
         // Check for pending transcription/summarization jobs
         Task {
             let backgroundManager = BackgroundProcessingManager.shared
@@ -898,7 +898,7 @@ struct BisonNotesAIApp: App {
                 task.setTaskCompleted(success: true)
                 return
             }
-            
+
             // Process any queued jobs
             if !backgroundManager.activeJobs.filter({ $0.status == .queued }).isEmpty {
                 AppLog.shared.general("Processing queued jobs in background")
@@ -911,7 +911,7 @@ struct BisonNotesAIApp: App {
             }
         }
     }
-    
+
     private func handleAppRefresh(task: BGAppRefreshTask) {
         AppLog.shared.general("Background app refresh started")
 
@@ -919,18 +919,18 @@ struct BisonNotesAIApp: App {
             AppLog.shared.general("Background app refresh expired", level: .error)
             task.setTaskCompleted(success: false)
         }
-        
+
         // Quick refresh of app state
         Task {
             // Clean up any stale jobs
             let backgroundManager = BackgroundProcessingManager.shared
             await backgroundManager.cleanupStaleJobs()
-            
+
             AppLog.shared.general("Background app refresh completed")
             task.setTaskCompleted(success: true)
         }
     }
-    
+
     private func setupWatchConnectivity() {
         AppLog.shared.general("setupWatchConnectivity() called in BisonNotesAIApp")
 
@@ -967,7 +967,7 @@ struct BisonNotesAIApp: App {
 
         AppLog.shared.general("iPhone watch connectivity initialized for background sync")
     }
-    
+
     private func setupAppShortcuts() {
         // Update app shortcuts to include our recording intent
         Task {
@@ -987,7 +987,7 @@ struct BisonNotesAIApp: App {
             Task {
                 do {
                     let controls = try await ControlCenter.shared.currentControls()
-                    let _ = controls.map { $0.kind }
+                    _ = controls.map { $0.kind }
                 } catch {
                     AppLog.shared.general("Failed to fetch current controls: \(error)", level: .error)
                 }
@@ -995,7 +995,7 @@ struct BisonNotesAIApp: App {
         }
         #endif
     }
-    
+
 #if DEBUG
     private static func configureCoverageOutputIfNeeded() {
         guard ProcessInfo.processInfo.environment["LLVM_PROFILE_FILE"] == nil else { return }

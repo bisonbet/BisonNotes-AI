@@ -38,7 +38,7 @@ final class RTFExportService {
             AppLog.shared.fileManagement("RTFExportService: Invalid summary data - recording name is empty", level: .error)
             throw RTFExportError.invalidDocumentData
         }
-        
+
         let document = NSMutableAttributedString()
 
         do {

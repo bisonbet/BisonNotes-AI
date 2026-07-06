@@ -39,7 +39,7 @@ struct DataMigrationView: View {
     @State private var orphanedAudioFiles: [URL] = []
     @State private var showingOrphanedFilesCleanup = false
     @State private var showingOrphanedFilesResults = false
-    @State private var orphanedFilesResults: (deleted: Int, totalSize: Int64, errors: [String])? = nil
+    @State private var orphanedFilesResults: (deleted: Int, totalSize: Int64, errors: [String])?
     @State private var totalOrphanedSize: Int64 = 0
 
     // Background Processing
@@ -593,7 +593,7 @@ struct DataMigrationView: View {
             Button("Recover", role: .destructive) {
                 Task {
                     migrationManager.setCloudSyncManagers(legacy: legacyiCloudManager)
-                    let _ = await migrationManager.recoverDataFromiCloud()
+                    _ = await migrationManager.recoverDataFromiCloud()
                 }
             }
         } message: {
@@ -898,7 +898,6 @@ struct DataMigrationView: View {
             return "Automatically repair the data integrity issues found during the scan to restore missing transcripts and summaries."
         }
     }
-
 
     // MARK: - Cleanup Functions
 

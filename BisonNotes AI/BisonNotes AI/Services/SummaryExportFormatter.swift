@@ -3,7 +3,7 @@ import UIKit
 
 enum SummaryExportFormatter {
     // MARK: - Cached Regex Patterns
-    
+
     private static let jsonPrefixRegex = try! NSRegularExpression(pattern: "^\"summary\"\\s*:\\s*\"", options: [])
     private static let jsonContentRegex = try! NSRegularExpression(pattern: "^\"content\"\\s*:\\s*\"", options: [])
     private static let jsonTextRegex = try! NSRegularExpression(pattern: "^\"text\"\\s*:\\s*\"", options: [])
@@ -248,10 +248,7 @@ enum SummaryExportFormatter {
             let s = String(line[runStart..<i])
             if s.isEmpty { return }
             let font: UIFont
-            if bold && italic { font = boldItalicFont }
-            else if bold { font = boldFont }
-            else if italic { font = italicFont }
-            else { font = baseFont }
+            if bold && italic { font = boldItalicFont } else if bold { font = boldFont } else if italic { font = italicFont } else { font = baseFont }
             result.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: textColor]))
             runStart = i
         }

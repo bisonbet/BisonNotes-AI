@@ -50,7 +50,7 @@ struct MLXModelOption: Identifiable {
             parameters: "8B",
             contextWindow: 16_384,
             requiredRAM: 8.0
-        ),
+        )
     ]
 
     /// Identifier for the 1.7B model — used by both the device-default selection

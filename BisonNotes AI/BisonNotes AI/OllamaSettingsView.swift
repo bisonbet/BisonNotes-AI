@@ -350,7 +350,7 @@ struct OllamaSettingsView: View {
 
     // MARK: - Methods
 
-    private func testConnection() {
+    func testConnection() {
         isTestingConnection = true
         testResult = nil
 

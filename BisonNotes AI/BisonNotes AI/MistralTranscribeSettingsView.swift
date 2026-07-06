@@ -164,7 +164,7 @@ struct MistralTranscribeSettingsView: View {
 
     // MARK: - Actions
 
-    private func testConnection() {
+    func testConnection() {
         guard !apiKey.isEmpty else { return }
         isTestingConnection = true
         showingConnectionResult = false

@@ -34,7 +34,6 @@ struct SummariesView: View {
 
     @AppStorage("hasSeeniCloudPrompt") private var hasSeeniCloudPrompt = false
 
-
     // MARK: - Body
 
     var body: some View {
@@ -263,7 +262,6 @@ struct SummariesView: View {
         .padding(.vertical, 8)
         .background(Color(.secondarySystemGroupedBackground))
     }
-
 
     // MARK: - Empty State
 

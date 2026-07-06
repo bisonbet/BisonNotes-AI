@@ -424,7 +424,7 @@ struct SimpleSettingsView: View {
             .disabled(isSaving)
 
             // For Mistral, the save button launches the onboarding wizard instead
-            .onChange(of: selectedOption) { _, newValue in
+            .onChange(of: selectedOption) { _, _ in
                 // Reset save result when switching options
                 showingSaveResult = false
             }
@@ -582,7 +582,7 @@ struct SimpleSettingsView: View {
                     let localEngines: Set<String> = [
                         AIEngineType.onDeviceLLM.rawValue,
                         AIEngineType.mlxSwift.rawValue,
-                        AIEngineType.appleNative.rawValue,
+                        AIEngineType.appleNative.rawValue
                     ]
 
                     if let currentAI, localEngines.contains(currentAI) {

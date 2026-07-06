@@ -12,10 +12,10 @@ import UserNotifications
 @MainActor
 class OnDeviceAIDownloadMonitor: ObservableObject {
     static let shared = OnDeviceAIDownloadMonitor()
-    
+
     @Published var showingCompletionAlert = false
     @Published var completionMessage = ""
-    
+
     private var cancellables = Set<AnyCancellable>()
     private var hasShownCompletion = false
     private let fluidAudioManager = FluidAudioManager.shared
@@ -68,15 +68,15 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
             }
         }
     }
-    
+
     func reset() {
         hasShownCompletion = false
     }
-    
+
     private func sendNotification(title: String, body: String) async {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
-        
+
         // Request permission if not yet determined
         if settings.authorizationStatus == .notDetermined {
             do {
@@ -91,18 +91,18 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
             AppLog.shared.summarization("[OnDeviceAIDownloadMonitor] Notification not sent - permission denied")
             return
         }
-        
+
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
-        
+
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,
             content: content,
             trigger: nil // Immediate delivery
         )
-        
+
         do {
             try await center.add(request)
             AppLog.shared.summarization("[OnDeviceAIDownloadMonitor] Sent notification: \(title)")

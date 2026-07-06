@@ -45,13 +45,13 @@ class DocumentPickerCoordinator: NSObject, ObservableObject {
 
 class AudioDocumentPickerViewController: UIDocumentPickerViewController {
     private let coordinator: DocumentPickerCoordinator
-    
+
     init(coordinator: DocumentPickerCoordinator) {
         self.coordinator = coordinator
-        
+
         // Create supported audio types
         var supportedTypes: [UTType] = [UTType.audio]
-        
+
         // Add specific audio formats if available
         if let m4aType = UTType(filenameExtension: "m4a") {
             supportedTypes.append(m4aType)
@@ -62,14 +62,14 @@ class AudioDocumentPickerViewController: UIDocumentPickerViewController {
         if let wavType = UTType(filenameExtension: "wav") {
             supportedTypes.append(wavType)
         }
-        
+
         super.init(forOpeningContentTypes: supportedTypes, asCopy: true)
-        
+
         self.delegate = coordinator
         self.allowsMultipleSelection = true
         self.shouldShowFileExtensions = true
     }
-    
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
@@ -82,7 +82,7 @@ extension DocumentPickerCoordinator: UIDocumentPickerDelegate {
         // Handle the selected URLs
         handleSelectedURLs(urls)
     }
-    
+
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
         // Handle cancellation
         handleSelectedURLs([])

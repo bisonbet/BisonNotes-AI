@@ -11,19 +11,19 @@ import UIKit
 
 /// Enhanced audio session manager for recording, playback, and background operations.
 class EnhancedAudioSessionManager: NSObject, ObservableObject {
-    
+
     // MARK: - Published Properties
     @Published var isConfigured = false
     @Published var isMixedAudioEnabled = false
     @Published var isBackgroundRecordingEnabled = false
     @Published var currentConfiguration: AudioSessionConfig?
     @Published var lastError: AudioProcessingError?
-    
+
     // MARK: - Private Properties
     private lazy var session = AVAudioSession.sharedInstance()
     private var interruptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
-    
+
     // MARK: - Configuration Structures
     struct AudioSessionConfig {
         let category: AVAudioSession.Category
@@ -31,7 +31,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         let options: AVAudioSession.CategoryOptions
         let allowMixedAudio: Bool
         let backgroundRecording: Bool
-        
+
         static let mixedAudioRecording = AudioSessionConfig(
             category: .playAndRecord,
             mode: .default,  // Use .default instead of .voiceChat to preserve music quality
@@ -39,7 +39,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             allowMixedAudio: true,
             backgroundRecording: false
         )
-        
+
         static let backgroundRecording = AudioSessionConfig(
             category: .playAndRecord,
             mode: .default,  // Use .default instead of .voiceChat to preserve recording quality
@@ -47,7 +47,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             allowMixedAudio: false,
             backgroundRecording: true
         )
-        
+
         static let standardRecording = AudioSessionConfig(
             category: .playAndRecord,
             mode: .voiceChat,
@@ -56,7 +56,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             backgroundRecording: false
         )
     }
-    
+
     // MARK: - Initialization
     override init() {
         super.init()
@@ -65,7 +65,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             self?.setupNotificationObservers()
         }
     }
-    
+
     deinit {
         // Remove observers synchronously since deinit cannot be async
         if let observer = interruptionObserver {
@@ -75,32 +75,32 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
     }
-    
+
     // MARK: - Public Methods
-    
+
     /// Configure audio session for mixed audio recording (allows other apps to play audio simultaneously)
     func configureMixedAudioSession() async throws {
         do {
             let config = AudioSessionConfig.mixedAudioRecording
             try await applyConfiguration(config)
-            
+
             isMixedAudioEnabled = true
             isBackgroundRecordingEnabled = false
             currentConfiguration = config
             isConfigured = true
-            
+
             AppLog.shared.audioSession("Mixed audio session configured successfully")
 
             // Prefer Bluetooth HFP if available for recording input
             await autoSelectBestInput()
-            
+
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Mixed audio configuration failed: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
         }
     }
-    
+
     /// Configure audio session for active recording.
     /// Recording should interrupt other audio so device playback does not bleed
     /// into the captured note, then deactivation lets other apps resume.
@@ -111,28 +111,28 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             lastError = error
             throw error
         }
-        
+
         do {
             let config = AudioSessionConfig.backgroundRecording
             try await applyConfiguration(config)
-            
+
             isMixedAudioEnabled = false
             isBackgroundRecordingEnabled = true
             currentConfiguration = config
             isConfigured = true
-            
+
             AppLog.shared.audioSession("Exclusive background recording session configured successfully")
 
             // Prefer Bluetooth HFP if available for recording input
             await autoSelectBestInput()
-            
+
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Background recording configuration failed: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
         }
     }
-    
+
     /// Restore audio session to previous configuration (useful after interruptions)
     func restoreAudioSession() async throws {
         #if targetEnvironment(macCatalyst)
@@ -188,21 +188,21 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         do {
             let config = AudioSessionConfig.standardRecording
             try await applyConfiguration(config)
-            
+
             isMixedAudioEnabled = false
             isBackgroundRecordingEnabled = false
             currentConfiguration = config
             isConfigured = true
-            
+
             AppLog.shared.audioSession("Standard recording session configured successfully")
-            
+
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Standard recording configuration failed: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
         }
     }
-    
+
     /// Configure audio session for in-app recording playback.
     /// Do not mix with other apps here: recording playback should take over,
     /// then `deactivateSession()` notifies interrupted audio apps to resume.
@@ -250,7 +250,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         isConfigured = true
         AppLog.shared.audioSession("Background processing session configured with playback mixWithOthers")
     }
-    
+
     /// Set preferred audio input device
     func setPreferredInput(_ input: AVAudioSessionPortDescription) async throws {
         #if targetEnvironment(macCatalyst)
@@ -317,7 +317,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                session.categoryOptions.contains(.mixWithOthers)
         #endif
     }
-    
+
     /// Deactivate audio session
     func deactivateSession() async throws {
         #if !targetEnvironment(macCatalyst)
@@ -335,9 +335,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         currentConfiguration = nil
         AppLog.shared.audioSession("Audio session deactivated and reset")
     }
-    
+
     // MARK: - Private Methods
-    
+
     private func applyConfiguration(_ config: AudioSessionConfig) async throws {
         #if !targetEnvironment(macCatalyst)
         // On Mac Catalyst, setCategory/setActive talk to mediaserverd via Mach ports
@@ -357,7 +357,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             try await requestBackgroundAudioCapability()
         }
     }
-    
+
     private func checkBackgroundAudioPermission() async -> Bool {
         // Check if the app has background audio capability in Info.plist
         guard let backgroundModes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String],
@@ -365,10 +365,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             AppLog.shared.audioSession("Background audio mode not configured in Info.plist", level: .error)
             return false
         }
-        
+
         return true
     }
-    
+
     private func requestBackgroundAudioCapability() async throws {
         #if targetEnvironment(macCatalyst)
         // Mac apps don't have iOS background modes — Catalyst recording stays alive
@@ -382,7 +382,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
         #endif
     }
-    
+
     private func setupNotificationObservers() {
         #if !targetEnvironment(macCatalyst)
         // AVAudioSession Mach port handlers don't exist on Mac — skip to avoid
@@ -434,22 +434,22 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
         #endif
     }
-    
+
     // MARK: - Notification Handlers
-    
+
     func handleAudioInterruption(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
               let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
             return
         }
-        
+
         switch type {
         case .began:
             EnhancedLogger.shared.logAudioSessionInterruption(type)
             // Audio session was interrupted (e.g., phone call)
             // Recording will be automatically paused by the system
-            
+
         case .ended:
             EnhancedLogger.shared.logAudioSessionInterruption(type)
             // Attempt to restore audio session
@@ -463,29 +463,29 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                     await EnhancedErrorHandler().handleAudioProcessingError(.audioSessionConfigurationFailed(error.localizedDescription), context: "Interruption Recovery")
                 }
             }
-            
+
         @unknown default:
             break
         }
     }
-    
+
     private func handleRouteChange(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
               let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
               let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
             return
         }
-        
+
         switch reason {
         case .newDeviceAvailable:
             EnhancedLogger.shared.logAudioSessionRouteChange(reason)
-            
+
         case .oldDeviceUnavailable:
             EnhancedLogger.shared.logAudioSessionRouteChange(reason)
-            
+
         case .categoryChange:
             EnhancedLogger.shared.logAudioSessionRouteChange(reason)
-            
+
         default:
             EnhancedLogger.shared.logAudioSession("Audio route changed: \(reason)", level: .info)
         }
@@ -525,7 +525,7 @@ enum AudioProcessingError: Error, LocalizedError {
     case playbackFailed(String)
     case formatConversionFailed(String)
     case metadataExtractionFailed(String)
-    
+
     var errorDescription: String? {
         switch self {
         case .audioSessionConfigurationFailed(let message):
@@ -550,7 +550,7 @@ enum AudioProcessingError: Error, LocalizedError {
             return "Audio metadata extraction failed: \(message)"
         }
     }
-    
+
     var recoverySuggestion: String? {
         switch self {
         case .audioSessionConfigurationFailed:

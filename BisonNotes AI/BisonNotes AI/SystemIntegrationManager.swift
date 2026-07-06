@@ -28,19 +28,19 @@ class SystemIntegrationManager: NSObject, ObservableObject {
         guard let url = URL(string: "googlecalendar://") else { return false }
         return UIApplication.shared.canOpenURL(url)
     }
-    
+
     override init() {
         super.init()
         checkAuthorizationStatus()
     }
-    
+
     // MARK: - Authorization
-    
+
     func checkAuthorizationStatus() {
         authorizationStatus = EKEventStore.authorizationStatus(for: .event)
         isAuthorized = authorizationStatus == .fullAccess
     }
-    
+
     func requestAccess() async -> Bool {
         do {
             let granted = try await eventStore.requestFullAccessToEvents()
@@ -57,7 +57,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             return false
         }
     }
-    
+
     func requestReminderAccess() async -> Bool {
         do {
             let granted = try await eventStore.requestFullAccessToReminders()
@@ -73,42 +73,42 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             return false
         }
     }
-    
+
     // MARK: - Task Integration
-    
+
     func addTaskToReminders(_ task: TaskItem, recordingName: String) async -> Bool {
         if !isAuthorized {
             if !(await requestReminderAccess()) {
                 return false
             }
         }
-        
+
         await MainActor.run {
             isProcessing = true
         }
-        
+
         let reminder = EKReminder(eventStore: eventStore)
         reminder.title = task.text
         			reminder.notes = "Created from BisonNotes AI recording: \(recordingName)"
         reminder.priority = task.priority.ekPriority
         reminder.calendar = eventStore.defaultCalendarForNewReminders()
-        
+
         // Set due date if available
         if let timeRef = task.timeReference, let dueDate = parseDateFromTimeReference(timeRef) {
             reminder.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: dueDate)
         }
-        
+
         // Add category tag
         reminder.addTag(task.category.rawValue)
-        
+
         do {
             try eventStore.save(reminder, commit: true)
-            
+
             await MainActor.run {
                 isProcessing = false
             }
             return true
-            
+
         } catch {
             await MainActor.run {
                 isProcessing = false
@@ -118,48 +118,48 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             return false
         }
     }
-    
+
     func addTaskToCalendar(_ task: TaskItem, recordingName: String) async -> Bool {
         if !isAuthorized {
             if !(await requestAccess()) {
                 return false
             }
         }
-        
+
         await MainActor.run {
             isProcessing = true
         }
-        
+
         let event = EKEvent(eventStore: eventStore)
         event.title = task.text
         event.notes = "Created from BisonNotes AI recording: \(recordingName)"
         event.calendar = eventStore.defaultCalendarForNewEvents
-        
+
         // Set start and end times
         let now = Date()
         var startDate = now
         var endDate = Calendar.current.date(byAdding: .hour, value: 1, to: now) ?? now
-        
+
         if let timeRef = task.timeReference, let dueDate = parseDateFromTimeReference(timeRef) {
             startDate = dueDate
             endDate = Calendar.current.date(byAdding: .hour, value: 1, to: dueDate) ?? dueDate
         }
-        
+
         event.startDate = startDate
         event.endDate = endDate
-        
+
         // Set alarm
         let alarm = EKAlarm(relativeOffset: -900) // 15 minutes before
         event.addAlarm(alarm)
-        
+
         do {
             try eventStore.save(event, span: .thisEvent, commit: true)
-            
+
             await MainActor.run {
                 isProcessing = false
             }
             return true
-            
+
         } catch {
             await MainActor.run {
                 isProcessing = false
@@ -169,26 +169,26 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             return false
         }
     }
-    
+
     // MARK: - Reminder Integration
-    
+
     func addReminderToReminders(_ reminder: ReminderItem, recordingName: String) async -> Bool {
         if !isAuthorized {
             if !(await requestReminderAccess()) {
                 return false
             }
         }
-        
+
         await MainActor.run {
             isProcessing = true
         }
-        
+
         let ekReminder = EKReminder(eventStore: eventStore)
         ekReminder.title = reminder.text
         ekReminder.notes = "Created from BisonNotes AI recording: \(recordingName)"
         ekReminder.priority = reminder.urgency.ekPriority
         ekReminder.calendar = eventStore.defaultCalendarForNewReminders()
-        
+
         // Set due date if available
         if let dueDate = reminder.timeReference.parsedDate {
             ekReminder.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: dueDate)
@@ -198,18 +198,18 @@ class SystemIntegrationManager: NSObject, ObservableObject {
                 ekReminder.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: relativeDate)
             }
         }
-        
+
         // Add urgency tag
         ekReminder.addTag(reminder.urgency.rawValue)
-        
+
         do {
             try eventStore.save(ekReminder, commit: true)
-            
+
             await MainActor.run {
                 isProcessing = false
             }
             return true
-            
+
         } catch {
             await MainActor.run {
                 isProcessing = false
@@ -219,28 +219,28 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             return false
         }
     }
-    
+
     func addReminderToCalendar(_ reminder: ReminderItem, recordingName: String) async -> Bool {
         if !isAuthorized {
             if !(await requestAccess()) {
                 return false
             }
         }
-        
+
         await MainActor.run {
             isProcessing = true
         }
-        
+
         let event = EKEvent(eventStore: eventStore)
         event.title = reminder.text
         event.notes = "Created from BisonNotes AI recording: \(recordingName)"
         event.calendar = eventStore.defaultCalendarForNewEvents
-        
+
         // Set start and end times
         let now = Date()
         var startDate = now
         var endDate = Calendar.current.date(byAdding: .hour, value: 1, to: now) ?? now
-        
+
         if let dueDate = reminder.timeReference.parsedDate {
             startDate = dueDate
             endDate = Calendar.current.date(byAdding: .hour, value: 1, to: dueDate) ?? dueDate
@@ -250,10 +250,10 @@ class SystemIntegrationManager: NSObject, ObservableObject {
                 endDate = Calendar.current.date(byAdding: .hour, value: 1, to: relativeDate) ?? relativeDate
             }
         }
-        
+
         event.startDate = startDate
         event.endDate = endDate
-        
+
         // Set alarm based on urgency
         let alarmOffset: TimeInterval
         switch reminder.urgency {
@@ -266,18 +266,18 @@ class SystemIntegrationManager: NSObject, ObservableObject {
         case .later:
             alarmOffset = -86400 // 1 day before
         }
-        
+
         let alarm = EKAlarm(relativeOffset: alarmOffset)
         event.addAlarm(alarm)
-        
+
         do {
             try eventStore.save(event, span: .thisEvent, commit: true)
-            
+
             await MainActor.run {
                 isProcessing = false
             }
             return true
-            
+
         } catch {
             await MainActor.run {
                 isProcessing = false
@@ -287,7 +287,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             return false
         }
     }
-    
+
     // MARK: - Google Calendar Integration
 
     /// Opens a task in Google Calendar using the web URL fallback.
@@ -339,7 +339,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             URLQueryItem(name: "text", value: title),
             URLQueryItem(name: "dates", value: "\(startString)/\(endString)"),
             URLQueryItem(name: "details", value: details),
-            URLQueryItem(name: "sf", value: "true"),
+            URLQueryItem(name: "sf", value: "true")
         ]
 
         guard let url = components.url else {
@@ -357,7 +357,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
-        
+
         // Try different date formats
         let formats = [
             "MMM dd, yyyy",
@@ -366,22 +366,22 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             "dd/MM/yyyy",
             "MM-dd-yyyy"
         ]
-        
+
         for format in formats {
             formatter.dateFormat = format
             if let date = formatter.date(from: timeRef) {
                 return date
             }
         }
-        
+
         return nil
     }
-    
+
     private func parseRelativeTime(_ relativeTime: String) -> Date? {
         let lowercased = relativeTime.lowercased()
         let now = Date()
         let calendar = Calendar.current
-        
+
         if lowercased.contains("today") {
             return calendar.startOfDay(for: now)
         } else if lowercased.contains("tomorrow") {
@@ -391,7 +391,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
         } else if lowercased.contains("next month") {
             return calendar.date(byAdding: .month, value: 1, to: now)
         }
-        
+
         return nil
     }
 }
@@ -425,4 +425,4 @@ extension EKReminder {
         // This is a placeholder for future implementation
         // In newer iOS versions, you might use categories or other metadata
     }
-} 
+}

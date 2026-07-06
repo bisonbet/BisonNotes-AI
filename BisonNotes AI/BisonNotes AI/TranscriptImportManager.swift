@@ -499,7 +499,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
         let bufferSize = 1024 * 64  // 64KB buffer
         var decompressed = Data()
 
-        data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Void in
+        data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) in
             guard let baseAddress = sourcePtr.baseAddress else { return }
 
             var stream = z_stream()

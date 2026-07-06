@@ -223,7 +223,7 @@ struct MistralAISettingsView: View {
         }
     }
 
-    private func testConnection() {
+    func testConnection() {
         isTestingConnection = true
 
         Task {

@@ -434,8 +434,6 @@ struct RecordingsView: View {
         .buttonStyle(.plain)
     }
 
-
-
     private var backgroundProcessingIndicator: some View {
         Button(action: {
             showingBackgroundProcessing = true

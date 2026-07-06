@@ -208,7 +208,7 @@ struct OpenAISummarizationSettingsView: View {
         }
     }
 
-    private func testConnection() {
+    func testConnection() {
         isTestingConnection = true
 
         Task {
@@ -362,7 +362,7 @@ struct OpenAICompatibleSettingsView: View {
         }
     }
 
-    private func testConnection() {
+    func testConnection() {
         guard !apiKey.isEmpty else { return }
 
         isTestingConnection = true

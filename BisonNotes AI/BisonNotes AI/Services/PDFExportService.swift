@@ -963,7 +963,6 @@ class PDFExportService {
         return UIGraphicsGetImageFromCurrentImageContext()
     }
 
-
     private func colorForPriority(_ priority: TaskItem.Priority) -> UIColor {
         switch priority {
         case .high: return UIColor.red

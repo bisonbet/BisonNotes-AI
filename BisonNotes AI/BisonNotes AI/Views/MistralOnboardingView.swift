@@ -538,7 +538,7 @@ struct MistralOnboardingView: View {
         #endif
     }
 
-    private func testConnection() {
+    func testConnection() {
         guard !apiKeyInput.isEmpty else { return }
 
         isTestingConnection = true

@@ -202,7 +202,6 @@ class WyomingTCPClient: ObservableObject {
             AppLog.shared.transcription("Sending Wyoming TCP message: \(message.type)", level: .debug)
         }
 
-
         // Wyoming protocol uses JSONL (JSON Lines) - each message on a separate line
         let messageData = (jsonString + "\n").data(using: .utf8)!
 

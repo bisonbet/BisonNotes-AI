@@ -10,7 +10,7 @@ import UIKit
 
 enum MapSnapshotStorage {
     private static let directoryName = "SummaryLocationSnapshots"
-    
+
     /// Get the directory URL for storing map snapshots
     /// - Returns: Directory URL if successful, nil if directory creation fails
     private static func directoryURL() -> URL? {
@@ -18,9 +18,9 @@ enum MapSnapshotStorage {
             AppLog.shared.fileManagement("MapSnapshotStorage: Unable to access application support directory", level: .error)
             return nil
         }
-        
+
         let directory = baseURL.appendingPathComponent(directoryName, isDirectory: true)
-        
+
         // Create directory if it doesn't exist
         if !FileManager.default.fileExists(atPath: directory.path) {
             do {
@@ -31,10 +31,10 @@ enum MapSnapshotStorage {
                 return nil
             }
         }
-        
+
         return directory
     }
-    
+
     /// Get the file URL for a specific map snapshot
     /// - Parameters:
     ///   - summaryId: The unique ID of the summary
@@ -43,14 +43,14 @@ enum MapSnapshotStorage {
     private static func fileURL(summaryId: UUID, locationSignature: String) -> URL? {
         // Sanitize the location signature to prevent path traversal attacks
         let sanitizedSignature = locationSignature.replacingOccurrences(
-            of: "[^a-zA-Z0-9._-]", 
-            with: "_", 
+            of: "[^a-zA-Z0-9._-]",
+            with: "_",
             options: .regularExpression
         )
-        
+
         return directoryURL()?.appendingPathComponent("\(summaryId.uuidString)_\(sanitizedSignature).png")
     }
-    
+
     /// Load raw image data for a map snapshot
     /// - Parameters:
     ///   - summaryId: The unique ID of the summary
@@ -61,7 +61,7 @@ enum MapSnapshotStorage {
               FileManager.default.fileExists(atPath: url.path) else {
             return nil
         }
-        
+
         do {
             return try Data(contentsOf: url)
         } catch {
@@ -69,7 +69,7 @@ enum MapSnapshotStorage {
             return nil
         }
     }
-    
+
     /// Load a UIImage for a map snapshot
     /// - Parameters:
     ///   - summaryId: The unique ID of the summary
@@ -80,10 +80,10 @@ enum MapSnapshotStorage {
         guard let data = loadData(summaryId: summaryId, locationSignature: locationSignature) else {
             return nil
         }
-        
+
         return UIImage(data: data, scale: scale)
     }
-    
+
     /// Save image data to storage
     /// - Parameters:
     ///   - data: The image data to save
@@ -95,7 +95,7 @@ enum MapSnapshotStorage {
             AppLog.shared.fileManagement("MapSnapshotStorage: Unable to create file URL for saving", level: .error)
             return false
         }
-        
+
         do {
             try data.write(to: url)
             AppLog.shared.fileManagement("MapSnapshotStorage: Saved image data")
@@ -105,7 +105,7 @@ enum MapSnapshotStorage {
             return false
         }
     }
-    
+
     /// Delete a specific map snapshot
     /// - Parameters:
     ///   - summaryId: The unique ID of the summary
@@ -115,11 +115,11 @@ enum MapSnapshotStorage {
         guard let url = fileURL(summaryId: summaryId, locationSignature: locationSignature) else {
             return true // If we can't create the URL, consider it "deleted"
         }
-        
+
         guard FileManager.default.fileExists(atPath: url.path) else {
             return true // File doesn't exist, so it's effectively deleted
         }
-        
+
         do {
             try FileManager.default.removeItem(at: url)
             AppLog.shared.fileManagement("MapSnapshotStorage: Deleted image")
@@ -129,24 +129,24 @@ enum MapSnapshotStorage {
             return false
         }
     }
-    
+
     /// Get the size of the snapshots directory in bytes
     /// - Returns: Directory size in bytes, or 0 if unable to calculate
     static func getDirectorySize() -> Int64 {
         guard let directoryURL = directoryURL() else { return 0 }
-        
+
         do {
             let resourceKeys: [URLResourceKey] = [.fileSizeKey, .isDirectoryKey]
             let enumerator = FileManager.default.enumerator(
                 at: directoryURL,
                 includingPropertiesForKeys: resourceKeys,
-                options: [.skipsHiddenFiles], 
-                errorHandler: { (url, error) -> Bool in
+                options: [.skipsHiddenFiles],
+                errorHandler: { (_, error) -> Bool in
                     AppLog.shared.fileManagement("MapSnapshotStorage: Error enumerating: \(error)", level: .error)
                     return true
                 }
             )
-            
+
             var totalSize: Int64 = 0
             if let enumerator = enumerator {
                 for case let fileURL as URL in enumerator {
@@ -156,7 +156,7 @@ enum MapSnapshotStorage {
                     }
                 }
             }
-            
+
             return totalSize
         } catch {
             AppLog.shared.fileManagement("MapSnapshotStorage: Failed to calculate directory size: \(error.localizedDescription)", level: .error)

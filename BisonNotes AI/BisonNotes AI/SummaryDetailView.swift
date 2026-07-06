@@ -3297,7 +3297,7 @@ private struct StaticLocationMapView: View {
 
             if let imageData = image.pngData() {
                 Task.detached(priority: .utility) { [summaryId, signature, imageData] in
-                    let _ = MapSnapshotStorage.saveImageData(
+                    _ = MapSnapshotStorage.saveImageData(
                         imageData,
                         summaryId: summaryId,
                         locationSignature: signature
@@ -3326,7 +3326,7 @@ private struct StaticLocationMapView: View {
 
             if let fallbackData = fallback.pngData() {
                 Task.detached(priority: .utility) { [summaryId, signature, fallbackData] in
-                    let _ = MapSnapshotStorage.saveImageData(
+                    _ = MapSnapshotStorage.saveImageData(
                         fallbackData,
                         summaryId: summaryId,
                         locationSignature: signature

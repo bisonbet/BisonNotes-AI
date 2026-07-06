@@ -148,7 +148,7 @@ struct GoogleAIStudioSettingsView: View {
         }
     }
 
-    private func testConnection() {
+    func testConnection() {
         isTestingConnection = true
 
         Task {
