@@ -25,7 +25,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
-    private let supportedTextExtensions = ["txt", "text", "md", "markdown"]
+    private let supportedTextExtensions = ["txt", "text", "md", "markdown", "vtt", "srt"]
     private let supportedDocumentExtensions = ["pdf", "doc", "docx"]
 
     // MARK: - Constants
@@ -237,7 +237,12 @@ class TranscriptImportManager: NSObject, ObservableObject {
         do {
             if supportedTextExtensions.contains(fileExtension) {
                 // Plain text files
-                text = try String(contentsOf: sourceURL, encoding: .utf8)
+                let rawText = try String(contentsOf: sourceURL, encoding: .utf8)
+                if fileExtension == "vtt" || fileExtension == "srt" {
+                    text = TranscriptCaptionTextCleaner.plainText(from: rawText)
+                } else {
+                    text = rawText
+                }
             } else if fileExtension == "pdf" {
                 // PDF files
                 text = try await extractTextFromPDF(url: sourceURL)
@@ -935,7 +940,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
         return url.lastPathComponent
     }
 
-    private func completeImport(with results: TranscriptImportResults) {
+    func completeImport(with results: TranscriptImportResults) {
         importResults = results
         isImporting = false
         showingImportAlert = true
@@ -953,7 +958,7 @@ enum TranscriptImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat(let format):
-            return "Unsupported format: \(format). Supported formats: txt, md, markdown, pdf, docx"
+            return "Unsupported format: \(format). Supported formats: txt, md, markdown, vtt, srt, pdf, docx"
         case .readFailed(let reason):
             return "Failed to read file: \(reason)"
         case .dummyAudioCreationFailed(let reason):

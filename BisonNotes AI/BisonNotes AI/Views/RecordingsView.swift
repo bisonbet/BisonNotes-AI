@@ -17,11 +17,13 @@ struct RecordingsView: View {
     @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
     @StateObject private var textDocumentPickerCoordinator = DocumentPickerCoordinator()
     @StateObject private var videoPickerCoordinator = DocumentPickerCoordinator()
+    @StateObject private var webImportManager = WebImportManager()
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [AudioRecordingFile] = []
     @State private var showingRecordingsList = false
     @State private var showingBackgroundProcessing = false
     @State private var showingHelpDocumentation = false
+    @State private var showingWebImport = false
     @State private var showingRecorderError = false
     @State private var recorderErrorMessage = ""
 
@@ -206,6 +208,15 @@ struct RecordingsView: View {
                                 }
                             }
 
+                            homeActionButton(
+                                title: "Import From Link",
+                                subtitle: "Add web audio or captions",
+                                systemImage: "link.badge.plus",
+                                tint: .blue
+                            ) {
+                                showingWebImport = true
+                            }
+
                             // Video import button hidden — feature not yet ready for users
                             // videoPickerCoordinator.selectVideoFiles { ... }
 
@@ -251,6 +262,13 @@ struct RecordingsView: View {
             }
             .sheet(isPresented: $textDocumentPickerCoordinator.isShowingPicker) {
                 TextDocumentPicker(isPresented: $textDocumentPickerCoordinator.isShowingPicker, coordinator: textDocumentPickerCoordinator)
+            }
+            .sheet(isPresented: $showingWebImport) {
+                WebImportSheet(
+                    webImportManager: webImportManager,
+                    fileImportManager: importManager,
+                    transcriptImportManager: transcriptImportManager
+                )
             }
             // Video picker sheet hidden — feature not yet ready for users
             // .sheet(isPresented: $videoPickerCoordinator.isShowingPicker) { ... }
@@ -310,6 +328,11 @@ struct RecordingsView: View {
                         }
                     }
                 }
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(for: NSNotification.Name("ImportFromLinkFromMenu"))
+            ) { _ in
+                showingWebImport = true
             }
             .onChange(of: recorderVM.errorMessage) { _, message in
                 if let message, !message.isEmpty {

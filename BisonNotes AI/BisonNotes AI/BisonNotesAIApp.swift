@@ -590,6 +590,14 @@ struct BisonNotesAIApp: App {
                     NotificationCenter.default.post(name: NSNotification.Name("ImportTranscriptFromMenu"), object: nil)
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
+
+                Button("Import From Link...") {
+                    let switchName = NSNotification.Name("SwitchToRecordTabForImport")
+                    let importName = NSNotification.Name("ImportFromLinkFromMenu")
+                    NotificationCenter.default.post(name: switchName, object: nil)
+                    NotificationCenter.default.post(name: importName, object: nil)
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
             }
 
             CommandGroup(after: .sidebar) {
