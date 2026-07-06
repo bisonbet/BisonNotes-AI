@@ -4,9 +4,16 @@ SwiftUI app for recording audio, transcribing it with local or cloud engines, an
 
 AVAILABLE ON THE APP STORE: https://apps.apple.com/us/app/bisonnotes-ai-voice-notes/id6749189425
 
-Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
+Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Regression Testing Regimen](docs/testing-regimen.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
 
-## v2.0 Highlights
+## v2.1 Highlights
+- Mac Catalyst can optionally record meeting audio from other Mac apps and mix it with the microphone recording. The setting lives in Settings > Recording as **Record Meeting Audio**, requires macOS Screen & System Audio Recording permission, and falls back to microphone-only audio if permission or mixing fails.
+- iCloud sync now uses stronger guardrails: a HIPAA notice before enabling sync, per-recording **Keep on This Device** exclusions, deletion markers, active-manifest review for older cloud-only items, and clearer production CloudKit schema errors.
+- Parakeet transcription recovery is more reliable. The app recognizes cached model files after app updates or settings resets, supports English v2 and multilingual v3 model choices, reports download/prepare progress more accurately, and avoids short final tail chunks during long on-device transcriptions.
+- Recording reliability is improved through stricter audio session ownership, safer background processing interruption handling, crash-safe recording recovery, and conservative cleanup of stale temporary audio files.
+- Release validation now has app/watch `.xctestplan` files, deterministic UI-test launch fixtures, focused iCloud and transcription regression tests, and a documented regression testing regimen.
+
+## v2.0 Foundation Highlights
 - Modernized SwiftUI interface across Recordings, Transcripts, Summaries, Setup, and Settings, with denser action placement and cleaner status surfaces.
 - Redesigned watchOS recorder around one large tap target: tap to record, tap to stop, and use mute to pause/resume the same file. Transfer status and low-battery warnings stay visible without crowding the primary action.
 - On Device AI is now backed by MLX Swift by default on supported devices. New/legacy users with 4 GB+ RAM migrate to MLX automatically; devices below that fall back to Mistral AI.
@@ -18,7 +25,7 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Mistral AI Fr
 - Data: Core Data model at `BisonNotes AI/BisonNotes_AI.xcdatamodeld` stores recordings, transcripts, summaries, and jobs. Sensitive credentials (API keys, AWS access keys, Bedrock session tokens) live in the iOS Keychain, never on disk in plaintext.
 - Engines: Pluggable services for On Device transcription, OpenAI, OpenAI-compatible APIs, Mistral AI, Google AI Studio, AWS Bedrock/Transcribe, Whisper (REST), Wyoming streaming, Ollama, On Device AI (MLX Swift), On Device AI Legacy (llama.cpp), and Apple Native (Foundation Models). Each engine pairs a service with a settings view.
 - Background: `BackgroundProcessingManager` coordinates queued work with retries, timeouts, and recovery. Large files are chunked and processed streaming‑first.
-- Recording: A platform-aware audio pipeline — `AVAudioRecorder` on iOS/iPadOS, `AVAudioEngine` on Mac Catalyst (`AudioRecorderViewModel+CatalystEngine.swift`) — with shared Pause/Resume support and crash-safe interruption handling.
+- Recording: A platform-aware audio pipeline — `AVAudioRecorder` on iOS/iPadOS, `AVAudioEngine` on Mac Catalyst (`AudioRecorderViewModel+CatalystEngine.swift`) — with shared Pause/Resume support, optional Mac meeting-audio capture through `CatalystSystemAudioCapture`, and crash-safe interruption handling.
 - Watch Sync: `WatchConnectivityManager` (on iOS and watch targets) manages reachability, complete-file transfers, duplicate protection, queued acknowledgments, and import recovery. Watch complications and a Control Center recording widget are bundled as separate targets.
 - UI: SwiftUI views under `Views/` implement recording, summaries, transcripts, setup, and settings. AI-generated content uses MarkdownUI for professional formatting. View models isolate state and side effects.
 
@@ -40,6 +47,7 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Mistral AI Fr
 - Build (Mac Catalyst): `xcodebuild -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=macOS,variant=Mac Catalyst' -configuration Debug build`
 - Archive (Mac Catalyst): `Scripts/archive-catalyst.sh`. Use this script instead of Product > Archive so the arm64-only Catalyst setting reaches SwiftPM package targets.
 - Use the watch app scheme to run the watch target. SwiftPM resolves automatically in Xcode.
+- Release validation should follow [docs/testing-regimen.md](docs/testing-regimen.md), including app/watch test plans, Mac Catalyst build coverage, and manual hardware checks for microphone, watch transfer, iCloud, Parakeet, share import, Control Center, Action Button, and Mac meeting audio.
 - See `CLAUDE.md` for the manual `llama.xcframework` Mac Catalyst slice, duplicate-library modulemap cleanup, AWS/Smithy archive constraint, and `bisonbet/textual` Catalyst guards if you rebuild dependencies.
 
 ## Dependencies
@@ -73,6 +81,7 @@ The project uses Swift Package Manager for dependency management. Major dependen
 - **FluidAudio Parakeet**: On-device transcription using NVIDIA Parakeet models.
   - Complete privacy - audio never leaves device
   - Works offline after model download
+  - v2.1 supports Parakeet v2 (English) and Parakeet v3 (multilingual), keeps valid cached downloads across app updates/settings resets, and clears stale download state when model files are missing
   - WhisperKit was removed in v1.8; existing users are automatically migrated to Parakeet
 
 ### **Apple Frameworks**
@@ -90,7 +99,7 @@ All external dependencies are resolved automatically via Swift Package Manager w
 
 ## Key Features
 - **Modern v2.0 UI**: Recordings, Transcripts, Summaries, Setup, and Settings use refreshed SwiftUI layouts with clearer action placement, sectioned date lists, and Catalyst-friendly navigation.
-- **Mac Catalyst (v2.0)**: Native Apple Silicon Mac build with a Catalyst-specific audio pipeline, sandbox entitlements, iCloud archive support, and an arm64-only archive path.
+- **Mac Catalyst (v2.1)**: Native Apple Silicon Mac build with a Catalyst-specific audio pipeline, optional meeting-audio capture from other Mac apps, sandbox entitlements, iCloud archive support, and an arm64-only archive path.
 - **Pause and Resume Recording**: Pause mid-meeting without stopping the file. Resume seamlessly across iOS, iPadOS, watchOS mute/resume, and Mac Catalyst (separate `AVAudioEngine` path on Catalyst).
 - **Hardened Credential Storage (v1.11)**: API keys, AWS credentials, and Bedrock session tokens stored in the iOS Keychain. Legacy values are migrated automatically and kept out of iCloud settings backups. File protection is applied to recordings, transcripts, notes, attachments, and the Core Data SQLite files.
 - **Endpoint Safety (v1.11)**: User-configurable OpenAI, OpenAI-compatible, Ollama, and Whisper endpoints are validated — public cleartext (HTTP/WS) destinations are blocked by default; local/private endpoints stay allowed, with a Development Mode toggle for power users.
@@ -121,14 +130,14 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - **Date Filters**: Filter recordings, transcripts, and summaries by date range. Select start and end dates to quickly find content from specific time periods.
 
 ## Key Modules
-- Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel` (+ `+CatalystEngine`, `+Interruptions`, `+Background`, `+CallIntelligence`, `+Warnings`), `RecordingCombiner`, `TranscriptionStarter`
+- Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel` (+ `+CatalystEngine`, `+Interruptions`, `+Background`, `+CallIntelligence`, `+Warnings`), `CatalystSystemAudioCapture`, `RecordingCombiner`, `TranscriptionStarter`
 - Transcription: `FluidAudioManager` (Parakeet), `OpenAITranscribeService`, `MistralTranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`, `LiveTranscriptionService`
 - Summarization: `OpenAISummarizationService`, `MistralAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `OnDeviceLLMService`, `MLXSwiftEngine`, `AppleNativeEngine`
 - Security: `KeychainSecretStore`, `AWSCredentialsManager`, `AWSClientCredentialResolver`, `EndpointSecurityPolicy`, `AppFileProtection`
 - Export: `PDFExportService`, `SummaryExportFormatter`, `RecordingArchiveService`
 - UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI), `CombineRecordingsView`
 - Persistence: `Persistence`, `CoreDataManager`, models under `Models/`
-- Background: `BackgroundProcessingManager`
+- Background: `BackgroundProcessingManager`, `TemporaryFileCleanupService`
 - Watch: `WatchConnectivityManager` (both targets), `BisonNotesComplications` (Watch Widget target)
 - Controls: `RecordingControlWidget` (Control Center recording widget)
 - Share Extension: `ShareViewController` (imports audio from other apps via share sheet)
@@ -186,6 +195,8 @@ Parakeet is the sole on-device transcription engine as of v1.8 (WhisperKit was r
 - **Privacy**: 100% local processing - audio never leaves your device
 - **Offline**: Works completely offline after initial model download
 - **Requirements**: iOS 17.0 or later
+- **Models**: Parakeet v2 for English long-form recall and Parakeet v3 for multilingual transcription across 25 European languages
+- **Reliability**: v2.1 recognizes valid cached model files, restores the selected model version when possible, resets stale download state when files are gone, and absorbs very short final tail chunks during long on-device transcriptions
 - **Migration**: Existing users who had WhisperKit selected are automatically switched to Parakeet on first launch of v1.8
 
 ### Mistral AI Transcription

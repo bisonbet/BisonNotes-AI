@@ -1,130 +1,8 @@
 <!-- BisonNotes AI - Complete User Guide -->
-<!-- Paste everything below into WordPress Custom HTML block or HTML editor -->
+<!-- Paste everything below into a WordPress Custom HTML block or HTML editor. -->
+<!-- Keep the CSS inside the style tag compact: WordPress auto-paragraph formatting can break multi-paragraph CSS. -->
 
-<style>
-/* ===== RESET & BASE ===== */
-.bn *, .bn *::before, .bn *::after { box-sizing: border-box; }
-.bn {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 0.75rem;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
-  font-size: clamp(17px, 1rem + 0.4vw, 19px);
-  line-height: 1.7;
-  color: #1a1a1a;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-}
-
-/* Override WordPress theme constraints */
-.entry-content > .bn,
-.post-inner .bn,
-.page-content .bn,
-.section-inner .bn,
-.wp-block-post-content .bn,
-.entry-content .bn {
-  max-width: 960px !important;
-  width: 100% !important;
-}
-.entry-content > *:has(.bn),
-.post-inner:has(.bn),
-.section-inner:has(.bn) {
-  max-width: none !important;
-  width: 100% !important;
-}
-
-/* ===== TYPOGRAPHY ===== */
-.bn h2 { font-size: 1.35rem; font-weight: 700; margin: 2.2rem 0 0.8rem; padding-bottom: 0.35rem; border-bottom: 2px solid #c0392b; color: #111; }
-.bn h3 { font-size: 1.1rem; font-weight: 600; margin: 1.4rem 0 0.5rem; color: #222; }
-.bn h4 { font-size: 0.95rem; font-weight: 600; margin: 1rem 0 0.35rem; color: #333; }
-.bn p { margin: 0.5rem 0; }
-.bn ul, .bn ol { margin: 0.4rem 0 0.6rem; padding-left: 1.4rem; }
-.bn li { margin: 0.25rem 0; }
-.bn li ul, .bn li ol { margin: 0.2rem 0 0.3rem; }
-.bn a { color: #c0392b; text-decoration: none; }
-.bn a:hover { text-decoration: underline; }
-.bn code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-size: 0.88em; word-break: break-all; }
-.bn pre { background: #f0f0f0; padding: 0.8rem; border-radius: 6px; overflow-x: auto; font-size: 0.85em; margin: 0.6rem 0; }
-.bn pre code { background: none; padding: 0; word-break: normal; }
-.bn hr { border: none; border-top: 1px solid #ddd; margin: 2rem 0; }
-
-/* ===== HIDE WP PAGE TITLE (Twenty Twenty theme) ===== */
-.post-inner .entry-header,
-.entry-header .entry-title,
-body.page .entry-header {
-  display: none !important;
-}
-
-/* ===== HERO ===== */
-.bn-hero { text-align: center; padding: 1.5rem 1rem; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); color: #fff; border-radius: 10px; margin-bottom: 1.5rem; }
-.bn-hero h1 { color: #fff !important; font-size: 1.5rem; margin: 0 0 0.2rem; line-height: 1.3; border: none !important; padding: 0 !important; }
-.bn-hero p { margin: 0; font-size: 0.9rem; opacity: 0.8; color: #fff; }
-.bn-hero .bn-ver { display: inline-block; background: #c0392b; color: #fff; padding: 0.15rem 0.6rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; margin-top: 0.6rem; }
-
-/* ===== TABLE OF CONTENTS ===== */
-.bn-toc { background: #f7f8f9; border: 1px solid #e0e0e0; border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 1.8rem; }
-.bn-toc p { font-weight: 700; margin: 0 0 0.4rem; }
-.bn-toc ol { margin: 0; padding-left: 1.2rem; }
-.bn-toc li { margin: 0.2rem 0; font-size: 0.92rem; }
-.bn-toc a { color: #2563eb; }
-.bn-toc ul { list-style: disc; padding-left: 1.2rem; margin: 0.15rem 0 0; }
-
-/* ===== CALLOUT BOXES ===== */
-.bn-info, .bn-warn, .bn-ok { border-radius: 6px; padding: 0.7rem 0.9rem; margin: 0.7rem 0; font-size: 0.94rem; }
-.bn-info { background: #eaf3fc; border-left: 4px solid #2563eb; }
-.bn-warn { background: #fef7e0; border-left: 4px solid #e6a817; }
-.bn-ok { background: #eaf7ec; border-left: 4px solid #27ae60; }
-
-/* ===== CARDS ===== */
-.bn-card { background: #f7f8f9; border: 1px solid #e0e0e0; border-radius: 8px; padding: 0.8rem 1rem; margin: 0.6rem 0; }
-.bn-card-a { border-left: 4px solid #c0392b; }
-.bn-card h4:first-child { margin-top: 0; }
-
-/* ===== GRID ===== */
-.bn-g { display: grid; grid-template-columns: 1fr; gap: 0.6rem; margin: 0.8rem 0; }
-.bn-gc { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 0.8rem 1rem; }
-.bn-gc h4 { margin: 0 0 0.2rem; font-size: 0.95rem; }
-.bn-gc ul { font-size: 0.92rem; margin: 0.2rem 0; padding-left: 1.2rem; }
-.bn-gc p { font-size: 0.92rem; margin: 0.2rem 0; }
-.bn-badge { display: inline-block; font-size: 0.68rem; font-weight: 600; padding: 0.1rem 0.45rem; border-radius: 10px; margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.02em; }
-.bn-b-free { background: #d5edda; color: #155724; }
-.bn-b-cloud { background: #cce5ff; color: #004085; }
-.bn-b-local { background: #fff3cd; color: #856404; }
-.bn-b-paid { background: #f8d7da; color: #721c24; }
-
-/* ===== TABLES ===== */
-.bn-tw { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0.6rem 0; border-radius: 6px; border: 1px solid #e0e0e0; }
-.bn table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-.bn th, .bn td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid #eee; }
-.bn th { background: #f1f3f5; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.02em; color: #555; white-space: nowrap; }
-
-/* ===== COLLAPSIBLE SECTIONS ===== */
-.bn details { border: 1px solid #e0e0e0; border-radius: 8px; margin: 0.5rem 0; background: #fff; }
-.bn details[open] { background: #fafbfc; }
-.bn summary { padding: 0.65rem 0.9rem; font-weight: 600; cursor: pointer; list-style: none; display: flex; align-items: center; gap: 0.4rem; font-size: 0.97rem; -webkit-tap-highlight-color: transparent; }
-.bn summary::-webkit-details-marker { display: none; }
-.bn summary::before { content: "\25B6"; font-size: 0.6rem; transition: transform 0.15s; flex-shrink: 0; }
-.bn details[open] > summary::before { transform: rotate(90deg); }
-.bn .dd { padding: 0 0.9rem 0.8rem; }
-
-/* ===== STEP LIST ===== */
-.bn-sl { counter-reset: st; list-style: none; padding-left: 0; }
-.bn-sl > li { counter-increment: st; position: relative; padding-left: 2.3rem; margin: 0.7rem 0; }
-.bn-sl > li::before { content: counter(st); position: absolute; left: 0; top: 0; width: 1.6rem; height: 1.6rem; background: #c0392b; color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.8rem; line-height: 1; }
-.bn-sl > li ul { margin-top: 0.3rem; }
-
-/* ===== RESPONSIVE ===== */
-@media (min-width: 540px) {
-  .bn-g { grid-template-columns: 1fr 1fr; }
-  .bn { padding: 1rem; }
-}
-@media (max-width: 539px) {
-  .bn h2 { font-size: 1.25rem; }
-  .bn h3 { font-size: 1.08rem; }
-  .bn-hero h1 { font-size: 1.3rem; }
-  .bn-hero { padding: 1.2rem 0.7rem; }
-}
-</style>
+<style>.bn *,.bn *::before,.bn *::after{box-sizing:border-box;}.bn{max-width:960px;margin:0 auto;padding:0.75rem;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;font-size:clamp(17px,1rem + 0.4vw,19px);line-height:1.7;color:#1a1a1a;word-wrap:break-word;overflow-wrap:break-word;}.entry-content>.bn,.post-inner .bn,.page-content .bn,.section-inner .bn,.wp-block-post-content .bn,.entry-content .bn{max-width:960px !important;width:100% !important;}.entry-content>*:has(.bn),.post-inner:has(.bn),.section-inner:has(.bn){max-width:none !important;width:100% !important;}.bn h2{font-size:1.35rem;font-weight:700;margin:2.2rem 0 0.8rem;padding-bottom:0.35rem;border-bottom:2px solid #c0392b;color:#111;}.bn h3{font-size:1.1rem;font-weight:600;margin:1.4rem 0 0.5rem;color:#222;}.bn h4{font-size:0.95rem;font-weight:600;margin:1rem 0 0.35rem;color:#333;}.bn p{margin:0.5rem 0;}.bn ul,.bn ol{margin:0.4rem 0 0.6rem;padding-left:1.4rem;}.bn li{margin:0.25rem 0;}.bn li ul,.bn li ol{margin:0.2rem 0 0.3rem;}.bn a{color:#c0392b;text-decoration:none;}.bn a:hover{text-decoration:underline;}.bn code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:0.88em;word-break:break-all;}.bn pre{background:#f0f0f0;padding:0.8rem;border-radius:6px;overflow-x:auto;font-size:0.85em;margin:0.6rem 0;}.bn pre code{background:none;padding:0;word-break:normal;}.bn hr{border:none;border-top:1px solid #ddd;margin:2rem 0;}.post-inner .entry-header,.singular .entry-header,.entry-header .entry-title,body.page .entry-header{display:none !important;}.bn-hero{text-align:center;padding:1.5rem 1rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;border-radius:10px;margin-bottom:1.5rem;}.bn-hero h1{color:#fff !important;font-size:1.5rem;margin:0 0 0.2rem;line-height:1.3;border:none !important;padding:0 !important;}.bn-hero p{margin:0;font-size:0.9rem;opacity:0.8;color:#fff;}.bn-hero .bn-ver{display:inline-block;background:#c0392b;color:#fff;padding:0.15rem 0.6rem;border-radius:20px;font-size:0.75rem;font-weight:600;margin-top:0.6rem;}.bn-toc{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin-bottom:1.8rem;}.bn-toc p{font-weight:700;margin:0 0 0.4rem;}.bn-toc ol{margin:0;padding-left:1.2rem;}.bn-toc li{margin:0.2rem 0;font-size:0.92rem;}.bn-toc a{color:#2563eb;}.bn-toc ul{list-style:disc;padding-left:1.2rem;margin:0.15rem 0 0;}.bn-info,.bn-warn,.bn-ok{border-radius:6px;padding:0.7rem 0.9rem;margin:0.7rem 0;font-size:0.94rem;}.bn-info{background:#eaf3fc;border-left:4px solid #2563eb;}.bn-warn{background:#fef7e0;border-left:4px solid #e6a817;}.bn-ok{background:#eaf7ec;border-left:4px solid #27ae60;}.bn-card{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin:0.6rem 0;}.bn-card-a{border-left:4px solid #c0392b;}.bn-card h4:first-child{margin-top:0;}.bn-g{display:grid;grid-template-columns:1fr;gap:0.6rem;margin:0.8rem 0;}.bn-gc{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;}.bn-gc h4{margin:0 0 0.2rem;font-size:0.95rem;}.bn-gc ul{font-size:0.92rem;margin:0.2rem 0;padding-left:1.2rem;}.bn-gc p{font-size:0.92rem;margin:0.2rem 0;}.bn-badge{display:inline-block;font-size:0.68rem;font-weight:600;padding:0.1rem 0.45rem;border-radius:10px;margin-bottom:0.3rem;text-transform:uppercase;letter-spacing:0.02em;}.bn-b-free{background:#d5edda;color:#155724;}.bn-b-cloud{background:#cce5ff;color:#004085;}.bn-b-local{background:#fff3cd;color:#856404;}.bn-b-paid{background:#f8d7da;color:#721c24;}.bn-tw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0.6rem 0;border-radius:6px;border:1px solid #e0e0e0;}.bn table{width:100%;border-collapse:collapse;font-size:0.92rem;}.bn th,.bn td{text-align:left;padding:0.45rem 0.6rem;border-bottom:1px solid #eee;}.bn th{background:#f1f3f5;font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.02em;color:#555;white-space:nowrap;}.bn details{border:1px solid #e0e0e0;border-radius:8px;margin:0.5rem 0;background:#fff;}.bn details[open]{background:#fafbfc;}.bn summary{padding:0.65rem 0.9rem;font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:0.4rem;font-size:0.97rem;-webkit-tap-highlight-color:transparent;}.bn summary::-webkit-details-marker{display:none;}.bn summary::before{content:"\25B6";font-size:0.6rem;transition:transform 0.15s;flex-shrink:0;}.bn details[open]>summary::before{transform:rotate(90deg);}.bn .dd{padding:0 0.9rem 0.8rem;}.bn-sl{counter-reset:st;list-style:none;padding-left:0;}.bn-sl>li{counter-increment:st;position:relative;padding-left:2.3rem;margin:0.7rem 0;}.bn-sl>li::before{content:counter(st);position:absolute;left:0;top:0;width:1.6rem;height:1.6rem;background:#c0392b;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8rem;line-height:1;}.bn-sl>li ul{margin-top:0.3rem;}@media (min-width:540px){.bn-g{grid-template-columns:1fr 1fr;}.bn{padding:1rem;}}@media (max-width:539px){.bn h2{font-size:1.25rem;}.bn h3{font-size:1.08rem;}.bn-hero h1{font-size:1.3rem;}.bn-hero{padding:1.2rem 0.7rem;}}</style>
 
 <div class="bn">
 
@@ -132,7 +10,7 @@ body.page .entry-header {
 <div class="bn-hero">
   <h1>BisonNotes AI</h1>
   <p>Complete User Guide &mdash; iPhone, iPad, Apple Watch, and Mac</p>
-  <span class="bn-ver">v2.0</span>
+  <span class="bn-ver">v2.1</span>
 </div>
 
 <!-- ===== TOC ===== -->
@@ -168,16 +46,16 @@ body.page .entry-header {
 </div>
 
 <!-- ============================================================ -->
-<!-- WHAT'S NEW IN V2.0                                             -->
+<!-- WHAT'S NEW IN V2.1                                             -->
 <!-- ============================================================ -->
 <div class="bn-ok">
-  <strong>What&rsquo;s new in v2.0:</strong>
+  <strong>What&rsquo;s new in v2.1:</strong>
   <ul>
-    <li><strong>Modernized interface.</strong> Recordings, Transcripts, Summaries, Setup, and Settings use refreshed layouts with clearer actions and better Mac/iPad navigation.</li>
-    <li><strong>Redesigned Apple Watch recorder.</strong> Tap once to record, tap again to stop, and use mute to pause/resume the same file. The watch records independently and syncs the finished file back to iPhone.</li>
-    <li><strong>On Device AI is now MLX-backed.</strong> Supported devices use MLX Swift and Ternary Bonsai models by default. Devices with 4GB+ RAM can run local summaries; devices below 4GB fall back to Mistral AI.</li>
-    <li><strong>Legacy local AI cleanup.</strong> The old llama.cpp engine remains available as On Device AI (Legacy) on 6GB+ devices. The removed LFM 2.5 model is deleted during migration and no longer appears in model lists.</li>
-    <li><strong>Mac Catalyst refinements.</strong> The Mac build is Apple Silicon only, with Catalyst-specific audio recording, sandbox/iCloud entitlements, and iCloud audio archive support.</li>
+    <li><strong>Mac meeting audio capture.</strong> On Apple Silicon Macs, BisonNotes can optionally record audio playing from other Mac apps and mix it with your microphone recording. Enable <em>Record Meeting Audio</em> in Settings &rarr; Recording and grant macOS Screen &amp; System Audio Recording permission.</li>
+    <li><strong>Stronger iCloud sync controls.</strong> iCloud Sync now shows a HIPAA notice, supports per-recording <em>Keep on This Device</em> exclusions, uses deletion markers, and provides Review iCloud Items for older cloud-only records.</li>
+    <li><strong>More reliable Parakeet transcription.</strong> BisonNotes recognizes cached Parakeet models after updates or settings resets, supports English v2 and multilingual v3 model choices, improves download/prepare status, and avoids tiny final tail chunks on long local transcriptions.</li>
+    <li><strong>Recording reliability cleanup.</strong> Audio session ownership, background interruption handling, crash recovery, and stale temporary audio cleanup were tightened for safer long recordings.</li>
+    <li><strong>Regression validation.</strong> App/watch test plans, seeded UI test launch modes, iCloud and transcription regression tests, and a documented release test regimen were added.</li>
   </ul>
 </div>
 
@@ -261,8 +139,9 @@ body.page .entry-header {
   <div class="dd">
     <div class="bn-info"><strong>When does this appear?</strong> After generating your first successful summary.</div>
     <ul>
-      <li><strong>"Enable iCloud Sync"</strong> — Summaries sync across all your devices. Uses your iCloud storage quota.</li>
-      <li><strong>"Keep Local Only"</strong> — Summaries stay on this device only. Better for privacy-sensitive content. Can be changed later.</li>
+      <li><strong>"Enable iCloud Sync"</strong> — Eligible recordings, transcripts, summaries, and selected settings sync across your devices through your private iCloud account. BisonNotes shows a HIPAA notice before enabling this.</li>
+      <li><strong>"Keep Local Only"</strong> — Content stays on this device only. Better for privacy-sensitive content. Can be changed later.</li>
+      <li><strong>Per-recording exclusions</strong> — Use <em>Keep on This Device</em> from a recording row or audio player to keep that recording, transcript, and summary out of BisonNotes iCloud sync and backup.</li>
     </ul>
   </div>
 </details>
@@ -287,14 +166,16 @@ body.page .entry-header {
 <!-- ============================================================ -->
 <h2 id="bn-recording">Recording Features</h2>
 
-<h3 id="bn-mac">Mac Catalyst (v2.0)</h3>
+<h3 id="bn-mac">Mac Catalyst (v2.1)</h3>
 <p>BisonNotes AI runs natively on Apple Silicon Macs as a Mac Catalyst app. The Mac build uses an <code>AVAudioEngine</code>-based recording pipeline tuned for desktop audio sessions:</p>
 <ul>
   <li><strong>Same Core Data store</strong> &mdash; Recordings, transcripts, and summaries sync with iPhone/iPad through iCloud (if enabled).</li>
   <li><strong>Pause &amp; Resume</strong> &mdash; Full pause/resume support, the same as on iOS.</li>
   <li><strong>Microphone selection</strong> &mdash; Choose your built-in mic, USB interface, or Bluetooth device from Transcription Settings.</li>
+  <li><strong>Record Meeting Audio</strong> &mdash; Optionally capture audio playing from other Mac apps while your microphone records your local speech. BisonNotes mixes both tracks into one M4A recording.</li>
+  <li><strong>macOS permission</strong> &mdash; Meeting audio capture requires Screen &amp; System Audio Recording permission. BisonNotes records audio only and does not save screen video. If permission changes or capture fails, the app saves microphone audio only.</li>
   <li><strong>Local AI</strong> &mdash; On Device AI uses MLX Swift by default. The legacy llama.cpp engine remains available for higher-memory devices.</li>
-  <li><strong>Archive support</strong> &mdash; The Mac build includes Catalyst sandbox, microphone, networking, calendar, file access, and iCloud entitlements for v2.0 archive workflows.</li>
+  <li><strong>Archive support</strong> &mdash; The Mac build includes Catalyst sandbox, microphone, networking, calendar, file access, and iCloud entitlements for archive workflows.</li>
   <li><strong>Settings and lists</strong> &mdash; Setup, Settings, Summaries, and Transcripts use Mac-friendly scrolling, navigation, and button hit targets.</li>
 </ul>
 
@@ -741,15 +622,17 @@ ollama pull mistral-small3.2</code></pre>
 <details>
   <summary>On Device Transcription (Parakeet) — Default</summary>
   <div class="dd">
-    <div class="bn-ok"><strong>v1.8:</strong> Parakeet is now the sole on-device transcription engine. WhisperKit has been removed. Users who had WhisperKit selected are automatically migrated to Parakeet on first launch.</div>
+    <div class="bn-ok"><strong>v2.1:</strong> Parakeet is the default on-device transcription path. BisonNotes now keeps valid cached model files across app updates or settings resets, clears stale download state when files are missing, and avoids tiny final tail chunks on long local transcriptions.</div>
 
     <h4>Initial Setup</h4>
     <ol class="bn-sl">
       <li><strong>Enable:</strong> Setup &rarr; Transcription Settings &rarr; select "On Device" &rarr; Parakeet is selected by default.</li>
-      <li><strong>Download the model:</strong> Tap "Download" to get the Parakeet model.</li>
+      <li><strong>Choose a model:</strong> Parakeet v2 is English-only with stronger long-form English recall. Parakeet v3 supports multilingual transcription across 25 European languages.</li>
+      <li><strong>Download the model:</strong> Tap "Download" to get the selected Parakeet model. Progress now shows checking, downloading, preparing, and ready states.</li>
       <li><strong>Requirements:</strong> iOS 17.0+, model download required.</li>
     </ol>
 
+    <div class="bn-info"><strong>Migration note:</strong> WhisperKit was removed in v1.8. Users who had WhisperKit selected are automatically migrated to Parakeet on first launch.</div>
     <div class="bn-ok"><strong>Benefits:</strong> Complete privacy, works offline, no API costs.</div>
   </div>
 </details>
@@ -968,6 +851,7 @@ docker run -d -p 9000:9000 \
       <li><strong>No Audio:</strong> Check microphone permissions in Settings &rarr; Privacy</li>
       <li><strong>Poor Quality:</strong> Adjust audio quality settings, ensure proper mic distance</li>
       <li><strong>Background Recording:</strong> Enable in app settings</li>
+      <li><strong>Mac meeting audio missing:</strong> Enable Record Meeting Audio in BisonNotes Settings &rarr; Recording, then grant BisonNotes access in macOS System Settings &rarr; Privacy &amp; Security &rarr; Screen &amp; System Audio Recording. If permission or mixing fails, the app still saves microphone audio.</li>
     </ul>
   </div>
 </details>
@@ -990,6 +874,7 @@ docker run -d -p 9000:9000 \
       <li><strong>No Transcription:</strong> Check engine configuration</li>
       <li><strong>Poor Quality:</strong> Try a different engine or model</li>
       <li><strong>Large File Issues:</strong> Enable chunking for files over 5 minutes</li>
+      <li><strong>Parakeet says a model is missing:</strong> Open Transcription Settings and re-download the selected Parakeet model. BisonNotes will reuse valid cached files when they exist, but clears stale settings if the files were removed.</li>
     </ul>
   </div>
 </details>
@@ -1031,6 +916,7 @@ docker run -d -p 9000:9000 \
       <li><strong>Live Transcription</strong> (v1.8) &mdash; On-device speech-to-text streamed in real time during recording via SFSpeechRecognizer; transcript auto-saved when recording stops</li>
       <li><strong>Duplicate Summary Cleanup</strong> (v1.8) &mdash; Automatically detects and removes duplicate summaries; manual cleanup available in Database Tools</li>
       <li><strong>Explicit credential resolvers</strong> (v1.11) &mdash; Background AWS jobs always pull fresh credentials from the Keychain so stale process-environment values can&rsquo;t leak in</li>
+      <li><strong>Temporary audio cleanup</strong> (v2.1) &mdash; Conservative startup cleanup removes stale scratch, merge, and chunk files left by failed or interrupted audio workflows without touching active recordings.</li>
     </ul>
   </div>
 </details>
