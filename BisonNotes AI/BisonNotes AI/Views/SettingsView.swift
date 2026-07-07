@@ -189,6 +189,7 @@ struct SettingsView: View {
                             .fill(Color(.systemBackground))
                             .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 2)
                     )
+                    .accessibilityModalProgress(label: "Preparing logs")
                 }
                 .transition(.opacity)
             }
@@ -262,6 +263,7 @@ struct SettingsView: View {
                 action: { showingTranscriptionSettings = true }
             )
         }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsConfigurationSection)
     }
 
     private var modernRecordingSection: some View {
@@ -286,6 +288,7 @@ struct SettingsView: View {
                 )
             }
             .disabled(recorderVM.isRecording)
+            .accessibilityValue(AccessibilitySupport.statusValue(isOn: recorderVM.isMacSystemAudioCaptureEnabled))
 
             if recorderVM.isMacSystemAudioCaptureEnabled {
                 ModernInlineStatus(
@@ -343,6 +346,7 @@ struct SettingsView: View {
                     tint: .blue
                 )
             }
+            .accessibilityValue(AccessibilitySupport.statusValue(isOn: recorderVM.isLocationTrackingEnabled))
 
             if recorderVM.isLocationTrackingEnabled {
                 ModernInlineStatus(
@@ -353,6 +357,7 @@ struct SettingsView: View {
                 )
             }
         }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsRecordingSection)
     }
 
     private var moderniCloudSection: some View {
@@ -365,12 +370,19 @@ struct SettingsView: View {
             }
         ) {
             Toggle("Enable iCloud Sync", isOn: iCloudSyncToggleBinding)
+                .accessibilityValue(AccessibilitySupport.statusValue(isOn: iCloudManager.isEnabled))
+                .accessibilityHint("Shows a privacy notice before enabling iCloud sync.")
                 .accessibilityIdentifier(BisonNotesAccessibilityID.iCloudEnableToggle)
 
             if iCloudManager.isEnabled {
                 Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
+                    .accessibilityValue(AccessibilitySupport.statusValue(isOn: iCloudBackupIncludeAudioFiles))
                 Toggle("Include app settings", isOn: $iCloudBackupIncludeSettings)
+                    .accessibilityValue(AccessibilitySupport.statusValue(isOn: iCloudBackupIncludeSettings))
                 Toggle("Include sensitive settings", isOn: $iCloudBackupIncludeSensitiveSettings)
+                    .accessibilityValue(
+                        AccessibilitySupport.statusValue(isOn: iCloudBackupIncludeSensitiveSettings)
+                    )
                     .disabled(!iCloudBackupIncludeSettings)
 
                 Text("API keys and AWS credentials stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
@@ -487,6 +499,7 @@ struct SettingsView: View {
     private var modernBehaviorSection: some View {
         ModernSettingsCard(title: "App Behavior", systemImage: "wand.and.stars", tint: .purple) {
             Toggle("Comedy Mode", isOn: $comedyModeEnabled)
+                .accessibilityValue(AccessibilitySupport.statusValue(isOn: comedyModeEnabled))
 
             if comedyModeEnabled {
                 Picker("Style", selection: $comedyModeStyle) {
@@ -503,10 +516,12 @@ struct SettingsView: View {
             Divider()
 
             Toggle("Experimental features", isOn: $enableExperimentalModels)
+                .accessibilityValue(AccessibilitySupport.statusValue(isOn: enableExperimentalModels))
             Text("Exposes experimental on-device models. Experimental models are less reliable and may produce empty summaries.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBehaviorSection)
     }
 
     private var modernMaintenanceSection: some View {
@@ -553,6 +568,8 @@ struct SettingsView: View {
             }
             .buttonStyle(.plain)
             .disabled(isPreparingLogs)
+            .accessibilityLabel(isPreparingLogs ? "Preparing Diagnostic Logs" : "Export Diagnostic Logs")
+            .accessibilityValue(isPreparingLogs ? "In progress" : "")
 
             if let logExportError {
                 Text("Error: \(logExportError)")
@@ -583,6 +600,7 @@ struct SettingsView: View {
                 Text("These tools can delete data. Use with caution.")
             }
         }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsMaintenanceSection)
     }
 
     private var preferencesSection: some View {
@@ -1665,6 +1683,7 @@ private struct ModernSettingsCard<Content: View, Trailing: View>: View {
                 Text(title)
                     .font(.headline)
                     .foregroundColor(.primary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -1750,6 +1769,11 @@ private struct ModernSettingsNavigationRow<Trailing: View>: View {
             .clipShape(RoundedRectangle(cornerRadius: 15))
         }
         .buttonStyle(.plain)
+        .accessibilityCard(
+            label: title,
+            value: subtitle,
+            hint: "Opens \(title)."
+        )
     }
 }
 
@@ -1802,6 +1826,11 @@ private struct ModernSelectableRow: View {
         .padding(14)
         .background(isSelected ? tint.opacity(0.12) : Color(.tertiarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 15))
+        .accessibilityCard(
+            label: title,
+            value: "\(subtitle), \(isSelected ? "selected" : "not selected")",
+            hint: "Selects this microphone."
+        )
     }
 }
 
@@ -1864,6 +1893,7 @@ private struct ModernInlineStatus: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .accessibilityCard(label: title, value: subtitle)
     }
 }
 
@@ -1879,6 +1909,8 @@ private struct ModernStatusPill: View {
             .padding(.vertical, 4)
             .background(tint.opacity(0.14))
             .clipShape(Capsule())
+            .accessibilityLabel("Status")
+            .accessibilityValue(text)
     }
 }
 

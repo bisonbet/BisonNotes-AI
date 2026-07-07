@@ -4,7 +4,14 @@ SwiftUI app for recording audio, transcribing it with local or cloud engines, an
 
 AVAILABLE ON THE APP STORE: https://apps.apple.com/us/app/bisonnotes-ai-voice-notes/id6749189425
 
-Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Regression Testing Regimen](docs/testing-regimen.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
+Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Accessibility Matrix](docs/accessibility-matrix.md) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Regression Testing Regimen](docs/testing-regimen.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
+
+## v2.2 Accessibility Highlights
+- Common iPhone, iPad, Mac Catalyst, and Apple Watch tasks now have explicit VoiceOver labels, values, hints, and non-color state cues across setup, recording, imports, recordings, playback, transcripts, summaries, settings, and watch recording.
+- The custom audio scrubber remains visually unchanged but is exposed as an adjustable accessibility control with current/remaining time and 15-second seek increments.
+- Recording, transcript, and summary rows expose contextual status such as duration, file size, archive/local audio, iCloud/local-only state, transcript availability, summary availability, task/reminder counts, and location availability.
+- Apple Watch recording now exposes state for the main record/stop control, mute/pause, transfer progress, low battery, and error recovery, and the pulsing recording indicators respect Reduce Motion.
+- A dedicated accessibility evidence set was added: `docs/accessibility-matrix.md`, `docs/app-store-accessibility.md`, `docs/accessibility.html`, and `BisonNotes AI/BisonNotes AIUITests/BisonNotesAIAccessibilityTests.swift`.
 
 ## v2.1 Highlights
 - Mac Catalyst can optionally record meeting audio from other Mac apps and mix it with the microphone recording. The setting lives in Settings > Recording as **Record Meeting Audio**, requires macOS Screen & System Audio Recording permission, and falls back to microphone-only audio if permission or mixing fails.
@@ -48,7 +55,17 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Mistral AI Fr
 - Archive (Mac Catalyst): `Scripts/archive-catalyst.sh`. Use this script instead of Product > Archive so the arm64-only Catalyst setting reaches SwiftPM package targets.
 - Use the watch app scheme to run the watch target. SwiftPM resolves automatically in Xcode.
 - Release validation should follow [docs/testing-regimen.md](docs/testing-regimen.md), including app/watch test plans, Mac Catalyst build coverage, and manual hardware checks for microphone, watch transfer, iCloud, Parakeet, share import, Control Center, Action Button, and Mac meeting audio.
+- Accessibility validation should include the automated UI audit class:
+  `xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"BisonNotes AIUITests/BisonNotesAIAccessibilityTests"`
+- Real-device accessibility release checks are still required for VoiceOver, Voice Control, Switch Control sampling, Full Keyboard Access on iPad/Mac Catalyst, largest Dynamic Type, light/dark contrast modes, Reduce Motion, Apple Watch VoiceOver, Control Center, and Action Button.
 - See `CLAUDE.md` for the manual `llama.xcframework` Mac Catalyst slice, duplicate-library modulemap cleanup, AWS/Smithy archive constraint, and `bisonbet/textual` Catalyst guards if you rebuild dependencies.
+
+## Accessibility Development Notes
+- Shared accessibility strings and modifiers live in `BisonNotes AI/BisonNotes AI/AccessibilitySupport.swift`. Prefer these helpers for duration/status strings, row labels, announcements, and custom card semantics instead of one-off labels.
+- Stable automation identifiers live in `BisonNotes AI/BisonNotes AI/AccessibilityIdentifiers.swift`. Add identifiers only for surfaces needed by UI tests, audit navigation, or repeated external automation.
+- Deterministic accessibility UI tests live in `BisonNotes AI/BisonNotes AIUITests/BisonNotesAIAccessibilityTests.swift` and use DEBUG launch arguments from `UITestSupport.swift`, including `--show-first-setup`.
+- App Store accessibility evidence lives in `docs/accessibility-matrix.md` and `docs/app-store-accessibility.md`. Keep those files and the public `docs/accessibility.html` page aligned with implemented behavior before claiming Accessibility Nutrition Labels.
+- The shared SwiftUI app surfaces carry over to Mac Catalyst, but Catalyst still needs manual VoiceOver, Full Keyboard Access, keyboard navigation, window resizing, and real iCloud/file import validation on a Mac.
 
 ## Dependencies
 
@@ -99,6 +116,7 @@ All external dependencies are resolved automatically via Swift Package Manager w
 
 ## Key Features
 - **Modern v2.0 UI**: Recordings, Transcripts, Summaries, Setup, and Settings use refreshed SwiftUI layouts with clearer action placement, sectioned date lists, and Catalyst-friendly navigation.
+- **Accessibility-ready task flows (v2.2)**: VoiceOver and Voice Control labels, values, hints, contextual row summaries, adjustable playback scrubber support, Reduce Motion handling, accessibility UI audits, and App Store accessibility evidence docs cover the common iPhone/iPad, Mac Catalyst, and Apple Watch workflows.
 - **Mac Catalyst (v2.1)**: Native Apple Silicon Mac build with a Catalyst-specific audio pipeline, optional meeting-audio capture from other Mac apps, sandbox entitlements, iCloud archive support, and an arm64-only archive path.
 - **Pause and Resume Recording**: Pause mid-meeting without stopping the file. Resume seamlessly across iOS, iPadOS, watchOS mute/resume, and Mac Catalyst (separate `AVAudioEngine` path on Catalyst).
 - **Hardened Credential Storage (v1.11)**: API keys, AWS credentials, and Bedrock session tokens stored in the iOS Keychain. Legacy values are migrated automatically and kept out of iCloud settings backups. File protection is applied to recordings, transcripts, notes, attachments, and the Core Data SQLite files.
@@ -136,6 +154,7 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - Security: `KeychainSecretStore`, `AWSCredentialsManager`, `AWSClientCredentialResolver`, `EndpointSecurityPolicy`, `AppFileProtection`
 - Export: `PDFExportService`, `SummaryExportFormatter`, `RecordingArchiveService`
 - UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI), `CombineRecordingsView`
+- Accessibility: `AccessibilitySupport`, `AccessibilityIdentifiers`, `UITestSupport`, and `BisonNotesAIAccessibilityTests`
 - Persistence: `Persistence`, `CoreDataManager`, models under `Models/`
 - Background: `BackgroundProcessingManager`, `TemporaryFileCleanupService`
 - Watch: `WatchConnectivityManager` (both targets), `BisonNotesComplications` (Watch Widget target)

@@ -46,6 +46,7 @@ struct SummariesView: View {
                         Button(action: { showDateFilter = true }) {
                             Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                         }
+                        .accessibilityLabel("Filter Summaries")
                     }
                 }
                 .onAppear {
@@ -453,6 +454,7 @@ struct SummariesView: View {
             loadRecordings()
         }
         .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        .accessibilityIdentifier(BisonNotesAccessibilityID.summaryList)
         #endif
     }
 
@@ -508,6 +510,7 @@ struct SummariesView: View {
             loadRecordings()
         }
         .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        .accessibilityIdentifier(BisonNotesAccessibilityID.summaryList)
     }
 
     /// Full list page reached via the "More" row (matches TranscriptViews' full list pages).
@@ -569,6 +572,7 @@ struct SummariesView: View {
                 Button(action: { showDateFilter = true }) {
                     Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                 }
+                .accessibilityLabel("Filter Summaries")
             }
         }
     }
@@ -588,6 +592,10 @@ struct SummariesView: View {
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 15))
+        .accessibilityCard(
+            label: "Show \(remainingCount) more summaries",
+            hint: "Opens the full summary list."
+        )
     }
 
     // MARK: - Recording Row View
@@ -645,6 +653,22 @@ struct SummariesView: View {
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .contentShape(Rectangle())
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(
+            BisonNotesAccessibilityID.summaryRowPrefix
+                + (recording.id?.uuidString ?? recording.objectID.uriRepresentation().absoluteString)
+        )
+        .accessibilityLabel(
+            AccessibilitySupport.summaryRowLabel(name: recording.recordingName ?? "Unknown Recording")
+        )
+        .accessibilityValue(
+            AccessibilitySupport.summaryRowValue(
+                date: UserPreferences.shared.formatMediumDateTime(recording.recordingDate ?? Date()),
+                taskCount: summary?.tasks.count ?? 0,
+                reminderCount: summary?.reminders.count ?? 0,
+                hasSummary: summary != nil
+            )
+        )
 
     }
 
@@ -679,6 +703,13 @@ struct SummariesView: View {
         .frame(height: 28)
         .background(Color(.tertiarySystemGroupedBackground))
         .clipShape(Capsule())
+        .accessibilityLabel("Transcript and summary status")
+        .accessibilityValue(
+            [
+                recording.transcript != nil ? "Transcript available" : "No transcript",
+                recording.summary != nil ? "Summary available" : "No summary"
+            ].joined(separator: ", ")
+        )
     }
 
     @ViewBuilder
@@ -697,6 +728,7 @@ struct SummariesView: View {
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("View Summary for \(recording.recordingName ?? "Unknown Recording")")
         } else if recording.summaryStatus == ProcessingStatus.processing.rawValue || (isGeneratingSummary && generatingSummaryRecordingId == recording.id) {
             HStack(spacing: 7) {
                 ProgressView()
@@ -710,6 +742,8 @@ struct SummariesView: View {
             .background(Color.orange.opacity(0.14))
             .foregroundColor(.orange)
             .clipShape(Capsule())
+            .accessibilityLabel("Generating Summary for \(recording.recordingName ?? "Unknown Recording")")
+            .accessibilityValue("In progress")
         } else {
             Button(action: {
                 guard !isGeneratingSummary else { return }
@@ -727,6 +761,8 @@ struct SummariesView: View {
             .disabled(isGeneratingSummary)
             .buttonStyle(.plain)
             .contentShape(Rectangle())
+            .accessibilityLabel("Generate Summary for \(recording.recordingName ?? "Unknown Recording")")
+            .accessibilityValue(isGeneratingSummary ? "In progress" : "Ready")
         }
     }
 

@@ -126,6 +126,7 @@ struct SummaryDetailView: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Summary")
             .navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier(BisonNotesAccessibilityID.summaryDetail)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
@@ -143,6 +144,8 @@ struct SummaryDetailView: View {
                         }
                     }
                     .disabled(isExporting)
+                    .accessibilityLabel(activeExportFormat.map { "Exporting \($0.displayName)" } ?? "Export Summary")
+                    .accessibilityHint("Choose PDF or RTF export format.")
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
@@ -471,6 +474,7 @@ struct SummaryDetailView: View {
                                 .foregroundColor(.green)
                         }
                         .disabled(isUpdatingLocation)
+                        .accessibilityLabel("Edit Recording Location")
 
                         // Button to open full map view
                         Button(action: {
@@ -480,6 +484,7 @@ struct SummaryDetailView: View {
                                 .font(.title3)
                                 .foregroundColor(.accentColor)
                         }
+                        .accessibilityLabel("Open Recording Location Map")
                     }
                     .padding(.horizontal)
                     .padding(.vertical, 12)
@@ -528,6 +533,7 @@ struct SummaryDetailView: View {
                         .cornerRadius(8)
                     }
                     .disabled(isUpdatingLocation)
+                    .accessibilityLabel(isUpdatingLocation ? "Adding Location" : "Add Location")
                 }
                 .padding()
                 .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
@@ -547,6 +553,7 @@ struct SummaryDetailView: View {
                 .font(.title2)
                 .fontWeight(.bold)
                 .foregroundColor(.primary)
+                .accessibilityAddTraits(.isHeader)
 
             // Prominent date/time display
             VStack(alignment: .leading, spacing: 8) {
@@ -585,6 +592,11 @@ struct SummaryDetailView: View {
                 .padding(.horizontal, 12)
                 .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Recording Date and Time")
+                .accessibilityValue(
+                    "\(formatFullDateTime(summaryData.recordingDate))\(isCustomDate ? ", custom" : "")"
+                )
             }
 
             // Duration info
@@ -610,6 +622,7 @@ struct SummaryDetailView: View {
                     .foregroundColor(.blue)
                 Text("Metadata")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
             }
             .padding(.bottom, 8)
@@ -656,6 +669,7 @@ struct SummaryDetailView: View {
                     .foregroundColor(.accentColor)
                 Text("Summary")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
             }
             .padding(.bottom, 8)
@@ -677,6 +691,7 @@ struct SummaryDetailView: View {
                     .foregroundColor(.green)
                 Text("Tasks")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 if summaryData.tasks.count > 0 {
                     Text("(\(summaryData.tasks.count))")
                         .font(.subheadline)
@@ -708,6 +723,7 @@ struct SummaryDetailView: View {
                     .foregroundColor(.orange)
                 Text("Reminders")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 if summaryData.reminders.count > 0 {
                     Text("(\(summaryData.reminders.count))")
                         .font(.subheadline)
@@ -739,6 +755,7 @@ struct SummaryDetailView: View {
                     .foregroundColor(Color.purple)
                 Text("Titles")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 if summaryData.titles.count > 0 {
                     Text("(\(summaryData.titles.count))")
                         .font(.subheadline)
@@ -760,6 +777,7 @@ struct SummaryDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .disabled(isUpdatingRecordingName)
+                .accessibilityLabel("Change Recording Title")
             }
             .padding(.bottom, 8)
 
@@ -877,6 +895,7 @@ struct SummaryDetailView: View {
                             showingNoteEditor = true
                         }
                         .font(.caption)
+                        .accessibilityLabel("Edit Note")
                     }
 
                     Text(noteDraft)
@@ -917,6 +936,7 @@ struct SummaryDetailView: View {
                                 openAttachment(attachment)
                             }
                             .font(.caption)
+                            .accessibilityLabel("Open attachment \(attachment.fileName)")
 
                             Button(role: .destructive) {
                                 removeAttachment(attachment)
@@ -924,6 +944,7 @@ struct SummaryDetailView: View {
                                 Image(systemName: "trash")
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Remove attachment \(attachment.fileName)")
                         }
                         .padding(10)
                         .background(Color(.secondarySystemGroupedBackground))
@@ -979,6 +1000,7 @@ struct SummaryDetailView: View {
                     .cornerRadius(10)
                 }
                 .disabled(isUpdatingDate)
+                .accessibilityLabel(isUpdatingDate ? "Updating Date and Time" : "Set Custom Date and Time")
             }
         }
         .sheet(isPresented: $showingDateEditor) {
@@ -1036,6 +1058,7 @@ struct SummaryDetailView: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(isRegenerating)
+                .accessibilityLabel(isRegenerating ? "Regenerating Summary" : "Regenerate Summary")
             }
 
             // Location Editor Section
@@ -1105,6 +1128,7 @@ struct SummaryDetailView: View {
                         }
                         .buttonStyle(.borderless)
                         .disabled(isUpdatingLocation)
+                        .accessibilityLabel(isUpdatingLocation ? "Updating Location" : "Edit Location")
                     }
                 } else {
                     // Show add location option
@@ -1136,6 +1160,7 @@ struct SummaryDetailView: View {
                         }
                         .buttonStyle(.borderless)
                         .disabled(isUpdatingLocation)
+                        .accessibilityLabel(isUpdatingLocation ? "Adding Location" : "Add Location")
                     }
                 }
             }
@@ -1175,6 +1200,8 @@ struct SummaryDetailView: View {
                     .cornerRadius(10)
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("Delete Summary for \(summaryData.recordingName)")
+                .accessibilityHint("Deletes this summary and related notes while keeping the audio and transcript.")
             }
         }
     }
@@ -1799,6 +1826,8 @@ struct EnhancedTaskRowView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .disabled(integrationManager.isProcessing)
+                    .accessibilityLabel("Add task to system")
+                    .accessibilityHint("Choose Reminders, Calendar, or Google Calendar.")
                 }
             }
 
@@ -1853,6 +1882,11 @@ struct EnhancedTaskRowView: View {
         }
         .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Task")
+        .accessibilityValue(
+            "\(task.text.sanitizedPlainText()), \(task.priority.rawValue) priority, \(task.category.rawValue)"
+        )
     }
 
     private var priorityColor: Color {
@@ -1942,6 +1976,8 @@ struct EnhancedReminderRowView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .disabled(integrationManager.isProcessing)
+                    .accessibilityLabel("Add reminder to system")
+                    .accessibilityHint("Choose Reminders, Calendar, or Google Calendar.")
                 }
             }
 
@@ -1994,6 +2030,11 @@ struct EnhancedReminderRowView: View {
         } message: {
             Text(integrationManager.lastError ?? "Failed to add reminder to system.")
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Reminder")
+        .accessibilityValue(
+            "\(reminder.text.sanitizedPlainText()), \(reminder.urgency.rawValue), \(reminder.timeReference.displayText)"
+        )
     }
 
     private var urgencyColor: Color {
@@ -2025,6 +2066,7 @@ struct SelectableTitleRowView: View {
                     .foregroundColor(isCurrentTitle ? .green : .gray)
             }
             .disabled(isCurrentTitle)
+            .accessibilityLabel(isCurrentTitle ? "Current title selected" : "Use this title")
 
             VStack(alignment: .leading, spacing: 4) {
                 // Title text - sanitized for display (includes quote stripping)
@@ -2068,11 +2110,15 @@ struct SelectableTitleRowView: View {
                     .font(.caption)
                     .foregroundColor(.accentColor)
             }
+            .accessibilityLabel("Edit title \(title.text.sanitizedForTitle())")
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
         .background(isCurrentTitle ? Color.green.opacity(0.05) : Color(.secondarySystemGroupedBackground).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title.text.sanitizedForTitle())
+        .accessibilityValue(isCurrentTitle ? "Current title, \(title.category.rawValue)" : title.category.rawValue)
     }
 }
 
@@ -2264,6 +2310,8 @@ struct TitleOptionRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title.text.sanitizedForTitle())
+        .accessibilityValue(isSelected ? "Selected, \(title.category.rawValue)" : title.category.rawValue)
     }
 }
 

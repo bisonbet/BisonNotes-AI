@@ -646,7 +646,13 @@ struct RecordingsListView: View {
     }
 
     private func recordingRow(for recording: AudioRecordingFile) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let entry = appCoordinator.getRecording(url: recording.url)
+        let hasTranscript = entry?.transcript != nil || entry?.transcriptId != nil
+        let hasSummary = entry?.summary != nil
+            || entry?.summaryId != nil
+            || entry?.summaryStatus == ProcessingStatus.completed.rawValue
+
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
                 if isSelectionMode {
                     Button(action: {
@@ -658,6 +664,12 @@ struct RecordingsListView: View {
                             .frame(width: 32, height: 32)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(
+                        selectedRecordings.contains(recording.url)
+                            ? "Deselect \(recording.name)"
+                            : "Select \(recording.name)"
+                    )
+                    .accessibilityValue(selectedRecordings.contains(recording.url) ? "Selected" : "Not selected")
                 }
 
                 Button(action: {
@@ -712,11 +724,23 @@ struct RecordingsListView: View {
                             }
                             .buttonStyle(.plain)
                             .foregroundColor(.accentColor)
+                            .accessibilityLabel("View Location for \(recording.name)")
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
+                .accessibilityCard(
+                    label: AccessibilitySupport.recordingRowLabel(name: recording.name),
+                    value: AccessibilitySupport.recordingRowValue(recordingRowContext(
+                        recording: recording,
+                        hasTranscript: hasTranscript,
+                        hasSummary: hasSummary
+                    )),
+                    hint: isSelectionMode
+                        ? "Double tap to select or deselect this recording."
+                        : "Double tap to open the audio player."
+                )
             }
 
             Divider()
@@ -746,6 +770,24 @@ struct RecordingsListView: View {
             .font(.caption)
             .foregroundColor(.secondary)
             .lineLimit(1)
+    }
+
+    private func recordingRowContext(
+        recording: AudioRecordingFile,
+        hasTranscript: Bool,
+        hasSummary: Bool
+    ) -> AccessibilitySupport.RecordingRowContext {
+        AccessibilitySupport.RecordingRowContext(
+            date: recording.dateString,
+            duration: recording.durationString,
+            fileSize: recording.fileSizeString,
+            isArchived: recording.isArchived,
+            hasLocalAudio: recording.hasLocalAudio,
+            isCloudSyncDisabled: recording.isCloudSyncDisabled,
+            hasTranscript: hasTranscript,
+            hasSummary: hasSummary,
+            hasLocation: recording.locationData != nil
+        )
     }
 
     @ViewBuilder
@@ -783,7 +825,12 @@ struct RecordingsListView: View {
     @ViewBuilder
     private func recordingActionButtons(for recording: AudioRecordingFile) -> some View {
         if recording.hasLocalAudio {
-            recordingIconButton("Export Audio", systemImage: "square.and.arrow.up", tint: .accentColor) {
+            recordingIconButton(
+                "Export Audio",
+                systemImage: "square.and.arrow.up",
+                tint: .accentColor,
+                recordingName: recording.name
+            ) {
                 prepareExport(for: recording)
             }
         }
@@ -804,20 +851,35 @@ struct RecordingsListView: View {
             }
             .buttonStyle(.plain)
             .disabled(restoringArchiveRecordingId != nil && restoringArchiveRecordingId == recording.recordingId)
-            .accessibilityLabel("Restore Audio")
+            .accessibilityLabel("Restore Audio for \(recording.name)")
         } else if recording.isArchived && recording.hasLocalAudio {
-            recordingIconButton("Mark Local Archive State Clear", systemImage: "checkmark.circle.fill", tint: .green) {
+            recordingIconButton(
+                "Mark Local Archive State Clear",
+                systemImage: "checkmark.circle.fill",
+                tint: .green,
+                recordingName: recording.name
+            ) {
                 clearLocalArchiveState(recording)
             }
         } else {
-            recordingIconButton("Play Audio", systemImage: "play.fill", tint: .accentColor) {
+            recordingIconButton(
+                "Play Audio",
+                systemImage: "play.fill",
+                tint: .accentColor,
+                recordingName: recording.name
+            ) {
                 selectedRecordingForPlayer = recording
             }
         }
 
         cloudSyncPreferenceButton(for: recording)
 
-        recordingIconButton("Delete Recording", systemImage: "trash", tint: .red) {
+        recordingIconButton(
+            "Delete Recording",
+            systemImage: "trash",
+            tint: .red,
+            recordingName: recording.name
+        ) {
             deletionData.recordingToDelete = recording
             deleteRecording(recording)
         }
@@ -830,7 +892,8 @@ struct RecordingsListView: View {
                 recording.isCloudSyncDisabled ? "Allow iCloud Sync" : "Keep on This Device",
                 systemImage: recording.isCloudSyncDisabled ? "iphone" : "icloud",
                 tint: recording.isCloudSyncDisabled ? .indigo : .blue,
-                recordingId: recording.recordingId
+                recordingId: recording.recordingId,
+                recordingName: recording.name
             ) {
                 toggleCloudSyncPreference(for: recording)
             }
@@ -841,6 +904,7 @@ struct RecordingsListView: View {
                                      systemImage: String,
                                      tint: Color,
                                      recordingId: UUID? = nil,
+                                     recordingName: String? = nil,
                                      action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
@@ -850,7 +914,7 @@ struct RecordingsListView: View {
                 .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityLabel(recordingName.map { "\(label) for \($0)" } ?? label)
         .accessibilityIdentifier(identifier(forRecordingIconLabel: label, recordingId: recordingId))
     }
 
@@ -870,6 +934,14 @@ struct RecordingsListView: View {
             let jobStatus = transcriptionStarter.activeTranscriptionJobStatus(for: entry, appCoordinator: appCoordinator)
             let hasActiveJob = jobStatus != nil
             let isProcessing = isCleaning || isQueuedForCleanup || hasActiveJob
+            let processingLabel = transcriptProcessingLabel(
+                isCleaning: isCleaning,
+                isQueuedForCleanup: isQueuedForCleanup,
+                jobStatus: jobStatus
+            )
+            let accessibilityLabel = isProcessing
+                ? "\(processingLabel) for \(recording.name)"
+                : "Generate Transcript for \(recording.name)"
 
             Button(action: {
                 if !isProcessing {
@@ -882,9 +954,7 @@ struct RecordingsListView: View {
                         ProgressView()
                             .scaleEffect(0.8)
                             .tint(.orange)
-                        Text(transcriptProcessingLabel(isCleaning: isCleaning,
-                                                      isQueuedForCleanup: isQueuedForCleanup,
-                                                      jobStatus: jobStatus))
+                        Text(processingLabel)
                     } else {
                         Image(systemName: "text.bubble")
                         Text("Generate Transcript")
@@ -902,7 +972,8 @@ struct RecordingsListView: View {
             }
             .buttonStyle(.plain)
             .disabled(isProcessing)
-            .accessibilityLabel("Generate Transcript")
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityValue(isProcessing ? "In progress" : "Ready")
             .accessibilityIdentifier(BisonNotesAccessibilityID.generateTranscriptPrefix + recordingId.uuidString)
             .id("transcript-\(recordingId)-\(isProcessing)-\(transcriptStateRefresh)")
         }
@@ -1092,6 +1163,11 @@ struct RecordingsListView: View {
                 await MainActor.run {
                     loadRecordings()
                     refreshFileRelationships()
+                    AccessibilitySupport.announce(
+                        recording.isCloudSyncDisabled
+                            ? "\(recording.name) is eligible for iCloud sync."
+                            : "\(recording.name) will stay on this device."
+                    )
                 }
             } catch {
                 await MainActor.run {

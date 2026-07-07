@@ -18,8 +18,8 @@ final class BisonNotesAIUITests: XCTestCase {
 
         app.buttons["bisonnotes.record.view-recordings"].tap()
         XCTAssertTrue(app.staticTexts["UI Test Recording"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Keep on This Device"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Play Audio"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Keep on This Device for UI Test Recording"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Play Audio for UI Test Recording"].waitForExistence(timeout: 5))
 
         app.buttons["Done"].tap()
         app.tabBars.buttons["Setup"].tap()

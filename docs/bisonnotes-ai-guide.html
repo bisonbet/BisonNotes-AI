@@ -10,7 +10,7 @@
 <div class="bn-hero">
   <h1>BisonNotes AI</h1>
   <p>Complete User Guide &mdash; iPhone, iPad, Apple Watch, and Mac</p>
-  <span class="bn-ver">v2.1</span>
+  <span class="bn-ver">v2.2</span>
 </div>
 
 <!-- ===== TOC ===== -->
@@ -37,6 +37,7 @@
     <li><a href="#bn-summaries">Working with Summaries</a></li>
     <li><a href="#bn-playback">Audio Playback</a></li>
     <li><a href="#bn-settings">Setup &amp; Configuration</a></li>
+    <li><a href="#bn-accessibility">Accessibility</a></li>
     <li><a href="#bn-privacy">Privacy &amp; Security</a></li>
     <li><a href="#bn-trouble">Troubleshooting</a></li>
     <li><a href="#bn-advanced">Advanced Features</a></li>
@@ -46,17 +47,18 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- WHAT'S NEW IN V2.1                                             -->
+<!-- WHAT'S NEW IN V2.2                                             -->
 <!-- ============================================================ -->
 <div class="bn-ok">
-  <strong>What&rsquo;s new in v2.1:</strong>
+  <strong>What&rsquo;s new in v2.2:</strong>
   <ul>
-    <li><strong>Mac meeting audio capture.</strong> On Apple Silicon Macs, BisonNotes can optionally record audio playing from other Mac apps and mix it with your microphone recording. Enable <em>Record Meeting Audio</em> in Settings &rarr; Recording and grant macOS Screen &amp; System Audio Recording permission.</li>
-    <li><strong>Stronger iCloud sync controls.</strong> iCloud Sync now shows a HIPAA notice, supports per-recording <em>Keep on This Device</em> exclusions, uses deletion markers, and provides Review iCloud Items for older cloud-only records.</li>
-    <li><strong>More reliable Parakeet transcription.</strong> BisonNotes recognizes cached Parakeet models after updates or settings resets, supports English v2 and multilingual v3 model choices, improves download/prepare status, and avoids tiny final tail chunks on long local transcriptions.</li>
-    <li><strong>Recording reliability cleanup.</strong> Audio session ownership, background interruption handling, crash recovery, and stale temporary audio cleanup were tightened for safer long recordings.</li>
-    <li><strong>Regression validation.</strong> App/watch test plans, seeded UI test launch modes, iCloud and transcription regression tests, and a documented release test regimen were added.</li>
+    <li><strong>Accessibility-ready task flows.</strong> Recording, playback, imports, recordings, transcripts, summaries, setup, settings, and Apple Watch recording now expose clearer VoiceOver labels, values, hints, and non-color status cues.</li>
+    <li><strong>Voice Control-friendly action names.</strong> Repeated actions now include context such as the recording, transcript, or summary title, making commands easier to target by name.</li>
+    <li><strong>Adjustable playback scrubber.</strong> The custom audio scrubber now announces elapsed and remaining time and supports 15-second accessibility seek increments.</li>
+    <li><strong>Reduce Motion support.</strong> Recording indicators on iPhone, iPad, and Apple Watch keep their meaning when Reduce Motion is enabled.</li>
+    <li><strong>Accessibility evidence.</strong> BisonNotes now includes an accessibility matrix, App Store accessibility artifact, public accessibility page, and automated accessibility UI audit coverage for the main app surfaces.</li>
   </ul>
+  <p><strong>Also included from v2.1:</strong> Mac meeting audio capture, stronger iCloud sync controls, more reliable Parakeet transcription, safer recording recovery, and the documented regression testing regimen.</p>
 </div>
 
 <!-- ============================================================ -->
@@ -801,6 +803,60 @@ docker run -d -p 9000:9000 \
 
 <h3>Comedy Mode</h3>
 <p>Comedy Mode adds an optional tone to AI-generated summaries. Turn it on in Settings, pick a style (e.g.&nbsp;<em>snarky</em>), and supported engines will rewrite summaries in that voice. Disable it to return to the standard, neutral summary style.</p>
+
+<!-- ============================================================ -->
+<!-- ACCESSIBILITY                                                 -->
+<!-- ============================================================ -->
+<h2 id="bn-accessibility">Accessibility</h2>
+
+<div class="bn-info"><strong>Accessibility goal:</strong> BisonNotes AI is designed so common recording, transcription, summary, setup, settings, and watch recording tasks can be completed with Apple accessibility features where the platform supports them.</div>
+
+<h3>Supported accessibility features</h3>
+<ul>
+  <li><strong>VoiceOver:</strong> Main controls, rows, playback actions, setup options, settings, transcripts, summaries, and Apple Watch recording controls include labels, values, and hints.</li>
+  <li><strong>Voice Control:</strong> Common buttons and repeated row actions use clear names, often with the recording, transcript, or summary title included.</li>
+  <li><strong>Larger Text:</strong> BisonNotes uses SwiftUI system text styles and wrapping layouts across the main app surfaces.</li>
+  <li><strong>Reduced Motion:</strong> Recording indicators on iPhone, iPad, and Apple Watch avoid relying on pulsing animation when Reduce Motion is enabled.</li>
+  <li><strong>Contrast and non-color state:</strong> Important states such as recording availability, local-only status, transcript/summary availability, and sync state are exposed as text, not color alone.</li>
+  <li><strong>Keyboard access:</strong> Mac Catalyst and iPad keyboard users should be able to move through standard buttons, lists, settings, dialogs, and forms with keyboard navigation and Full Keyboard Access.</li>
+</ul>
+
+<h3>Common accessible workflows</h3>
+<div class="bn-g">
+  <div class="bn-gc">
+    <h4>Recording and playback</h4>
+    <p>Start recording, pause/resume, stop, browse recordings, play/pause audio, skip, scrub in 15-second accessibility increments, rename, export, and manage Keep on This Device state.</p>
+  </div>
+  <div class="bn-gc">
+    <h4>Transcripts and summaries</h4>
+    <p>Open transcript rows, generate summaries, edit transcript text, review summary sections, export reports, update titles, manage tasks/reminders, and edit date or location metadata.</p>
+  </div>
+  <div class="bn-gc">
+    <h4>Setup and settings</h4>
+    <p>Select processing method, open Additional Settings, adjust transcription/AI/iCloud options, review background processing, and export diagnostic logs.</p>
+  </div>
+  <div class="bn-gc">
+    <h4>Apple Watch</h4>
+    <p>The main watch button announces ready, recording, paused, saving, transferring, and unavailable states. Mute, transfer progress, low battery, and error recovery are also labeled.</p>
+  </div>
+</div>
+
+<h3>Platform notes</h3>
+<ul>
+  <li><strong>iPhone and iPad:</strong> Accessibility coverage includes setup, recording, imports, recordings, playback, transcripts, summaries, and settings. Control Center and Action Button recording still require a supported real device.</li>
+  <li><strong>Mac Catalyst:</strong> The shared SwiftUI surfaces use the same accessibility labels and values as iPad. For releases, also test macOS VoiceOver, Full Keyboard Access, keyboard navigation, file import, microphone recording, and window resizing on a real Mac.</li>
+  <li><strong>Apple Watch:</strong> The watch app supports VoiceOver-friendly recording state and reduced motion behavior, but watch flows must be verified on a physical watch.</li>
+</ul>
+
+<h3>Known limitations</h3>
+<ul>
+  <li>Transcripts are not the same as synchronized captions. Do not treat BisonNotes transcripts as caption tracks for all media playback.</li>
+  <li>Audio descriptions are not supported.</li>
+  <li>External provider account pages, system permission prompts, Files pickers, and share sheets are controlled by Apple or the provider and may have separate accessibility behavior.</li>
+  <li>Hardware-dependent flows such as microphone capture, Apple Watch transfer, iCloud sync, Control Center, and Action Button recording require real-device testing.</li>
+</ul>
+
+<div class="bn-ok"><strong>Feedback:</strong> If an accessibility task does not work as expected, include your device model, OS version, BisonNotes AI version, the accessibility feature you were using, and the task that failed when reporting the issue.</div>
 
 <!-- ============================================================ -->
 <!-- PRIVACY & SECURITY                                            -->

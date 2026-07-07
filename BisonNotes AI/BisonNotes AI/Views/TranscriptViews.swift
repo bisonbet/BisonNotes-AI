@@ -130,6 +130,7 @@ struct TranscriptsView: View {
                 Button(action: { showDateFilter = true }) {
                     Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                 }
+                .accessibilityLabel("Filter Transcripts")
             }
         }
         .sheet(isPresented: $showDateFilter) {
@@ -328,6 +329,7 @@ struct TranscriptsView: View {
             }
         }
         .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptList)
         #else
         // iOS / iPadOS: preview cards with "More" navigation to the full list page.
         let recentRecordings = Array(filtered.prefix(3))
@@ -389,6 +391,7 @@ struct TranscriptsView: View {
             loadRecordings()
         }
         .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptList)
         #endif
     }
 
@@ -444,6 +447,7 @@ struct TranscriptsView: View {
                 Button(action: { showDateFilter = true }) {
                     Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                 }
+                .accessibilityLabel("Filter Audio Transcripts")
             }
         }
     }
@@ -507,6 +511,7 @@ struct TranscriptsView: View {
                 Button(action: { showDateFilter = true }) {
                     Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                 }
+                .accessibilityLabel("Filter Imported Transcripts")
             }
         }
     }
@@ -609,10 +614,17 @@ struct TranscriptsView: View {
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 15))
+        .accessibilityCard(
+            label: "Show \(remainingCount) more transcripts",
+            hint: "Opens the full transcript list."
+        )
     }
 
     private func recordingRowView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let recordingId = recordingData.recording.id?.uuidString
+            ?? recordingData.recording.objectID.uriRepresentation().absoluteString
+
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
                 recordingInfoView(recordingData)
                 Spacer()
@@ -634,6 +646,7 @@ struct TranscriptsView: View {
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
+        .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptRowPrefix + recordingId)
     }
 
     private func importedTranscriptRowView(
@@ -648,6 +661,20 @@ struct TranscriptsView: View {
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityCard(
+                label: AccessibilitySupport.transcriptRowLabel(
+                    name: recordingData.recording.recordingName ?? "Untitled Import",
+                    source: "Imported"
+                ),
+                value: AccessibilitySupport.transcriptRowValue(
+                    date: UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()),
+                    wordCount: recordingData.transcript.map { transcriptWordCount($0) },
+                    hasSummary: recordingData.recording.summary != nil
+                        || recordingData.recording.summaryId != nil
+                        || recordingData.recording.summaryStatus == ProcessingStatus.completed.rawValue
+                ),
+                hint: "Opens this imported transcript."
+            )
 
             if let onDelete {
                 Divider()
@@ -662,13 +689,22 @@ struct TranscriptsView: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Delete imported transcript")
+                .accessibilityLabel(
+                    "Delete imported transcript \(recordingData.recording.recordingName ?? "Untitled Import")"
+                )
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
+        .accessibilityIdentifier(
+            BisonNotesAccessibilityID.transcriptRowPrefix
+                + (
+                    recordingData.recording.id?.uuidString
+                        ?? recordingData.recording.objectID.uriRepresentation().absoluteString
+                )
+        )
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if let onDelete {
                 Button(role: .destructive, action: onDelete) {
@@ -732,6 +768,19 @@ struct TranscriptsView: View {
                 locationButtonView(locationData, recordingURL: recordingURL)
             }
         }
+        .accessibilityCard(
+            label: AccessibilitySupport.transcriptRowLabel(
+                name: recordingData.recording.recordingName ?? "Unknown Recording",
+                source: "Audio"
+            ),
+            value: AccessibilitySupport.transcriptRowValue(
+                date: UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()),
+                wordCount: recordingData.transcript.map { transcriptWordCount($0) },
+                hasSummary: recordingData.recording.summary != nil
+                    || recordingData.recording.summaryId != nil
+                    || recordingData.recording.summaryStatus == ProcessingStatus.completed.rawValue
+            )
+        )
     }
 
     private func locationButtonView(_ locationData: LocationData, recordingURL: URL) -> some View {
@@ -791,6 +840,12 @@ struct TranscriptsView: View {
         .disabled(isProcessing && !hasTranscript)
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .accessibilityLabel(
+            hasTranscript
+                ? "Edit Transcript for \(recordingData.recording.recordingName ?? "Unknown Recording")"
+                : "Generate Transcript for \(recordingData.recording.recordingName ?? "Unknown Recording")"
+        )
+        .accessibilityValue(isProcessing && !hasTranscript ? "In progress" : "Ready")
         .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(hasTranscript)-\(hasActiveJob)-\(isCleaning)-\(isQueuedForCleanup)-\(refreshTrigger)")
     }
 
@@ -809,6 +864,12 @@ struct TranscriptsView: View {
             return "Transcribing..."
         default:
             return "Processing..."
+        }
+    }
+
+    private func transcriptWordCount(_ transcript: TranscriptData) -> Int {
+        transcript.segments.reduce(0) { partialResult, segment in
+            partialResult + segment.text.split(whereSeparator: \.isWhitespace).count
         }
     }
 
@@ -852,6 +913,8 @@ struct TranscriptsView: View {
             }
             .buttonStyle(.plain)
             .disabled(isGenerating)
+            .accessibilityLabel("Generate Summary for \(recording.recordingName ?? "Unknown Recording")")
+            .accessibilityValue(isGenerating ? "In progress" : "Ready")
         }
     }
 
@@ -883,6 +946,7 @@ struct TranscriptsView: View {
         Image(systemName: hasTranscript ? "checkmark.circle.fill" : "clock")
             .font(.title3)
             .foregroundColor(hasTranscript ? .green : .secondary)
+            .accessibilityLabel(hasTranscript ? "Transcript available" : "Transcript not generated")
     }
 
     private func generateSummary(for recording: RecordingEntry) {
@@ -1380,6 +1444,10 @@ struct EditableTranscriptView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Edit Speakers")
+                            .accessibilityValue(
+                                AccessibilitySupport.itemCount(uniqueSpeakers.count, singular: "speaker")
+                            )
                         }
                     }
 
@@ -1417,6 +1485,7 @@ struct EditableTranscriptView: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Edit Transcript")
             .navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptDetail)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { dismiss() }
@@ -1552,9 +1621,15 @@ struct EditableTranscriptView: View {
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .disabled(isProcessing)
-            }
+            .buttonStyle(.plain)
+            .disabled(isProcessing)
+            .accessibilityLabel(
+                hasSummary
+                    ? "View Summary for \(savedRecordingName)"
+                    : "Generate Summary for \(savedRecordingName)"
+            )
+            .accessibilityValue(isProcessing ? "In progress" : "Ready")
+        }
             .id("summary-section-\(recordingId)-\(hasSummary)-\(isProcessing)-\(summaryStateRefresh)")
         }
     }
@@ -1955,6 +2030,11 @@ struct TranscriptSegmentView: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(Color(.separator).opacity(0.35), lineWidth: 1)
             )
+            .accessibilityLabel(
+                hasSpeakerLabel
+                    ? "\(displaySpeaker), starts at \(formatTime(segment.startTime))"
+                    : "Transcript segment starting at \(formatTime(segment.startTime))"
+            )
         }
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -2157,6 +2237,7 @@ struct TranscriptDetailView: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Transcript")
             .navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptDetail)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }

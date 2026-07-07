@@ -34,6 +34,17 @@ struct AudioPlayerView: View {
     @State private var selectedRecordingForTranscript: RecordingEntry?
     @State private var transcriptStateRefresh = false
 
+    private var displayTitle: String {
+        currentSavedTitle.isEmpty ? recording.name : currentSavedTitle
+    }
+
+    private var playbackAccessibilityValue: String {
+        AccessibilitySupport.playbackValue(
+            currentTime: recorderVM.playingTime,
+            totalDuration: duration
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -53,9 +64,13 @@ struct AudioPlayerView: View {
                         .font(.headline)
                         .foregroundColor(.accentColor)
                         .frame(width: 38, height: 38)
-                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(
+                            Color(.secondarySystemGroupedBackground),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        )
                 }
-                .accessibilityLabel("Export Audio")
+                .accessibilityLabel("Export Audio for \(displayTitle)")
+                .accessibilityHint("Opens sharing options for this audio file.")
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
@@ -123,6 +138,9 @@ struct AudioPlayerView: View {
                             }
                             .buttonStyle(.plain)
                             .foregroundColor(.accentColor)
+                            .accessibilityLabel("Skip Backward 15 Seconds")
+                            .accessibilityValue(playbackAccessibilityValue)
+                            .accessibilityIdentifier(BisonNotesAccessibilityID.audioSkipBackwardButton)
 
                             Button(action: togglePlayback) {
                                 Image(systemName: recorderVM.isPlaying ? "pause.circle.fill" : "play.circle.fill")
@@ -131,6 +149,9 @@ struct AudioPlayerView: View {
                             }
                             .buttonStyle(.plain)
                             .disabled(audioLoadError != nil)
+                            .accessibilityLabel(recorderVM.isPlaying ? "Pause Audio" : "Play Audio")
+                            .accessibilityValue(playbackAccessibilityValue)
+                            .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayPauseButton)
 
                             Button(action: skipForward) {
                                 VStack(spacing: 4) {
@@ -143,10 +164,14 @@ struct AudioPlayerView: View {
                             }
                             .buttonStyle(.plain)
                             .foregroundColor(.accentColor)
+                            .accessibilityLabel("Skip Forward 15 Seconds")
+                            .accessibilityValue(playbackAccessibilityValue)
+                            .accessibilityIdentifier(BisonNotesAccessibilityID.audioSkipForwardButton)
                         }
                     }
                     .padding(18)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayerPlaybackSection)
 
                     Button("Close") {
                         if recorderVM.isPlaying {
@@ -155,6 +180,7 @@ struct AudioPlayerView: View {
                         dismiss()
                     }
                     .buttonStyle(.bordered)
+                    .accessibilityLabel("Close Audio Player")
                     .frame(maxWidth: .infinity)
                     .padding(.top, 4)
                 }
@@ -285,10 +311,12 @@ struct AudioPlayerView: View {
             ))
             .labelsHidden()
             .accessibilityLabel("Keep on This Device")
+            .accessibilityValue(AccessibilitySupport.statusValue(isOn: isCloudSyncDisabled))
             .accessibilityHint("Excludes this recording, transcript, and summary from BisonNotes iCloud sync and backup.")
             .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayerKeepOnThisDevice)
             .disabled(isUpdatingCloudSyncPreference || recording.recordingId == nil)
         }
+        .accessibilityElement(children: .contain)
     }
 
     /// "Generate Transcript" action shown in the player. Disappears once a transcript exists —
@@ -332,6 +360,13 @@ struct AudioPlayerView: View {
             }
             .buttonStyle(.plain)
             .disabled(isProcessing || audioLoadError != nil)
+            .accessibilityLabel(
+                isProcessing
+                    ? "Transcribing \(currentSavedTitle.isEmpty ? recording.name : currentSavedTitle)"
+                    : "Generate Transcript for \(currentSavedTitle.isEmpty ? recording.name : currentSavedTitle)"
+            )
+            .accessibilityValue(isProcessing ? "In progress" : "Ready")
+            .accessibilityHint("Opens options before generating a transcript from this audio.")
             .id("transcript-action-\(recordingId)-\(isProcessing)-\(transcriptStateRefresh)")
         }
     }
@@ -435,6 +470,7 @@ struct AudioPlayerView: View {
                         object: nil,
                         userInfo: ["recordingId": recordingId, "newName": trimmedName]
                     )
+                    AccessibilitySupport.announce("Recording title updated to \(trimmedName)")
                     AppLog.shared.recording("Updated recording title from AudioPlayerView to: \(trimmedName)")
                 }
             } catch {
@@ -473,6 +509,11 @@ struct AudioPlayerView: View {
                 await MainActor.run {
                     isCloudSyncDisabled = disabled
                     isUpdatingCloudSyncPreference = false
+                    AccessibilitySupport.announce(
+                        disabled
+                            ? "This recording will stay on this device."
+                            : "This recording is eligible for iCloud sync."
+                    )
                 }
             } catch {
                 await MainActor.run {
@@ -508,6 +549,9 @@ struct RecordingTitleEditorView: View {
                     .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .disabled(isSaving)
                     .onSubmit { onSave() }
+                    .accessibilityLabel("Recording Title")
+                    .accessibilityValue(title)
+                    .accessibilityHint("Edits the display name for this recording.")
 
                 Button(action: onSave) {
                     if isSaving {
@@ -520,6 +564,8 @@ struct RecordingTitleEditorView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
+                .accessibilityLabel(isSaving ? "Saving Recording Title" : "Save Recording Title")
+                .accessibilityHint("Saves the edited recording title.")
                 .disabled(
                     isSaving ||
                     title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||

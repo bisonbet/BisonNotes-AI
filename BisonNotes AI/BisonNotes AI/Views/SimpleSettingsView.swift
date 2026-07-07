@@ -116,6 +116,7 @@ struct SimpleSettingsView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color(.systemGroupedBackground))
+            .accessibilityIdentifier(BisonNotesAccessibilityID.setupScroll)
             .navigationBarHidden(true)
         }
         .onAppear {
@@ -205,6 +206,7 @@ struct SimpleSettingsView: View {
                     RoundedRectangle(cornerRadius: 14)
                         .fill(Color.accentColor.gradient)
                 )
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("BisonNotes AI")
@@ -227,6 +229,7 @@ struct SimpleSettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 38, height: 38)
                     .background(Color(.secondarySystemGroupedBackground), in: Circle())
+                    .accessibilityHidden(true)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Additional Settings")
@@ -267,6 +270,7 @@ struct SimpleSettingsView: View {
                             selectedOption.tintColor.opacity(0.14),
                             in: RoundedRectangle(cornerRadius: 11)
                         )
+                        .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(selectedOption.displayName)
@@ -284,6 +288,7 @@ struct SimpleSettingsView: View {
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
+                        .accessibilityHidden(true)
                 }
                 .padding(12)
                 .background(
@@ -294,6 +299,9 @@ struct SimpleSettingsView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Processing Method: \(selectedOption.displayName)")
+            .accessibilityValue(selectedOption.description)
+            .accessibilityHint("Opens processing method choices.")
+            .accessibilityIdentifier(BisonNotesAccessibilityID.setupProcessingMethod)
 
             if !deviceSupported {
                 InlineNotice(
@@ -422,6 +430,9 @@ struct SimpleSettingsView: View {
                 .foregroundColor(.white)
             }
             .disabled(isSaving)
+            .accessibilityLabel(isSaving ? "Saving Configuration" : "Save and Configure")
+            .accessibilityValue(selectedOption.displayName)
+            .accessibilityIdentifier(BisonNotesAccessibilityID.setupSaveButton)
 
             // For Mistral, the save button launches the onboarding wizard instead
             .onChange(of: selectedOption) { _, _ in
@@ -433,6 +444,7 @@ struct SimpleSettingsView: View {
                 HStack {
                     Image(systemName: saveSuccessful ? "checkmark.circle.fill" : "xmark.circle.fill")
                         .foregroundColor(saveSuccessful ? .green : .red)
+                        .accessibilityHidden(true)
 
                     Text(saveMessage)
                         .font(.caption)
@@ -696,6 +708,7 @@ private struct SectionHeader: View {
                 .frame(width: 36, height: 36)
                 .background(tint.opacity(0.14))
                 .clipShape(RoundedRectangle(cornerRadius: 11))
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
@@ -751,6 +764,7 @@ private struct InlineNotice<Content: View>: View {
             Image(systemName: systemImage)
                 .foregroundColor(tint)
                 .padding(.top, 1)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
@@ -775,6 +789,7 @@ struct FeatureBullet: View {
                 .font(.caption)
                 .foregroundColor(.blue)
                 .padding(.top, 2)
+                .accessibilityHidden(true)
 
             Text(text)
                 .font(.caption)
@@ -794,6 +809,7 @@ struct LimitationBullet: View {
                 .font(.caption)
                 .foregroundColor(.orange)
                 .padding(.top, 2)
+                .accessibilityHidden(true)
 
             Text(text)
                 .font(.caption)
