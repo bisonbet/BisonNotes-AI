@@ -28,6 +28,7 @@
         <li><a href="#bn-mac">Mac Catalyst</a></li>
         <li><a href="#bn-pause">Pause &amp; Resume</a></li>
         <li><a href="#bn-action-btn">Action Button</a></li>
+        <li><a href="#bn-import-link">Import From Link</a></li>
         <li><a href="#bn-share-ext">Share Extension</a></li>
         <li><a href="#bn-combine">Combining Recordings</a></li>
       </ul>
@@ -53,6 +54,7 @@
   <strong>What&rsquo;s new in v2.2:</strong>
   <ul>
     <li><strong>Accessibility-ready task flows.</strong> Recording, playback, imports, recordings, transcripts, summaries, setup, settings, and Apple Watch recording now expose clearer VoiceOver labels, values, hints, and non-color status cues.</li>
+    <li><strong>Import from web links.</strong> Direct audio, video, and transcript URLs can be imported from the Recordings screen or Mac File menu. YouTube links are parsed for public caption import, with a guided pasted-transcript recovery flow if YouTube blocks automated caption downloads.</li>
     <li><strong>Voice Control-friendly action names.</strong> Repeated actions now include context such as the recording, transcript, or summary title, making commands easier to target by name.</li>
     <li><strong>Adjustable playback scrubber.</strong> The custom audio scrubber now announces elapsed and remaining time and supports 15-second accessibility seek increments.</li>
     <li><strong>Reduce Motion support.</strong> Recording indicators on iPhone, iPad, and Apple Watch keep their meaning when Reduce Motion is enabled.</li>
@@ -224,6 +226,22 @@
   <li>Files are automatically added to your recordings library.</li>
 </ol>
 
+<h3 id="bn-import-link">Import From Link</h3>
+<div class="bn-info"><strong>Use web addresses:</strong> BisonNotes can import direct links to audio, video, and transcript files. On Mac, use File &rarr; Import From Link; on iPhone and iPad, use Import From Link on the Recordings screen.</div>
+<ol class="bn-sl">
+  <li><strong>Paste a URL</strong> &mdash; Enter an HTTPS link to an audio/video file, transcript document, or YouTube video.</li>
+  <li><strong>Choose import type</strong> &mdash; Leave Automatic selected, or choose Audio or Video / Transcript when you know what the link contains.</li>
+  <li><strong>Review the result</strong> &mdash; Audio and video links become recordings; transcript links become imported transcripts that can be summarized immediately.</li>
+</ol>
+<p><strong>Supported web link types:</strong></p>
+<ul>
+  <li><strong>Audio:</strong> M4A, MP3, WAV, CAF, AIFF, AIF</li>
+  <li><strong>Video:</strong> MP4, MOV, M4V, AVI, MKV. BisonNotes extracts the audio to M4A.</li>
+  <li><strong>Transcripts/documents:</strong> TXT, MD, VTT, SRT, PDF, DOC, DOCX</li>
+</ul>
+<div class="bn-warn"><strong>YouTube note:</strong> YouTube audio/video is not downloaded directly. BisonNotes tries to import public captions as a transcript. If YouTube blocks the caption request, BisonNotes shows directions, an Open YouTube Video button, and a pasted-transcript box so you can copy the transcript from YouTube and import it for summary generation.</div>
+<div class="bn-info"><strong>Security:</strong> Public HTTP links are blocked. Use HTTPS, localhost, or private-network addresses.</div>
+
 <h3>Archive Audio to iCloud Drive</h3>
 <ol class="bn-sl">
   <li>Select one or more recordings, or choose the archive option for recordings older than a selected age.</li>
@@ -235,10 +253,10 @@
 
 <h3 id="bn-share-ext">Import via Share Extension</h3>
 
-<div class="bn-info"><strong>Share from other apps:</strong> Import audio files directly from Voice Memos, Files, and other apps using the iOS share sheet.</div>
+<div class="bn-info"><strong>Share from other apps:</strong> Import audio and transcript files directly from Voice Memos, Files, and other apps using the iOS share sheet.</div>
 
 <ol class="bn-sl">
-  <li><strong>Open the source app</strong> — Voice Memos, Files, or any app with the audio file.</li>
+  <li><strong>Open the source app</strong> — Voice Memos, Files, or any app with the audio or transcript file.</li>
   <li><strong>Tap Share</strong> — Select "BisonNotes AI" from the share sheet.</li>
   <li><strong>Automatic Import</strong> — The file is saved and BisonNotes AI opens to import it.</li>
   <li><strong>Background Import</strong> — If BisonNotes AI is already running, it detects the new file immediately.</li>
@@ -247,7 +265,7 @@
 <p><strong>Supported file types:</strong></p>
 <ul>
   <li><strong>Audio:</strong> M4A, MP3, WAV, CAF, AIFF, AIF</li>
-  <li><strong>Documents:</strong> TXT, MD, PDF, DOC, DOCX</li>
+  <li><strong>Documents:</strong> TXT, MD, VTT, SRT, PDF, DOC, DOCX</li>
 </ul>
 
 <h3 id="bn-combine">Combining Recordings</h3>
@@ -981,7 +999,8 @@ docker run -d -p 9000:9000 \
   <summary>File Management</summary>
   <div class="dd">
     <ul>
-      <li><strong>Import/Export</strong> &mdash; M4A, MP3, WAV, CAF, AIFF, AIF</li>
+      <li><strong>Import/Export</strong> &mdash; M4A, MP3, WAV, CAF, AIFF, AIF, plus transcript documents such as TXT, MD, VTT, SRT, PDF, DOC, and DOCX</li>
+      <li><strong>Import From Link</strong> (v2.2) &mdash; Import direct HTTPS links for audio/video files and transcript documents; YouTube links can import public captions or fall back to pasted transcript text when captions are blocked</li>
       <li><strong>Audio Export</strong> (v1.8) &mdash; Share any recording as an audio file via the iOS share sheet</li>
       <li><strong>Clean Audio Export</strong> (v1.10) &mdash; Exports use a clean, user-friendly filename derived from the recording title</li>
       <li><strong>Audio Archive</strong> &mdash; Offload selected or older audio files to iCloud Drive, keep an in-app restore pointer, and remove the archived cloud copy after restore</li>

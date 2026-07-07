@@ -6,7 +6,8 @@ AVAILABLE ON THE APP STORE: https://apps.apple.com/us/app/bisonnotes-ai-voice-no
 
 Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Accessibility Matrix](docs/accessibility-matrix.md) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Regression Testing Regimen](docs/testing-regimen.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
 
-## v2.2 Accessibility Highlights
+## v2.2 Highlights
+- Import from web links can now bring in direct audio/video files, transcript documents, and public YouTube captions, with a guided pasted-transcript recovery flow when YouTube blocks automated caption downloads.
 - Common iPhone, iPad, Mac Catalyst, and Apple Watch tasks now have explicit VoiceOver labels, values, hints, and non-color state cues across setup, recording, imports, recordings, playback, transcripts, summaries, settings, and watch recording.
 - The custom audio scrubber remains visually unchanged but is exposed as an adjustable accessibility control with current/remaining time and 15-second seek increments.
 - Recording, transcript, and summary rows expose contextual status such as duration, file size, archive/local audio, iCloud/local-only state, transcript availability, summary availability, task/reminder counts, and location availability.
@@ -136,10 +137,11 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - **Recording Title Editing**: Edit recording titles directly from the audio player or transcript editor; AI-generated alternative titles are still available from the summary view.
 - **Audio Export**: Share any recording as an audio file via the iOS share sheet
 - **Audio Archive to iCloud Drive**: Offload selected recordings, or recordings older than a chosen age, while keeping transcripts, summaries, and a saved restore pointer in the app. Third-party file providers are disabled for archive targets for now.
+- **Import From Link**: Import direct web URLs for audio/video files and transcript documents. YouTube links are parsed for public caption import; if YouTube blocks the caption request, BisonNotes shows a recovery workflow to open the video, copy the transcript, and import pasted transcript text.
 - **Video Import**: Import video files; audio is automatically extracted to M4A
 - **Audio Cleanup**: Optional pre-transcription DSP processing — high-pass filter, noise gate, dynamic normalization, and peak limiting
 - **Live Transcription**: On-device live speech-to-text via SFSpeechRecognizer during recording; transcript auto-saved on stop
-- **Share Extension**: Import audio files directly from Voice Memos, Files, and other apps via the iOS share sheet. Token-based authorization prevents the main app from scanning the shared container without an explicit handoff.
+- **Share Extension**: Import audio and transcript files directly from Voice Memos, Files, and other apps via the iOS share sheet. Token-based authorization prevents the main app from scanning the shared container without an explicit handoff.
 - **Combine Recordings**: Merge two separate recordings into a single continuous audio file
 - **PDF Export**: Professional PDF reports with three-pane header (metadata, local map, regional map), pagination, and dedicated tasks/reminders sections
 - **Background Processing**: Long recordings and complex processing handled automatically in the background with intelligent stale job detection and automatic recovery
@@ -150,6 +152,7 @@ All external dependencies are resolved automatically via Swift Package Manager w
 ## Key Modules
 - Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel` (+ `+CatalystEngine`, `+Interruptions`, `+Background`, `+CallIntelligence`, `+Warnings`), `CatalystSystemAudioCapture`, `RecordingCombiner`, `TranscriptionStarter`
 - Transcription: `FluidAudioManager` (Parakeet), `OpenAITranscribeService`, `MistralTranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`, `LiveTranscriptionService`
+- Web Import: `WebImportManager`, `WebImportDownloader`, `WebImportURLClassifier`, `YouTubeImportService`, `YouTubePlayerResponseParser`, `TranscriptCaptionTextCleaner`
 - Summarization: `OpenAISummarizationService`, `MistralAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `OnDeviceLLMService`, `MLXSwiftEngine`, `AppleNativeEngine`
 - Security: `KeychainSecretStore`, `AWSCredentialsManager`, `AWSClientCredentialResolver`, `EndpointSecurityPolicy`, `AppFileProtection`
 - Export: `PDFExportService`, `SummaryExportFormatter`, `RecordingArchiveService`
@@ -377,17 +380,28 @@ Date range filtering helps you find content from specific time periods:
 
 ## Share Extension
 
-Import audio files from other apps directly into BisonNotes AI using the iOS share sheet:
+Import audio and transcript files from other apps directly into BisonNotes AI using the iOS share sheet:
 
 - **Supported audio formats**: M4A, MP3, WAV, CAF, AIFF, AIF
-- **Supported document formats**: TXT, MD, PDF, DOC, DOCX
+- **Supported document formats**: TXT, MD, VTT, SRT, PDF, DOC, DOCX
 - **How it works**:
-  1. Open Voice Memos, Files, or any app with audio files
+  1. Open Voice Memos, Files, or any app with audio or transcript files
   2. Tap the share button and select "BisonNotes AI"
   3. The file is saved to the shared container
   4. BisonNotes AI opens automatically and imports the file
 - **Background import**: If the main app is already running, a Darwin notification wakes it to scan for new files immediately
 - **File naming**: Imported files are prefixed with a UUID to prevent name collisions
+
+## Import From Link
+
+Import audio, video, and transcript content from web addresses without downloading the file manually first:
+
+- **Where to start**: Tap **Import From Link** on the Recordings screen, or use **File > Import From Link...** on Mac.
+- **Direct audio/video URLs**: Supported media links include M4A, MP3, WAV, CAF, AIFF, AIF, MP4, MOV, M4V, AVI, and MKV. Video imports extract the audio to M4A for transcription.
+- **Direct transcript URLs**: Supported transcript/document links include TXT, MD, VTT, SRT, PDF, DOC, and DOCX. Imported transcripts can be summarized without an audio file.
+- **YouTube links**: YouTube share links are recognized and the app attempts to import public captions as a transcript. YouTube audio/video is not downloaded directly.
+- **YouTube recovery flow**: If YouTube blocks the caption request, the sheet shows directions, an **Open YouTube Video** button, and a pasted-transcript import box. Copy the transcript from YouTube, paste it into BisonNotes, and import it for summary generation.
+- **Endpoint safety**: Public HTTP links are blocked. Use HTTPS, localhost, or private-network addresses.
 
 ## Combine Recordings
 
