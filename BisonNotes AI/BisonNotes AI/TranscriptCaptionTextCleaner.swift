@@ -39,15 +39,16 @@ struct TranscriptCaptionTextCleaner {
     }
 
     private static func plainTextFromCueLines(_ lines: [String]) -> String {
+        let cleanedLines = lines.map(cleanCaptionLine)
         var output: [String] = []
         var previousLine = ""
 
-        for line in lines.map(cleanCaptionLine) {
+        for (index, line) in cleanedLines.enumerated() {
             guard !line.isEmpty,
                   !isCaptionMetadataLine(line),
                   !line.contains("-->"),
                   !isTimestampOnlyLine(line),
-                  Int(line) == nil else {
+                  !isCueIdentifier(line, at: index, in: cleanedLines) else {
                 continue
             }
 
@@ -65,14 +66,26 @@ struct TranscriptCaptionTextCleaner {
 
     private static func cleanCaptionLine(_ line: String) -> String {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        let withoutTags = trimmed.replacingOccurrences(
-            of: #"<[^>]+>"#,
+        let withoutCaptionTags = trimmed.replacingOccurrences(
+            of: #"</?(?:c(?:\.[\w-]+)*|v|i|b|u|ruby|rt|lang)(?:\s+[^>]*)?>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        let withoutInlineTimestamps = withoutCaptionTags.replacingOccurrences(
+            of: #"<(?:\d{1,2}:)?\d{2}:\d{2}(?:[.,]\d{1,3})?>"#,
             with: "",
             options: .regularExpression
         )
-        return decodeHTMLEntities(in: withoutTags)
+        return decodeHTMLEntities(in: withoutInlineTimestamps)
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isCueIdentifier(_ line: String, at index: Int, in lines: [String]) -> Bool {
+        guard Int(line) != nil else { return false }
+
+        let nextMeaningfulLine = lines.dropFirst(index + 1).first { !$0.isEmpty }
+        return nextMeaningfulLine?.contains("-->") == true
     }
 
     private static func isCaptionMetadataLine(_ line: String) -> Bool {

@@ -655,92 +655,66 @@ struct RecordingsListView: View {
         return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
                 if isSelectionMode {
+                    recordingSelectionButton(for: recording)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
                     Button(action: {
-                        toggleSelection(for: recording)
-                    }) {
-                        Image(systemName: selectedRecordings.contains(recording.url) ? "checkmark.circle.fill" : "circle")
-                            .font(.title2)
-                            .foregroundColor(selectedRecordings.contains(recording.url) ? .accentColor : .secondary)
-                            .frame(width: 32, height: 32)
-                    }
+                        openOrSelectRecording(recording)
+                    }, label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(recording.name)
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(2)
+
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 8) {
+                                    recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
+                                    recordingMetaLabel(systemImage: "timer", text: recording.durationString)
+                                    recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
+                                }
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
+                                    recordingMetaLabel(systemImage: "timer", text: recording.durationString)
+                                    recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
+                                }
+                            }
+
+                            recordingStatusView(for: recording)
+
+                            if recording.isCloudSyncDisabled {
+                                Label("Keep on This Device", systemImage: "iphone")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundColor(.indigo)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.indigo.opacity(0.12), in: Capsule())
+                            }
+
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    })
                     .buttonStyle(.plain)
-                    .accessibilityLabel(
-                        selectedRecordings.contains(recording.url)
-                            ? "Deselect \(recording.name)"
-                            : "Select \(recording.name)"
+                    .accessibilityCard(
+                        label: AccessibilitySupport.recordingRowLabel(name: recording.name),
+                        value: AccessibilitySupport.recordingRowValue(recordingRowContext(
+                            recording: recording,
+                            hasTranscript: hasTranscript,
+                            hasSummary: hasSummary
+                        )),
+                        hint: isSelectionMode
+                            ? "Double tap to select or deselect this recording."
+                            : "Double tap to open the audio player."
                     )
-                    .accessibilityValue(selectedRecordings.contains(recording.url) ? "Selected" : "Not selected")
-                }
 
-                Button(action: {
-                    if isSelectionMode {
-                        toggleSelection(for: recording)
-                    } else if recording.isArchived && !recording.hasLocalAudio {
-                        selectedRecordingForPlayer = nil
-                        archiveInfoRecording = recording
-                    } else {
-                        selectedRecordingForPlayer = recording
+                    if let locationData = recording.locationData {
+                        recordingLocationButton(locationData, recordingName: recording.name)
                     }
-                }) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(recording.name)
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(2)
-
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 8) {
-                                recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
-                                recordingMetaLabel(systemImage: "timer", text: recording.durationString)
-                                recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
-                            }
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
-                                recordingMetaLabel(systemImage: "timer", text: recording.durationString)
-                                recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
-                            }
-                        }
-
-                        recordingStatusView(for: recording)
-
-                        if recording.isCloudSyncDisabled {
-                            Label("Keep on This Device", systemImage: "iphone")
-                                .font(.caption.weight(.medium))
-                                .foregroundColor(.indigo)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.indigo.opacity(0.12), in: Capsule())
-                        }
-
-                        if let locationData = recording.locationData {
-                            Button(action: {
-                                showLocationDetails(locationData)
-                            }) {
-                                Label("View Location", systemImage: "location.fill")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundColor(.accentColor)
-                            .accessibilityLabel("View Location for \(recording.name)")
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.plain)
-                .accessibilityCard(
-                    label: AccessibilitySupport.recordingRowLabel(name: recording.name),
-                    value: AccessibilitySupport.recordingRowValue(recordingRowContext(
-                        recording: recording,
-                        hasTranscript: hasTranscript,
-                        hasSummary: hasSummary
-                    )),
-                    hint: isSelectionMode
-                        ? "Double tap to select or deselect this recording."
-                        : "Double tap to open the audio player."
-                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Divider()
@@ -763,6 +737,51 @@ struct RecordingsListView: View {
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityIdentifier(BisonNotesAccessibilityID.recordingRowPrefix + (recording.recordingId?.uuidString ?? recording.url.lastPathComponent))
+    }
+
+    private func recordingSelectionButton(for recording: AudioRecordingFile) -> some View {
+        Button(action: {
+            toggleSelection(for: recording)
+        }, label: {
+            Image(systemName: selectedRecordings.contains(recording.url) ? "checkmark.circle.fill" : "circle")
+                .font(.title2)
+                .foregroundColor(selectedRecordings.contains(recording.url) ? .accentColor : .secondary)
+                .frame(width: 32, height: 32)
+        })
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            selectedRecordings.contains(recording.url)
+                ? "Deselect \(recording.name)"
+                : "Select \(recording.name)"
+        )
+        .accessibilityValue(selectedRecordings.contains(recording.url) ? "Selected" : "Not selected")
+    }
+
+    private func recordingLocationButton(
+        _ locationData: LocationData,
+        recordingName: String
+    ) -> some View {
+        Button(action: {
+            showLocationDetails(locationData)
+        }, label: {
+            Label("View Location", systemImage: "location.fill")
+                .font(.caption)
+                .fontWeight(.medium)
+        })
+        .buttonStyle(.plain)
+        .foregroundColor(.accentColor)
+        .accessibilityLabel("View Location for \(recordingName)")
+    }
+
+    private func openOrSelectRecording(_ recording: AudioRecordingFile) {
+        if isSelectionMode {
+            toggleSelection(for: recording)
+        } else if recording.isArchived && !recording.hasLocalAudio {
+            selectedRecordingForPlayer = nil
+            archiveInfoRecording = recording
+        } else {
+            selectedRecordingForPlayer = recording
+        }
     }
 
     private func recordingMetaLabel(systemImage: String, text: String) -> some View {

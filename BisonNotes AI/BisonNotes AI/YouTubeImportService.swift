@@ -13,10 +13,33 @@ struct YouTubeImportService {
             throw WebImportError.invalidYouTubeURL
         }
 
-        let watchMetadata = try? await fetchWatchPageMetadata(videoID: videoID)
-        let tracks = watchMetadata?.captionTracks.isEmpty == false
-            ? watchMetadata?.captionTracks ?? []
-            : try await fetchCaptionTracks(videoID: videoID)
+        let watchMetadata: YouTubeWatchPageMetadata?
+        let watchError: Error?
+        do {
+            watchMetadata = try await fetchWatchPageMetadata(videoID: videoID)
+            watchError = nil
+        } catch {
+            watchMetadata = nil
+            watchError = error
+        }
+        let tracks: [YouTubeCaptionTrack]
+        if let watchMetadata, !watchMetadata.captionTracks.isEmpty {
+            tracks = watchMetadata.captionTracks
+        } else {
+            do {
+                tracks = try await fetchCaptionTracks(videoID: videoID)
+            } catch {
+                throw Self.preferredCaptionDiscoveryError(
+                    watchError: watchError,
+                    fallbackError: error
+                )
+            }
+        }
+
+        if tracks.isEmpty, let watchError,
+           Self.isYouTubeRateLimit(watchError) {
+            throw WebImportError.youtubeRateLimited
+        }
         guard let track = preferredCaptionTrack(from: tracks) else {
             throw WebImportError.noYouTubeCaptions
         }
@@ -34,6 +57,19 @@ struct YouTubeImportService {
             title = await fetchTitle(for: url) ?? "YouTube \(videoID)"
         }
         return TranscriptTextImportItem(text: transcript, name: title)
+    }
+
+    static func preferredCaptionDiscoveryError(watchError: Error?, fallbackError: Error) -> Error {
+        if let watchError, isYouTubeRateLimit(watchError) {
+            return WebImportError.youtubeRateLimited
+        }
+        return fallbackError
+    }
+
+    private static func isYouTubeRateLimit(_ error: Error) -> Bool {
+        guard let webImportError = error as? WebImportError else { return false }
+        if case .youtubeRateLimited = webImportError { return true }
+        return false
     }
 
     private func fetchWatchPageMetadata(videoID: String) async throws -> YouTubeWatchPageMetadata {

@@ -84,7 +84,7 @@ public class OnDeviceLLMService: ObservableObject {
         let contextSize = Int32(min(config.modelInfo.contextWindow, deviceContextSize))
         let maxOutputTokens: Int32 = 2700
 
-        llm = OnDeviceLLM(
+        llm = try OnDeviceLLM(
             from: modelURL,
             template: template,
             topK: config.topK,

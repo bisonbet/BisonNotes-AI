@@ -13,8 +13,27 @@ struct WebImportDownloader {
     private let transcriptExtensions: Set<String> = [
         "txt", "text", "md", "markdown", "vtt", "srt", "pdf", "doc", "docx"
     ]
-    private let maxMediaDownloadSize: Int64 = 2 * 1024 * 1024 * 1024
-    private let maxTranscriptDownloadSize: Int64 = 50 * 1024 * 1024
+    private let sessionConfiguration: URLSessionConfiguration
+    private let maxMediaDownloadSize: Int64
+    private let maxTranscriptDownloadSize: Int64
+
+    init(
+        sessionConfiguration: URLSessionConfiguration = .ephemeral,
+        maxMediaDownloadSize: Int64 = 2 * 1024 * 1024 * 1024,
+        maxTranscriptDownloadSize: Int64 = 50 * 1024 * 1024
+    ) {
+        let configuration = sessionConfiguration.copy() as? URLSessionConfiguration
+            ?? URLSessionConfiguration.ephemeral
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCredentialStorage = nil
+
+        self.sessionConfiguration = configuration
+        self.maxMediaDownloadSize = maxMediaDownloadSize
+        self.maxTranscriptDownloadSize = maxTranscriptDownloadSize
+    }
 
     private var mimeExtensions: [String: String] {
         [
@@ -38,42 +57,53 @@ struct WebImportDownloader {
         from url: URL,
         preferredKind: WebImportKind
     ) async throws -> DownloadedWebFile {
+        guard Self.isAllowedDownloadURL(url) else {
+            throw WebImportError.insecureURL
+        }
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 120
         request.setValue("BisonNotesAI/1.0", forHTTPHeaderField: "User-Agent")
 
-        let (temporaryURL, response) = try await URLSession.shared.download(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw WebImportError.invalidResponse
+        let stagingURL = try makeProtectedStagingFile()
+
+        do {
+            let transfer = BoundedWebImportTransfer(
+                configuration: sessionConfiguration,
+                stagingURL: stagingURL,
+                routeResolver: { response in
+                    try routeForRemoteFile(
+                        url: response.url ?? url,
+                        mimeType: response.mimeType?.lowercased(),
+                        preferredKind: preferredKind
+                    )
+                },
+                sizeLimit: { route in
+                    route == .transcript ? maxTranscriptDownloadSize : maxMediaDownloadSize
+                }
+            )
+            let result = try await transfer.start(request: request)
+            let mimeType = result.response.mimeType?.lowercased()
+            let destinationURL = try moveToImportTempDirectory(
+                stagingURL,
+                sourceURL: result.response.url ?? url,
+                response: result.response,
+                mimeType: mimeType,
+                route: result.route
+            )
+
+            return DownloadedWebFile(localURL: destinationURL, route: result.route)
+        } catch {
+            try? FileManager.default.removeItem(at: stagingURL)
+            throw error
         }
+    }
 
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw WebImportError.httpStatus(httpResponse.statusCode)
-        }
-
-        let mimeType = httpResponse.mimeType?.lowercased()
-        let route = try routeForRemoteFile(
-            url: url,
-            mimeType: mimeType,
-            preferredKind: preferredKind
-        )
-
-        try validateDownloadSize(
-            response: httpResponse,
-            localURL: temporaryURL,
-            route: route
-        )
-
-        let destinationURL = try moveToImportTempDirectory(
-            temporaryURL,
-            sourceURL: url,
-            response: httpResponse,
-            mimeType: mimeType,
-            route: route
-        )
-
-        return DownloadedWebFile(localURL: destinationURL, route: route)
+    static func isAllowedDownloadURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), url.host != nil else { return false }
+        if scheme == "https" { return true }
+        return scheme == "http" && EndpointSecurityPolicy.isAllowed(endpoint: url.absoluteString)
     }
 
     private func routeForRemoteFile(
@@ -121,20 +151,22 @@ struct WebImportDownloader {
         return nil
     }
 
-    private func validateDownloadSize(
-        response: HTTPURLResponse,
-        localURL: URL,
-        route: WebImportRoute
-    ) throws {
-        let sizeLimit = route == .transcript ? maxTranscriptDownloadSize : maxMediaDownloadSize
-        if response.expectedContentLength > sizeLimit {
-            throw WebImportError.fileTooLarge(response.expectedContentLength, sizeLimit)
-        }
+    private func makeProtectedStagingFile() throws -> URL {
+        let destinationDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BisonNotesWebImports", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: destinationDirectory,
+            withIntermediateDirectories: true
+        )
+        AppFileProtection.apply(to: destinationDirectory)
 
-        let fileSize = try fileSize(at: localURL)
-        guard fileSize <= sizeLimit else {
-            throw WebImportError.fileTooLarge(fileSize, sizeLimit)
+        let stagingURL = destinationDirectory
+            .appendingPathComponent(".download-\(UUID().uuidString)")
+        guard FileManager.default.createFile(atPath: stagingURL.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
         }
+        AppFileProtection.apply(to: stagingURL)
+        return stagingURL
     }
 
     private func moveToImportTempDirectory(
@@ -161,10 +193,12 @@ struct WebImportDownloader {
             at: destinationDirectory,
             withIntermediateDirectories: true
         )
+        AppFileProtection.apply(to: destinationDirectory)
 
         let destinationURL = destinationDirectory.appendingPathComponent(filename)
         try? FileManager.default.removeItem(at: destinationURL)
         try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
+        AppFileProtection.apply(to: destinationURL)
         return destinationURL
     }
 
@@ -255,10 +289,5 @@ struct WebImportDownloader {
             .map { allowed.contains($0) ? String($0) : "-" }
             .joined()
             .trimmingCharacters(in: CharacterSet(charactersIn: " -_"))
-    }
-
-    private func fileSize(at url: URL) throws -> Int64 {
-        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-        return attributes[.size] as? Int64 ?? 0
     }
 }

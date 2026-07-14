@@ -7,6 +7,52 @@ import XCTest
 @testable import BisonNotes_AI
 
 final class WebImportManagerTests: XCTestCase {
+    func testDownloaderStopsAnUnknownLengthBodyAtTheRouteLimit() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OversizedWebImportURLProtocol.self]
+        let downloader = WebImportDownloader(
+            sessionConfiguration: configuration,
+            maxMediaDownloadSize: 16,
+            maxTranscriptDownloadSize: 5
+        )
+        let url = try XCTUnwrap(URL(string: "https://example.com/transcript.txt"))
+
+        do {
+            _ = try await downloader.downloadRemoteFile(from: url, preferredKind: .transcript)
+            XCTFail("Expected the streaming size limit to stop the transfer")
+        } catch WebImportError.fileTooLarge(let attemptedSize, let limit) {
+            XCTAssertGreaterThan(attemptedSize, limit)
+            XCTAssertEqual(limit, 5)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testDownloaderRejectsRedirectTargetsThatViolateTransportPolicy() throws {
+        let secureURL = try XCTUnwrap(URL(string: "https://example.com/file.txt"))
+        let insecureURL = try XCTUnwrap(URL(string: "http://example.com/file.txt"))
+
+        XCTAssertTrue(WebImportDownloader.isAllowedDownloadURL(secureURL))
+        XCTAssertFalse(WebImportDownloader.isAllowedDownloadURL(insecureURL))
+    }
+
+    func testTemporaryCleanupRemovesStaleWebImportArtifacts() throws {
+        let fileManager = FileManager.default
+        let importsDirectory = fileManager.temporaryDirectory
+            .appendingPathComponent("BisonNotesWebImports", isDirectory: true)
+        try fileManager.createDirectory(at: importsDirectory, withIntermediateDirectories: true)
+        let staleFile = importsDirectory.appendingPathComponent("stale-test-\(UUID().uuidString).txt")
+        try Data("stale transcript".utf8).write(to: staleFile)
+        try fileManager.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-120)],
+            ofItemAtPath: staleFile.path
+        )
+
+        TemporaryFileCleanupService.shared.cleanupStaleFiles(maxAge: 60)
+
+        XCTAssertFalse(fileManager.fileExists(atPath: staleFile.path))
+    }
+
     func testYouTubeVideoIDExtractionSupportsCommonURLShapes() throws {
         let watchURL = try XCTUnwrap(URL(string: "https://www.youtube.com/watch?v=abcDEF123_4&t=120"))
         let shortURL = try XCTUnwrap(URL(string: "https://youtu.be/abcDEF123_4"))
@@ -95,10 +141,85 @@ final class WebImportManagerTests: XCTestCase {
         XCTAssertEqual(text, "Welcome & thanks for joining\nNext topic\nDecision made")
     }
 
+    func testCaptionCleanerPreservesNumericSpeechAndComparisons() {
+        let vtt = """
+        WEBVTT
+
+        1
+        00:00:00.000 --> 00:00:02.000
+        911
+
+        2
+        00:00:02.000 --> 00:00:04.000
+        In 2026, 5 < 10 and 10 > 5
+        """
+
+        let text = TranscriptCaptionTextCleaner.plainText(from: vtt)
+
+        XCTAssertEqual(text, "911\nIn 2026, 5 < 10 and 10 > 5")
+    }
+
+    func testCaptionCleanerOnlyTreatsNumbersBeforeTimingLinesAsCueIdentifiers() {
+        let srt = """
+        42
+        This number is spoken aloud.
+
+        43
+        00:00:01,000 --> 00:00:02,000
+        This is a caption cue.
+        """
+
+        let text = TranscriptCaptionTextCleaner.plainText(from: srt)
+
+        XCTAssertEqual(text, "42\nThis number is spoken aloud.\nThis is a caption cue.")
+    }
+
     func testYouTubeRateLimitMessageDoesNotExposeRawHTTPStatus() {
         let message = WebImportError.youtubeRateLimited.localizedDescription
 
         XCTAssertTrue(message.contains("YouTube blocked the caption request"))
         XCTAssertFalse(message.contains("HTTP 429"))
     }
+
+    func testYouTubeRateLimitWinsWhenCaptionFallbackAlsoFails() {
+        let resolved = YouTubeImportService.preferredCaptionDiscoveryError(
+            watchError: WebImportError.youtubeRateLimited,
+            fallbackError: WebImportError.noYouTubeCaptions
+        )
+
+        guard let webImportError = resolved as? WebImportError,
+              case .youtubeRateLimited = webImportError else {
+            return XCTFail("Expected the rate-limit recovery error to be preserved")
+        }
+    }
+}
+
+private final class OversizedWebImportURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "text/plain"]
+              ) else {
+            client?.urlProtocol(self, didFailWithError: WebImportError.invalidResponse)
+            return
+        }
+
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("four".utf8))
+        client?.urlProtocol(self, didLoad: Data("more".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

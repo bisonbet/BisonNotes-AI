@@ -177,7 +177,7 @@ open class OnDeviceLLM: ObservableObject {
         presencePenalty: Float = 0.0,  // Penalize tokens that have appeared
         maxTokenCount: Int32 = 2048,
         maxOutputTokens: Int32 = 2700  // Hard limit on output length (~2,000 words)
-    ) {
+    ) throws {
         // Configure logging before any llama.cpp operations
         Self.configureLogging()
 
@@ -192,7 +192,9 @@ open class OnDeviceLLM: ObservableObject {
             AppLog.shared.summarization("[OnDeviceLLM] Requesting all layers on GPU (n_gpu_layers=999)", level: .debug)
         #endif
         guard let model = llama_model_load_from_file(self.path, modelParams) else {
-            fatalError("[OnDeviceLLM] Failed to load model from: \(path)")
+            throw OnDeviceLLMError.configurationError(
+                "The model file could not be loaded. Re-download the model and try again."
+            )
         }
 
         // Log model info
@@ -250,19 +252,31 @@ open class OnDeviceLLM: ObservableObject {
         let sparams = llama_sampler_chain_default_params()
         self.sampler = llama_sampler_chain_init(sparams)
 
-        if let sampler = self.sampler {
-            llama_sampler_chain_add(sampler, llama_sampler_init_top_k(topK))
-            llama_sampler_chain_add(sampler, llama_sampler_init_top_p(topP, 1))
-            // Only add min_p sampler if minP > 0
-            if minP > 0 {
-                llama_sampler_chain_add(sampler, llama_sampler_init_min_p(minP, 1))
-            }
-            // Penalty parameters: (penalty_last_n, penalty_repeat, penalty_freq, penalty_present)
-            // Use configurable values - aggressive for small models, standard for larger models
-            llama_sampler_chain_add(sampler, llama_sampler_init_penalties(penaltyLastN, repeatPenalty, frequencyPenalty, presencePenalty))
-            llama_sampler_chain_add(sampler, llama_sampler_init_temp(temp))
-            llama_sampler_chain_add(sampler, llama_sampler_init_dist(seed))
+        guard let sampler = self.sampler else {
+            throw OnDeviceLLMError.configurationError(
+                "The token sampler could not be initialized. Free memory and try again."
+            )
         }
+
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_k(topK))
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_p(topP, 1))
+        // Only add min_p sampler if minP > 0
+        if minP > 0 {
+            llama_sampler_chain_add(sampler, llama_sampler_init_min_p(minP, 1))
+        }
+        // Penalty parameters: (penalty_last_n, penalty_repeat, penalty_freq, penalty_present)
+        // Use configurable values - aggressive for small models, standard for larger models
+        llama_sampler_chain_add(
+            sampler,
+            llama_sampler_init_penalties(
+                penaltyLastN,
+                repeatPenalty,
+                frequencyPenalty,
+                presencePenalty
+            )
+        )
+        llama_sampler_chain_add(sampler, llama_sampler_init_temp(temp))
+        llama_sampler_chain_add(sampler, llama_sampler_init_dist(seed))
     }
 
     public convenience init(
@@ -280,8 +294,8 @@ open class OnDeviceLLM: ObservableObject {
         presencePenalty: Float = 0.0,
         maxTokenCount: Int32 = 2048,
         maxOutputTokens: Int32 = 2700
-    ) {
-        self.init(
+    ) throws {
+        try self.init(
             from: url.path,
             stopSequences: template.stopSequences,
             history: history,
@@ -302,6 +316,10 @@ open class OnDeviceLLM: ObservableObject {
     }
 
     deinit {
+        if let sampler {
+            llama_sampler_free(sampler)
+        }
+        llama_batch_free(batch)
         llama_model_free(self.model)
     }
 
@@ -382,7 +400,11 @@ open class OnDeviceLLM: ObservableObject {
             return model.endToken
         }
         guard let sampler = self.sampler else {
-            fatalError("Sampler not initialized")
+            AppLog.shared.summarization(
+                "[OnDeviceLLM] Sampler is unavailable, ending generation",
+                level: .error
+            )
+            return model.endToken
         }
 
         // Check if app is backgrounded before submitting GPU work

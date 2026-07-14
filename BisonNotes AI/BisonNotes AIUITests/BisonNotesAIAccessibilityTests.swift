@@ -110,7 +110,10 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
 
         try app.performAccessibilityAudit { issue in
             let description = String(describing: issue)
-            let isDocumentedException = self.documentedAuditException(description)
+            let isDocumentedException = self.documentedAuditException(
+                screen: name,
+                description: description
+            )
 
             if isDocumentedException {
                 let attachment = XCTAttachment(string: description)
@@ -123,13 +126,92 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
         }
     }
 
-    private func documentedAuditException(_ description: String) -> Bool {
-        // Current baseline exceptions are visual-audit prompts that still need the
-        // manual device checks in docs/testing-regimen.md before App Store labels
-        // are claimed for a release.
-        description.contains("Dynamic Type font sizes are partially unsupported")
-            || description.contains("Contrast failed")
-            || description.contains("Contrast nearly passed")
-            || description.contains("Text clipped")
+    private func documentedAuditException(screen: String, description: String) -> Bool {
+        // These are exact screen, issue, and element exceptions captured by the
+        // release audit. A new issue type or a new affected element must fail.
+        let exceptions: [String: [(issue: String, element: String)]] = [
+            "Record": [
+                ("Dynamic Type font sizes are partially unsupported", "(null)"),
+                ("Dynamic Type font sizes are partially unsupported", "Unexpected Shutdown"),
+                (
+                    "Dynamic Type font sizes are partially unsupported",
+                    "It looks like BisonNotes AI didn't shut down properly last time. Would you like to send a diagnostic report to help us fix this?"
+                )
+            ],
+            "Recordings list": [
+                ("Dynamic Type font sizes are partially unsupported", "0:02"),
+                ("Dynamic Type font sizes are partially unsupported", "Complete"),
+                ("Dynamic Type font sizes are partially unsupported", "132 KB"),
+                ("Dynamic Type font sizes are partially unsupported", "Feb 25, 2026 at 1:13 AM"),
+                ("Text clipped", "1 recording"),
+                ("Text clipped", "0:02"),
+                ("Text clipped", "Feb 25, 2026 at 1:13 AM"),
+                ("Text clipped", "132 KB")
+            ],
+            "Audio Player": [
+                ("Contrast nearly passed", "15s"),
+                ("Dynamic Type font sizes are partially unsupported", "15s"),
+                ("Text clipped", "Enter title")
+            ],
+            "Transcripts": [
+                ("Contrast nearly passed", "Search transcripts..."),
+                ("Dynamic Type font sizes are partially unsupported", "bisonnotes.app.ready"),
+                ("Dynamic Type font sizes are partially unsupported", "Edit Transcript"),
+                ("Text clipped", "Search transcripts..."),
+                ("Text clipped", "bisonnotes.app.ready"),
+                ("Text clipped", "Edit Transcript")
+            ],
+            "Summaries": [
+                ("Contrast nearly passed", "Search summaries, tasks, reminders..."),
+                ("Contrast nearly passed", "View Summary"),
+                ("Dynamic Type font sizes are partially unsupported", "0 Reminders"),
+                ("Dynamic Type font sizes are partially unsupported", "bisonnotes.app.ready"),
+                ("Dynamic Type font sizes are partially unsupported", "1 Tasks"),
+                ("Text clipped", "bisonnotes.app.ready"),
+                ("Text clipped", "View Summary"),
+                ("Text clipped", "Search summaries, tasks, reminders..."),
+                (
+                    "Text clipped",
+                    "This seeded UI test summary is intentionally long enough to pass summary validation and prove the summary linkage survives launch."
+                )
+            ],
+            "Summary detail": [
+                ("Contrast nearly passed", "Add Location"),
+                ("Dynamic Type font sizes are partially unsupported", "Done"),
+                ("Dynamic Type font sizes are partially unsupported", "Export")
+            ],
+            "Setup": [
+                ("Contrast failed", "BisonNotes AI"),
+                ("Contrast failed", "Choose how recordings become transcripts, summaries, tasks, and reminders."),
+                ("Contrast failed", "Processing Method"),
+                ("Contrast failed", "Pick the default path for new audio notes."),
+                ("Contrast failed", "On-Device AI Setup"),
+                ("Contrast failed", "Private processing for users who want recordings and summaries to stay local."),
+                ("Contrast failed", "Setup Process"),
+                ("Contrast failed", "Step 1: Download transcription model (150-520MB)"),
+                ("Contrast failed", "Step 2: Download AI summary model (2-3GB)"),
+                ("Contrast failed", "Total storage needed: ~3.5GB"),
+                ("Contrast failed", "Important Notes"),
+                ("Contrast failed", "Best for recordings under 60 minutes"),
+                ("Contrast failed", "May be less accurate than cloud services"),
+                ("Contrast failed", "Save & Configure"),
+                ("Contrast failed", "On-Device AI"),
+                ("Contrast failed", "Private, on-device AI processing"),
+                ("Text clipped", "Private, on-device AI processing"),
+                ("Text clipped", "Save & Configure")
+            ],
+            "Settings": [
+                ("Contrast failed", "Refresh Microphones"),
+                ("Dynamic Type font sizes are partially unsupported", "Done")
+            ]
+        ]
+
+        return exceptions[screen, default: []].contains { exception in
+            let issueToken = "CompactDescription:\"\(exception.issue)\""
+            let elementToken = exception.element == "(null)"
+                ? "Element:(null)"
+                : "Element:\"\(exception.element)\""
+            return description.contains(issueToken) && description.contains(elementToken)
+        }
     }
 }

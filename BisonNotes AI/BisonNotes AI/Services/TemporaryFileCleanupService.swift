@@ -41,6 +41,12 @@ final class TemporaryFileCleanupService {
         }
 
         cleanupAudioChunksDirectory(cutoff: cutoff, deletedCount: &deletedCount, reclaimedBytes: &reclaimedBytes, errors: &errors)
+        cleanupWebImportsDirectory(
+            cutoff: cutoff,
+            deletedCount: &deletedCount,
+            reclaimedBytes: &reclaimedBytes,
+            errors: &errors
+        )
 
         if deletedCount > 0 {
             AppLog.shared.fileManagement("Cleaned up \(deletedCount) stale temporary file(s), reclaimed \(formatBytes(reclaimedBytes))")
@@ -101,6 +107,30 @@ final class TemporaryFileCleanupService {
         }
 
         removeDirectoryIfEmpty(chunksRoot)
+    }
+
+    private func cleanupWebImportsDirectory(
+        cutoff: Date,
+        deletedCount: inout Int,
+        reclaimedBytes: inout Int64,
+        errors: inout [String]
+    ) {
+        let importsRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("BisonNotesWebImports", isDirectory: true)
+        guard isSafeChild(importsRoot, of: fileManager.temporaryDirectory) else { return }
+
+        for url in directChildren(of: importsRoot) where isOlderThanCutoff(url, cutoff: cutoff) {
+            let size = fileSize(url)
+            do {
+                try fileManager.removeItem(at: url)
+                deletedCount += 1
+                reclaimedBytes += size
+            } catch {
+                errors.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+
+        removeDirectoryIfEmpty(importsRoot)
     }
 
     private func directChildren(of directory: URL) -> [URL] {

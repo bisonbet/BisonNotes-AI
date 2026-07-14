@@ -754,13 +754,31 @@ struct TranscriptsView: View {
 
     private func recordingInfoView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(recordingData.recording.recordingName ?? "Unknown Recording")
-                .font(.headline)
-                .foregroundColor(.primary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(recordingData.recording.recordingName ?? "Unknown Recording")
+                    .font(.headline)
+                    .foregroundColor(.primary)
 
-            Text(UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()))
-                .font(.caption)
-                .foregroundColor(.secondary)
+                Text(UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .accessibilityCard(
+                label: AccessibilitySupport.transcriptRowLabel(
+                    name: recordingData.recording.recordingName ?? "Unknown Recording",
+                    source: "Audio"
+                ),
+                value: AccessibilitySupport.transcriptRowValue(
+                    date: UserPreferences.shared.formatMediumDateTime(
+                        recordingData.recording.recordingDate ?? Date()
+                    ),
+                    wordCount: recordingData.transcript.map { transcriptWordCount($0) },
+                    hasSummary: recordingData.recording.summary != nil
+                        || recordingData.recording.summaryId != nil
+                        || recordingData.recording.summaryStatus == ProcessingStatus.completed.rawValue
+                )
+            )
+
             // Cheap attribute reads only — getAbsoluteURL would probe FileManager (and possibly
             // save the Core Data context) per row, which stalled Mac Catalyst on long lists.
             if let locationData = appCoordinator.coreDataManager.getLocationData(for: recordingData.recording),
@@ -768,19 +786,6 @@ struct TranscriptsView: View {
                 locationButtonView(locationData, recordingURL: recordingURL)
             }
         }
-        .accessibilityCard(
-            label: AccessibilitySupport.transcriptRowLabel(
-                name: recordingData.recording.recordingName ?? "Unknown Recording",
-                source: "Audio"
-            ),
-            value: AccessibilitySupport.transcriptRowValue(
-                date: UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()),
-                wordCount: recordingData.transcript.map { transcriptWordCount($0) },
-                hasSummary: recordingData.recording.summary != nil
-                    || recordingData.recording.summaryId != nil
-                    || recordingData.recording.summaryStatus == ProcessingStatus.completed.rawValue
-            )
-        )
     }
 
     private func locationButtonView(_ locationData: LocationData, recordingURL: URL) -> some View {
@@ -797,6 +802,7 @@ struct TranscriptsView: View {
             }
         }
         .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("View recording location")
     }
 
     private func transcriptButtonView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
