@@ -154,11 +154,6 @@ struct RecordingsListView: View {
             .sheet(item: $selectedLocationData) { locationData in
                 LocationDetailView(locationData: locationData)
             }
-            .sheet(item: $selectedRecordingForPlayer) { recording in
-                AudioPlayerView(recording: recording)
-                    .environmentObject(recorderVM)
-                    .environmentObject(appCoordinator)
-            }
             .sheet(isPresented: $showingCombineView) {
                 if let recordings = recordingsToCombine {
                     let combiner = RecordingCombiner.shared
@@ -294,6 +289,11 @@ struct RecordingsListView: View {
                 Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
             }
         }
+        .sheet(item: $selectedRecordingForPlayer) { recording in
+            AudioPlayerView(recording: recording)
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+        }
         .onAppear {
             refreshFileRelationships()
             loadRecordings()
@@ -338,7 +338,7 @@ struct RecordingsListView: View {
 
                 Text(recordingsHeaderSubtitle)
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .lineLimit(1)
             }
 
@@ -625,7 +625,7 @@ struct RecordingsListView: View {
                         Text(sectionData.section.title)
                             .font(.caption)
                             .fontWeight(.semibold)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.primary)
                             .textCase(.uppercase)
                             .padding(.horizontal, 4)
 
@@ -709,6 +709,10 @@ struct RecordingsListView: View {
                             ? "Double tap to select or deselect this recording."
                             : "Double tap to open the audio player."
                     )
+                    .accessibilityIdentifier(
+                        BisonNotesAccessibilityID.recordingRowPrefix
+                            + (recording.recordingId?.uuidString ?? recording.url.lastPathComponent)
+                    )
 
                     if let locationData = recording.locationData {
                         recordingLocationButton(locationData, recordingName: recording.name)
@@ -736,7 +740,6 @@ struct RecordingsListView: View {
         }
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .accessibilityIdentifier(BisonNotesAccessibilityID.recordingRowPrefix + (recording.recordingId?.uuidString ?? recording.url.lastPathComponent))
     }
 
     private func recordingSelectionButton(for recording: AudioRecordingFile) -> some View {
@@ -787,7 +790,7 @@ struct RecordingsListView: View {
     private func recordingMetaLabel(systemImage: String, text: String) -> some View {
         Label(text, systemImage: systemImage)
             .font(.caption)
-            .foregroundColor(.secondary)
+            .foregroundColor(.primary)
             .lineLimit(1)
     }
 
@@ -881,14 +884,23 @@ struct RecordingsListView: View {
                 clearLocalArchiveState(recording)
             }
         } else {
-            recordingIconButton(
-                "Play Audio",
-                systemImage: "play.fill",
-                tint: .accentColor,
-                recordingName: recording.name
-            ) {
-                selectedRecordingForPlayer = recording
+            NavigationLink {
+                AudioPlayerView(recording: recording)
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
+            } label: {
+                Image(systemName: "play.fill")
+                    .font(.headline)
+                    .foregroundColor(.accentColor)
+                    .frame(width: 44, height: 44)
+                    .background(
+                        Color.accentColor.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Play Audio for \(recording.name)")
+            .accessibilityIdentifier("bisonnotes.recording.action.play-audio")
         }
 
         cloudSyncPreferenceButton(for: recording)
@@ -929,7 +941,7 @@ struct RecordingsListView: View {
             Image(systemName: systemImage)
                 .font(.headline)
                 .foregroundColor(tint)
-                .frame(width: 34, height: 34)
+                .frame(width: 44, height: 44)
                 .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)

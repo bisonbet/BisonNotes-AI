@@ -505,7 +505,7 @@ struct SummaryDetailView: View {
 
                             Text("Add a location to remember where this recording was made")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.primary)
                                 .multilineTextAlignment(.leading)
                         }
 
@@ -565,7 +565,7 @@ struct SummaryDetailView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Recording Date & Time")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.primary)
                             .fontWeight(.medium)
 
                         Text(formatFullDateTime(summaryData.recordingDate))
@@ -603,10 +603,10 @@ struct SummaryDetailView: View {
             HStack {
                 Image(systemName: "clock")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                 Text("Duration: \(recording.durationString)")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
 
                 Spacer()
             }

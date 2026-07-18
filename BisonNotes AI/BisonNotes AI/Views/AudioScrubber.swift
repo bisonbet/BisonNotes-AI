@@ -40,14 +40,14 @@ struct AudioScrubber: View {
             HStack {
                 Text(currentTimeString)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .monospacedDigit()
 
                 Spacer()
 
                 Text(remainingTimeString)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .monospacedDigit()
             }
 

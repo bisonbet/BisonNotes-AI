@@ -10,6 +10,7 @@ import AVFoundation
 
 struct AudioPlayerView: View {
     let recording: AudioRecordingFile
+    var onClose: (() -> Void)?
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @Environment(\.dismiss) private var dismiss
@@ -54,7 +55,7 @@ struct AudioPlayerView: View {
                         .fontWeight(.bold)
                     Text(recording.dateString)
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.primary)
                 }
 
                 Spacer()
@@ -177,7 +178,11 @@ struct AudioPlayerView: View {
                         if recorderVM.isPlaying {
                             recorderVM.stopPlaying()
                         }
-                        dismiss()
+                        if let onClose {
+                            onClose()
+                        } else {
+                            dismiss()
+                        }
                     }
                     .buttonStyle(.bordered)
                     .accessibilityLabel("Close Audio Player")
@@ -284,6 +289,11 @@ struct AudioPlayerView: View {
         }
     }
 
+    init(recording: AudioRecordingFile, onClose: (() -> Void)? = nil) {
+        self.recording = recording
+        self.onClose = onClose
+    }
+
     private var localOnlyPreferenceRow: some View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: isCloudSyncDisabled ? "iphone" : "icloud")
@@ -297,7 +307,7 @@ struct AudioPlayerView: View {
                     .font(.subheadline.weight(.semibold))
                 Text("Excludes this recording, transcript, and summary from BisonNotes iCloud sync and backup.")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -538,7 +548,7 @@ struct RecordingTitleEditorView: View {
             Text("Recording Title")
                 .font(.caption)
                 .fontWeight(.semibold)
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
                 .textCase(.uppercase)
 
             HStack(spacing: 8) {

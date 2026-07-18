@@ -116,6 +116,7 @@ struct SimpleSettingsView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color(.systemGroupedBackground))
+            .accessibilityLabel("Setup")
             .accessibilityIdentifier(BisonNotesAccessibilityID.setupScroll)
             .navigationBarHidden(true)
         }
@@ -215,7 +216,7 @@ struct SimpleSettingsView: View {
 
                 Text("Choose how recordings become transcripts, summaries, tasks, and reminders.")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -493,7 +494,7 @@ struct SimpleSettingsView: View {
 
             Text(subtitle)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
         }
     }
 
@@ -729,7 +730,7 @@ private struct SectionHeader: View {
 
                 Text(subtitle)
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -745,7 +746,7 @@ private struct DetailGroup<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
-                .foregroundColor(tint)
+                .foregroundColor(.primary)
 
             content
         }
@@ -793,7 +794,7 @@ struct FeatureBullet: View {
 
             Text(text)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -813,7 +814,7 @@ struct LimitationBullet: View {
 
             Text(text)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
