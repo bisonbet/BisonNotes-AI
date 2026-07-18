@@ -56,6 +56,7 @@ enum WebImportError: LocalizedError {
     case emptyTranscript
     case youtubeAudioUnsupported
     case transcriptImportFailed
+    case importedFileRejected(String)
     case youtubeRateLimited
 
     var errorDescription: String? {
@@ -87,6 +88,8 @@ enum WebImportError: LocalizedError {
             """
         case .transcriptImportFailed:
             return "The transcript could not be imported."
+        case .importedFileRejected(let reason):
+            return "The downloaded file could not be imported. \(reason)"
         case .youtubeRateLimited:
             return """
             YouTube blocked the caption request from this network. Try again later, or import a VTT, \

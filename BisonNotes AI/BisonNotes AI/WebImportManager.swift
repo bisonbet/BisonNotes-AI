@@ -16,8 +16,12 @@ final class WebImportManager: ObservableObject {
     @Published var youtubeRecovery: YouTubeImportRecovery?
     @Published private(set) var lastImportSucceeded = false
 
-    private let downloader = WebImportDownloader()
+    private let downloader: WebImportDownloader
     private let youtubeService = YouTubeImportService()
+
+    init(downloader: WebImportDownloader = WebImportDownloader()) {
+        self.downloader = downloader
+    }
 
     func importFromURLString(
         _ rawURLString: String,
@@ -97,12 +101,32 @@ final class WebImportManager: ObservableObject {
         case .audioOrVideo:
             currentlyImporting = "Importing audio..."
             await fileImportManager.importAudioFiles(from: [downloaded.localURL])
-            lastImportSucceeded = (fileImportManager.importResults?.successful ?? 0) > 0
+            let results = fileImportManager.importResults
+            fileImportManager.showingImportAlert = false
+            guard (results?.successful ?? 0) > 0 else {
+                throw WebImportError.importedFileRejected(
+                    firstFailureReason(in: results?.errors) ?? "The audio file was rejected."
+                )
+            }
+            lastImportSucceeded = true
         case .transcript:
             currentlyImporting = "Importing transcript..."
             await transcriptImportManager.importTranscriptFiles(from: [downloaded.localURL])
-            lastImportSucceeded = (transcriptImportManager.importResults?.successful ?? 0) > 0
+            let results = transcriptImportManager.importResults
+            transcriptImportManager.showingImportAlert = false
+            guard (results?.successful ?? 0) > 0 else {
+                throw WebImportError.importedFileRejected(
+                    firstFailureReason(in: results?.errors) ?? "The transcript file was rejected."
+                )
+            }
+            lastImportSucceeded = true
         }
+    }
+
+    private func firstFailureReason(in errors: [String]?) -> String? {
+        guard let error = errors?.first else { return nil }
+        guard let separator = error.range(of: ": ") else { return error }
+        return String(error[separator.upperBound...])
     }
 
     private func importYouTubeURL(

@@ -33,6 +33,12 @@ class FileImportManager: NSObject, ObservableObject {
         super.init()
     }
 
+    init(persistenceController: PersistenceController) {
+        self.persistenceController = persistenceController
+        self.context = persistenceController.container.viewContext
+        super.init()
+    }
+
     // MARK: - Import Methods
 
     func importAudioFiles(from urls: [URL]) async {
@@ -114,6 +120,13 @@ class FileImportManager: NSObject, ObservableObject {
             throw ImportError.fileAlreadyExists(filename)
         }
 
+        var importCompleted = false
+        defer {
+            if !importCompleted {
+                try? FileManager.default.removeItem(at: destinationURL)
+            }
+        }
+
         // Copy file to documents directory with comprehensive error handling for thumbnail issues
         do {
             try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
@@ -136,6 +149,7 @@ class FileImportManager: NSObject, ObservableObject {
 
         // Create Core Data entry for the imported file
         try await createRecordingEntryForImportedFile(at: destinationURL)
+        importCompleted = true
 
         AppLog.shared.fileManagement("Successfully imported: \(filename)")
     }
@@ -227,6 +241,13 @@ class FileImportManager: NSObject, ObservableObject {
                 throw ImportError.fileAlreadyExists(filename)
             }
 
+            var restoreCompleted = false
+            defer {
+                if !restoreCompleted {
+                    try? FileManager.default.removeItem(at: destinationURL)
+                }
+            }
+
             do {
                 try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
                 AppFileProtection.apply(to: destinationURL)
@@ -242,6 +263,7 @@ class FileImportManager: NSObject, ObservableObject {
             try validateAudioFile(at: destinationURL)
 
             RecordingArchiveService.shared.restoreRecording(recording, newAudioURL: destinationURL)
+            restoreCompleted = true
             NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
             AppLog.shared.fileManagement("Restored archived recording \(recording.recordingName ?? "unknown") from import \(sourceURL.lastPathComponent)")
         }
@@ -255,6 +277,17 @@ class FileImportManager: NSObject, ObservableObject {
         let timestamp = formatter.string(from: Date())
         let audioFilename = "\(baseName)_\(timestamp).m4a"
         let destinationURL = documentsPath.appendingPathComponent(audioFilename)
+
+        guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
+            throw ImportError.fileAlreadyExists(audioFilename)
+        }
+
+        var importCompleted = false
+        defer {
+            if !importCompleted {
+                try? FileManager.default.removeItem(at: destinationURL)
+            }
+        }
 
         let asset = AVURLAsset(url: sourceURL)
 
@@ -279,6 +312,7 @@ class FileImportManager: NSObject, ObservableObject {
 
         // Create Core Data entry
         try await createRecordingEntryForImportedFile(at: destinationURL)
+        importCompleted = true
 
         AppLog.shared.fileManagement("Successfully extracted audio from video: \(audioFilename)")
     }
@@ -420,6 +454,7 @@ class FileImportManager: NSObject, ObservableObject {
             AppLog.shared.fileManagement("Created Core Data entry for imported file")
         } catch {
             AppLog.shared.fileManagement("Failed to save Core Data entry: \(error)", level: .error)
+            context.delete(recordingEntry)
             throw ImportError.copyFailed("Failed to save to database: \(error.localizedDescription)")
         }
     }
