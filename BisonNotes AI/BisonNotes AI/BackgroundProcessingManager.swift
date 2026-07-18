@@ -8,11 +8,15 @@
 import Foundation
 import SwiftUI
 import UserNotifications
+#if canImport(UIKit)
 import UIKit
+#endif
 import CoreData
 import AVFoundation
 import AVKit
+#if canImport(BackgroundTasks)
 import BackgroundTasks
+#endif
 
 // MARK: - Processing Job Models
 
@@ -310,17 +314,25 @@ class BackgroundProcessingManager: ObservableObject {
     // and accessing .batteryState spams "Error retrieving battery status" to the log.
     // Applies to both Mac Catalyst and "Designed for iPad" on Apple Silicon.
     fileprivate static var batteryLevelString: String {
-        if UIDevice.isRunningOnMac {
+        if PlatformDevice.isRunningOnMac {
             return "n/a (Mac)"
         }
+        #if canImport(UIKit)
         return "\(UIDevice.current.batteryLevel)"
+        #else
+        return "n/a"
+        #endif
     }
 
     fileprivate static var batteryStateString: String {
-        if UIDevice.isRunningOnMac {
+        if PlatformDevice.isRunningOnMac {
             return "n/a (Mac)"
         }
+        #if canImport(UIKit)
         return "\(UIDevice.current.batteryState.rawValue)"
+        #else
+        return "n/a"
+        #endif
     }
 
     // MARK: - Published Properties
@@ -1804,6 +1816,7 @@ class BackgroundProcessingManager: ObservableObject {
 
     /// Schedule background processing task for queued jobs
     private func scheduleBackgroundProcessingIfNeeded() async {
+        #if os(iOS)
         guard !activeJobs.filter({ $0.status == .queued }).isEmpty else { return }
 
         let request = BGProcessingTaskRequest(identifier: "com.bisonai.audio-processing")
@@ -1817,6 +1830,8 @@ class BackgroundProcessingManager: ObservableObject {
         } catch {
             AppLog.shared.backgroundProcessing("Failed to schedule background processing: \(error.localizedDescription)", level: .error)
         }
+        #endif
+        // macOS: jobs keep running in-process; no scheduler needed.
     }
 
     private func handleAppForegrounding() async {

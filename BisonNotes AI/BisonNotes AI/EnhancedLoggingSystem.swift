@@ -7,7 +7,9 @@
 //
 
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 import os.log
 import AVFoundation
 
@@ -316,12 +318,18 @@ class AppLog {
     }
 
     func generateDiagnosticReport() -> DiagnosticReport {
-        let device = UIDevice.current
+        #if canImport(UIKit)
+        let model = UIDevice.current.model
+        let systemVersion = UIDevice.current.systemVersion
+        #else
+        let model = "Mac"
+        let systemVersion = ProcessInfo.processInfo.operatingSystemVersionString
+        #endif
         return DiagnosticReport(
             timestamp: Date(),
             deviceInfo: DeviceDiagnosticInfo(
-                model: device.model,
-                systemVersion: device.systemVersion,
+                model: model,
+                systemVersion: systemVersion,
                 appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown",
                 memoryUsage: Self.currentMemoryUsage,
                 storageInfo: Self.freeStorageGB
@@ -366,6 +374,7 @@ extension AppLog {
     }
 
     // Bridge old EnhancedLogger structured methods
+    #if os(iOS)
     func logAudioSessionConfiguration(_ category: AVAudioSession.Category, mode: AVAudioSession.Mode, options: AVAudioSession.CategoryOptions) {
         audioSession("Configuring audio session - Category: \(category), Mode: \(mode), Options: \(options)")
     }
@@ -375,6 +384,7 @@ extension AppLog {
     func logAudioSessionRouteChange(_ reason: AVAudioSession.RouteChangeReason) {
         audioSession("Audio route change: \(reason)")
     }
+    #endif
     func logChunkingStart(_ fileURL: URL, strategy: ChunkingStrategy) {
         chunking("Starting chunking for \(fileURL.lastPathComponent) with strategy: \(strategy)")
     }

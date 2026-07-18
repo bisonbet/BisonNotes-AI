@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 struct DeviceCompatibility {
 
@@ -89,6 +91,7 @@ struct DeviceCompatibility {
     }
 }
 
+#if canImport(UIKit)
 public extension UIDevice {
     var modelName: String {
         var systemInfo = utsname()
@@ -101,3 +104,4 @@ public extension UIDevice {
         return identifier
     }
 }
+#endif

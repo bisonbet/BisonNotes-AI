@@ -8,7 +8,9 @@
 import Foundation
 import EventKit
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // MARK: - System Integration Manager
 

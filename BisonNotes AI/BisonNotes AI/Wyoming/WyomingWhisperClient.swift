@@ -7,7 +7,9 @@
 
 import Foundation
 import AVFoundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 @MainActor
 class WyomingWhisperClient: ObservableObject {

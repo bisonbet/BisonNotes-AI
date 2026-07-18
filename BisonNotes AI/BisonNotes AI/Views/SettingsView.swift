@@ -879,54 +879,39 @@ struct SettingsView: View {
 
                             if !cloudOnlySummaries.isEmpty {
                                 await MainActor.run {
-                                    let alert = UIAlertController(
+                                    PlatformAlert.present(
                                         title: "iCloud Data Found",
                                         message: "We found \(cloudOnlySummaries.count) summaries in your iCloud that aren't on this device. Would you like to download them?",
-                                        preferredStyle: .alert
-                                    )
-                                    alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-                                    alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
-                                        Task {
-                                            do {
-                                                let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
-                                                AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
-                                            } catch {
-                                                AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                                        actions: [
+                                            PlatformAlert.Action(title: "Cancel", isCancel: true),
+                                            PlatformAlert.Action(title: "Download") {
+                                                Task {
+                                                    do {
+                                                        let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
+                                                        AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
+                                                    } catch {
+                                                        AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                                                    }
+                                                }
                                             }
-                                        }
-                                    })
-                                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                       let rootViewController = windowScene.windows.first?.rootViewController {
-                                        rootViewController.present(alert, animated: true)
-                                    }
+                                        ]
+                                    )
                                 }
                             } else {
                                 await MainActor.run {
-                                    let alert = UIAlertController(
+                                    PlatformAlert.present(
                                         title: "No iCloud Data",
-                                        message: "No summaries were found in your iCloud account.",
-                                        preferredStyle: .alert
+                                        message: "No summaries were found in your iCloud account."
                                     )
-                                    alert.addAction(UIAlertAction(title: "OK", style: .default))
-                                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                       let rootViewController = windowScene.windows.first?.rootViewController {
-                                        rootViewController.present(alert, animated: true)
-                                    }
                                 }
                             }
                         } catch {
                             AppLog.shared.log("Failed to check for iCloud data: \(error)", level: .error, category: .general)
                             await MainActor.run {
-                                let alert = UIAlertController(
+                                PlatformAlert.present(
                                     title: "Check Failed",
-                                    message: "Could not check for iCloud data: \(error.localizedDescription)",
-                                    preferredStyle: .alert
+                                    message: "Could not check for iCloud data: \(error.localizedDescription)"
                                 )
-                                alert.addAction(UIAlertAction(title: "OK", style: .default))
-                                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                   let rootViewController = windowScene.windows.first?.rootViewController {
-                                    rootViewController.present(alert, animated: true)
-                                }
                             }
                         }
                     }
@@ -1163,6 +1148,7 @@ struct SettingsView: View {
         }
     }
 
+    #if os(iOS)
     private func microphoneTypeDescription(for portType: AVAudioSession.Port) -> String {
         switch portType {
         case .builtInMic:
@@ -1187,6 +1173,7 @@ struct SettingsView: View {
             return portType.rawValue.capitalized
         }
     }
+    #endif
 
     private func handleMacSystemAudioCaptureToggle(_ enabled: Bool) {
         #if targetEnvironment(macCatalyst)
@@ -1346,54 +1333,39 @@ struct SettingsView: View {
 
                 if !cloudOnlySummaries.isEmpty {
                     await MainActor.run {
-                        let alert = UIAlertController(
+                        PlatformAlert.present(
                             title: "iCloud Data Found",
                             message: "We found \(cloudOnlySummaries.count) summaries in your iCloud that aren't on this device. Would you like to download them?",
-                            preferredStyle: .alert
-                        )
-                        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-                        alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
-                            Task {
-                                do {
-                                    let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
-                                    AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
-                                } catch {
-                                    AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                            actions: [
+                                PlatformAlert.Action(title: "Cancel", isCancel: true),
+                                PlatformAlert.Action(title: "Download") {
+                                    Task {
+                                        do {
+                                            let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
+                                            AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
+                                        } catch {
+                                            AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                                        }
+                                    }
                                 }
-                            }
-                        })
-                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                           let rootViewController = windowScene.windows.first?.rootViewController {
-                            rootViewController.present(alert, animated: true)
-                        }
+                            ]
+                        )
                     }
                 } else {
                     await MainActor.run {
-                        let alert = UIAlertController(
+                        PlatformAlert.present(
                             title: "No iCloud Data",
-                            message: "No summaries were found in your iCloud account.",
-                            preferredStyle: .alert
+                            message: "No summaries were found in your iCloud account."
                         )
-                        alert.addAction(UIAlertAction(title: "OK", style: .default))
-                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                           let rootViewController = windowScene.windows.first?.rootViewController {
-                            rootViewController.present(alert, animated: true)
-                        }
                     }
                 }
             } catch {
                 AppLog.shared.log("Failed to check for iCloud data: \(error)", level: .error, category: .general)
                 await MainActor.run {
-                    let alert = UIAlertController(
+                    PlatformAlert.present(
                         title: "Check Failed",
-                        message: "Could not check for iCloud data: \(error.localizedDescription)",
-                        preferredStyle: .alert
+                        message: "Could not check for iCloud data: \(error.localizedDescription)"
                     )
-                    alert.addAction(UIAlertAction(title: "OK", style: .default))
-                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                       let rootViewController = windowScene.windows.first?.rootViewController {
-                        rootViewController.present(alert, animated: true)
-                    }
                 }
             }
         }

@@ -6,7 +6,9 @@
 //
 
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 enum MapSnapshotStorage {
     private static let directoryName = "SummaryLocationSnapshots"
@@ -70,6 +72,7 @@ enum MapSnapshotStorage {
         }
     }
 
+    #if canImport(UIKit)
     /// Load a UIImage for a map snapshot
     /// - Parameters:
     ///   - summaryId: The unique ID of the summary
@@ -83,6 +86,7 @@ enum MapSnapshotStorage {
 
         return UIImage(data: data, scale: scale)
     }
+    #endif
 
     /// Save image data to storage
     /// - Parameters:

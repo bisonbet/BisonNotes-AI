@@ -38,10 +38,13 @@ struct PersistenceController {
         persistentContainer.persistentStoreDescriptions.forEach { description in
             description.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
             description.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
+            #if os(iOS)
+            // iOS Data Protection; macOS relies on FileVault for encryption at rest.
             description.setOption(
                 AppFileProtection.sensitiveFileProtection.rawValue as NSString,
                 forKey: NSPersistentStoreFileProtectionKey
             )
+            #endif
         }
         persistentContainer.loadPersistentStores(completionHandler: { (storeDescription, error) in
             if let error = error as NSError? {

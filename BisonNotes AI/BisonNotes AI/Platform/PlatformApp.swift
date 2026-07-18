@@ -13,6 +13,8 @@
 import Foundation
 #if canImport(UIKit)
 import UIKit
+#else
+import AppKit
 #endif
 
 // MARK: - App-level services
@@ -23,6 +25,8 @@ enum PlatformApp {
     static func open(_ url: URL) {
         #if canImport(UIKit)
         UIApplication.shared.open(url)
+        #else
+        NSWorkspace.shared.open(url)
         #endif
     }
 
@@ -59,6 +63,109 @@ enum PlatformApp {
     }
 }
 
+// MARK: - Pasteboard
+
+enum PlatformPasteboard {
+    /// The general pasteboard's plain-text contents.
+    static var string: String? {
+        get {
+            #if canImport(UIKit)
+            return UIPasteboard.general.string
+            #else
+            return NSPasteboard.general.string(forType: .string)
+            #endif
+        }
+        set {
+            #if canImport(UIKit)
+            UIPasteboard.general.string = newValue
+            #else
+            NSPasteboard.general.clearContents()
+            if let newValue {
+                NSPasteboard.general.setString(newValue, forType: .string)
+            }
+            #endif
+        }
+    }
+}
+
+// MARK: - Alerts
+
+/// Imperatively presents a simple alert from non-SwiftUI contexts (error paths
+/// in async tasks). On iOS it presents a UIAlertController from the key window's
+/// root controller; on macOS it runs an NSAlert modally.
+enum PlatformAlert {
+    struct Action {
+        let title: String
+        let isCancel: Bool
+        let handler: (() -> Void)?
+
+        init(title: String, isCancel: Bool = false, handler: (() -> Void)? = nil) {
+            self.title = title
+            self.isCancel = isCancel
+            self.handler = handler
+        }
+    }
+
+    @MainActor
+    static func present(title: String, message: String, actions: [Action] = [Action(title: "OK")]) {
+        #if canImport(UIKit)
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        for action in actions {
+            alert.addAction(UIAlertAction(
+                title: action.title,
+                style: action.isCancel ? .cancel : .default
+            ) { _ in action.handler?() })
+        }
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let rootViewController = windowScene.windows.first?.rootViewController {
+            rootViewController.present(alert, animated: true)
+        }
+        #else
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        for action in actions {
+            alert.addButton(withTitle: action.title)
+        }
+        let response = alert.runModal()
+        let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        if index >= 0, index < actions.count {
+            actions[index].handler?()
+        }
+        #endif
+    }
+}
+
+// MARK: - Device
+
+enum PlatformDevice {
+    /// True on any Mac: native macOS, Mac Catalyst, or iOS-app-on-Mac.
+    /// Battery APIs are unreliable/absent in all three cases.
+    static var isRunningOnMac: Bool {
+        #if os(macOS) || targetEnvironment(macCatalyst)
+        return true
+        #else
+        return ProcessInfo.processInfo.isiOSAppOnMac
+        #endif
+    }
+
+    /// A stable per-install identifier. On iOS this is identifierForVendor;
+    /// on macOS (no such API) we persist a generated UUID in UserDefaults.
+    static var vendorIdentifier: String {
+        #if canImport(UIKit)
+        return UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+        #else
+        let key = "PlatformDeviceVendorIdentifier"
+        if let existing = UserDefaults.standard.string(forKey: key) {
+            return existing
+        }
+        let generated = UUID().uuidString
+        UserDefaults.standard.set(generated, forKey: key)
+        return generated
+        #endif
+    }
+}
+
 // MARK: - Lifecycle notifications
 
 /// Platform-neutral names for app lifecycle notifications.
@@ -72,6 +179,16 @@ enum PlatformLifecycle {
     static let willEnterForegroundNotification = UIApplication.willEnterForegroundNotification
     static let willTerminateNotification = UIApplication.willTerminateNotification
     static let didReceiveMemoryWarningNotification = UIApplication.didReceiveMemoryWarningNotification
+    #else
+    static let didFinishLaunchingNotification = NSApplication.didFinishLaunchingNotification
+    static let didBecomeActiveNotification = NSApplication.didBecomeActiveNotification
+    static let willResignActiveNotification = NSApplication.willResignActiveNotification
+    // macOS apps are not backgrounded; hide/unhide is the closest user-visible analog.
+    static let didEnterBackgroundNotification = NSApplication.didHideNotification
+    static let willEnterForegroundNotification = NSApplication.willUnhideNotification
+    static let willTerminateNotification = NSApplication.willTerminateNotification
+    // No macOS analog — never posted; observers simply stay idle.
+    static let didReceiveMemoryWarningNotification = Notification.Name("BisonNotesPlatformMemoryWarning")
     #endif
 }
 
@@ -95,6 +212,24 @@ enum PlatformBackgroundTask {
 
     static var remainingTime: TimeInterval {
         UIApplication.shared.backgroundTimeRemaining
+    }
+    #else
+    // macOS: apps are not suspended, so background-task assertions are no-ops.
+    // rawValue mirrors UIBackgroundTaskIdentifier's for shared logging code.
+    struct ID: Equatable {
+        let rawValue: Int
+        static let invalid = ID(rawValue: 0)
+    }
+    static let invalidID: ID = .invalid
+
+    static func begin(name: String, expirationHandler: (() -> Void)? = nil) -> ID {
+        ID(rawValue: 1)
+    }
+
+    static func end(_ id: ID) {}
+
+    static var remainingTime: TimeInterval {
+        .greatestFiniteMagnitude
     }
     #endif
 }

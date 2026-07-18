@@ -8,7 +8,9 @@
 
 import Foundation
 import os.log
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // MARK: - On-Device LLM Engine
 

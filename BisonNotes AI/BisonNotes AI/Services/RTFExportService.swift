@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 import MapKit
 
 /// Errors that can occur during RTF document generation
@@ -20,6 +22,7 @@ enum RTFExportError: LocalizedError {
     }
 }
 
+#if canImport(UIKit)
 final class RTFExportService {
     static let shared = RTFExportService()
 
@@ -559,3 +562,20 @@ final class RTFExportService {
         document.append(list)
     }
 }
+#else
+// TODO(macos-phase2): native macOS RTF export via NSFont/NSAttributedString (plan §2.5).
+final class RTFExportService {
+    static let shared = RTFExportService()
+
+    private init() {}
+
+    @MainActor
+    func generateDocument(
+        summaryData: EnhancedSummaryData,
+        locationData: LocationData?,
+        locationAddress: String?
+    ) throws -> Data {
+        throw RTFExportError.invalidDocumentData
+    }
+}
+#endif

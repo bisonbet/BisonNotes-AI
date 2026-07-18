@@ -6,7 +6,9 @@
 //
 
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 struct DeviceCapabilities {
 
@@ -40,7 +42,7 @@ struct DeviceCapabilities {
     /// does not expose a direct capability API, so gate the setup guidance by
     /// known device identifier families and keep Mac Catalyst/iPad hidden.
     static var supportsActionButton: Bool {
-        #if targetEnvironment(macCatalyst)
+        #if targetEnvironment(macCatalyst) || os(macOS)
         return false
         #else
         guard UIDevice.current.userInterfaceIdiom == .phone else {

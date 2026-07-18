@@ -517,11 +517,9 @@ struct MistralOnboardingView: View {
     // MARK: - Actions
 
     private func pasteFromClipboard() {
-        #if canImport(UIKit)
-        if let clipboardString = UIPasteboard.general.string, !clipboardString.isEmpty {
+        if let clipboardString = PlatformPasteboard.string, !clipboardString.isEmpty {
             apiKeyInput = clipboardString.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        #endif
     }
 
     func testConnection() {

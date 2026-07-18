@@ -6,15 +6,17 @@
 //
 
 import Foundation
-#if !targetEnvironment(macCatalyst)
+#if os(iOS) && !targetEnvironment(macCatalyst)
 @preconcurrency import WatchConnectivity
 #endif
 import Combine
+#if canImport(UIKit)
 import UIKit
+#endif
 
-#if targetEnvironment(macCatalyst)
-// MARK: - Mac Catalyst Stub
-/// Minimal stub for Mac Catalyst where WatchConnectivity is not available
+#if targetEnvironment(macCatalyst) || os(macOS)
+// MARK: - Mac Stub
+/// Minimal stub for Mac (Catalyst and native) where WatchConnectivity is not available
 @MainActor
 class WatchConnectivityManager: NSObject, ObservableObject {
     @Published var connectionState: WatchConnectionState = .disconnected

@@ -10,7 +10,9 @@ import Speech
 import AVFoundation
 import Combine
 import SwiftUI // Added for @AppStorage
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // MARK: - Transcription Progress
 

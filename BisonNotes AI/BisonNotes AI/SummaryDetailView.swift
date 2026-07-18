@@ -2,7 +2,9 @@ import SwiftUI
 @preconcurrency import MapKit
 import Contacts
 @preconcurrency import CoreLocation
+#if canImport(UIKit)
 import UIKit
+#endif
 import LinkPresentation
 import UniformTypeIdentifiers
 import PDFKit
@@ -3069,6 +3071,7 @@ struct LocationResultRow: View {
 
 // MARK: - Static Location Map View
 
+#if os(iOS)
 private final class MapSnapshotCache {
     static let shared = MapSnapshotCache()
     private let cache = NSCache<NSString, UIImage>()
@@ -3414,9 +3417,38 @@ private struct StaticLocationMapView: View {
         }
     }
 }
+#else
+/// Native macOS variant: a live (non-interactive) SwiftUI Map replaces the
+/// UIGraphicsImageRenderer-based static snapshot pipeline.
+private struct StaticLocationMapView: View {
+    let summaryId: UUID
+    let locationData: LocationData
+    let size: CGSize
+
+    private var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(
+            latitude: locationData.latitude,
+            longitude: locationData.longitude
+        )
+    }
+
+    var body: some View {
+        Map(initialPosition: .region(MKCoordinateRegion(
+            center: coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005)
+        ))) {
+            Marker("", coordinate: coordinate)
+        }
+        .allowsHitTesting(false)
+        .frame(width: size.width, height: size.height)
+        .clipped()
+    }
+}
+#endif
 
 // MARK: - Attachment Preview
 
+#if os(iOS)
 private struct SummaryAttachmentPDFView: UIViewRepresentable {
     let url: URL
 
@@ -3435,9 +3467,30 @@ private struct SummaryAttachmentPDFView: UIViewRepresentable {
         }
     }
 }
+#else
+private struct SummaryAttachmentPDFView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePageContinuous
+        view.displayDirection = .vertical
+        view.document = PDFDocument(url: url)
+        return view
+    }
+
+    func updateNSView(_ nsView: PDFView, context: Context) {
+        if nsView.document?.documentURL != url {
+            nsView.document = PDFDocument(url: url)
+        }
+    }
+}
+#endif
 
 // MARK: - Share Sheet
 
+#if os(iOS)
 struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
     let subject: String?
@@ -3539,6 +3592,75 @@ private final class ExportActivityItem: NSObject, UIActivityItemSource {
         }
     }
 }
+#else
+/// macOS twin of the iOS UIActivityItemSource: writes the export payload to a
+/// temp file so ShareSheet can reveal it. Full NSSharingServicePicker in Phase 2.5.
+final class ExportActivityItem {
+    let fileURL: URL?
+
+    init(data: Data, fileName: String, iconSystemName: String) {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try data.write(to: destination, options: .atomic)
+            self.fileURL = destination
+        } catch {
+            AppLog.shared.summarization("Failed to write temporary export for sharing: \(error)", level: .error)
+            self.fileURL = nil
+        }
+    }
+}
+
+// TODO(macos-phase2): NSSharingServicePicker-based sharing (plan §2.5).
+// Interim macOS behavior: reveal file URLs in Finder; other items get a notice.
+struct ShareSheet: View {
+    let activityItems: [Any]
+    let subject: String?
+
+    @Environment(\.dismiss) private var dismiss
+
+    init(activityItems: [Any], subject: String? = nil) {
+        self.activityItems = activityItems
+        self.subject = subject
+    }
+
+    private var fileURLs: [URL] {
+        activityItems.compactMap { item -> URL? in
+            if let url = item as? URL, url.isFileURL { return url }
+            if let export = item as? ExportActivityItem { return export.fileURL }
+            return nil
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Sharing")
+                .font(.headline)
+            if fileURLs.isEmpty {
+                Text("Sharing from the Mac app is coming soon.")
+                    .foregroundColor(.secondary)
+            } else {
+                Text("The exported file will be shown in Finder.")
+                    .foregroundColor(.secondary)
+            }
+            HStack {
+                Button("Close") { dismiss() }
+                if !fileURLs.isEmpty {
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting(fileURLs)
+                        dismiss()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 320)
+    }
+}
+#endif
 
 // MARK: - Note Editor Sheet
 

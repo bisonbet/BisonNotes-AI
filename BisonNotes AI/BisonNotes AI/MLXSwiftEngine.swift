@@ -203,7 +203,9 @@ final class MLXSwiftEngine: SummarizationEngine, ConnectionTestable {
 import MLXLLM
 import MLX
 import MLXLMCommon
+#if canImport(UIKit)
 import UIKit
+#endif
 import os
 
 // MARK: MLX Memory Configuration for iOS
@@ -580,10 +582,10 @@ private actor MLXSwiftService {
     private static let minimumAvailableMemory: UInt64 = 2_500_000_000
 
     /// Returns the amount of memory the process can safely use before loading.
-    /// On iOS this is the jetsam-limit headroom; on Mac Catalyst that API returns 0
-    /// (no jetsam limits on macOS), so we read host VM stats for actual free RAM.
+    /// On iOS this is the jetsam-limit headroom; on Mac (Catalyst or native) that
+    /// API is unavailable/returns 0, so we read host VM stats for actual free RAM.
     private static func availableMemoryForModelLoad() -> UInt64 {
-        #if targetEnvironment(macCatalyst)
+        #if targetEnvironment(macCatalyst) || os(macOS)
         var stats = vm_statistics64()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &stats) { ptr -> kern_return_t in

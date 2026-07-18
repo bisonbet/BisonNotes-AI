@@ -6,8 +6,12 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(BackgroundTasks)
 import BackgroundTasks
+#endif
 import UserNotifications
 import AppIntents
 import WidgetKit
@@ -25,7 +29,11 @@ struct BisonNotesAIApp: App {
     @State private var hasQueuedParakeetStartupRepair = false
 
     // Phase 6: Register AppDelegate for notification handling
+    #if canImport(UIKit)
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #else
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #endif
 
     /// Performs one-time migration of AWS Bedrock settings from legacy model identifiers
     /// This ensures UserDefaults is updated rather than migrating on every access
@@ -864,6 +872,7 @@ struct BisonNotesAIApp: App {
     }
 
     private func setupBackgroundTasks() {
+        #if os(iOS)
         // Register background task identifiers
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.bisonai.audio-processing", using: nil) { task in
             handleBackgroundProcessing(task: task as! BGProcessingTask)
@@ -872,6 +881,8 @@ struct BisonNotesAIApp: App {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.bisonai.app-refresh", using: nil) { task in
             handleAppRefresh(task: task as! BGAppRefreshTask)
         }
+        #endif
+        // macOS: no BGTaskScheduler — the app keeps running; jobs continue in-process.
     }
 
     private func requestBackgroundAppRefreshPermission() {
@@ -880,6 +891,7 @@ struct BisonNotesAIApp: App {
         AppLog.shared.general("Background app refresh configured via BGTaskScheduler")
     }
 
+    #if os(iOS)
     private func handleBackgroundProcessing(task: BGProcessingTask) {
         AppLog.shared.general("Background processing task started: \(task.identifier)")
 
@@ -930,6 +942,7 @@ struct BisonNotesAIApp: App {
             task.setTaskCompleted(success: true)
         }
     }
+    #endif
 
     private func setupWatchConnectivity() {
         AppLog.shared.general("setupWatchConnectivity() called in BisonNotesAIApp")
@@ -974,7 +987,7 @@ struct BisonNotesAIApp: App {
             AppShortcuts.updateAppShortcutParameters()
         }
 
-        #if !targetEnvironment(macCatalyst)
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         if #available(iOS 18.0, *) {
             if let plugInsURL = Bundle.main.builtInPlugInsURL,
                let _ = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {

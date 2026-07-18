@@ -8,9 +8,15 @@
 
 import Foundation
 import OSLog
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import SwiftUI
+#if canImport(MessageUI)
 import MessageUI
+#endif
 
 // MARK: - Log Exporter
 
@@ -30,10 +36,15 @@ struct LogExporter {
         var sections = [String]()
 
         // ── Header ──
+        #if canImport(UIKit)
         // Capture UIDevice info on the main thread (UIKit is main-thread-only)
         let (deviceModel, systemVersion) = await MainActor.run {
             (UIDevice.current.model, UIDevice.current.systemVersion)
         }
+        #else
+        let deviceModel = "Mac"
+        let systemVersion = ProcessInfo.processInfo.operatingSystemVersionString
+        #endif
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
         let previousCrash = AppLog.shared.previousSessionCrashed
@@ -127,6 +138,8 @@ struct LogExporter {
 
 // MARK: - Log Email Presenter
 
+// TODO(macos-phase2): share logs via NSSharingServicePicker on native macOS (plan §2.5).
+#if os(iOS)
 /// Presents MFMailComposeViewController directly from the UIKit window,
 /// bypassing SwiftUI's sheet stack to avoid "only a single sheet" conflicts.
 /// Falls back to UIActivityViewController if Mail is not configured.
@@ -207,3 +220,20 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
         return vc
     }
 }
+#else
+/// macOS stub — log sharing moves to NSSharingServicePicker in Phase 2.5.
+class LogEmailPresenter: NSObject {
+    static let shared = LogEmailPresenter()
+
+    func presentLogEmail(
+        logFileURL: URL,
+        onPresented: @escaping () -> Void = {},
+        onDismiss: @escaping () -> Void
+    ) {
+        // TODO(macos-phase2): NSSharingServicePicker. For now reveal the file in Finder.
+        NSWorkspace.shared.activateFileViewerSelecting([logFileURL])
+        onPresented()
+        onDismiss()
+    }
+}
+#endif

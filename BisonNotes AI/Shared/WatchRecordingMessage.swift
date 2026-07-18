@@ -6,7 +6,9 @@
 //
 
 import Foundation
+#if canImport(WatchConnectivity)
 import WatchConnectivity
+#endif
 import CoreLocation
 
 /// Messages sent between watch and phone for recording coordination.
@@ -88,6 +90,7 @@ enum WatchDeviceType: String, Codable, CaseIterable {
     case appleWatch = "Apple Watch"
 }
 
+#if canImport(WatchConnectivity)
 /// Extension to simplify WatchConnectivity message sending
 extension WCSession {
     /// Send a recording message with optional user info
@@ -107,6 +110,7 @@ extension WCSession {
         }
     }
 }
+#endif
 
 /// Data structure for sync request
 struct WatchSyncRequest: Codable {

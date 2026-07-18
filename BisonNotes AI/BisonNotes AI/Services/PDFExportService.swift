@@ -6,12 +6,15 @@
 //
 
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 import PDFKit
 import MapKit
 import CoreLocation
 import CoreText
 
+#if canImport(UIKit)
 class PDFExportService {
     static let shared = PDFExportService()
 
@@ -980,3 +983,22 @@ class PDFExportService {
         }
     }
 }
+#else
+// TODO(macos-phase2): native macOS PDF export via NSGraphicsContext/CoreText (plan §2.5).
+class PDFExportService {
+    static let shared = PDFExportService()
+
+    @MainActor
+    func generatePDF(
+        summaryData: EnhancedSummaryData,
+        locationData: LocationData?,
+        locationAddress: String?
+    ) async throws -> Data {
+        throw NSError(
+            domain: "PDFExportService",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "PDF export is not yet available in the Mac version."]
+        )
+    }
+}
+#endif

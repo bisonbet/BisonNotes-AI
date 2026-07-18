@@ -7,8 +7,11 @@
 
 import Foundation
 import AVFoundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
+#if os(iOS)
 /// Enhanced audio session manager for recording, playback, and background operations.
 class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
@@ -511,6 +514,74 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         #endif
     }
 }
+
+#else
+
+// TODO(macos-phase2): Core Audio device management replaces AVAudioSession (plan §2.2).
+// AVAudioSession does not exist on native macOS: AVAudioEngine records without a
+// session, so configuration methods are no-ops. Input enumeration/selection
+// returns empty until the Core Audio implementation lands.
+
+/// Minimal stand-in for AVAudioSessionPortDescription so the shared audio stack
+/// compiles on native macOS. Callers only use portName, uid, and portType.
+final class AVAudioSessionPortDescription: NSObject {
+    struct Port: Equatable {
+        let rawValue: String
+        static let builtInMic = Port(rawValue: "BuiltInMic")
+        static let bluetoothHFP = Port(rawValue: "BluetoothHFP")
+        static let headsetMic = Port(rawValue: "HeadsetMic")
+        static let usbAudio = Port(rawValue: "USBAudio")
+    }
+
+    let portName: String
+    let uid: String
+    let portType: Port
+
+    init(portName: String, uid: String, portType: Port) {
+        self.portName = portName
+        self.uid = uid
+        self.portType = portType
+    }
+}
+
+class EnhancedAudioSessionManager: NSObject, ObservableObject {
+    @Published var isConfigured = false
+    @Published var isMixedAudioEnabled = false
+    @Published var isBackgroundRecordingEnabled = false
+    @Published var lastError: AudioProcessingError?
+
+    func configureMixedAudioSession() async throws {
+        isConfigured = true
+        isMixedAudioEnabled = true
+    }
+
+    func configureBackgroundRecording() async throws {
+        isConfigured = true
+        isBackgroundRecordingEnabled = true
+    }
+
+    func configurePlaybackSession() async throws {}
+
+    func configureBackgroundProcessingSession() async throws {}
+
+    func restoreAudioSession() async throws {}
+
+    func deactivateSession() async throws {
+        isConfigured = false
+    }
+
+    func setPreferredInput(_ input: AVAudioSessionPortDescription) async throws {}
+
+    func clearPreferredInput() async throws {}
+
+    func getAvailableInputs() -> [AVAudioSessionPortDescription] { [] }
+
+    func getActiveInput() -> AVAudioSessionPortDescription? { nil }
+
+    func handleAudioInterruption(_ notification: Notification) {}
+}
+
+#endif
 
 // MARK: - Error Types
 

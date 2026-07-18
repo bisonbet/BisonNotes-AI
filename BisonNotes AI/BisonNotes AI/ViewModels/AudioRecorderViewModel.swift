@@ -12,7 +12,9 @@ import Combine
 import CoreLocation
 import UserNotifications
 #if !targetEnvironment(macCatalyst)
+#if canImport(CallKit) && os(iOS)
 import CallKit
+#endif
 #endif
 
 class AudioRecorderViewModel: NSObject, ObservableObject {
@@ -111,7 +113,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var currentSegmentIndex: Int = 0 // Track which segment we're on
 
 	// Call interruption intelligence (Phase 1)
-	#if !targetEnvironment(macCatalyst)
+	#if os(iOS) && !targetEnvironment(macCatalyst)
 	var callObserver: CXCallObserver?
 	#endif
 	var callInterruptionStartTime: Date?
@@ -197,7 +199,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		setupNotificationObservers()
 
 		// Setup CallKit observer for intelligent call interruption handling (Phase 1)
-		#if !targetEnvironment(macCatalyst)
+		#if os(iOS) && !targetEnvironment(macCatalyst)
 		setupCallObserver()
 		#endif
 	}
@@ -260,7 +262,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// MARK: - Notification Observers
 
 	func setupNotificationObservers() {
-		#if !targetEnvironment(macCatalyst)
+		#if os(iOS) && !targetEnvironment(macCatalyst)
 		// AVAudioSession interruption/route notifications use Mach ports that don't
 		// exist on Mac — registering for them floods the log with "cannot add handler".
 		// Phone-call interruptions and Bluetooth routing don't apply on Mac anyway.
@@ -427,7 +429,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	// MARK: - Call Observer Setup (Phase 1)
 
-	#if !targetEnvironment(macCatalyst)
+	#if os(iOS) && !targetEnvironment(macCatalyst)
 	/// Setup CallKit observer for intelligent call interruption handling
 	func setupCallObserver() {
 		callObserver = CXCallObserver()

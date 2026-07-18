@@ -1409,17 +1409,10 @@ struct RecordingsListView: View {
 
         if !issues.isEmpty {
             // Show alert explaining why they can't combine
-            let alert = UIAlertController(
+            PlatformAlert.present(
                 title: "Cannot Combine Recordings",
-                message: "These recordings cannot be combined because:\n\n\(issues.joined(separator: "\n"))\n\nPlease delete the transcripts and/or summaries from both recordings before combining them.",
-                preferredStyle: .alert
+                message: "These recordings cannot be combined because:\n\n\(issues.joined(separator: "\n"))\n\nPlease delete the transcripts and/or summaries from both recordings before combining them."
             )
-            alert.addAction(UIAlertAction(title: "OK", style: .default))
-
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootViewController = windowScene.windows.first?.rootViewController {
-                rootViewController.present(alert, animated: true)
-            }
 
             // Exit selection mode
             isSelectionMode = false

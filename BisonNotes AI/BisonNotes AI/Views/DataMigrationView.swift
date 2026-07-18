@@ -1145,17 +1145,10 @@ struct DataMigrationView: View {
         } catch {
             AppLog.shared.dataMigration("Failed to verify iCloud sync: \(error)", level: .error)
             await MainActor.run {
-                let alert = UIAlertController(
+                PlatformAlert.present(
                     title: "Verification Failed",
-                    message: "Could not verify iCloud sync: \(error.localizedDescription)",
-                    preferredStyle: .alert
+                    message: "Could not verify iCloud sync: \(error.localizedDescription)"
                 )
-                alert.addAction(UIAlertAction(title: "OK", style: .default))
-
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let rootViewController = windowScene.windows.first?.rootViewController {
-                    rootViewController.present(alert, animated: true)
-                }
             }
         }
     }
@@ -1185,17 +1178,10 @@ struct DataMigrationView: View {
         } catch {
             AppLog.shared.dataMigration("Failed to sync missing summaries: \(error)", level: .error)
             await MainActor.run {
-                let alert = UIAlertController(
+                PlatformAlert.present(
                     title: "Sync Failed",
-                    message: "Could not sync summaries to iCloud: \(error.localizedDescription)",
-                    preferredStyle: .alert
+                    message: "Could not sync summaries to iCloud: \(error.localizedDescription)"
                 )
-                alert.addAction(UIAlertAction(title: "OK", style: .default))
-
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let rootViewController = windowScene.windows.first?.rootViewController {
-                    rootViewController.present(alert, animated: true)
-                }
             }
         }
     }

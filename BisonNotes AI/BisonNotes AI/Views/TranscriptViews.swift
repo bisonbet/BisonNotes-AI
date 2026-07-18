@@ -2297,7 +2297,7 @@ struct TitleRowView: View {
 
                     // Copy button
                     Button(action: {
-                        UIPasteboard.general.string = title.text
+                        PlatformPasteboard.string = title.text
                     }) {
                         Image(systemName: "doc.on.doc")
                             .font(.caption2)
@@ -2366,7 +2366,7 @@ struct EnhancedTitleRowView: View {
 
                     // Copy button
                     Button(action: {
-                        UIPasteboard.general.string = title.text
+                        PlatformPasteboard.string = title.text
                     }) {
                         Image(systemName: "doc.on.doc")
                             .font(.caption2)
