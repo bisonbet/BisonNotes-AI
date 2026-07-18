@@ -6,10 +6,6 @@
 //
 
 import SwiftUI
-import UIKit
-#if !targetEnvironment(macCatalyst)
-import SafariServices
-#endif
 
 enum ProcessingOption: String, CaseIterable {
     case openai = "OpenAI"
@@ -72,6 +68,7 @@ enum ProcessingOption: String, CaseIterable {
 
 struct SimpleSettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var selectedOption: ProcessingOption = .chooseLater
@@ -83,7 +80,6 @@ struct SimpleSettingsView: View {
     @State private var isFirstLaunch = false
     @State private var deviceSupported = false
     @State private var showingOnDeviceLLMSettings = false
-    @State private var showingHelpDocumentation = false
     @State private var showingOnDeviceAIDownload = false
     @State private var showingMistralOnboarding = false
 
@@ -158,21 +154,6 @@ struct SimpleSettingsView: View {
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
-        }
-        .sheet(isPresented: $showingHelpDocumentation) {
-            #if !targetEnvironment(macCatalyst)
-            if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
-                SafariView(url: url)
-            }
-            #endif
-        }
-        .onChange(of: showingHelpDocumentation) { _, isShowing in
-            #if targetEnvironment(macCatalyst)
-            if isShowing, let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
-                UIApplication.shared.open(url)
-                showingHelpDocumentation = false
-            }
-            #endif
         }
         .sheet(isPresented: $showingOnDeviceAIDownload) {
             OnDeviceAIDownloadView(
@@ -393,7 +374,9 @@ struct SimpleSettingsView: View {
             }
 
             Button(action: {
-                showingHelpDocumentation = true
+                if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
+                    openURL(url)
+                }
             }) {
                 Label {
                     Text("Learn More About Processing Options")

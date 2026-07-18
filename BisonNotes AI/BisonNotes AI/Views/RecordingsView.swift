@@ -6,11 +6,9 @@
 //
 
 import SwiftUI
-#if !targetEnvironment(macCatalyst)
-import SafariServices
-#endif
 
 struct RecordingsView: View {
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var importManager: FileImportManager
     @EnvironmentObject var transcriptImportManager: TranscriptImportManager
@@ -23,7 +21,6 @@ struct RecordingsView: View {
     @State private var recordings: [AudioRecordingFile] = []
     @State private var showingRecordingsList = false
     @State private var showingBackgroundProcessing = false
-    @State private var showingHelpDocumentation = false
     @State private var showingWebImport = false
     @State private var showingRecorderError = false
     @State private var recorderErrorMessage = ""
@@ -188,7 +185,9 @@ struct RecordingsView: View {
                         Spacer()
 
                         Button(action: {
-                            showingHelpDocumentation = true
+                            if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
+                                openURL(url)
+                            }
                         }) {
                             Image(systemName: "questionmark.circle")
                                 .font(.title3)
@@ -328,21 +327,6 @@ struct RecordingsView: View {
             // .sheet(isPresented: $videoPickerCoordinator.isShowingPicker) { ... }
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()
-            }
-            .sheet(isPresented: $showingHelpDocumentation) {
-                #if !targetEnvironment(macCatalyst)
-                if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
-                    SafariView(url: url)
-                }
-                #endif
-            }
-            .onChange(of: showingHelpDocumentation) { _, isShowing in
-                #if targetEnvironment(macCatalyst)
-                if isShowing, let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
-                    UIApplication.shared.open(url)
-                    showingHelpDocumentation = false
-                }
-                #endif
             }
             .alert("Audio Import Results", isPresented: $importManager.showingImportAlert) {
                 Button("OK", role: .cancel) {}
@@ -657,6 +641,3 @@ struct RecordingsView: View {
         .cornerRadius(8)
     }
 }
-
-// MARK: - Safari View Wrapper
-// SafariView is now in Views/SafariView.swift

@@ -12,6 +12,7 @@ import UIKit
 
 struct MistralOnboardingView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
 
     @SecureStorage(KeychainSecretStore.mistralAPIKey) private var mistralAPIKey: String = ""
     @AppStorage("mistralModel") private var mistralModel: String = MistralAIModel.mistralMedium2508.rawValue
@@ -24,8 +25,6 @@ struct MistralOnboardingView: View {
 
     @State private var currentStep = 0
     @State private var apiKeyInput: String = ""
-    @State private var showingSafari = false
-    @State private var safariURL: URL?
     @State private var isTestingConnection = false
     @State private var connectionTestPassed = false
     @State private var connectionTestFailed = false
@@ -60,21 +59,6 @@ struct MistralOnboardingView: View {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { dismiss() }
                 }
-            }
-            .sheet(isPresented: $showingSafari) {
-                if let url = safariURL {
-                    #if !targetEnvironment(macCatalyst)
-                    SafariView(url: url)
-                    #endif
-                }
-            }
-            .onChange(of: showingSafari) { _, isShowing in
-                #if targetEnvironment(macCatalyst)
-                if isShowing, let url = safariURL {
-                    UIApplication.shared.open(url)
-                    showingSafari = false
-                }
-                #endif
             }
         }
     }
@@ -184,8 +168,9 @@ struct MistralOnboardingView: View {
                 )
 
                 Button(action: {
-                    safariURL = URL(string: "https://console.mistral.ai")
-                    showingSafari = true
+                    if let url = URL(string: "https://console.mistral.ai") {
+                        openURL(url)
+                    }
                 }) {
                     Label("Open Mistral Console", systemImage: "safari")
                         .fontWeight(.semibold)
@@ -267,8 +252,9 @@ struct MistralOnboardingView: View {
                 )
 
                 Button(action: {
-                    safariURL = URL(string: "https://console.mistral.ai/api-keys")
-                    showingSafari = true
+                    if let url = URL(string: "https://console.mistral.ai/api-keys") {
+                        openURL(url)
+                    }
                 }) {
                     Label("Open API Keys Page", systemImage: "safari")
                         .fontWeight(.semibold)
