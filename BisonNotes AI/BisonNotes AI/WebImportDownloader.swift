@@ -41,12 +41,21 @@ struct WebImportDownloader {
             "audio/mp3": "mp3",
             "audio/mp4": "m4a",
             "audio/x-m4a": "m4a",
-            "audio/aac": "m4a",
             "audio/wav": "wav",
             "audio/x-wav": "wav",
+            "audio/vnd.wave": "wav",
+            "audio/x-caf": "caf",
+            "audio/aiff": "aiff",
+            "audio/x-aiff": "aiff",
             "video/mp4": "mp4",
             "video/quicktime": "mov",
+            "video/x-m4v": "m4v",
+            "video/x-msvideo": "avi",
+            "video/x-matroska": "mkv",
+            "text/plain": "txt",
+            "text/markdown": "md",
             "text/vtt": "vtt",
+            "application/x-subrip": "srt",
             "application/pdf": "pdf",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
             "application/msword": "doc"
@@ -76,6 +85,7 @@ struct WebImportDownloader {
                     try routeForRemoteFile(
                         url: response.url ?? url,
                         mimeType: response.mimeType?.lowercased(),
+                        suggestedFilename: filename(from: response),
                         preferredKind: preferredKind
                     )
                 },
@@ -109,9 +119,11 @@ struct WebImportDownloader {
     private func routeForRemoteFile(
         url: URL,
         mimeType: String?,
+        suggestedFilename: String?,
         preferredKind: WebImportKind
     ) throws -> WebImportRoute {
         let detectedRoute = routeFromExtension(url.pathExtension)
+            ?? routeFromExtension(URL(fileURLWithPath: suggestedFilename ?? "").pathExtension)
             ?? routeFromMIME(mimeType)
 
         switch preferredKind {
@@ -139,13 +151,14 @@ struct WebImportDownloader {
 
     private func routeFromMIME(_ mimeType: String?) -> WebImportRoute? {
         guard let mimeType else { return nil }
-        if mimeType.hasPrefix("audio/") || mimeType.hasPrefix("video/") {
+        if mimeType.hasPrefix("text/") {
+            return .transcript
+        }
+        guard let mappedExtension = mimeExtensions[mimeType] else { return nil }
+        if audioExtensions.contains(mappedExtension) || videoExtensions.contains(mappedExtension) {
             return .audioOrVideo
         }
-        if mimeType.hasPrefix("text/")
-            || mimeType.contains("pdf")
-            || mimeType.contains("wordprocessingml")
-            || mimeType.contains("msword") {
+        if transcriptExtensions.contains(mappedExtension) {
             return .transcript
         }
         return nil
@@ -176,8 +189,9 @@ struct WebImportDownloader {
         mimeType: String?,
         route: WebImportRoute
     ) throws -> URL {
-        let fileExtension = inferredFileExtension(
+        let fileExtension = try inferredFileExtension(
             from: sourceURL,
+            response: response,
             mimeType: mimeType,
             route: route
         )
@@ -204,11 +218,19 @@ struct WebImportDownloader {
 
     private func inferredFileExtension(
         from url: URL,
+        response: HTTPURLResponse,
         mimeType: String?,
         route: WebImportRoute
-    ) -> String {
+    ) throws -> String {
         if let routeExtension = routeExtension(from: url.pathExtension) {
             return routeExtension
+        }
+
+        if let dispositionFilename = filename(from: response),
+           let dispositionExtension = routeExtension(
+               from: URL(fileURLWithPath: dispositionFilename).pathExtension
+           ) {
+            return dispositionExtension
         }
 
         if let mimeType, let mappedExtension = mimeExtensions[mimeType] {
@@ -219,7 +241,12 @@ struct WebImportDownloader {
             return "txt"
         }
 
-        return route == .transcript ? "txt" : "m4a"
+        // Reaching the transcript fallback means the route came from a generic
+        // text MIME. Unknown media MIME types are rejected before downloading.
+        guard route == .transcript else {
+            throw WebImportError.unsupportedRemoteType
+        }
+        return "txt"
     }
 
     private func routeExtension(from fileExtension: String) -> String? {

@@ -4,9 +4,101 @@
 //
 
 import XCTest
+import CoreData
 @testable import BisonNotes_AI
 
 final class WebImportManagerTests: XCTestCase {
+    @MainActor
+    func testSignedAudioDownloadImportsThroughPersistence() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AudioWebImportURLProtocol.self]
+        let downloader = WebImportDownloader(sessionConfiguration: configuration)
+        let persistence = PersistenceController(inMemory: true)
+        let fileImportManager = FileImportManager(persistenceController: persistence)
+        let transcriptImportManager = TranscriptImportManager()
+        let manager = WebImportManager(downloader: downloader)
+        let url = "https://example.com/signed-download"
+
+        await manager.importFromURLString(
+            url,
+            importKind: .audioOrVideo,
+            fileImportManager: fileImportManager,
+            transcriptImportManager: transcriptImportManager
+        )
+
+        XCTAssertTrue(manager.lastImportSucceeded)
+        XCTAssertFalse(manager.showingImportAlert)
+        XCTAssertEqual(fileImportManager.importResults?.successful, 1)
+
+        let request: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        let recordings = try persistence.container.viewContext.fetch(request)
+        let recording = try XCTUnwrap(recordings.first)
+        XCTAssertEqual(recording.transcriptionStatus, "Not Started")
+        XCTAssertTrue(recording.recordingURL?.hasSuffix(".wav") == true)
+
+        if let relativePath = recording.recordingURL,
+           let documentsURL = FileManager.default.urls(
+               for: .documentDirectory,
+               in: .userDomainMask
+           ).first {
+            try? FileManager.default.removeItem(
+                at: documentsURL.appendingPathComponent(relativePath)
+            )
+        }
+    }
+
+    @MainActor
+    func testRejectedAudioShowsLinkErrorAndLeavesNoOrphanedFile() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AudioWebImportURLProtocol.self]
+        let downloader = WebImportDownloader(sessionConfiguration: configuration)
+        let persistence = PersistenceController(inMemory: true)
+        let fileImportManager = FileImportManager(persistenceController: persistence)
+        let transcriptImportManager = TranscriptImportManager()
+        let manager = WebImportManager(downloader: downloader)
+        let documentsURL = try XCTUnwrap(
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        )
+        let filesBefore = Set(
+            (try? FileManager.default.contentsOfDirectory(atPath: documentsURL.path)) ?? []
+        )
+
+        await manager.importFromURLString(
+            "https://example.com/invalid.wav",
+            importKind: .audioOrVideo,
+            fileImportManager: fileImportManager,
+            transcriptImportManager: transcriptImportManager
+        )
+
+        let filesAfter = Set(
+            (try? FileManager.default.contentsOfDirectory(atPath: documentsURL.path)) ?? []
+        )
+        let request: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+
+        XCTAssertFalse(manager.lastImportSucceeded)
+        XCTAssertTrue(manager.showingImportAlert)
+        XCTAssertTrue(manager.importMessage.contains("Invalid audio file"))
+        XCTAssertFalse(fileImportManager.showingImportAlert)
+        XCTAssertEqual(filesAfter, filesBefore)
+        XCTAssertEqual(try persistence.container.viewContext.count(for: request), 0)
+    }
+
+    func testUnknownAudioMIMEIsNotRelabeledAsM4A() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AudioWebImportURLProtocol.self]
+        let downloader = WebImportDownloader(sessionConfiguration: configuration)
+        let url = try XCTUnwrap(URL(string: "https://example.com/unknown-media"))
+
+        do {
+            _ = try await downloader.downloadRemoteFile(from: url, preferredKind: .audioOrVideo)
+            XCTFail("Expected an unknown audio MIME type to be rejected")
+        } catch WebImportError.unsupportedRemoteType {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testDownloaderStopsAnUnknownLengthBodyAtTheRouteLimit() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [OversizedWebImportURLProtocol.self]
@@ -195,11 +287,11 @@ final class WebImportManagerTests: XCTestCase {
 }
 
 private final class OversizedWebImportURLProtocol: URLProtocol {
-    override class func canInit(with request: URLRequest) -> Bool {
+    override static func canInit(with request: URLRequest) -> Bool {
         true
     }
 
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest {
         request
     }
 
@@ -222,4 +314,83 @@ private final class OversizedWebImportURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+private final class AudioWebImportURLProtocol: URLProtocol {
+    override static func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: WebImportError.invalidResponse)
+            return
+        }
+
+        let isSignedDownload = url.lastPathComponent == "signed-download"
+        let isUnknownMedia = url.lastPathComponent == "unknown-media"
+        let headers: [String: String]
+        let data: Data
+
+        if isSignedDownload {
+            headers = [
+                "Content-Type": "application/octet-stream",
+                "Content-Disposition": "attachment; filename=\"signed-recording.wav\""
+            ]
+            data = Self.validWAVData()
+        } else if isUnknownMedia {
+            headers = ["Content-Type": "audio/flac"]
+            data = Data("not-flac".utf8)
+        } else {
+            headers = ["Content-Type": "audio/wav"]
+            data = Data("not-audio".utf8)
+        }
+
+        guard let response = HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: headers
+        ) else {
+            client?.urlProtocol(self, didFailWithError: WebImportError.invalidResponse)
+            return
+        }
+
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private static func validWAVData() -> Data {
+        let sampleCount: UInt32 = 800
+        var data = Data("RIFF".utf8)
+        data.appendLittleEndian(UInt32(36) + sampleCount)
+        data.append(Data("WAVEfmt ".utf8))
+        data.appendLittleEndian(UInt32(16))
+        data.appendLittleEndian(UInt16(1))
+        data.appendLittleEndian(UInt16(1))
+        data.appendLittleEndian(UInt32(8_000))
+        data.appendLittleEndian(UInt32(8_000))
+        data.appendLittleEndian(UInt16(1))
+        data.appendLittleEndian(UInt16(8))
+        data.append(Data("data".utf8))
+        data.appendLittleEndian(sampleCount)
+        data.append(Data(repeating: 128, count: Int(sampleCount)))
+        return data
+    }
+}
+
+private extension Data {
+    mutating func appendLittleEndian<Integer: FixedWidthInteger>(_ value: Integer) {
+        var littleEndianValue = value.littleEndian
+        Swift.withUnsafeBytes(of: &littleEndianValue) { bytes in
+            append(contentsOf: bytes)
+        }
+    }
 }
