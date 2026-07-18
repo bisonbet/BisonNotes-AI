@@ -2,13 +2,13 @@
 //  AudioRecorderViewModel+CatalystEngine.swift
 //  BisonNotes AI
 //
-//  Mac Catalyst recording uses AVAudioEngine + AVAudioFile because
+//  Mac recording uses AVAudioEngine + AVAudioFile because
 //  AVAudioRecorder cannot reliably set up its AAC/PCM converter on macOS.
 //  The engine taps the input node directly, writes native PCM to a temporary
 //  CAF file, then exports that file to the app's normal M4A recording URL.
 //
 
-#if targetEnvironment(macCatalyst)
+#if targetEnvironment(macCatalyst) || os(macOS)
 
 import Foundation
 @preconcurrency import AVFoundation
@@ -65,6 +65,7 @@ extension AudioRecorderViewModel {
 		// Tear down any leftover engine state from a previous run.
 		stopCatalystEngineRecording(closingFile: false)
 
+		#if targetEnvironment(macCatalyst)
 		do {
 			try startCatalystEnginePipeline(at: url)
 		} catch {
@@ -80,6 +81,11 @@ extension AudioRecorderViewModel {
 				throw error
 			}
 		}
+		#else
+		// Native macOS uses Core Audio directly. AVAudioSession is an iOS API
+		// and the Catalyst-only fallback must never run here.
+		try startCatalystEnginePipeline(at: url)
+		#endif
 	}
 
 	private func startCatalystEnginePipeline(at url: URL) throws {
@@ -118,12 +124,14 @@ extension AudioRecorderViewModel {
 		try engine.start()
 	}
 
+	#if targetEnvironment(macCatalyst)
 	private func activateCatalystAudioSessionFallback() throws {
 		let session = AVAudioSession.sharedInstance()
 		try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers])
 		try session.setActive(true)
 		catalystAudioSessionActivated = true
 	}
+	#endif
 
 	/// Pause Catalyst recording: remove the input tap so the file stops
 	/// receiving samples. The engine and file stay alive so resume can
@@ -162,10 +170,12 @@ extension AudioRecorderViewModel {
 		catalystEngineFormat = nil
 		if closingFile {
 			catalystAudioFile = nil
+			#if targetEnvironment(macCatalyst)
 			if catalystAudioSessionActivated {
 				try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 				catalystAudioSessionActivated = false
 			}
+			#endif
 		}
 	}
 

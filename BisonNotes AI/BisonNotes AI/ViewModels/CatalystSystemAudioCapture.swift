@@ -3,10 +3,10 @@
 //  BisonNotes AI
 //
 //  Captures Mac system/application audio through ScreenCaptureKit while the
-//  existing Catalyst microphone recorder continues to capture local speech.
+//  existing Mac microphone recorder continues to capture local speech.
 //
 
-#if targetEnvironment(macCatalyst)
+#if targetEnvironment(macCatalyst) || os(macOS)
 
 import Foundation
 @preconcurrency import AVFoundation

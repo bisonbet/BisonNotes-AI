@@ -11,7 +11,8 @@ This document is written for an AI agent (or human) to execute incrementally. Ev
 
 - **Phase 0 — DONE** (commits `930bcbf3`, `3fd6cb53`, `c4195e50`). SafariView, document pickers, and the PlatformApp shim landed; iOS + Catalyst green.
 - **Phase 1 — DONE** (commit `42a1a6e0`). Native `BisonNotes AI macOS` target + scheme created; iOS-only APIs fenced. **All three targets build green** (macOS native, iOS Simulator, Mac Catalyst). Launch-verified: the native app runs, opens the Core Data store read-write **in the same container the Catalyst app uses** (`~/Library/Containers/Bison-Networking.BisonNotes-AI/`, same bundle ID — validates the Phase 4.1 data-continuity design), and quits cleanly with no crash report (the historical Catalyst quit-crash did not reproduce). Screenshot verification was blocked by the environment's display sandbox; UI was confirmed via process + open-file inspection instead.
-- **Next: Phase 2** — work the 6 `TODO(macos-phase2)` markers (grep for them): the AVAudioSession→Core Audio recording/session/device stack (§2.1–2.3) and the PDF/RTF export + share-sheet stack (§2.5). The macOS recording path is currently stubbed (records nothing yet).
+- **Phase 2.1 — IMPLEMENTED, RUNTIME QA PENDING.** Native macOS now uses the shared Mac AVAudioEngine/AVAudioFile microphone path and ScreenCaptureKit system-audio path. The AVAudioSession retry/deactivation fallback remains Catalyst-only. Native macOS, iOS Simulator, and Mac Catalyst builds are green; a signed native build still needs the Phase 2 exit-criteria mic/system-audio hardware pass.
+- **Next: Phase 2.2** — replace the native macOS audio-session/device stubs in `EnhancedAudioSessionManager.swift` with Core Audio input enumeration and selection. The 6 `TODO(macos-phase2)` markers remain the tracked Phase 2 worklist.
 
 ---
 

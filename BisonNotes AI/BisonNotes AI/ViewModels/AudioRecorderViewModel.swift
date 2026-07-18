@@ -88,11 +88,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var lastCheckpointTime: Date = Date.distantPast
 	var recordingStartedAt: (url: URL, date: Date)?
 
-	#if targetEnvironment(macCatalyst)
-	// On Mac Catalyst, AVAudioRecorder cannot reliably encode to the app's
+	#if targetEnvironment(macCatalyst) || os(macOS)
+	// On Mac, AVAudioRecorder cannot reliably encode to the app's
 	// M4A target. AVAudioEngine taps deliver PCM buffers to a scratch file that
-	// is exported to M4A when recording stops; AVAudioSession is only used as a
-	// fallback if the direct engine path cannot start.
+	// is exported to M4A when recording stops; Catalyst uses AVAudioSession only
+	// as a fallback if the direct engine path cannot start.
 	var catalystAudioEngine: AVAudioEngine?
 	var catalystAudioFile: AVAudioFile?
 	var catalystEngineFormat: AVAudioFormat?
@@ -457,7 +457,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	func startRecording() {
 		guard beginRecordingStartup() else { return }
 		AppLog.shared.recording("startRecording: requesting microphone permission")
-		#if targetEnvironment(macCatalyst)
+		#if targetEnvironment(macCatalyst) || os(macOS)
 		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
@@ -492,7 +492,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		#endif
 	}
 
-	#if targetEnvironment(macCatalyst)
+	#if targetEnvironment(macCatalyst) || os(macOS)
 	@MainActor
 	private func requestMicPermissionAndRecord() {
 		let status = AVAudioApplication.shared.recordPermission
@@ -538,7 +538,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	func startBackgroundRecording() {
 		guard beginRecordingStartup() else { return }
 		AppLog.shared.recording("startBackgroundRecording: requesting microphone permission")
-		#if targetEnvironment(macCatalyst)
+		#if targetEnvironment(macCatalyst) || os(macOS)
 		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
@@ -592,7 +592,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		// capture records system output first, so live mic-only transcription is
 		// disabled for that mode and transcription runs from the saved file.
 		var useLiveTranscription = UserDefaults.standard.bool(forKey: "enableLiveTranscription")
-		#if targetEnvironment(macCatalyst)
+		#if targetEnvironment(macCatalyst) || os(macOS)
 		if isMacSystemAudioCaptureEnabled {
 			useLiveTranscription = false
 		}
@@ -604,7 +604,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 
 		do {
-			#if targetEnvironment(macCatalyst)
+			#if targetEnvironment(macCatalyst) || os(macOS)
 			Task { @MainActor in
 				await self.setupCatalystRecording(at: audioFilename)
 			}
@@ -682,7 +682,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			return
 		}
 
-		#if targetEnvironment(macCatalyst)
+		#if targetEnvironment(macCatalyst) || os(macOS)
 		guard catalystAudioEngine != nil else { return }
 		pauseCatalystEngineRecording()
 		#else
@@ -701,7 +701,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	func resumeRecording() {
 		guard isPaused else { return }
 
-		#if targetEnvironment(macCatalyst)
+		#if targetEnvironment(macCatalyst) || os(macOS)
 		do {
 			try resumeCatalystEngineRecording()
 		} catch {
@@ -747,7 +747,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			return
 		}
 
-		#if targetEnvironment(macCatalyst)
+		#if targetEnvironment(macCatalyst) || os(macOS)
 		// On Catalyst, recording is driven by AVAudioEngine + AVAudioFile.
 		// Tear it down here, then run the save flow manually since there's
 		// no AVAudioRecorder delegate to fire it.
@@ -779,7 +779,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				await mergeRecordingSegments()
 			}
 		} else {
-			#if targetEnvironment(macCatalyst)
+			#if targetEnvironment(macCatalyst) || os(macOS)
 			if let url = catalystFinalURL {
 				AppLog.shared.recording("Recording finished successfully (Catalyst engine)")
 				Task { @MainActor in
@@ -902,7 +902,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				// while the app is in the background, and we need to detect that.
 				// NOTE: In live transcription mode, audioRecorder is nil so this block is
 				// safely skipped — LiveTranscriptionService manages its own AVAudioEngine.
-				#if targetEnvironment(macCatalyst)
+				#if targetEnvironment(macCatalyst) || os(macOS)
 				// On Mac Catalyst there is no AVAudioSession interruption model and
 				// AVAudioRecorder.isRecording is unreliable; the recovery flow that
 				// reactivates the session and rebuilds the recorder is a no-op here
