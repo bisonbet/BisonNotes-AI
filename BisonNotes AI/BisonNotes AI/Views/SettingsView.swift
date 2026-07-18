@@ -1221,7 +1221,7 @@ struct SettingsView: View {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else {
             return
         }
-        UIApplication.shared.open(url)
+        PlatformApp.open(url)
         #endif
     }
 

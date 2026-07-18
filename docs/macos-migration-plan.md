@@ -78,7 +78,7 @@ Shrinks the eventual port and benefits iOS/Catalyst immediately. Each task is in
 
 ### Phase 0 exit criteria
 - `SafariView.swift`, `DocumentPickerCoordinator.swift`, `DocumentExportPicker.swift` deleted or reduced to cross-platform SwiftUI.
-- `grep -rl "UIApplication" --include='*.swift' "BisonNotes AI/BisonNotes AI"` returns ≤ 5 files (the shim itself, AppDelegate, app entry, and genuinely iOS-only files like the Share extension).
+- The only files still referencing `UIApplication` are: `Platform/PlatformApp.swift` (the shim), `AppDelegate.swift` + `BisonNotesAIApp.swift` (delegate adaptor — inherently UIKit until Phase 1), `WatchConnectivity/WatchConnectivityManager.swift` (KEEP-iOS), and the four window-scene/share-sheet sites (`LogExporter.swift`, `Views/SettingsView.swift`, `Views/RecordingsListView.swift`, `Views/DataMigrationView.swift`) whose presentation is feature-specific and ports in Phase 2.5 (NSSharingServicePicker on macOS).
 - iOS + Catalyst builds green; unit tests pass.
 
 ---

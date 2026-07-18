@@ -281,7 +281,7 @@ private actor MLXSwiftService {
         guard memoryObserver == nil else { return }
 
         let observer = NotificationCenter.default.addObserver(
-            forName: UIApplication.didReceiveMemoryWarningNotification,
+            forName: PlatformLifecycle.didReceiveMemoryWarningNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in

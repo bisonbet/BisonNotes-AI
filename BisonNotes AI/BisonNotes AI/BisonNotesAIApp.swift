@@ -379,7 +379,7 @@ struct BisonNotesAIApp: App {
             return
         }
 
-        guard UIApplication.shared.isProtectedDataAvailable else {
+        guard PlatformApp.isProtectedDataAvailable else {
             return
         }
 
@@ -530,7 +530,7 @@ struct BisonNotesAIApp: App {
                 .environmentObject(fileImportManager)
                 .environmentObject(transcriptImportManager)
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didFinishLaunchingNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didFinishLaunchingNotification)) { _ in
                     requestBackgroundAppRefreshPermission()
                     #if !targetEnvironment(macCatalyst)
                     setupWatchConnectivity()
@@ -543,13 +543,13 @@ struct BisonNotesAIApp: App {
                     appCoordinator.reconcileiCloudIfEnabled(reason: "app launch", force: true)
                 }
                 .onOpenURL(perform: handleOpenURL)
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didEnterBackgroundNotification)) { _ in
                     AppLog.shared.markCleanShutdown()
                 }
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.willTerminateNotification)) { _ in
                     AppLog.shared.markCleanShutdown()
                 }
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didBecomeActiveNotification)) { _ in
                     AppLog.shared.markSessionActive()
                     // Clear badge when the user actively opens the app. Using the
                     // scene-phase notification here (rather than AppDelegate

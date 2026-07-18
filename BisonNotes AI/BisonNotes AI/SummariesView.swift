@@ -77,7 +77,7 @@ struct SummariesView: View {
                         }
                     }
                 }
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.willEnterForegroundNotification)) { _ in
                     // Refresh when app comes to foreground
                     loadRecordings()
                 }

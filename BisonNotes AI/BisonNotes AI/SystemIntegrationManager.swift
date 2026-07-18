@@ -26,7 +26,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
     /// Whether the Google Calendar app is installed on this device
     var isGoogleCalendarInstalled: Bool {
         guard let url = URL(string: "googlecalendar://") else { return false }
-        return UIApplication.shared.canOpenURL(url)
+        return PlatformApp.canOpen(url)
     }
 
     override init() {
@@ -348,7 +348,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             return
         }
 
-        UIApplication.shared.open(url)
+        PlatformApp.open(url)
     }
 
     // MARK: - Helper Methods

@@ -791,8 +791,8 @@ extension AudioRecorderViewModel {
 		let body = "Found and saved your recording from when the app was in background: \(filename.prefix(30))..."
 
 		// Check app state for notification timing
-		let appState = await MainActor.run { UIApplication.shared.applicationState }
-		AppLog.shared.audioSession("App state when sending recovery notification: \(appState.rawValue)", level: .debug)
+		let appIsActive = await MainActor.run { PlatformApp.isActive }
+		AppLog.shared.audioSession("App active when sending recovery notification: \(appIsActive)", level: .debug)
 
 		// Use the proven BackgroundProcessingManager notification system
 		_ = await MainActor.run {

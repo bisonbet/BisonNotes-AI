@@ -78,7 +78,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     /// a fatal crash in llama.cpp's Metal backend (ggml_abort).
     private func setupBackgroundObservers() {
         backgroundObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.didEnterBackgroundNotification,
+            forName: PlatformLifecycle.didEnterBackgroundNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -87,7 +87,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         }
 
         foregroundObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.willEnterForegroundNotification,
+            forName: PlatformLifecycle.willEnterForegroundNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -101,7 +101,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         // still in flight. Explicitly unloading the model here forces llama_free /
         // llama_model_free to run before exit(), releasing all Metal resources cleanly.
         terminateObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.willTerminateNotification,
+            forName: PlatformLifecycle.willTerminateNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -348,14 +348,13 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             AppLog.shared.summarization("[OnDeviceLLMEngine] Processing chunk \(index + 1)/\(chunks.count)", level: .debug)
 
             // Check if we are running in background and task is about to expire
-            // Must access UIApplication.shared on MainActor
             let isBackground = await MainActor.run {
-                UIApplication.shared.applicationState == .background
+                PlatformApp.isInBackground
             }
 
             if isBackground {
                 let remaining = await MainActor.run {
-                    UIApplication.shared.backgroundTimeRemaining
+                    PlatformBackgroundTask.remainingTime
                 }
 
                 if remaining < 10 { // Less than 10 seconds remaining

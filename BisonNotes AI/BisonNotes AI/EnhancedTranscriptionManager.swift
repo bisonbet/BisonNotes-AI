@@ -69,7 +69,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     private var speechRecognizer: SFSpeechRecognizer?
     private var currentTask: SFSpeechRecognitionTask?
     private let chunkingService = AudioFileChunkingService()
-    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundTaskID: PlatformBackgroundTask.ID = .invalid
     private var backgroundTaskStartTime: Date?
     private var backgroundTaskRefreshTimer: Task<Void, Never>?
 
@@ -288,7 +288,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
     private func beginBackgroundTask() {
         guard backgroundTaskID == .invalid else { return }
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WhisperTranscription") { [weak self] in
+        backgroundTaskID = PlatformBackgroundTask.begin(name: "WhisperTranscription") { [weak self] in
             Task { @MainActor in
                 self?.endBackgroundTask()
             }
@@ -311,7 +311,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
         if backgroundTaskID != .invalid {
             AppLog.shared.transcription("Ending background task for Whisper: \(backgroundTaskID.rawValue)", level: .debug)
-            UIApplication.shared.endBackgroundTask(backgroundTaskID)
+            PlatformBackgroundTask.end(backgroundTaskID)
             backgroundTaskID = .invalid
             backgroundTaskStartTime = nil
         }
@@ -344,13 +344,13 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
         // End the current task
         let oldTaskID = backgroundTaskID
-        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        PlatformBackgroundTask.end(backgroundTaskID)
         backgroundTaskID = .invalid
         backgroundTaskStartTime = nil
         AppLog.shared.transcription("Ended old task: \(oldTaskID.rawValue)", level: .debug)
 
         // Immediately start a new one
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WhisperTranscription") { [weak self] in
+        backgroundTaskID = PlatformBackgroundTask.begin(name: "WhisperTranscription") { [weak self] in
             Task { @MainActor in
                 self?.endBackgroundTask()
             }

@@ -60,7 +60,7 @@ class SummaryManager: ObservableObject {
     /// Background task ID for keeping summarization alive when the app is backgrounded.
     /// Cloud AI calls (OpenAI, Bedrock, Gemini) use network requests that iOS will
     /// terminate after ~30s without a background task.
-    private var summaryBackgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var summaryBackgroundTaskID: PlatformBackgroundTask.ID = .invalid
 
     // MARK: - Error Handling Integration
 
@@ -1161,13 +1161,13 @@ class SummaryManager: ObservableObject {
 
     private func beginSummaryBackgroundTask() {
         guard summaryBackgroundTaskID == .invalid else { return }
-        summaryBackgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "AISummarization") { [weak self] in
+        summaryBackgroundTaskID = PlatformBackgroundTask.begin(name: "AISummarization") { [weak self] in
             // Expiration handler — iOS is about to kill us
             AppLog.shared.summarization("Background task expiring for summarization", level: .default)
             self?.endSummaryBackgroundTask()
         }
         if summaryBackgroundTaskID != .invalid {
-            let remaining = UIApplication.shared.backgroundTimeRemaining
+            let remaining = PlatformBackgroundTask.remainingTime
             if remaining != Double.greatestFiniteMagnitude {
                 AppLog.shared.summarization("Background task started - \(Int(remaining))s remaining", level: .debug)
             } else {
@@ -1179,7 +1179,7 @@ class SummaryManager: ObservableObject {
     private func endSummaryBackgroundTask() {
         guard summaryBackgroundTaskID != .invalid else { return }
         AppLog.shared.summarization("Ending summarization background task", level: .debug)
-        UIApplication.shared.endBackgroundTask(summaryBackgroundTaskID)
+        PlatformBackgroundTask.end(summaryBackgroundTaskID)
         summaryBackgroundTaskID = .invalid
     }
 

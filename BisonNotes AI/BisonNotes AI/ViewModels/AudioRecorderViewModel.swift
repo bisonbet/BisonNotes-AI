@@ -80,7 +80,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var lastRecoveryAttempt: Date = Date.distantPast
 
 	// Background task identifier for recording continuity
-	var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+	var backgroundTask: PlatformBackgroundTask.ID = .invalid
 
 	// Track last checkpoint time for periodic data flushing
 	var lastCheckpointTime: Date = Date.distantPast
@@ -307,7 +307,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		#endif
 
 		willEnterForegroundObserver = NotificationCenter.default.addObserver(
-			forName: UIApplication.willEnterForegroundNotification,
+			forName: PlatformLifecycle.willEnterForegroundNotification,
 			object: nil,
 			queue: .main
 		) { [weak self] _ in
@@ -385,7 +385,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 		// Add observer for app backgrounding
 		NotificationCenter.default.addObserver(
-			forName: UIApplication.didEnterBackgroundNotification,
+			forName: PlatformLifecycle.didEnterBackgroundNotification,
 			object: nil,
 			queue: .main
 		) { [weak self] _ in

@@ -341,7 +341,7 @@ class BackgroundProcessingManager: ObservableObject {
     private var cancellationReason: String?
     /// Maps job ID → old summary ID for regeneration jobs (delete old summary before saving new)
     private var regenerationSummaryIds: [UUID: UUID] = [:]
-    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundTaskID: PlatformBackgroundTask.ID = .invalid
     private var backgroundTaskStartTime: Date?
     private var backgroundTimeMonitor: Task<Void, Never>?
     private var staleJobMonitor: Task<Void, Never>?
@@ -1724,21 +1724,21 @@ class BackgroundProcessingManager: ObservableObject {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appDidEnterBackground),
-            name: UIApplication.didEnterBackgroundNotification,
+            name: PlatformLifecycle.didEnterBackgroundNotification,
             object: nil
         )
 
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appWillEnterForeground),
-            name: UIApplication.willEnterForegroundNotification,
+            name: PlatformLifecycle.willEnterForegroundNotification,
             object: nil
         )
 
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appWillTerminate),
-            name: UIApplication.willTerminateNotification,
+            name: PlatformLifecycle.willTerminateNotification,
             object: nil
         )
     }
@@ -2183,7 +2183,7 @@ class BackgroundProcessingManager: ObservableObject {
         #if targetEnvironment(macCatalyst)
         return
         #else
-        guard UIApplication.shared.applicationState != .active else {
+        guard !PlatformApp.isActive else {
             AppLog.shared.backgroundProcessing("Skipping keep-alive audio while app is active", level: .debug)
             return
         }
@@ -2199,7 +2199,7 @@ class BackgroundProcessingManager: ObservableObject {
             backgroundAudioKeepAliveActive = true
             AppLog.shared.backgroundProcessing("Playback audio session configured for background processing")
 
-            let backgroundTime = UIApplication.shared.backgroundTimeRemaining
+            let backgroundTime = PlatformBackgroundTask.remainingTime
             if backgroundTime != Double.greatestFiniteMagnitude {
                 AppLog.shared.backgroundProcessing("After audio session config: \(Int(backgroundTime))s background time", level: .debug)
             } else {
@@ -2254,7 +2254,7 @@ class BackgroundProcessingManager: ObservableObject {
             "AudioProcessing-JobQueue"
         }
 
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: taskName) { [weak self] in
+        backgroundTaskID = PlatformBackgroundTask.begin(name: taskName) { [weak self] in
             AppLog.shared.backgroundProcessing("Background task is about to expire", level: .error)
             Task { @MainActor in
                 await self?.handleBackgroundTaskExpiration()
@@ -2270,7 +2270,7 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Started background task: \(backgroundTaskID.rawValue)")
 
             // Check remaining background time immediately
-            let remainingTime = UIApplication.shared.backgroundTimeRemaining
+            let remainingTime = PlatformBackgroundTask.remainingTime
             if remainingTime == Double.greatestFiniteMagnitude {
                 AppLog.shared.backgroundProcessing("Background time: Unlimited (likely in foreground or audio session active)", level: .debug)
             } else {
@@ -2307,7 +2307,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         if backgroundTaskID != .invalid {
             AppLog.shared.backgroundProcessing("Ending background task: \(backgroundTaskID.rawValue)")
-            UIApplication.shared.endBackgroundTask(backgroundTaskID)
+            PlatformBackgroundTask.end(backgroundTaskID)
             backgroundTaskID = .invalid
             backgroundTaskStartTime = nil
 
@@ -2329,7 +2329,7 @@ class BackgroundProcessingManager: ObservableObject {
     private func monitorBackgroundTime() {
         guard backgroundTaskID != .invalid else { return }
 
-        let remainingTime = UIApplication.shared.backgroundTimeRemaining
+        let remainingTime = PlatformBackgroundTask.remainingTime
 
         // Skip monitoring and refreshing if we have unlimited time (app is likely in foreground or has special privileges/audio session active)
         guard remainingTime != Double.greatestFiniteMagnitude else { return }
@@ -2384,7 +2384,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         // End the current background task
         let oldTaskID = backgroundTaskID
-        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        PlatformBackgroundTask.end(backgroundTaskID)
         backgroundTaskID = .invalid
         backgroundTaskStartTime = nil
         AppLog.shared.backgroundProcessing("Ended old task: \(oldTaskID.rawValue)", level: .debug)
