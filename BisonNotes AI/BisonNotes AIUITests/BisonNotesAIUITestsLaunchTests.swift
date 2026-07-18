@@ -26,7 +26,7 @@ final class BisonNotesAIUITestsLaunchTests: XCTestCase {
             "--disable-cloud-services"
         ]
         app.launch()
-        XCTAssertTrue(app.staticTexts["bisonnotes.app.ready"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
 
         // Insert assertions here to perform after app launch but before taking a screenshot,
         // such as logging into a test account or navigating somewhere in the app

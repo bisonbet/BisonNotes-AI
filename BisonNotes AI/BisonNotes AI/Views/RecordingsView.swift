@@ -131,7 +131,11 @@ struct RecordingsView: View {
             .foregroundColor(.white)
             .frame(height: 56)
             .frame(maxWidth: .infinity)
-            .background(recorderVM.isStartingRecording ? Color.gray : Color.accentColor)
+            .background(
+                recorderVM.isStartingRecording
+                    ? Color.gray
+                    : Color(red: 0.0, green: 0.32, blue: 0.68)
+            )
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
@@ -167,7 +171,7 @@ struct RecordingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        AdaptiveNavigationWrapper {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     HStack {
@@ -178,7 +182,7 @@ struct RecordingsView: View {
 
                             Text("Capture audio, import files, and pick up previous recordings.")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.primary)
                         }
 
                         Spacer()
@@ -201,6 +205,7 @@ struct RecordingsView: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 116, height: 116)
+                            .accessibilityHidden(true)
 
                         VStack(spacing: 6) {
                             Text("BisonNotes AI")
@@ -209,7 +214,7 @@ struct RecordingsView: View {
 
                             Text("Ready when you are.")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.primary)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -306,10 +311,6 @@ struct RecordingsView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color(.systemGroupedBackground))
-            .sheet(isPresented: $showingRecordingsList) {
-                RecordingsListView()
-                    .environmentObject(recorderVM)
-            }
             .sheet(isPresented: $documentPickerCoordinator.isShowingPicker) {
                 AudioDocumentPicker(isPresented: $documentPickerCoordinator.isShowingPicker, coordinator: documentPickerCoordinator)
             }
@@ -400,6 +401,11 @@ struct RecordingsView: View {
                 Text(recorderErrorMessage)
             }
         }
+        .sheet(isPresented: $showingRecordingsList) {
+            RecordingsListView()
+                .environment(\.isEmbeddedInSplitView, false)
+                .environmentObject(recorderVM)
+        }
     }
 
     private var recordingStatusPanel: some View {
@@ -478,7 +484,7 @@ struct RecordingsView: View {
 
                     Text(config.subtitle)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.primary)
                 }
 
                 Spacer()

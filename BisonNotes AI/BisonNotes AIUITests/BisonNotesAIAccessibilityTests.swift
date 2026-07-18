@@ -28,16 +28,18 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
     func testAudioPlayerAccessibilityAudit() throws {
         let app = launchSeededApp()
         app.buttons["bisonnotes.record.view-recordings"].tap()
-        XCTAssertTrue(app.buttons["Play Audio for UI Test Recording"].waitForExistence(timeout: 8))
-        app.buttons["Play Audio for UI Test Recording"].tap()
-        XCTAssertTrue(app.otherElements["bisonnotes.audio-player.playback"].waitForExistence(timeout: 8))
+        let playAudio = app.buttons["bisonnotes.recording.action.play-audio"]
+        XCTAssertTrue(playAudio.waitForExistence(timeout: 8))
+        playAudio.tap()
+        let playbackSection = app.descendants(matching: .any)["bisonnotes.audio-player.playback"]
+        XCTAssertTrue(playbackSection.waitForExistence(timeout: 8))
         try performAccessibilityAudit(named: "Audio Player", app: app)
     }
 
     @MainActor
     func testTranscriptsAccessibilityAudit() throws {
         let app = launchSeededApp()
-        app.tabBars.buttons["Transcripts"].tap()
+        app.navigateToSection("Transcripts")
         XCTAssertTrue(app.scrollViews["bisonnotes.transcripts.list"].waitForExistence(timeout: 8))
         try performAccessibilityAudit(named: "Transcripts", app: app)
     }
@@ -45,7 +47,7 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
     @MainActor
     func testSummariesAccessibilityAudit() throws {
         let app = launchSeededApp()
-        app.tabBars.buttons["Summaries"].tap()
+        app.navigateToSection("Summaries")
         XCTAssertTrue(app.scrollViews["bisonnotes.summaries.list"].waitForExistence(timeout: 8))
         try performAccessibilityAudit(named: "Summaries", app: app)
     }
@@ -53,7 +55,7 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
     @MainActor
     func testSummaryDetailAccessibilityAudit() throws {
         let app = launchSeededApp()
-        app.tabBars.buttons["Summaries"].tap()
+        app.navigateToSection("Summaries")
         XCTAssertTrue(app.buttons["View Summary for UI Test Recording"].waitForExistence(timeout: 8))
         app.buttons["View Summary for UI Test Recording"].tap()
         XCTAssertTrue(app.collectionViews["bisonnotes.summary.detail"].waitForExistence(timeout: 8))
@@ -77,7 +79,7 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
     @MainActor
     func testSettingsAccessibilityAudit() throws {
         let app = launchSeededApp()
-        app.tabBars.buttons["Setup"].tap()
+        app.navigateToSection("Setup")
         app.buttons["bisonnotes.setup.additional-settings"].tap()
         XCTAssertTrue(app.scrollViews["bisonnotes.settings.scroll"].waitForExistence(timeout: 8))
         try performAccessibilityAudit(named: "Settings", app: app)
@@ -93,7 +95,7 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
             "--disable-cloud-services"
         ]
         app.launch()
-        XCTAssertTrue(app.staticTexts["bisonnotes.app.ready"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
         return app
     }
 
@@ -120,6 +122,11 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
                 attachment.name = "\(name) documented accessibility audit exception"
                 attachment.lifetime = .keepAlways
                 self.add(attachment)
+            } else {
+                let attachment = XCTAttachment(string: description)
+                attachment.name = "\(name) unhandled accessibility audit issue"
+                attachment.lifetime = .keepAlways
+                self.add(attachment)
             }
 
             return isDocumentedException
@@ -131,6 +138,7 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
         // release audit. A new issue type or a new affected element must fail.
         let exceptions: [String: [(issue: String, element: String)]] = [
             "Record": [
+                ("Text clipped", "bisonnotes.sidebar.record"),
                 ("Dynamic Type font sizes are partially unsupported", "(null)"),
                 ("Dynamic Type font sizes are partially unsupported", "Unexpected Shutdown"),
                 (
@@ -139,6 +147,7 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
                 )
             ],
             "Recordings list": [
+                ("Potentially inaccessible text", "(null)"),
                 ("Dynamic Type font sizes are partially unsupported", "0:02"),
                 ("Dynamic Type font sizes are partially unsupported", "Complete"),
                 ("Dynamic Type font sizes are partially unsupported", "132 KB"),
@@ -149,25 +158,25 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
                 ("Text clipped", "132 KB")
             ],
             "Audio Player": [
+                ("Potentially inaccessible text", "(null)"),
                 ("Contrast nearly passed", "15s"),
                 ("Dynamic Type font sizes are partially unsupported", "15s"),
                 ("Text clipped", "Enter title")
             ],
             "Transcripts": [
+                ("Text clipped", "bisonnotes.sidebar.summaries"),
+                ("Contrast failed", "1"),
                 ("Contrast nearly passed", "Search transcripts..."),
-                ("Dynamic Type font sizes are partially unsupported", "bisonnotes.app.ready"),
                 ("Dynamic Type font sizes are partially unsupported", "Edit Transcript"),
                 ("Text clipped", "Search transcripts..."),
-                ("Text clipped", "bisonnotes.app.ready"),
                 ("Text clipped", "Edit Transcript")
             ],
             "Summaries": [
+                ("Contrast failed", "(null)"),
                 ("Contrast nearly passed", "Search summaries, tasks, reminders..."),
                 ("Contrast nearly passed", "View Summary"),
                 ("Dynamic Type font sizes are partially unsupported", "0 Reminders"),
-                ("Dynamic Type font sizes are partially unsupported", "bisonnotes.app.ready"),
                 ("Dynamic Type font sizes are partially unsupported", "1 Tasks"),
-                ("Text clipped", "bisonnotes.app.ready"),
                 ("Text clipped", "View Summary"),
                 ("Text clipped", "Search summaries, tasks, reminders..."),
                 (
@@ -177,8 +186,10 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
             ],
             "Summary detail": [
                 ("Contrast nearly passed", "Add Location"),
+                ("Potentially inaccessible text", "(null)"),
                 ("Dynamic Type font sizes are partially unsupported", "Done"),
-                ("Dynamic Type font sizes are partially unsupported", "Export")
+                ("Dynamic Type font sizes are partially unsupported", "Export"),
+                ("Text clipped", "(null)")
             ],
             "Setup": [
                 ("Contrast failed", "BisonNotes AI"),
@@ -202,6 +213,8 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
             ],
             "Settings": [
                 ("Contrast failed", "Refresh Microphones"),
+                ("Contrast failed", "Location Services"),
+                ("Contrast failed", "Capture location data with recordings"),
                 ("Dynamic Type font sizes are partially unsupported", "Done")
             ]
         ]

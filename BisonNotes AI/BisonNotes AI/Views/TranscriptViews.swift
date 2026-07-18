@@ -577,10 +577,10 @@ struct TranscriptsView: View {
                 .font(.caption.weight(.semibold))
             Text(title)
             Text("\(count)")
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
         }
         .font(.caption.weight(.semibold))
-        .foregroundColor(.secondary)
+        .foregroundColor(.primary)
         .textCase(.uppercase)
         .padding(.top, 4)
         .listRowSeparator(.hidden)
@@ -733,7 +733,7 @@ struct TranscriptsView: View {
 
                 Text(UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()))
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
 
                 if let transcript = recordingData.transcript {
                     Text("\(transcript.segments.reduce(0) { $0 + $1.text.split(separator: " ").count }) words")
@@ -761,7 +761,7 @@ struct TranscriptsView: View {
 
                 Text(UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()))
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
             }
             .accessibilityCard(
                 label: AccessibilitySupport.transcriptRowLabel(
@@ -840,7 +840,7 @@ struct TranscriptsView: View {
             .padding(.horizontal, 12)
             .frame(height: 34)
             .background((hasTranscript ? Color.green : isProcessing ? Color.orange : Color.accentColor).opacity(0.14))
-            .foregroundColor(hasTranscript ? .green : isProcessing ? .orange : .accentColor)
+            .foregroundColor(.primary)
             .clipShape(Capsule())
         }
         .disabled(isProcessing && !hasTranscript)
@@ -940,7 +940,7 @@ struct TranscriptsView: View {
 
             Text("\(count)")
                 .font(.caption.weight(.semibold))
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(Color(.secondarySystemGroupedBackground))

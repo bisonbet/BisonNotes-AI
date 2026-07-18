@@ -22,7 +22,7 @@ final class BisonNotesAIUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Play Audio for UI Test Recording"].waitForExistence(timeout: 5))
 
         app.buttons["Done"].tap()
-        app.tabBars.buttons["Setup"].tap()
+        app.navigateToSection("Setup")
         app.buttons["bisonnotes.setup.additional-settings"].tap()
 
         let iCloudToggle = findICloudToggle(in: app)
@@ -57,7 +57,7 @@ final class BisonNotesAIUITests: XCTestCase {
             "--disable-cloud-services"
         ]
         app.launch()
-        XCTAssertTrue(app.staticTexts["bisonnotes.app.ready"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
         return app
     }
 
@@ -79,5 +79,30 @@ final class BisonNotesAIUITests: XCTestCase {
         }
 
         return identifierToggle.exists ? identifierToggle : labelToggle
+    }
+}
+
+@MainActor
+extension XCUIApplication {
+    func navigateToSection(
+        _ name: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let tab = tabBars.buttons[name]
+        if tab.waitForExistence(timeout: 1) {
+            tab.tap()
+            return
+        }
+
+        let sidebarIdentifier = "bisonnotes.sidebar.\(name.lowercased())"
+        let sidebarItem = staticTexts.matching(identifier: sidebarIdentifier).firstMatch
+        XCTAssertTrue(
+            sidebarItem.waitForExistence(timeout: 8),
+            "Could not find \(name) in either the tab bar or adaptive sidebar.",
+            file: file,
+            line: line
+        )
+        sidebarItem.tap()
     }
 }

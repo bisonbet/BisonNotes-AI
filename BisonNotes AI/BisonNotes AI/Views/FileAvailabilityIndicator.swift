@@ -22,7 +22,7 @@ struct FileAvailabilityIndicator: View {
             if showLabel {
                 Text(status.rawValue)
                     .font(size.textFont)
-                    .foregroundColor(colorForStatus(status))
+                    .foregroundColor(.primary)
             }
         }
         .help(status.description)

@@ -230,7 +230,7 @@ struct SettingsView: View {
 
             Text("Configure processing, privacy, sync, and diagnostics.")
                 .font(.subheadline)
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
         }
     }
 
@@ -346,6 +346,7 @@ struct SettingsView: View {
                     tint: .blue
                 )
             }
+            .foregroundStyle(.primary)
             .accessibilityValue(AccessibilitySupport.statusValue(isOn: recorderVM.isLocationTrackingEnabled))
 
             if recorderVM.isLocationTrackingEnabled {
@@ -1814,7 +1815,7 @@ private struct ModernSelectableRow: View {
 
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
             }
 
             Spacer()
@@ -1851,7 +1852,7 @@ private struct ModernSettingsLabel: View {
 
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
             }
         }
     }

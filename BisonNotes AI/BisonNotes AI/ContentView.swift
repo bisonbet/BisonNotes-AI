@@ -44,7 +44,7 @@ struct ContentView: View {
                 }
             }
 
-            if showSplash {
+            if shouldShowSplash {
                 SplashView(isActive: $showSplash)
                     .transition(.opacity)
                     .zIndex(1)
@@ -56,8 +56,16 @@ struct ContentView: View {
             DispatchQueue.main.async {
                 initializeApp()
             }
-            // Check if previous session crashed
-            if AppLog.shared.previousSessionCrashed {
+            // XCTest terminates the app between UI tests without sending the normal
+            // lifecycle callbacks. Do not present a false crash report over the next
+            // deterministic UI-test launch.
+            #if DEBUG
+            let shouldShowCrashReport = AppLog.shared.previousSessionCrashed
+                && !BisonNotesUITestSupport.isUITesting
+            #else
+            let shouldShowCrashReport = AppLog.shared.previousSessionCrashed
+            #endif
+            if shouldShowCrashReport {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     showingCrashReport = true
                 }
@@ -91,6 +99,14 @@ struct ContentView: View {
         }
     }
 
+    private var shouldShowSplash: Bool {
+        #if DEBUG
+        showSplash && !BisonNotesUITestSupport.isUITesting
+        #else
+        showSplash
+        #endif
+    }
+
     // MARK: - Extracted Sub-Views
 
     private var firstLaunchView: some View {
@@ -112,18 +128,6 @@ struct ContentView: View {
                     .environmentObject(recorderVM)
                     .environmentObject(appCoordinator)
             }
-        }
-        .overlay(alignment: .topLeading) {
-            #if DEBUG
-            if BisonNotesUITestSupport.isUITesting {
-                Text("Ready")
-                    .font(.caption2)
-                    .opacity(0.01)
-                    .frame(width: 1, height: 1)
-                    .accessibilityIdentifier(BisonNotesAccessibilityID.appReady)
-                    .allowsHitTesting(false)
-            }
-            #endif
         }
         .alert("Enable Location Services", isPresented: $showingLocationPermission) {
             Button("Continue") {

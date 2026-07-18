@@ -620,7 +620,7 @@ struct SummariesView: View {
 
                     Text(UserPreferences.shared.formatMediumDateTime(recording.recordingDate ?? Date()))
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.primary)
                 }
 
                 Spacer()
@@ -724,7 +724,7 @@ struct SummariesView: View {
                     .padding(.horizontal, 12)
                     .frame(height: 34)
                     .background(Color.blue.opacity(0.14))
-                    .foregroundColor(.blue)
+                    .foregroundColor(.primary)
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -782,7 +782,7 @@ struct SummariesView: View {
 
             Text("\(count)")
                 .font(.caption.weight(.semibold))
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(Color(.secondarySystemGroupedBackground))
@@ -805,7 +805,7 @@ struct SummariesView: View {
     private func summaryMetric(_ label: String, count: Int, tint: Color) -> some View {
         Text("\(count) \(label)")
             .font(.caption2.weight(.semibold))
-            .foregroundColor(tint)
+            .foregroundColor(.primary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(tint.opacity(0.12))

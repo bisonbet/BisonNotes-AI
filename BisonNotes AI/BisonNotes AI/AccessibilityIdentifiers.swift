@@ -6,8 +6,6 @@
 import Foundation
 
 enum BisonNotesAccessibilityID {
-    static let appReady = "bisonnotes.app.ready"
-
     static let tabRecord = "bisonnotes.tab.record"
     static let tabTranscripts = "bisonnotes.tab.transcripts"
     static let tabSummaries = "bisonnotes.tab.summaries"
