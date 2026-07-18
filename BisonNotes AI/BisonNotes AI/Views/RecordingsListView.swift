@@ -193,42 +193,15 @@ struct RecordingsListView: View {
                 )
                 .presentationDetents([.medium, .large])
             }
-            .sheet(isPresented: $showingArchiveExportPicker) {
-                DocumentExportPicker(urls: archiveExportURLs) { success, exportedURLs in
-                    showingArchiveExportPicker = false
-                    if success {
-                        let archivedCount = RecordingArchiveService.shared.archiveRecordings(
-                            recordingsToArchive,
-                            removeLocal: removeLocalAfterArchive,
-                            exportedURLs: exportedURLs
-                        )
-                        if archivedCount == 0 {
-                            archiveRestoreError = "The export completed, but the selected destination was not iCloud Drive or was not trackable. The audio was left local so you can archive it again to iCloud Drive."
-                        }
-                        isSelectionMode = false
-                        selectedRecordings.removeAll()
-                        loadRecordings()
-                    }
-                    recordingsToArchive = []
-                    archiveExportURLs = []
-                    RecordingArchiveService.shared.cleanupArchiveStaging()
-                }
+            .fileMover(isPresented: $showingArchiveExportPicker, files: archiveExportURLs) { result in
+                completeArchiveExport(exportedURLs: try? result.get())
+            } onCancellation: {
+                completeArchiveExport(exportedURLs: nil)
             }
-            .sheet(isPresented: $showingAudioExportPicker) {
-                DocumentExportPicker(urls: audioExportURLs) { success, _ in
-                    showingAudioExportPicker = false
-                    if success {
-                        if audioExportSkippedCount > 0 {
-                            let skippedText = audioExportSkippedCount == 1 ? "1 selected recording was" : "\(audioExportSkippedCount) selected recordings were"
-                            archiveRestoreError = "\(skippedText) not exported because the audio is not stored locally. Restore archived audio before exporting it."
-                        }
-                        isSelectionMode = false
-                        selectedRecordings.removeAll()
-                    }
-                    audioExportURLs = []
-                    audioExportSkippedCount = 0
-                    RecordingArchiveService.shared.cleanupAudioExportStaging()
-                }
+            .fileMover(isPresented: $showingAudioExportPicker, files: audioExportURLs) { result in
+                completeAudioExport(success: (try? result.get()) != nil)
+            } onCancellation: {
+                completeAudioExport(success: false)
             }
             .sheet(isPresented: $showingArchiveOlderThan) {
                 archiveOlderThanSheet
@@ -1058,6 +1031,39 @@ struct RecordingsListView: View {
         }
 
         return result
+    }
+
+    private func completeArchiveExport(exportedURLs: [URL]?) {
+        if let exportedURLs {
+            let archivedCount = RecordingArchiveService.shared.archiveRecordings(
+                recordingsToArchive,
+                removeLocal: removeLocalAfterArchive,
+                exportedURLs: exportedURLs
+            )
+            if archivedCount == 0 {
+                archiveRestoreError = "The export completed, but the selected destination was not iCloud Drive or was not trackable. The audio was left local so you can archive it again to iCloud Drive."
+            }
+            isSelectionMode = false
+            selectedRecordings.removeAll()
+            loadRecordings()
+        }
+        recordingsToArchive = []
+        archiveExportURLs = []
+        RecordingArchiveService.shared.cleanupArchiveStaging()
+    }
+
+    private func completeAudioExport(success: Bool) {
+        if success {
+            if audioExportSkippedCount > 0 {
+                let skippedText = audioExportSkippedCount == 1 ? "1 selected recording was" : "\(audioExportSkippedCount) selected recordings were"
+                archiveRestoreError = "\(skippedText) not exported because the audio is not stored locally. Restore archived audio before exporting it."
+            }
+            isSelectionMode = false
+            selectedRecordings.removeAll()
+        }
+        audioExportURLs = []
+        audioExportSkippedCount = 0
+        RecordingArchiveService.shared.cleanupAudioExportStaging()
     }
 
     private func loadRecordings() {

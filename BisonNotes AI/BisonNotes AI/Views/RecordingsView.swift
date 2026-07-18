@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RecordingsView: View {
     @Environment(\.openURL) private var openURL
@@ -13,9 +14,8 @@ struct RecordingsView: View {
     @EnvironmentObject var importManager: FileImportManager
     @EnvironmentObject var transcriptImportManager: TranscriptImportManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
-    @StateObject private var textDocumentPickerCoordinator = DocumentPickerCoordinator()
-    @StateObject private var videoPickerCoordinator = DocumentPickerCoordinator()
+    @State private var showingAudioImporter = false
+    @State private var showingTranscriptImporter = false
     @StateObject private var webImportManager = WebImportManager()
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [AudioRecordingFile] = []
@@ -143,6 +143,27 @@ struct RecordingsView: View {
         .accessibilityIdentifier(BisonNotesAccessibilityID.startRecordingButton)
     }
 
+    // File-importer URLs are security-scoped; hold access for the whole import.
+    private func handleImport(_ result: Result<[URL], Error>, using importFiles: @escaping ([URL]) async -> Void) {
+        guard case .success(let urls) = result, !urls.isEmpty else { return }
+        Task {
+            let accessedURLs = urls.filter { $0.startAccessingSecurityScopedResource() }
+            defer { accessedURLs.forEach { $0.stopAccessingSecurityScopedResource() } }
+            await importFiles(urls)
+        }
+    }
+
+    private static let transcriptContentTypes: [UTType] = {
+        var types: [UTType] = [.plainText, .text, .pdf]
+        types.append(UTType(importedAs: "org.openxmlformats.wordprocessingml.document"))
+        for ext in ["md", "markdown", "docx", "doc"] {
+            if let type = UTType(filenameExtension: ext) {
+                types.append(type)
+            }
+        }
+        return types
+    }()
+
     private func recordingActionButton(
         _ config: RecordingActionConfig,
         action: @escaping () -> Void
@@ -249,14 +270,7 @@ struct RecordingsView: View {
                                     accessibilityIdentifier: BisonNotesAccessibilityID.importAudioButton
                                 )
                             ) {
-                                // Directly trigger document picker for audio files
-                                documentPickerCoordinator.selectAudioFiles { urls in
-                                    if !urls.isEmpty {
-                                        Task {
-                                            await importManager.importAudioFiles(from: urls)
-                                        }
-                                    }
-                                }
+                                showingAudioImporter = true
                             }
 
                             homeActionButton(
@@ -272,7 +286,6 @@ struct RecordingsView: View {
                             }
 
                             // Video import button hidden — feature not yet ready for users
-                            // videoPickerCoordinator.selectVideoFiles { ... }
 
                             homeActionButton(
                                 HomeActionConfig(
@@ -283,14 +296,7 @@ struct RecordingsView: View {
                                     accessibilityIdentifier: BisonNotesAccessibilityID.importTranscriptButton
                                 )
                             ) {
-                                // Trigger document picker for text files
-                                textDocumentPickerCoordinator.selectTextFiles { urls in
-                                    if !urls.isEmpty {
-                                        Task {
-                                            await transcriptImportManager.importTranscriptFiles(from: urls)
-                                        }
-                                    }
-                                }
+                                showingTranscriptImporter = true
                             }
                         }
 
@@ -310,11 +316,23 @@ struct RecordingsView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color(.systemGroupedBackground))
-            .sheet(isPresented: $documentPickerCoordinator.isShowingPicker) {
-                AudioDocumentPicker(isPresented: $documentPickerCoordinator.isShowingPicker, coordinator: documentPickerCoordinator)
+            .fileImporter(
+                isPresented: $showingAudioImporter,
+                allowedContentTypes: [.audio],
+                allowsMultipleSelection: true
+            ) { result in
+                handleImport(result) { urls in
+                    await importManager.importAudioFiles(from: urls)
+                }
             }
-            .sheet(isPresented: $textDocumentPickerCoordinator.isShowingPicker) {
-                TextDocumentPicker(isPresented: $textDocumentPickerCoordinator.isShowingPicker, coordinator: textDocumentPickerCoordinator)
+            .fileImporter(
+                isPresented: $showingTranscriptImporter,
+                allowedContentTypes: Self.transcriptContentTypes,
+                allowsMultipleSelection: true
+            ) { result in
+                handleImport(result) { urls in
+                    await transcriptImportManager.importTranscriptFiles(from: urls)
+                }
             }
             .sheet(isPresented: $showingWebImport) {
                 WebImportSheet(
@@ -323,8 +341,7 @@ struct RecordingsView: View {
                     transcriptImportManager: transcriptImportManager
                 )
             }
-            // Video picker sheet hidden — feature not yet ready for users
-            // .sheet(isPresented: $videoPickerCoordinator.isShowingPicker) { ... }
+            // Video import hidden — feature not yet ready for users
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()
             }
@@ -350,22 +367,10 @@ struct RecordingsView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportAudioFromMenu"))) { _ in
-                documentPickerCoordinator.selectAudioFiles { urls in
-                    if !urls.isEmpty {
-                        Task {
-                            await importManager.importAudioFiles(from: urls)
-                        }
-                    }
-                }
+                showingAudioImporter = true
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportTranscriptFromMenu"))) { _ in
-                textDocumentPickerCoordinator.selectTextFiles { urls in
-                    if !urls.isEmpty {
-                        Task {
-                            await transcriptImportManager.importTranscriptFiles(from: urls)
-                        }
-                    }
-                }
+                showingTranscriptImporter = true
             }
             .onReceive(
                 NotificationCenter.default.publisher(for: NSNotification.Name("ImportFromLinkFromMenu"))
