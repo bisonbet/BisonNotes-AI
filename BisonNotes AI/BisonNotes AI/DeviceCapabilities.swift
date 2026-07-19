@@ -129,11 +129,15 @@ struct DeviceCapabilities {
         report += "On-Device LLM Support: \(supportsOnDeviceLLM ? "✅" : "❌")\n"
         report += "Action Button Support: \(supportsActionButton ? "✅" : "❌")\n"
 
+        #if os(macOS)
+        report += "macOS Version: \(ProcessInfo.processInfo.operatingSystemVersionString)\n"
+        #else
         if #available(iOS 16.0, *) {
             report += "iOS Version: ✅ (16.0+)\n"
         } else {
             report += "iOS Version: ❌ (< 16.0)\n"
         }
+        #endif
 
         return report
     }

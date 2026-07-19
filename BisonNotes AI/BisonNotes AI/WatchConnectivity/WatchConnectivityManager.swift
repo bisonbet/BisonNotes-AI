@@ -505,7 +505,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
     }
 }
-#endif // !targetEnvironment(macCatalyst)
+#endif // targetEnvironment(macCatalyst) || os(macOS)
 
 // MARK: - Extensions
 

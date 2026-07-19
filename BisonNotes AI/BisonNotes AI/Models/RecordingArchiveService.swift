@@ -387,10 +387,10 @@ class RecordingArchiveService: ObservableObject {
             locationObject.setValue(Self.statusAvailable, forKey: "status")
 
             // Persist a security-scoped bookmark so sandbox access survives
-            // app launches. Mac Catalyst requires the explicit option; on iOS
-            // the default already retains the picker-granted scope.
+            // app launches. Both native macOS and Mac Catalyst require the
+            // explicit option; on iOS the picker-granted scope is retained.
             let bookmarkOptions: URL.BookmarkCreationOptions = {
-                #if targetEnvironment(macCatalyst)
+                #if targetEnvironment(macCatalyst) || os(macOS)
                 return [.withSecurityScope]
                 #else
                 return []
@@ -485,11 +485,10 @@ class RecordingArchiveService: ObservableObject {
     private func resolvedArchiveURL(from locationObject: NSManagedObject) throws -> URL {
         if let bookmarkData = locationObject.value(forKey: "bookmarkData") as? Data {
             var isStale = false
-            // Mac Catalyst stores security-scoped bookmarks; resolution must
-            // pass the matching option for startAccessingSecurityScopedResource()
-            // to grant access on a subsequent launch.
+            // Mac builds store security-scoped bookmarks; resolution must pass
+            // the matching option so access can be restored after relaunch.
             let resolutionOptions: URL.BookmarkResolutionOptions = {
-                #if targetEnvironment(macCatalyst)
+                #if targetEnvironment(macCatalyst) || os(macOS)
                 return [.withoutUI, .withSecurityScope]
                 #else
                 return [.withoutUI]

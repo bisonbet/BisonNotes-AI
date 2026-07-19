@@ -90,7 +90,11 @@ class PerformanceOptimizer: ObservableObject {
     @Published var isProcessing = false
     @Published var processingProgress: Double = 0.0
     @Published var memoryUsage: MemoryUsage = MemoryUsage()
-    @Published var batteryInfo: BatteryInfo = BatteryInfo(level: 1.0, state: .unknown, isLowPowerMode: false)
+    @Published var batteryInfo: BatteryInfo = BatteryInfo(
+        level: 1.0,
+        state: PlatformDevice.isRunningOnMac ? .full : .unknown,
+        isLowPowerMode: false
+    )
     @Published var performanceMetrics: PerformanceMetrics = PerformanceMetrics()
     @Published var optimizationLevel: OptimizationLevel = .balanced
 
@@ -138,9 +142,14 @@ class PerformanceOptimizer: ObservableObject {
     // MARK: - Battery Monitoring
 
     private func startBatteryMonitoring() {
-        // No reliable battery API on Mac — leave default battery info (treated as full/charged)
-        // and skip the polling timer to avoid "Error retrieving battery status" logs.
-        if PlatformDevice.isRunningOnMac { return }
+        // No reliable cross-Mac battery API — report plugged in/full and
+        // respect Low Power Mode without starting an iOS battery polling timer.
+        if PlatformDevice.isRunningOnMac {
+            Task { @MainActor in
+                await updateBatteryInfo()
+            }
+            return
+        }
 
         #if canImport(UIKit)
         UIDevice.current.isBatteryMonitoringEnabled = true
@@ -160,10 +169,11 @@ class PerformanceOptimizer: ObservableObject {
 
     private func updateBatteryInfo() async {
         if PlatformDevice.isRunningOnMac {
-            // Battery state is not available on Mac; only respect Low Power Mode.
+            // Battery state is not available consistently on Mac. Report the
+            // app as plugged in/full and only respect Low Power Mode.
             let batteryInfo = BatteryInfo(
                 level: 1.0,
-                state: .unknown,
+                state: .full,
                 isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
             )
             self.batteryInfo = batteryInfo
