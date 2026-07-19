@@ -193,15 +193,8 @@ struct RecordingsListView: View {
                 )
                 .presentationDetents([.medium, .large])
             }
-            .fileMover(isPresented: $showingArchiveExportPicker, files: archiveExportURLs) { result in
-                completeArchiveExport(exportedURLs: try? result.get())
-            } onCancellation: {
-                completeArchiveExport(exportedURLs: nil)
-            }
-            .fileMover(isPresented: $showingAudioExportPicker, files: audioExportURLs) { result in
-                completeAudioExport(success: (try? result.get()) != nil)
-            } onCancellation: {
-                completeAudioExport(success: false)
+            .background {
+                exportMoverPresenters
             }
             .sheet(isPresented: $showingArchiveOlderThan) {
                 archiveOlderThanSheet
@@ -1033,7 +1026,31 @@ struct RecordingsListView: View {
         return result
     }
 
+    @ViewBuilder
+    private var exportMoverPresenters: some View {
+        // SwiftUI logs and refuses the operation when fileMover is mounted with
+        // an empty files array, even if its presentation binding is false.
+        if !archiveExportURLs.isEmpty {
+            Color.clear
+                .fileMover(isPresented: $showingArchiveExportPicker, files: archiveExportURLs) { result in
+                    completeArchiveExport(exportedURLs: try? result.get())
+                } onCancellation: {
+                    completeArchiveExport(exportedURLs: nil)
+                }
+        }
+
+        if !audioExportURLs.isEmpty {
+            Color.clear
+                .fileMover(isPresented: $showingAudioExportPicker, files: audioExportURLs) { result in
+                    completeAudioExport(success: (try? result.get()) != nil)
+                } onCancellation: {
+                    completeAudioExport(success: false)
+                }
+        }
+    }
+
     private func completeArchiveExport(exportedURLs: [URL]?) {
+        showingArchiveExportPicker = false
         if let exportedURLs {
             let archivedCount = RecordingArchiveService.shared.archiveRecordings(
                 recordingsToArchive,
@@ -1053,6 +1070,7 @@ struct RecordingsListView: View {
     }
 
     private func completeAudioExport(success: Bool) {
+        showingAudioExportPicker = false
         if success {
             if audioExportSkippedCount > 0 {
                 let skippedText = audioExportSkippedCount == 1 ? "1 selected recording was" : "\(audioExportSkippedCount) selected recordings were"
