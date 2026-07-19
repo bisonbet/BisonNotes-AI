@@ -1428,86 +1428,22 @@ struct EditableTranscriptView: View {
     }
 
     var body: some View {
-        // NavigationStack { Form } is the only sheet pattern that scrolls reliably
-        // on Mac Catalyst. See feedback_mac_catalyst_scrollview.md.
         NavigationStack {
-            Form {
-                Section {
-                    recordingTitleEditor
+            Group {
+                #if os(macOS)
+                // Native macOS needs one explicit scroll owner for the full
+                // transcript. Each segment editor expands instead of scrolling.
+                List {
+                    transcriptSections
                 }
-
-                if editedSegments.isEmpty {
-                    Section {
-                        VStack(spacing: 16) {
-                            Image(systemName: "doc.text")
-                                .font(.system(size: 48))
-                                .foregroundColor(.accentColor)
-                            Text("No transcript content available")
-                                .font(.title3)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.secondary)
-                            Text("Transcript segments: \(editedSegments.count)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
-                    }
-                } else {
-                    if !uniqueSpeakers.isEmpty {
-                        Section {
-                            Button {
-                                showingSpeakerEditor = true
-                            } label: {
-                                HStack {
-                                    Image(systemName: "person.2.fill")
-                                        .foregroundColor(.purple)
-                                    Text("Edit Speakers (\(uniqueSpeakers.count))")
-                                        .foregroundColor(.primary)
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Edit Speakers")
-                            .accessibilityValue(
-                                AccessibilitySupport.itemCount(uniqueSpeakers.count, singular: "speaker")
-                            )
-                        }
-                    }
-
-                    Section("Segments") {
-                        ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, _ in
-                            TranscriptSegmentView(segment: $editedSegments[index], speakerMappings: speakerMappings)
-                        }
-                    }
-                    .id("transcript-\(editedSegments.count)-\(editedSegments.first?.text.prefix(10).hashValue ?? 0)")
+                .listStyle(.inset)
+                .scrollIndicators(.visible)
+                #else
+                // Form preserves the established iOS and Catalyst behavior.
+                Form {
+                    transcriptSections
                 }
-
-                summarySection
-
-                Section {
-                    Button {
-                        showingRerunAlert = true
-                    } label: {
-                        HStack {
-                            if isRerunningTranscription {
-                                ProgressView().scaleEffect(0.8)
-                                Text("Rerunning Transcription...")
-                            } else {
-                                Image(systemName: "arrow.clockwise")
-                                Text("Rerun Transcription")
-                            }
-                            Spacer()
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isRerunningTranscription)
-                }
+                #endif
             }
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
@@ -1571,8 +1507,34 @@ struct EditableTranscriptView: View {
             .nativeMacModalSizing(width: 620, height: 560)
         }
         .sheet(isPresented: $showSummarySheet) {
+            #if os(macOS)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Summary")
+                        .font(.headline)
+                    Spacer()
+                    Button("Done") {
+                        showSummarySheet = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityHint("Closes the summary and returns to the transcript.")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.bar)
+
+                Divider()
+
+                summarySheetContent
+            }
+            .onExitCommand {
+                showSummarySheet = false
+            }
+            .nativeMacModalSizing(width: 760, height: 680)
+            #else
             summarySheetContent
                 .nativeMacModalSizing(width: 760, height: 680)
+            #endif
         }
         .alert("Unable to Generate Summary", isPresented: Binding(
             get: { summaryGenerationError != nil },
@@ -1608,6 +1570,86 @@ struct EditableTranscriptView: View {
         }
         .onAppear {
             refreshTranscriptFromCoreData()
+        }
+    }
+
+    @ViewBuilder
+    private var transcriptSections: some View {
+        Section {
+            recordingTitleEditor
+        }
+
+        if editedSegments.isEmpty {
+            Section {
+                VStack(spacing: 16) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 48))
+                        .foregroundColor(.accentColor)
+                    Text("No transcript content available")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                    Text("Transcript segments: \(editedSegments.count)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+            }
+        } else {
+            if !uniqueSpeakers.isEmpty {
+                Section {
+                    Button {
+                        showingSpeakerEditor = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "person.2.fill")
+                                .foregroundColor(.purple)
+                            Text("Edit Speakers (\(uniqueSpeakers.count))")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Edit Speakers")
+                    .accessibilityValue(
+                        AccessibilitySupport.itemCount(uniqueSpeakers.count, singular: "speaker")
+                    )
+                }
+            }
+
+            Section("Segments") {
+                ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, _ in
+                    TranscriptSegmentView(segment: $editedSegments[index], speakerMappings: speakerMappings)
+                }
+            }
+            .id("transcript-\(editedSegments.count)-\(editedSegments.first?.text.prefix(10).hashValue ?? 0)")
+        }
+
+        summarySection
+
+        Section {
+            Button {
+                showingRerunAlert = true
+            } label: {
+                HStack {
+                    if isRerunningTranscription {
+                        ProgressView().scaleEffect(0.8)
+                        Text("Rerunning Transcription...")
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Rerun Transcription")
+                    }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isRerunningTranscription)
         }
     }
 
@@ -2068,24 +2110,14 @@ struct TranscriptSegmentView: View {
     @ViewBuilder
     private var transcriptTextEditor: some View {
         #if os(macOS)
-        // A nested scrolling TextEditor consumes trackpad/wheel events before
-        // the transcript Form can receive them. Invisible text establishes the
-        // editor's full wrapped height, while scrollDisabled sends scrolling to
-        // the outer transcript window.
-        Text(segment.text.isEmpty ? " " : segment.text + "\n")
+        // A multiline TextField expands and is not backed by its own scroll
+        // view, so wheel/trackpad events always reach the transcript List.
+        TextField("Transcript segment", text: segmentTextBinding, axis: .vertical)
             .font(.body)
-            .foregroundStyle(.clear)
+            .textFieldStyle(.plain)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 8)
-            .accessibilityHidden(true)
-            .overlay(alignment: .topLeading) {
-                TextEditor(text: segmentTextBinding)
-                    .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .scrollDisabled(true)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
             .frame(minHeight: 120, alignment: .topLeading)
         #else
         TextEditor(text: segmentTextBinding)
