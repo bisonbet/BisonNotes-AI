@@ -14,6 +14,9 @@ import Foundation
 @preconcurrency import AVFoundation
 
 extension AudioRecorderViewModel {
+	// Keep the worst-case summed level below full scale while favoring nearby speech.
+	private static let microphoneMeetingMixGain: Float = 0.5
+	private static let systemMeetingMixGain: Float = 0.4
 
 	@MainActor
 	func setupCatalystRecording(at url: URL) async {
@@ -528,65 +531,53 @@ extension AudioRecorderViewModel {
 		finalURL: URL
 	) async throws {
 		let fileManager = FileManager.default
-		let microphoneM4AURL = fileManager.temporaryDirectory
-			.appendingPathComponent("catalyst_mic_export_\(UUID().uuidString).m4a")
 
 		do {
-			try await exportCatalystScratchRecordings(from: microphoneScratchURLs, to: microphoneM4AURL)
 			try await mixCatalystAudioTracks(
-				microphoneURL: microphoneM4AURL,
+				microphoneScratchURLs: microphoneScratchURLs,
 				systemAudioURL: systemAudioURL,
 				finalURL: finalURL
 			)
-			try? fileManager.removeItem(at: microphoneM4AURL)
+			removeCatalystScratchFiles(microphoneScratchURLs)
 			try? fileManager.removeItem(at: systemAudioURL)
 		} catch {
 			AppLog.shared.recording("Catalyst meeting audio mix failed; saving microphone track only: \(error.localizedDescription)", level: .error)
-			if fileManager.fileExists(atPath: microphoneM4AURL.path) {
-				if fileManager.fileExists(atPath: finalURL.path) {
-					try fileManager.removeItem(at: finalURL)
-				}
-				try fileManager.moveItem(at: microphoneM4AURL, to: finalURL)
-				AppFileProtection.apply(to: finalURL)
-				errorMessage = "Meeting audio could not be mixed into this recording. Saved microphone audio only."
-				try? fileManager.removeItem(at: systemAudioURL)
-				return
-			}
-			throw error
+			try await exportCatalystScratchRecordings(from: microphoneScratchURLs, to: finalURL)
+			errorMessage = "Meeting audio could not be mixed into this recording. Saved microphone audio only."
+			try? fileManager.removeItem(at: systemAudioURL)
 		}
 	}
 
 	private func mixCatalystAudioTracks(
-		microphoneURL: URL,
+		microphoneScratchURLs: [URL],
 		systemAudioURL: URL,
 		finalURL: URL
 	) async throws {
 		let fileManager = FileManager.default
-		let microphoneAsset = AVURLAsset(url: microphoneURL)
-			let systemAsset = AVURLAsset(url: systemAudioURL)
-			let composition = AVMutableComposition()
-			var mixParameters: [AVAudioMixInputParameters] = []
-			let microphoneDuration = try await microphoneAsset.load(.duration)
-			guard microphoneDuration.isValid, microphoneDuration.seconds > 0 else {
-				throw NSError(
-					domain: "AudioRecorderViewModel.Catalyst",
-					code: -12,
-					userInfo: [NSLocalizedDescriptionKey: "Microphone recording has no audio duration."]
-				)
-			}
+		let systemAsset = AVURLAsset(url: systemAudioURL)
+		let (composition, microphoneDuration) = try await makeRecoveredMicrophoneComposition(
+			from: microphoneScratchURLs
+		)
+		guard microphoneDuration.isValid, microphoneDuration.seconds > 0 else {
+			throw NSError(
+				domain: "AudioRecorderViewModel.Catalyst",
+				code: -12,
+				userInfo: [NSLocalizedDescriptionKey: "Microphone recording has no audio duration."]
+			)
+		}
 
-			try await addAudioTracks(
-				from: microphoneAsset,
-				to: composition,
-				mixParameters: &mixParameters,
-				maxDuration: microphoneDuration
-			)
-			try await addAudioTracks(
-				from: systemAsset,
-				to: composition,
-				mixParameters: &mixParameters,
-				maxDuration: microphoneDuration
-			)
+		var mixParameters: [AVAudioMixInputParameters] = composition.tracks(withMediaType: .audio).map { track in
+			let parameter = AVMutableAudioMixInputParameters(track: track)
+			parameter.setVolume(Self.microphoneMeetingMixGain, at: .zero)
+			return parameter
+		}
+		try await addAudioTracks(
+			from: systemAsset,
+			to: composition,
+			mixParameters: &mixParameters,
+			volume: Self.systemMeetingMixGain,
+			maxDuration: microphoneDuration
+		)
 
 		guard !composition.tracks(withMediaType: .audio).isEmpty else {
 			throw NSError(
@@ -605,11 +596,11 @@ extension AudioRecorderViewModel {
 				code: -10,
 				userInfo: [NSLocalizedDescriptionKey: "Could not create meeting audio export session."]
 			)
-			}
-			exportSession.audioMix = audioMix
-			exportSession.timeRange = CMTimeRange(start: .zero, duration: microphoneDuration)
+		}
+		exportSession.audioMix = audioMix
+		exportSession.timeRange = CMTimeRange(start: .zero, duration: microphoneDuration)
 
-			let tempURL = fileManager.temporaryDirectory
+		let tempURL = fileManager.temporaryDirectory
 			.appendingPathComponent("catalyst_meeting_mix_\(UUID().uuidString).m4a")
 		if fileManager.fileExists(atPath: tempURL.path) {
 			try fileManager.removeItem(at: tempURL)
@@ -640,6 +631,7 @@ extension AudioRecorderViewModel {
 		from asset: AVURLAsset,
 		to composition: AVMutableComposition,
 		mixParameters: inout [AVAudioMixInputParameters],
+		volume: Float,
 		maxDuration: CMTime? = nil
 	) async throws {
 		let tracks = try await asset.loadTracks(withMediaType: .audio)
@@ -665,7 +657,7 @@ extension AudioRecorderViewModel {
 				at: .zero
 			)
 			let parameter = AVMutableAudioMixInputParameters(track: compositionTrack)
-			parameter.setVolume(1.0, at: .zero)
+			parameter.setVolume(volume, at: .zero)
 			mixParameters.append(parameter)
 		}
 	}

@@ -27,8 +27,12 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 	private var pauseStartedAt: CMTime?
 	private var accumulatedPausedDuration = CMTime.zero
 	private var didReceiveAudio = false
+	private var audibleAudioDuration: Double = 0
 	private var isPaused = false
 	private var stopError: Error?
+
+	private static let audibleAmplitudeThreshold: Float = 0.001
+	private static let minimumAudibleDuration = 0.05
 
 	init(outputURL: URL) {
 		self.outputURL = outputURL
@@ -147,10 +151,15 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 
 		let fileManager = FileManager.default
 		guard didReceiveAudio,
+		      audibleAudioDuration >= Self.minimumAudibleDuration,
 		      fileManager.fileExists(atPath: outputURL.path),
 		      (try? fileManager.attributesOfItem(atPath: outputURL.path)[.size] as? Int64) ?? 0 > 0 else {
 			try? fileManager.removeItem(at: outputURL)
-			AppLog.shared.recording("Catalyst system audio capture produced no audio; continuing with microphone recording only", level: .debug)
+			AppLog.shared.recording(
+				"Catalyst system audio capture contained no sustained audible signal; " +
+				"continuing with microphone recording only",
+				level: .debug
+			)
 			return nil
 		}
 
@@ -205,9 +214,100 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 
 		if input.append(retimedBuffer) {
 			didReceiveAudio = true
+			if Self.containsAudibleSignal(sampleBuffer) {
+				let duration = CMSampleBufferGetDuration(sampleBuffer).seconds
+				if duration.isFinite, duration > 0 {
+					audibleAudioDuration += duration
+				} else if let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+				          let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) {
+					let sampleRate = streamDescription.pointee.mSampleRate
+					if sampleRate > 0 {
+						audibleAudioDuration += Double(CMSampleBufferGetNumSamples(sampleBuffer)) / sampleRate
+					}
+				}
+			}
 		} else if let error = writer.error {
 			stopError = error
 			AppLog.shared.recording("Catalyst system audio append failed: \(error.localizedDescription)", level: .error)
+		}
+	}
+
+	private static func containsAudibleSignal(_ sampleBuffer: CMSampleBuffer) -> Bool {
+		guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+		      let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else {
+			// Preserve unknown formats rather than risk dropping real system audio.
+			return true
+		}
+
+		let format = streamDescription.pointee
+		guard format.mFormatID == kAudioFormatLinearPCM else { return true }
+
+		var bufferListSize = 0
+		let sizeStatus = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+			sampleBuffer,
+			bufferListSizeNeededOut: &bufferListSize,
+			bufferListOut: nil,
+			bufferListSize: 0,
+			blockBufferAllocator: nil,
+			blockBufferMemoryAllocator: nil,
+			flags: 0,
+			blockBufferOut: nil
+		)
+		guard sizeStatus == noErr, bufferListSize > 0 else { return true }
+
+		let rawBufferList = UnsafeMutableRawPointer.allocate(
+			byteCount: bufferListSize,
+			alignment: MemoryLayout<AudioBufferList>.alignment
+		)
+		defer { rawBufferList.deallocate() }
+		let audioBufferList = rawBufferList.bindMemory(to: AudioBufferList.self, capacity: 1)
+		var retainedBlockBuffer: CMBlockBuffer?
+		let listStatus = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+			sampleBuffer,
+			bufferListSizeNeededOut: nil,
+			bufferListOut: audioBufferList,
+			bufferListSize: bufferListSize,
+			blockBufferAllocator: nil,
+			blockBufferMemoryAllocator: nil,
+			flags: 0,
+			blockBufferOut: &retainedBlockBuffer
+		)
+		guard listStatus == noErr else { return true }
+
+		let isFloat = format.mFormatFlags & kAudioFormatFlagIsFloat != 0
+		let isSignedInteger = format.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0
+		let bufferCount = Int(audioBufferList.pointee.mNumberBuffers)
+
+		return withUnsafeMutablePointer(to: &audioBufferList.pointee.mBuffers) { firstBuffer in
+			for bufferIndex in 0..<bufferCount {
+				let buffer = firstBuffer[bufferIndex]
+				guard let data = buffer.mData else { continue }
+				let byteCount = Int(buffer.mDataByteSize)
+				if isFloat, format.mBitsPerChannel == 32 {
+					let samples = data.bindMemory(to: Float.self, capacity: byteCount / MemoryLayout<Float>.size)
+					for index in 0..<(byteCount / MemoryLayout<Float>.size)
+					where abs(samples[index]) >= audibleAmplitudeThreshold {
+						return true
+					}
+				} else if isSignedInteger, format.mBitsPerChannel == 16 {
+					let samples = data.bindMemory(to: Int16.self, capacity: byteCount / MemoryLayout<Int16>.size)
+					let threshold = Int16(Float(Int16.max) * audibleAmplitudeThreshold)
+					for index in 0..<(byteCount / MemoryLayout<Int16>.size)
+					where abs(Int(samples[index])) >= Int(threshold) {
+						return true
+					}
+				} else if isSignedInteger, format.mBitsPerChannel == 32 {
+					let samples = data.bindMemory(to: Int32.self, capacity: byteCount / MemoryLayout<Int32>.size)
+					let threshold = Int64(Float(Int32.max) * audibleAmplitudeThreshold)
+					for index in 0..<(byteCount / MemoryLayout<Int32>.size)
+					where abs(Int64(samples[index])) >= threshold {
+						return true
+					}
+				} else {
+					return true
+				}
+			}
+			return false
 		}
 	}
 
