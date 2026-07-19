@@ -44,7 +44,7 @@ extension AudioRecorderViewModel {
 	// MARK: - Background Time Monitoring
 
 	func startBackgroundTimeMonitoring() {
-		#if targetEnvironment(macCatalyst)
+		#if targetEnvironment(macCatalyst) || os(macOS)
 		// No iOS-style background time limit on Mac — skip polling.
 		return
 		#else

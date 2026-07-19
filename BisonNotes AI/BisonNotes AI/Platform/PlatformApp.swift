@@ -194,11 +194,11 @@ enum PlatformLifecycle {
 
 // MARK: - Background task assertions
 
-/// UIKit background-task assertions ("finish this work after backgrounding").
-/// On native macOS (Phase 2) these become no-ops or ProcessInfo activities —
-/// macOS apps keep running in the background.
+/// A platform assertion for user-initiated work that must continue when the app
+/// is not frontmost. iOS uses a finite UIKit background task. Mac uses a
+/// ProcessInfo activity to prevent App Nap while still allowing idle system sleep.
 enum PlatformBackgroundTask {
-    #if canImport(UIKit)
+    #if canImport(UIKit) && !targetEnvironment(macCatalyst)
     typealias ID = UIBackgroundTaskIdentifier
     static let invalidID: ID = .invalid
 
@@ -214,22 +214,54 @@ enum PlatformBackgroundTask {
         UIApplication.shared.backgroundTimeRemaining
     }
     #else
-    // macOS: apps are not suspended, so background-task assertions are no-ops.
-    // rawValue mirrors UIBackgroundTaskIdentifier's for shared logging code.
+    // Mac apps do not receive iOS expiration time. A ProcessInfo activity keeps
+    // transcription and summarization responsive when the app is hidden.
     struct ID: Equatable {
         let rawValue: Int
         static let invalid = ID(rawValue: 0)
     }
     static let invalidID: ID = .invalid
+    private static let activityRegistry = ActivityRegistry()
 
     static func begin(name: String, expirationHandler: (() -> Void)? = nil) -> ID {
-        ID(rawValue: 1)
+        ID(rawValue: activityRegistry.begin(name: name))
     }
 
-    static func end(_ id: ID) {}
+    static func end(_ id: ID) {
+        guard id != .invalid else { return }
+        activityRegistry.end(id: id.rawValue)
+    }
 
     static var remainingTime: TimeInterval {
         .greatestFiniteMagnitude
+    }
+
+    private final class ActivityRegistry: @unchecked Sendable {
+        private let lock = NSLock()
+        private var nextID = 1
+        private var activities: [Int: any NSObjectProtocol] = [:]
+
+        func begin(name: String) -> Int {
+            let activity = ProcessInfo.processInfo.beginActivity(
+                options: .userInitiatedAllowingIdleSystemSleep,
+                reason: name
+            )
+            lock.lock()
+            defer { lock.unlock() }
+            let id = nextID
+            nextID += 1
+            activities[id] = activity
+            return id
+        }
+
+        func end(id: Int) {
+            lock.lock()
+            let activity = activities.removeValue(forKey: id)
+            lock.unlock()
+            if let activity {
+                ProcessInfo.processInfo.endActivity(activity)
+            }
+        }
     }
     #endif
 }

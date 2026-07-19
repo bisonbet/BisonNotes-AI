@@ -872,7 +872,7 @@ struct BisonNotesAIApp: App {
     }
 
     private func setupBackgroundTasks() {
-        #if os(iOS)
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         // Register background task identifiers
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.bisonai.audio-processing", using: nil) { task in
             handleBackgroundProcessing(task: task as! BGProcessingTask)
@@ -886,12 +886,16 @@ struct BisonNotesAIApp: App {
     }
 
     private func requestBackgroundAppRefreshPermission() {
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         // Background app refresh is now handled via BGTaskScheduler in setupBackgroundTasks()
         // No need for the deprecated setMinimumBackgroundFetchInterval
         AppLog.shared.general("Background app refresh configured via BGTaskScheduler")
+        #else
+        AppLog.shared.general("Mac background jobs continue in-process", level: .debug)
+        #endif
     }
 
-    #if os(iOS)
+    #if os(iOS) && !targetEnvironment(macCatalyst)
     private func handleBackgroundProcessing(task: BGProcessingTask) {
         AppLog.shared.general("Background processing task started: \(task.identifier)")
 
