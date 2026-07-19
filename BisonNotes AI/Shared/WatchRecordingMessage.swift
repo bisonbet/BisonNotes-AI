@@ -240,7 +240,7 @@ struct WatchLocationData: Codable, Equatable {
 }
 
 /// Shared location data structure - compatible with both iPhone and Watch apps
-struct LocationData: Codable, Identifiable, Sendable {
+struct LocationData: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     let latitude: Double
     let longitude: Double

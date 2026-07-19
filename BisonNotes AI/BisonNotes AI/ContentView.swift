@@ -147,6 +147,7 @@ struct ContentView: View {
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .alert("Switched to Parakeet", isPresented: $showingWhisperKitSwitchedAlert) {
             Button("OK") { }
@@ -173,6 +174,7 @@ struct ContentView: View {
             NavigationStack {
                 FluidAudioSettingsView()
             }
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .alert("Download Complete", isPresented: Binding(
             get: { downloadMonitor.showingCompletionAlert && !recorderVM.isRecording },

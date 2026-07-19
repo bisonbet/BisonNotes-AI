@@ -224,6 +224,7 @@ struct SummariesView: View {
         }
         .sheet(isPresented: $showDateFilter) {
             dateFilterSheet
+                .nativeMacModalSizing(width: 520, height: 440)
         }
     } // End of body variable
 
@@ -721,7 +722,7 @@ struct SummariesView: View {
             Button(action: {
                 #if os(macOS)
                 if let recordingID = recording.id {
-                    openWindow(value: recordingID)
+                    openWindow(id: NativeWindowID.summary, value: recordingID)
                 }
                 #else
                 selectedRecording = recording

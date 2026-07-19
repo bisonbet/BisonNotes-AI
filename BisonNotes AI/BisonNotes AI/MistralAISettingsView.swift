@@ -215,7 +215,7 @@ struct MistralAISettingsView: View {
             } message: {
                 Text(alertMessage)
             }
-            .fullScreenCover(isPresented: $showingOnboarding) {
+            .platformFullScreenCover(isPresented: $showingOnboarding) {
                 MistralOnboardingView(onSetupComplete: {
                     onConfigurationChanged()
                 })

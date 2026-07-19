@@ -23,6 +23,7 @@ private struct TranscriptWithDate {
 }
 
 struct TranscriptsView: View {
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
@@ -61,14 +62,17 @@ struct TranscriptsView: View {
                 EditableTranscriptView(recording: recording, transcript: transcript, transcriptManager: TranscriptManager.shared)
                     .environmentObject(appCoordinator)
                     .environmentObject(recorderVM)
+                    .nativeMacModalSizing(width: 820, height: 720)
             } else {
                 TranscriptDetailView(recording: recording, transcriptText: "")
                     .environmentObject(appCoordinator)
                     .environmentObject(recorderVM)
+                    .nativeMacModalSizing(width: 820, height: 720)
             }
         }
         .sheet(item: $selectedLocationData) { locationData in
             LocationDetailView(locationData: locationData)
+                .nativeMacModalSizing(width: 680, height: 620)
         }
         .confirmationDialog(
             "Clean Audio Before Transcribing?",
@@ -135,6 +139,7 @@ struct TranscriptsView: View {
         }
         .sheet(isPresented: $showDateFilter) {
             dateFilterSheet
+                .nativeMacModalSizing(width: 520, height: 440)
         }
         .onAppear {
             loadRecordings()
@@ -655,7 +660,7 @@ struct TranscriptsView: View {
     ) -> some View {
         HStack(alignment: .center, spacing: 12) {
             Button(action: {
-                selectedRecording = recordingData.recording
+                presentTranscript(recordingData.recording)
             }) {
                 importedTranscriptRowContent(recordingData, showsChevron: onDelete == nil)
             }
@@ -790,7 +795,7 @@ struct TranscriptsView: View {
 
     private func locationButtonView(_ locationData: LocationData, recordingURL: URL) -> some View {
         Button(action: {
-            selectedLocationData = locationData
+            presentLocation(locationData)
         }) {
             HStack {
                 Image(systemName: "location.fill")
@@ -817,7 +822,7 @@ struct TranscriptsView: View {
         return Button(action: {
             if hasTranscript {
                 // Show existing transcript for editing - always allowed
-                selectedRecording = recordingData.recording
+                presentTranscript(recordingData.recording)
             } else {
                 // Generate new transcript - only if this recording doesn't already have an active job
                 if !isProcessing {
@@ -853,6 +858,23 @@ struct TranscriptsView: View {
         )
         .accessibilityValue(isProcessing && !hasTranscript ? "In progress" : "Ready")
         .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(hasTranscript)-\(hasActiveJob)-\(isCleaning)-\(isQueuedForCleanup)-\(refreshTrigger)")
+    }
+
+    private func presentTranscript(_ recording: RecordingEntry) {
+        #if os(macOS)
+        guard let recordingID = recording.id else { return }
+        openWindow(id: NativeWindowID.transcript, value: recordingID)
+        #else
+        selectedRecording = recording
+        #endif
+    }
+
+    private func presentLocation(_ locationData: LocationData) {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.location, value: locationData)
+        #else
+        selectedLocationData = locationData
+        #endif
     }
 
     /// Returns the appropriate label for the processing button based on current phase
@@ -1546,9 +1568,11 @@ struct EditableTranscriptView: View {
                 speakerIds: uniqueSpeakers,
                 speakerMappings: $speakerMappings
             )
+            .nativeMacModalSizing(width: 620, height: 560)
         }
         .sheet(isPresented: $showSummarySheet) {
             summarySheetContent
+                .nativeMacModalSizing(width: 760, height: 680)
         }
         .alert("Unable to Generate Summary", isPresented: Binding(
             get: { summaryGenerationError != nil },

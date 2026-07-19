@@ -14,6 +14,7 @@ import CoreGraphics
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var regenerationManager: SummaryRegenerationManager
@@ -113,6 +114,7 @@ struct SettingsView: View {
         .sheet(isPresented: $showingCloudReview) {
             CloudReviewItemsView(includeAudioFiles: iCloudBackupIncludeAudioFiles)
                 .environmentObject(appCoordinator)
+                .nativeMacModalSizing(width: 780, height: 700)
         }
         .onAppear {
             refreshEngineStatuses()
@@ -152,22 +154,28 @@ struct SettingsView: View {
         .sheet(isPresented: $showingAISettings) {
             AISettingsView()
                 .environmentObject(recorderVM)
+                .nativeMacModalSizing(width: 780, height: 700)
         }
         .sheet(isPresented: $showingTranscriptionSettings) {
             TranscriptionSettingsView()
+                .nativeMacModalSizing(width: 780, height: 700)
         }
         .sheet(isPresented: $showingBackgroundProcessing) {
             BackgroundProcessingView()
+                .nativeMacModalSizing(width: 760, height: 680)
         }
         .sheet(isPresented: $showingDataMigration) {
             DataMigrationView()
                 .environmentObject(appCoordinator)
+                .nativeMacModalSizing(width: 800, height: 700)
         }
         .sheet(isPresented: $showingPreferences) {
             PreferencesView()
+                .nativeMacModalSizing(width: 700, height: 620)
         }
         .sheet(isPresented: $showingAcknowledgements) {
             AcknowledgementsView()
+                .nativeMacModalSizing(width: 700, height: 620)
         }
         .overlay {
             if isPreparingLogs {
@@ -549,7 +557,7 @@ struct SettingsView: View {
                 subtitle: "Manage transcription and summarization jobs",
                 systemImage: "gearshape.2",
                 tint: .blue,
-                action: { showingBackgroundProcessing = true }
+                action: { presentBackgroundProcessing() }
             )
 
             Button {
@@ -990,7 +998,7 @@ struct SettingsView: View {
             }
 
             Button {
-                showingBackgroundProcessing = true
+                presentBackgroundProcessing()
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1065,6 +1073,14 @@ struct SettingsView: View {
                     .foregroundColor(.red)
             }
         }
+    }
+
+    private func presentBackgroundProcessing() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.backgroundProcessing)
+        #else
+        showingBackgroundProcessing = true
+        #endif
     }
 
     private var aboutSection: some View {

@@ -303,41 +303,49 @@ struct AISettingsView: View {
             OllamaSettingsView(onConfigurationChanged: {
                 self.refreshEngineStatuses()
             })
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .sheet(isPresented: $showingOpenAISettings) {
             OpenAISummarizationSettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .sheet(isPresented: $showingOpenAICompatibleSettings) {
             OpenAICompatibleSettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .sheet(isPresented: $showingGoogleAIStudioSettings) {
             GoogleAIStudioSettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .sheet(isPresented: $showingMistralAISettings) {
             MistralAISettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .sheet(isPresented: $showingAWSBedrockSettings) {
             AWSBedrockSettingsView()
+                .nativeMacModalSizing(width: 760, height: 700)
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .sheet(isPresented: $showingMLXSwiftSettings) {
             NavigationStack {
                 MLXSwiftSettingsView()
             }
+            .nativeMacModalSizing(width: 760, height: 700)
         }
-        .fullScreenCover(isPresented: $showingMistralOnboarding) {
+        .platformFullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
                 refreshEngineStatuses()
             })

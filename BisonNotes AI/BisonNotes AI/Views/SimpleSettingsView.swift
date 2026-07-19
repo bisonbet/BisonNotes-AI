@@ -149,11 +149,13 @@ struct SimpleSettingsView: View {
             SettingsView()
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
+                .nativeMacModalSizing(width: 780, height: 720)
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .sheet(isPresented: $showingOnDeviceAIDownload) {
             OnDeviceAIDownloadView(
@@ -163,8 +165,9 @@ struct SimpleSettingsView: View {
                     showingOnDeviceAIDownload = false
                 }
             )
+            .nativeMacModalSizing(width: 700, height: 620)
         }
-        .fullScreenCover(isPresented: $showingMistralOnboarding) {
+        .platformFullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
                 // Mistral onboarding completed — mark first setup done and navigate
                 UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")

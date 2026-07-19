@@ -9,6 +9,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct RecordingsView: View {
+    @Environment(\.openWindow) private var openWindow
     @Environment(\.openURL) private var openURL
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var importManager: FileImportManager
@@ -258,7 +259,7 @@ struct RecordingsView: View {
                                     accessibilityIdentifier: BisonNotesAccessibilityID.viewRecordingsButton
                                 )
                             ) {
-                                showingRecordingsList = true
+                                presentRecordingsLibrary()
                             }
 
                             homeActionButton(
@@ -340,10 +341,12 @@ struct RecordingsView: View {
                     fileImportManager: importManager,
                     transcriptImportManager: transcriptImportManager
                 )
+                .nativeMacModalSizing(width: 700, height: 620)
             }
             // Video import hidden — feature not yet ready for users
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()
+                    .nativeMacModalSizing(width: 760, height: 680)
             }
             .alert("Audio Import Results", isPresented: $importManager.showingImportAlert) {
                 Button("OK", role: .cancel) {}
@@ -394,6 +397,7 @@ struct RecordingsView: View {
             RecordingsListView()
                 .environment(\.isEmbeddedInSplitView, false)
                 .environmentObject(recorderVM)
+                .nativeMacModalSizing(width: 900, height: 720)
         }
     }
 
@@ -495,7 +499,7 @@ struct RecordingsView: View {
 
     private var backgroundProcessingIndicator: some View {
         Button(action: {
-            showingBackgroundProcessing = true
+            presentBackgroundProcessing()
         }) {
             HStack {
                 Image(systemName: "gear.circle.fill")
@@ -529,6 +533,22 @@ struct RecordingsView: View {
             .padding(.horizontal, 40)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+
+    private func presentRecordingsLibrary() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.recordings)
+        #else
+        showingRecordingsList = true
+        #endif
+    }
+
+    private func presentBackgroundProcessing() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.backgroundProcessing)
+        #else
+        showingBackgroundProcessing = true
+        #endif
     }
 
     // MARK: - Phase 5: UI Helper Methods

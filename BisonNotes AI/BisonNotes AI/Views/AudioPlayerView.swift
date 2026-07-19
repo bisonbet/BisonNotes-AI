@@ -201,6 +201,7 @@ struct AudioPlayerView: View {
         }) {
             if let audioExportURL {
                 ShareSheet(activityItems: [audioExportURL])
+                    .nativeMacModalSizing(width: 560, height: 440)
             }
         }
         .sheet(item: $selectedRecordingForTranscript) { entry in
@@ -208,9 +209,11 @@ struct AudioPlayerView: View {
                let transcript = appCoordinator.getTranscriptData(for: recordingId) {
                 EditableTranscriptView(recording: entry, transcript: transcript, transcriptManager: TranscriptManager.shared)
                     .environmentObject(appCoordinator)
+                    .nativeMacModalSizing(width: 820, height: 720)
             } else {
                 TranscriptDetailView(recording: entry, transcriptText: "")
                     .environmentObject(appCoordinator)
+                    .nativeMacModalSizing(width: 820, height: 720)
             }
         }
         .confirmationDialog(

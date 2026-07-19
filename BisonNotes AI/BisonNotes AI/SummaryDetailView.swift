@@ -30,6 +30,7 @@ private actor SummaryGeocodeCache {
 private let summaryGeocodeCache = SummaryGeocodeCache()
 
 struct SummaryDetailView: View {
+    @Environment(\.openWindow) private var openWindow
     let recording: RecordingFile
     @State private var summaryData: EnhancedSummaryData
     @Environment(\.dismiss) private var dismiss
@@ -228,6 +229,7 @@ struct SummaryDetailView: View {
         .sheet(isPresented: $showingLocationDetail) {
             if let locationData = recording.locationData {
                 LocationDetailView(locationData: locationData)
+                    .nativeMacModalSizing(width: 680, height: 620)
             }
         }
         .sheet(isPresented: $showingLocationPicker) {
@@ -236,6 +238,7 @@ struct SummaryDetailView: View {
                     updateRecordingLocation(location)
                 }
             )
+            .nativeMacModalSizing(width: 700, height: 620)
         }
         .sheet(isPresented: $showingShareSheet) {
             Group {
@@ -257,6 +260,7 @@ struct SummaryDetailView: View {
                         }
                 }
             }
+            .nativeMacModalSizing(width: 560, height: 440)
         }
         .alert("Export Error", isPresented: .constant(exportError != nil)) {
             Button("OK") {
@@ -310,6 +314,7 @@ struct SummaryDetailView: View {
                     }
                 }
             }
+            .nativeMacModalSizing(width: 760, height: 680)
         }
         .sheet(isPresented: $showingPDFAttachment) {
             if let selectedAttachmentPDFURL {
@@ -325,12 +330,14 @@ struct SummaryDetailView: View {
                             }
                         }
                 }
+                .nativeMacModalSizing(width: 800, height: 700)
             }
         }
         .sheet(isPresented: $showingNoteEditor) {
             NoteEditorSheet(text: $noteDraft) {
                 saveUserNotes()
             }
+            .nativeMacModalSizing(width: 680, height: 600)
         }
         .quickLookPreview($selectedAttachmentGenericURL)
         .alert("Attachment Error", isPresented: .constant(attachmentError != nil)) {
@@ -503,7 +510,13 @@ struct SummaryDetailView: View {
 
                         // Button to open full map view
                         Button(action: {
+                            #if os(macOS)
+                            if let locationData = recording.locationData {
+                                openWindow(id: NativeWindowID.location, value: locationData)
+                            }
+                            #else
                             showingLocationDetail = true
+                            #endif
                         }) {
                             Image(systemName: "arrow.up.right.circle.fill")
                                 .font(.title3)
@@ -868,6 +881,7 @@ struct SummaryDetailView: View {
                     updateRecordingName(to: customTitle)
                 }
             )
+            .nativeMacModalSizing(width: 620, height: 560)
         }
         .alert("Edit Title", isPresented: Binding(
             get: { editingTitle != nil },
@@ -1035,6 +1049,7 @@ struct SummaryDetailView: View {
                     updateRecordingDateTime(to: newDateTime)
                 }
             )
+            .nativeMacModalSizing(width: 560, height: 500)
         }
     }
 
@@ -1894,6 +1909,7 @@ struct EnhancedTaskRowView: View {
                     integrationManager.addTaskToGoogleCalendar(task, recordingName: recordingName)
                 }
             )
+            .nativeMacModalSizing(width: 560, height: 500)
         }
         .alert("Success", isPresented: $showingSuccessAlert) {
             Button("OK") { }
@@ -2044,6 +2060,7 @@ struct EnhancedReminderRowView: View {
                     integrationManager.addReminderToGoogleCalendar(reminder, recordingName: recordingName)
                 }
             )
+            .nativeMacModalSizing(width: 560, height: 500)
         }
         .alert("Success", isPresented: $showingSuccessAlert) {
             Button("OK") { }

@@ -652,7 +652,7 @@ struct BisonNotesAIApp: App {
         }
         .defaultSize(width: 760, height: 700)
 
-        WindowGroup("Summary", for: UUID.self) { $recordingID in
+        WindowGroup("Summary", id: NativeWindowID.summary, for: UUID.self) { $recordingID in
             if let recordingID {
                 NativeSummaryWindowView(recordingID: recordingID)
                     .environmentObject(appCoordinator)
@@ -666,6 +666,63 @@ struct BisonNotesAIApp: App {
             }
         }
         .defaultSize(width: 760, height: 700)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("Transcript", id: NativeWindowID.transcript, for: UUID.self) { $recordingID in
+            if let recordingID {
+                NativeTranscriptWindowView(recordingID: recordingID)
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            }
+        }
+        .defaultSize(width: 820, height: 720)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("Recording", id: NativeWindowID.recording, for: UUID.self) { $recordingID in
+            if let recordingID {
+                NativeRecordingWindowView(recordingID: recordingID)
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            }
+        }
+        .defaultSize(width: 720, height: 680)
+        .windowResizability(.contentMinSize)
+
+        Window("Recordings", id: NativeWindowID.recordings) {
+            RecordingsListView()
+                .environment(\.isEmbeddedInSplitView, false)
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .frame(minWidth: 720, minHeight: 520)
+        }
+        .defaultSize(width: 900, height: 720)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("Location", id: NativeWindowID.location, for: LocationData.self) { $locationData in
+            if let locationData {
+                LocationDetailView(locationData: locationData)
+                    .frame(minWidth: 560, minHeight: 480)
+            }
+        }
+        .defaultSize(width: 680, height: 620)
+        .windowResizability(.contentMinSize)
+
+        Window("Background Processing", id: NativeWindowID.backgroundProcessing) {
+            BackgroundProcessingView()
+                .frame(minWidth: 620, minHeight: 500)
+        }
+        .defaultSize(width: 760, height: 680)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("Processing Job", id: NativeWindowID.processingJob, for: UUID.self) { $jobID in
+            if let jobID {
+                NativeProcessingJobWindowView(jobID: jobID)
+            }
+        }
+        .defaultSize(width: 620, height: 540)
         .windowResizability(.contentMinSize)
         #endif
     }

@@ -17,6 +17,7 @@ class DeletionData: ObservableObject {
 }
 
 struct RecordingsListView: View {
+    @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
@@ -97,6 +98,7 @@ struct RecordingsListView: View {
             .searchable(text: $searchText, prompt: "Search recordings...")
             .sheet(isPresented: $showDateFilter) {
                 dateFilterSheet
+                    .nativeMacModalSizing(width: 520, height: 440)
             }
             .sheet(isPresented: $showingEnhancedDeleteDialog) {
                 if let recording = deletionData.recordingToDelete, let relationships = deletionData.fileRelationships {
@@ -114,6 +116,7 @@ struct RecordingsListView: View {
                             showingEnhancedDeleteDialog = false
                         }
                     )
+                    .nativeMacModalSizing(width: 680, height: 620)
                 } else {
                     // Loading or error state
                     VStack(spacing: 20) {
@@ -149,10 +152,12 @@ struct RecordingsListView: View {
                         .padding()
                     }
                     .padding()
+                    .nativeMacModalSizing(width: 680, height: 620)
                 }
             }
             .sheet(item: $selectedLocationData) { locationData in
                 LocationDetailView(locationData: locationData)
+                    .nativeMacModalSizing(width: 680, height: 620)
             }
             .sheet(isPresented: $showingCombineView) {
                 if let recordings = recordingsToCombine {
@@ -169,6 +174,7 @@ struct RecordingsListView: View {
                         recommendedFirst: recommendedRecording
                     )
                     .environmentObject(appCoordinator)
+                    .nativeMacModalSizing(width: 760, height: 680)
                 }
             }
             .sheet(isPresented: $showingArchiveConfirmation) {
@@ -192,12 +198,14 @@ struct RecordingsListView: View {
                     }
                 )
                 .presentationDetents([.medium, .large])
+                .nativeMacModalSizing(width: 680, height: 620)
             }
             .background {
                 exportMoverPresenters
             }
             .sheet(isPresented: $showingArchiveOlderThan) {
                 archiveOlderThanSheet
+                    .nativeMacModalSizing(width: 520, height: 440)
             }
             .alert("Audio Archived", isPresented: Binding(
                 get: { archiveInfoRecording != nil },
@@ -226,9 +234,11 @@ struct RecordingsListView: View {
                    let transcript = appCoordinator.getTranscriptData(for: recordingId) {
                     EditableTranscriptView(recording: entry, transcript: transcript, transcriptManager: TranscriptManager.shared)
                         .environmentObject(appCoordinator)
+                        .nativeMacModalSizing(width: 820, height: 720)
                 } else {
                     TranscriptDetailView(recording: entry, transcriptText: "")
                         .environmentObject(appCoordinator)
+                        .nativeMacModalSizing(width: 820, height: 720)
                 }
             }
             .confirmationDialog(
@@ -259,6 +269,7 @@ struct RecordingsListView: View {
             AudioPlayerView(recording: recording)
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
+                .nativeMacModalSizing(width: 720, height: 680)
         }
         .onAppear {
             refreshFileRelationships()
@@ -749,7 +760,12 @@ struct RecordingsListView: View {
             selectedRecordingForPlayer = nil
             archiveInfoRecording = recording
         } else {
+            #if os(macOS)
+            guard let recordingID = recording.recordingId else { return }
+            openWindow(id: NativeWindowID.recording, value: recordingID)
+            #else
             selectedRecordingForPlayer = recording
+            #endif
         }
     }
 
@@ -850,23 +866,27 @@ struct RecordingsListView: View {
                 clearLocalArchiveState(recording)
             }
         } else {
+            #if os(macOS)
+            Button {
+                openOrSelectRecording(recording)
+            } label: {
+                playRecordingIcon
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Play Audio for \(recording.name)")
+            .accessibilityIdentifier("bisonnotes.recording.action.play-audio")
+            #else
             NavigationLink {
                 AudioPlayerView(recording: recording)
                     .environmentObject(recorderVM)
                     .environmentObject(appCoordinator)
             } label: {
-                Image(systemName: "play.fill")
-                    .font(.headline)
-                    .foregroundColor(.accentColor)
-                    .frame(width: 44, height: 44)
-                    .background(
-                        Color.accentColor.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    )
+                playRecordingIcon
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Play Audio for \(recording.name)")
             .accessibilityIdentifier("bisonnotes.recording.action.play-audio")
+            #endif
         }
 
         cloudSyncPreferenceButton(for: recording)
@@ -880,6 +900,17 @@ struct RecordingsListView: View {
             deletionData.recordingToDelete = recording
             deleteRecording(recording)
         }
+    }
+
+    private var playRecordingIcon: some View {
+        Image(systemName: "play.fill")
+            .font(.headline)
+            .foregroundColor(.accentColor)
+            .frame(width: 44, height: 44)
+            .background(
+                Color.accentColor.opacity(0.12),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
     }
 
     @ViewBuilder
@@ -1203,7 +1234,11 @@ struct RecordingsListView: View {
     }
 
     private func showLocationDetails(_ locationData: LocationData) {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.location, value: locationData)
+        #else
         selectedLocationData = locationData
+        #endif
     }
 
     private func toggleCloudSyncPreference(for recording: AudioRecordingFile) {
@@ -1465,7 +1500,9 @@ struct RecordingsListView: View {
                 _ = try RecordingArchiveService.shared.restoreArchivedRecording(recordingEntry)
                 loadRecordings()
                 refreshFileRelationships()
-                selectedRecordingForPlayer = recordings.first { $0.recordingId == recordingId }
+                if let restoredRecording = recordings.first(where: { $0.recordingId == recordingId }) {
+                    openOrSelectRecording(restoredRecording)
+                }
             } catch {
                 archiveRestoreError = error.localizedDescription
             }
