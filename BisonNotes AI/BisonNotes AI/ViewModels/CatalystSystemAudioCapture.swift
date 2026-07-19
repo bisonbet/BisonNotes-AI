@@ -16,6 +16,7 @@ import ScreenCaptureKit
 final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	private let outputURL: URL
 	private let sampleQueue = DispatchQueue(label: "com.bisonnotesai.catalyst-system-audio")
+	private let discardedVideoQueue = DispatchQueue(label: "com.bisonnotesai.catalyst-system-video-discard")
 
 	private var stream: SCStream?
 	private var assetWriter: AVAssetWriter?
@@ -77,18 +78,11 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 			)
 		}
 
-		let config = SCStreamConfiguration()
-		config.width = max(display.width, 2)
-		config.height = max(display.height, 2)
-		config.minimumFrameInterval = CMTime(value: 1, timescale: 2)
-		config.queueDepth = 3
-		config.capturesAudio = true
-		config.excludesCurrentProcessAudio = true
-		config.sampleRate = 48_000
-		config.channelCount = 2
+		let config = Self.makeSystemAudioConfiguration()
 
 		let filter = SCContentFilter(display: display, excludingWindows: [])
 		let stream = SCStream(filter: filter, configuration: config, delegate: self)
+		try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: discardedVideoQueue)
 		try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: sampleQueue)
 
 		self.assetWriter = writer
@@ -97,6 +91,22 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 
 		try await stream.startCapture()
 		AppLog.shared.recording("Catalyst system audio capture started")
+	}
+
+	private static func makeSystemAudioConfiguration() -> SCStreamConfiguration {
+		let config = SCStreamConfiguration()
+		// ScreenCaptureKit always produces a screen stream, even when the app only
+		// needs system audio. The tiny no-op screen output prevents repeated
+		// "stream output NOT found" logs for otherwise-unclaimed video frames.
+		config.width = 2
+		config.height = 2
+		config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+		config.queueDepth = 3
+		config.capturesAudio = true
+		config.excludesCurrentProcessAudio = true
+		config.sampleRate = 48_000
+		config.channelCount = 2
+		return config
 	}
 
 	func setPaused(_ paused: Bool) {
