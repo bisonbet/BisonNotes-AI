@@ -9,7 +9,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var recorderVM = AudioRecorderViewModel()
+    @EnvironmentObject private var recorderVM: AudioRecorderViewModel
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @EnvironmentObject var appCoordinator: AppDataCoordinator
@@ -421,6 +421,7 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
+        .environmentObject(AudioRecorderViewModel())
         .environmentObject(AppDataCoordinator())
         .environmentObject(FileImportManager())
         .environmentObject(TranscriptImportManager())

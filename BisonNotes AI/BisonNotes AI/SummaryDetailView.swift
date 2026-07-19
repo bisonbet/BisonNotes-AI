@@ -162,6 +162,12 @@ struct SummaryDetailView: View {
             showingAIWarning: $showingAIWarning,
             onSettingsRequested: {}
         )
+        .focusedSceneValue(
+            \.summaryExportAction,
+            SummaryExportAction {
+                showingExportFormatPicker = true
+            }
+        )
         .onAppear {
             // Debug summary data being displayed
             AppLog.shared.summarization("SummaryDetailView opened: summary=\(summaryData.summary.count) chars, tasks=\(summaryData.tasks.count), reminders=\(summaryData.reminders.count), titles=\(summaryData.titles.count)", level: .debug)

@@ -24,9 +24,11 @@ import Darwin
 struct BisonNotesAIApp: App {
     let persistenceController = PersistenceController.shared
     @StateObject private var appCoordinator = AppDataCoordinator()
+    @StateObject private var recorderVM = AudioRecorderViewModel()
     @StateObject private var fileImportManager = FileImportManager()
     @StateObject private var transcriptImportManager = TranscriptImportManager()
     @State private var hasQueuedParakeetStartupRepair = false
+    @FocusedValue(\.summaryExportAction) private var summaryExportAction
 
     // Phase 6: Register AppDelegate for notification handling
     #if canImport(UIKit)
@@ -534,6 +536,7 @@ struct BisonNotesAIApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
                 .environmentObject(fileImportManager)
                 .environmentObject(transcriptImportManager)
@@ -578,34 +581,45 @@ struct BisonNotesAIApp: App {
                     NSLog("📎 Darwin notification received from Share Extension")
                     scanSharedContainerForImports(trigger: .pendingToken)
                 }
+                .nativeMainWindowSizing()
         }
+        #if os(macOS)
+        .defaultSize(width: 1_100, height: 720)
+        .windowResizability(.contentMinSize)
+        #endif
         .commands {
             // MARK: - Mac Menu Bar Commands
+            // Keep the system undo/redo and pasteboard groups untouched so
+            // focused TextField/TextEditor controls retain standard Edit-menu behavior.
             CommandGroup(replacing: .newItem) {
                 Button("New Recording") {
-                    NotificationCenter.default.post(name: NSNotification.Name("ToggleRecording"), object: nil)
+                    postRecordingCommand(named: "ToggleRecording")
                 }
-                .keyboardShortcut("r", modifiers: .command)
+                .keyboardShortcut("n", modifiers: .command)
 
                 Divider()
 
                 Button("Import Audio...") {
-                    NotificationCenter.default.post(name: NSNotification.Name("ImportAudioFromMenu"), object: nil)
+                    postRecordingCommand(named: "ImportAudioFromMenu")
                 }
                 .keyboardShortcut("i", modifiers: .command)
 
                 Button("Import Transcript...") {
-                    NotificationCenter.default.post(name: NSNotification.Name("ImportTranscriptFromMenu"), object: nil)
+                    postRecordingCommand(named: "ImportTranscriptFromMenu")
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
 
                 Button("Import From Link...") {
-                    let switchName = NSNotification.Name("SwitchToRecordTabForImport")
-                    let importName = NSNotification.Name("ImportFromLinkFromMenu")
-                    NotificationCenter.default.post(name: switchName, object: nil)
-                    NotificationCenter.default.post(name: importName, object: nil)
+                    postRecordingCommand(named: "ImportFromLinkFromMenu")
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Export Summary...") {
+                    summaryExportAction?.perform()
+                }
+                .disabled(summaryExportAction == nil)
             }
 
             CommandGroup(after: .sidebar) {
@@ -629,6 +643,15 @@ struct BisonNotesAIApp: App {
         }
 
         #if os(macOS)
+        Settings {
+            SettingsView()
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .frame(minWidth: 680, minHeight: 600)
+        }
+        .defaultSize(width: 760, height: 700)
+
         WindowGroup("Summary", for: UUID.self) { $recordingID in
             if let recordingID {
                 NativeSummaryWindowView(recordingID: recordingID)
@@ -645,6 +668,16 @@ struct BisonNotesAIApp: App {
         .defaultSize(width: 760, height: 700)
         .windowResizability(.contentMinSize)
         #endif
+    }
+
+    private func postRecordingCommand(named name: String) {
+        NotificationCenter.default.post(
+            name: NSNotification.Name("SwitchToRecordTabForImport"),
+            object: nil
+        )
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: NSNotification.Name(name), object: nil)
+        }
     }
 
     /// Tracks the last URL processed by handleOpenURL to prevent double imports
@@ -1041,4 +1074,15 @@ struct BisonNotesAIApp: App {
         AppLog.shared.general("Code coverage output redirected to \(destination)", level: .debug)
     }
 #endif
+}
+
+private extension View {
+    @ViewBuilder
+    func nativeMainWindowSizing() -> some View {
+        #if os(macOS)
+        frame(minWidth: 860, minHeight: 560)
+        #else
+        self
+        #endif
+    }
 }
