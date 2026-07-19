@@ -2048,12 +2048,7 @@ struct TranscriptSegmentView: View {
                 Spacer()
             }
 
-            TextEditor(text: Binding(
-                get: { segment.text },
-                set: { segment = TranscriptSegment(speaker: segment.speaker, text: $0, startTime: segment.startTime, endTime: segment.endTime) }
-            ))
-            .font(.body)
-            .frame(minHeight: max(120, calculateTextHeight(for: segment.text)))
+            transcriptTextEditor
             .padding(12)
             .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
@@ -2068,6 +2063,49 @@ struct TranscriptSegmentView: View {
         }
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var transcriptTextEditor: some View {
+        #if os(macOS)
+        // A nested scrolling TextEditor consumes trackpad/wheel events before
+        // the transcript Form can receive them. Invisible text establishes the
+        // editor's full wrapped height, while scrollDisabled sends scrolling to
+        // the outer transcript window.
+        Text(segment.text.isEmpty ? " " : segment.text + "\n")
+            .font(.body)
+            .foregroundStyle(.clear)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 8)
+            .accessibilityHidden(true)
+            .overlay(alignment: .topLeading) {
+                TextEditor(text: segmentTextBinding)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .scrollDisabled(true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(minHeight: 120, alignment: .topLeading)
+        #else
+        TextEditor(text: segmentTextBinding)
+            .font(.body)
+            .frame(minHeight: max(120, calculateTextHeight(for: segment.text)))
+        #endif
+    }
+
+    private var segmentTextBinding: Binding<String> {
+        Binding(
+            get: { segment.text },
+            set: {
+                segment = TranscriptSegment(
+                    speaker: segment.speaker,
+                    text: $0,
+                    startTime: segment.startTime,
+                    endTime: segment.endTime
+                )
+            }
+        )
     }
 
     private func formatTime(_ time: TimeInterval) -> String {
