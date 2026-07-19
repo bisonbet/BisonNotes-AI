@@ -97,9 +97,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var catalystAudioFile: AVAudioFile?
 	var catalystEngineFormat: AVAudioFormat?
 	var catalystScratchRecordingURL: URL?
+	var catalystScratchSegmentURLs: [URL] = []
 	var catalystSystemAudioCapture: CatalystSystemAudioCapture?
 	var catalystSystemAudioURL: URL?
 	var catalystAudioSessionActivated = false
+	#if os(macOS)
+	var macInputDeviceChangeTask: Task<Void, Never>?
+	var isRecoveringMacInput = false
+	#endif
 	#endif
 	let checkpointInterval: TimeInterval = 30.0 // Try to checkpoint every 30 seconds
 	let forceCheckpointInterval: TimeInterval = 90.0 // Force checkpoint after 90 seconds even without silence
@@ -198,6 +203,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		// Setup notification observers after super.init()
 		setupNotificationObservers()
 
+		#if os(macOS)
+		setupMacInputDeviceMonitoring()
+		#endif
+
 		// Setup CallKit observer for intelligent call interruption handling (Phase 1)
 		#if os(iOS) && !targetEnvironment(macCatalyst)
 		setupCallObserver()
@@ -247,6 +256,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	deinit {
+		#if os(macOS)
+		macInputDeviceChangeTask?.cancel()
+		enhancedAudioSessionManager.stopInputDeviceMonitoring()
+		#endif
+
 		// Remove observers synchronously since deinit cannot be async
 		if let observer = interruptionObserver {
 			NotificationCenter.default.removeObserver(observer)

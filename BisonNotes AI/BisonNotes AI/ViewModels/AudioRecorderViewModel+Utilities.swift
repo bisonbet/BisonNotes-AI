@@ -170,6 +170,11 @@ extension AudioRecorderViewModel {
 				try await enhancedAudioSessionManager.setPreferredInput(input)
 				UserDefaults.standard.set(input.uid, forKey: preferredInputDefaultsKey)
 				try await enhancedAudioSessionManager.deactivateSession()
+				#if os(macOS)
+				await MainActor.run {
+					self.scheduleMacInputDeviceRefresh()
+				}
+				#endif
 			} catch {
 				errorMessage = "Failed to set preferred input: \(error.localizedDescription)"
 				try? await enhancedAudioSessionManager.deactivateSession()

@@ -555,6 +555,12 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     @Published var lastError: AudioProcessingError?
 
     private var preferredInputDeviceID: AudioDeviceID?
+    private var configuredInputDeviceID: AudioDeviceID?
+    private var inputDeviceMonitor: MacInputDeviceMonitor?
+
+    deinit {
+        stopInputDeviceMonitoring()
+    }
 
     func configureMixedAudioSession() async throws {
         isConfigured = true
@@ -649,10 +655,46 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         return inputs.first(where: { $0.audioDeviceID == defaultDeviceID }) ?? inputs.first
     }
 
+    /// The device a newly created recording engine should use. A disconnected
+    /// preferred device automatically falls back to the current system default.
+    func resolvedInputDeviceID() -> AudioDeviceID? {
+        let availableDeviceIDs = Set(getAvailableInputs().map(\.audioDeviceID))
+        if let preferredInputDeviceID, availableDeviceIDs.contains(preferredInputDeviceID) {
+            return preferredInputDeviceID
+        }
+        return Self.defaultInputDeviceID()
+    }
+
+    /// True when the engine is still bound to the device the current preference
+    /// resolves to. Device-list and default-input listeners use this to ignore
+    /// unrelated audio-device changes.
+    func recordingInputNeedsRecovery() -> Bool {
+        guard let configuredInputDeviceID else { return false }
+        return configuredInputDeviceID != resolvedInputDeviceID()
+    }
+
+    func clearConfiguredInputDevice() {
+        configuredInputDeviceID = nil
+    }
+
+    /// Watches both the system default input and the complete Core Audio device
+    /// list. The latter is required for a selected non-default USB/Bluetooth mic.
+    func startInputDeviceMonitoring(onChange: @escaping () -> Void) {
+        stopInputDeviceMonitoring()
+        let monitor = MacInputDeviceMonitor(onChange: onChange)
+        monitor.start()
+        inputDeviceMonitor = monitor
+    }
+
+    func stopInputDeviceMonitoring() {
+        inputDeviceMonitor?.stop()
+        inputDeviceMonitor = nil
+    }
+
     /// Applies the selected Mac input to this engine without changing the
     /// user's system-wide default input device.
     func configureInputDevice(for engine: AVAudioEngine) throws {
-        guard let deviceID = preferredInputDeviceID ?? Self.defaultInputDeviceID() else {
+        guard let deviceID = resolvedInputDeviceID() else {
             let error = AudioProcessingError.audioSessionConfigurationFailed("No microphone is available.")
             lastError = error
             throw error
@@ -682,6 +724,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             lastError = error
             throw error
         }
+        configuredInputDeviceID = deviceID
 
         let inputName = getAvailableInputs()
             .first(where: { $0.audioDeviceID == deviceID })?

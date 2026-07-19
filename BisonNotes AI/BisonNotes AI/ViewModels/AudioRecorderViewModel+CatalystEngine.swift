@@ -18,6 +18,7 @@ extension AudioRecorderViewModel {
 	@MainActor
 	func setupCatalystRecording(at url: URL) async {
 		var systemAudioError: Error?
+		catalystScratchSegmentURLs = []
 
 		if isMacSystemAudioCaptureEnabled {
 			let systemAudioURL = Self.catalystSystemAudioURL(for: url)
@@ -88,7 +89,11 @@ extension AudioRecorderViewModel {
 		#endif
 	}
 
-	private func startCatalystEnginePipeline(at url: URL) throws {
+	private func startCatalystEnginePipeline(
+		at url: URL,
+		scratchURL suppliedScratchURL: URL? = nil,
+		removingFinalOutput: Bool = true
+	) throws {
 		let engine = AVAudioEngine()
 		#if os(macOS)
 		try enhancedAudioSessionManager.configureInputDevice(for: engine)
@@ -104,12 +109,12 @@ extension AudioRecorderViewModel {
 			)
 		}
 
-		let scratchURL = Self.catalystScratchURL(for: url)
+		let scratchURL = suppliedScratchURL ?? Self.catalystScratchURL(for: url)
 		let fileManager = FileManager.default
 		if fileManager.fileExists(atPath: scratchURL.path) {
 			try fileManager.removeItem(at: scratchURL)
 		}
-		if fileManager.fileExists(atPath: url.path) {
+		if removingFinalOutput, fileManager.fileExists(atPath: url.path) {
 			try fileManager.removeItem(at: url)
 		}
 
@@ -171,6 +176,9 @@ extension AudioRecorderViewModel {
 		}
 		catalystAudioEngine = nil
 		catalystEngineFormat = nil
+		#if os(macOS)
+		enhancedAudioSessionManager.clearConfiguredInputDevice()
+		#endif
 		if closingFile {
 			catalystAudioFile = nil
 			#if targetEnvironment(macCatalyst)
@@ -181,6 +189,33 @@ extension AudioRecorderViewModel {
 			#endif
 		}
 	}
+
+	#if os(macOS)
+	/// Closes the current PCM segment without discarding it. A replacement input
+	/// may expose a different native format, so recovery always starts a new CAF.
+	func sealNativeMacScratchSegment() {
+		let currentScratchURL = catalystScratchRecordingURL
+		stopCatalystEngineRecording()
+		if let currentScratchURL,
+		   FileManager.default.fileExists(atPath: currentScratchURL.path),
+		   !catalystScratchSegmentURLs.contains(currentScratchURL) {
+			catalystScratchSegmentURLs.append(currentScratchURL)
+		}
+		catalystScratchRecordingURL = nil
+	}
+
+	/// Starts the next PCM segment on the currently resolved Core Audio input.
+	/// The original final URL is retained for the normal stop/finalize flow.
+	func startNativeMacContinuation(at finalURL: URL) throws {
+		let segmentIndex = catalystScratchSegmentURLs.count + 1
+		let scratchURL = Self.catalystScratchURL(for: finalURL, segmentIndex: segmentIndex)
+		try startCatalystEnginePipeline(
+			at: finalURL,
+			scratchURL: scratchURL,
+			removingFinalOutput: false
+		)
+	}
+	#endif
 
 	func stopCatalystSystemAudioCapture() async -> URL? {
 		guard let capture = catalystSystemAudioCapture else {
@@ -206,7 +241,8 @@ extension AudioRecorderViewModel {
 	/// after exporting the native PCM scratch file to M4A.
 	@MainActor
 	func finalizeCatalystRecording(at url: URL) async {
-		guard let scratchURL = catalystScratchRecordingURL else {
+		let scratchURLs = allCatalystScratchURLs()
+		guard !scratchURLs.isEmpty else {
 			AppLog.shared.recording("Catalyst finalize: scratch recording URL is missing", level: .error)
 			errorMessage = "Recording was not saved because the temporary audio file was missing."
 			return
@@ -215,18 +251,19 @@ extension AudioRecorderViewModel {
 		do {
 			if let systemAudioURL = catalystSystemAudioURL {
 				try await exportAndMixCatalystRecording(
-					microphoneScratchURL: scratchURL,
+					microphoneScratchURLs: scratchURLs,
 					systemAudioURL: systemAudioURL,
 					finalURL: url
 				)
 			} else {
-				try await exportCatalystScratchRecording(from: scratchURL, to: url)
+				try await exportCatalystScratchRecordings(from: scratchURLs, to: url)
 			}
 		} catch {
 			AppLog.shared.recording("Catalyst finalize: failed to export recording: \(error.localizedDescription)", level: .error)
 			errorMessage = "Recording could not be finalized: \(error.localizedDescription)"
-			try? FileManager.default.removeItem(at: scratchURL)
+			removeCatalystScratchFiles(scratchURLs)
 			catalystScratchRecordingURL = nil
+			catalystScratchSegmentURLs = []
 			return
 		}
 
@@ -259,11 +296,31 @@ extension AudioRecorderViewModel {
 		)
 		AppLog.shared.recording("Catalyst recording created with workflow manager, ID: \(recordingId)")
 
-		self.resetRecordingLocation()
-		self.recordingStartedAt = nil
-		self.recordingBeingProcessed = false
-		self.catalystScratchRecordingURL = nil
-		self.catalystSystemAudioURL = nil
+		resetCatalystFinalizationState()
+	}
+
+	private func resetCatalystFinalizationState() {
+		resetRecordingLocation()
+		recordingStartedAt = nil
+		recordingBeingProcessed = false
+		catalystScratchRecordingURL = nil
+		catalystScratchSegmentURLs = []
+		catalystSystemAudioURL = nil
+	}
+
+	private func allCatalystScratchURLs() -> [URL] {
+		var scratchURLs = catalystScratchSegmentURLs
+		if let currentScratchURL = catalystScratchRecordingURL,
+		   !scratchURLs.contains(currentScratchURL) {
+			scratchURLs.append(currentScratchURL)
+		}
+		return scratchURLs
+	}
+
+	private func removeCatalystScratchFiles(_ scratchURLs: [URL]) {
+		for scratchURL in scratchURLs {
+			try? FileManager.default.removeItem(at: scratchURL)
+		}
 	}
 
 	private func installCatalystInputTap() {
@@ -287,13 +344,15 @@ extension AudioRecorderViewModel {
 		}
 	}
 
-	private static func catalystScratchURL(for finalURL: URL) -> URL {
+	private static func catalystScratchURL(for finalURL: URL, segmentIndex: Int? = nil) -> URL {
 		// Stage in the temp directory, not next to the recording: an orphaned
 		// scratch file left by a crash between stop and finalize would otherwise
 		// sit in the recordings directory. The name is derived from the final
 		// recording so the start-pipeline retry cleanup can find and remove it.
-		FileManager.default.temporaryDirectory
-			.appendingPathComponent(finalURL.deletingPathExtension().lastPathComponent)
+		let basename = finalURL.deletingPathExtension().lastPathComponent
+		let scratchName = segmentIndex.map { "\(basename)-input-\($0)" } ?? basename
+		return FileManager.default.temporaryDirectory
+			.appendingPathComponent(scratchName)
 			.appendingPathExtension("caf")
 	}
 
@@ -382,8 +441,89 @@ extension AudioRecorderViewModel {
 		AppLog.shared.recording("Catalyst recording exported to M4A: \(finalURL.lastPathComponent), duration: \(exportedDuration)s, size: \(exportedSize) bytes")
 	}
 
+	private func exportCatalystScratchRecordings(from scratchURLs: [URL], to finalURL: URL) async throws {
+		guard scratchURLs.count > 1 else {
+			guard let scratchURL = scratchURLs.first else {
+				throw NSError(
+					domain: "AudioRecorderViewModel.Catalyst",
+					code: -13,
+					userInfo: [NSLocalizedDescriptionKey: "No temporary recording segments were available."]
+				)
+			}
+			try await exportCatalystScratchRecording(from: scratchURL, to: finalURL)
+			return
+		}
+
+		let (composition, insertionTime) = try await makeRecoveredMicrophoneComposition(from: scratchURLs)
+		guard insertionTime.isValid, insertionTime.seconds > 0,
+		      let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
+			throw NSError(
+				domain: "AudioRecorderViewModel.Catalyst",
+				code: -15,
+				userInfo: [NSLocalizedDescriptionKey: "Recovered microphone segments contained no audio."]
+			)
+		}
+
+		let fileManager = FileManager.default
+		let tempURL = fileManager.temporaryDirectory
+			.appendingPathComponent("catalyst_segments_\(UUID().uuidString).m4a")
+		try await exportSession.export(to: tempURL, as: .m4a)
+		let attributes = try fileManager.attributesOfItem(atPath: tempURL.path)
+		let exportedSize = attributes[.size] as? Int64 ?? 0
+		let exportedDuration = try await AVURLAsset(url: tempURL).load(.duration).seconds
+		guard exportedSize > 0, exportedDuration.isFinite, exportedDuration > 0 else {
+			try? fileManager.removeItem(at: tempURL)
+			throw NSError(
+				domain: "AudioRecorderViewModel.Catalyst",
+				code: -16,
+				userInfo: [NSLocalizedDescriptionKey: "Recovered microphone export was empty."]
+			)
+		}
+		if fileManager.fileExists(atPath: finalURL.path) {
+			try fileManager.removeItem(at: finalURL)
+		}
+		try fileManager.moveItem(at: tempURL, to: finalURL)
+		AppFileProtection.apply(to: finalURL)
+		removeCatalystScratchFiles(scratchURLs)
+		AppLog.shared.recording(
+			"Recovered Mac microphone segments exported to M4A: \(scratchURLs.count) segments, " +
+			"duration: \(exportedDuration)s, size: \(exportedSize) bytes"
+		)
+	}
+
+	private func makeRecoveredMicrophoneComposition(
+		from scratchURLs: [URL]
+	) async throws -> (AVMutableComposition, CMTime) {
+		let composition = AVMutableComposition()
+		guard let compositionTrack = composition.addMutableTrack(
+			withMediaType: .audio,
+			preferredTrackID: kCMPersistentTrackID_Invalid
+		) else {
+			throw NSError(
+				domain: "AudioRecorderViewModel.Catalyst",
+				code: -14,
+				userInfo: [NSLocalizedDescriptionKey: "Could not create a track for recovered microphone audio."]
+			)
+		}
+
+		var insertionTime = CMTime.zero
+		for scratchURL in scratchURLs {
+			let asset = AVURLAsset(url: scratchURL)
+			guard let sourceTrack = try await asset.loadTracks(withMediaType: .audio).first else { continue }
+			let duration = try await asset.load(.duration)
+			guard duration.isValid, duration.seconds > 0 else { continue }
+			try compositionTrack.insertTimeRange(
+				CMTimeRange(start: .zero, duration: duration),
+				of: sourceTrack,
+				at: insertionTime
+			)
+			insertionTime = CMTimeAdd(insertionTime, duration)
+		}
+		return (composition, insertionTime)
+	}
+
 	private func exportAndMixCatalystRecording(
-		microphoneScratchURL: URL,
+		microphoneScratchURLs: [URL],
 		systemAudioURL: URL,
 		finalURL: URL
 	) async throws {
@@ -392,7 +532,7 @@ extension AudioRecorderViewModel {
 			.appendingPathComponent("catalyst_mic_export_\(UUID().uuidString).m4a")
 
 		do {
-			try await exportCatalystScratchRecording(from: microphoneScratchURL, to: microphoneM4AURL)
+			try await exportCatalystScratchRecordings(from: microphoneScratchURLs, to: microphoneM4AURL)
 			try await mixCatalystAudioTracks(
 				microphoneURL: microphoneM4AURL,
 				systemAudioURL: systemAudioURL,
