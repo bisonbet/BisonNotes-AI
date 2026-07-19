@@ -275,29 +275,6 @@ struct SettingsView: View {
                 systemImage: "mic.fill",
                 tint: .green
             )
-
-            Toggle(isOn: Binding(
-                get: { recorderVM.isMacSystemAudioCaptureEnabled },
-                set: { handleMacSystemAudioCaptureToggle($0) }
-            )) {
-                ModernSettingsLabel(
-                    title: "Record Meeting Audio",
-                    subtitle: "Capture audio playing from other Mac apps while recording",
-                    systemImage: "macwindow.on.rectangle",
-                    tint: .purple
-                )
-            }
-            .disabled(recorderVM.isRecording)
-            .accessibilityValue(AccessibilitySupport.statusValue(isOn: recorderVM.isMacSystemAudioCaptureEnabled))
-
-            if recorderVM.isMacSystemAudioCaptureEnabled {
-                ModernInlineStatus(
-                    title: "Meeting audio capture is enabled",
-                    subtitle: "If macOS permission changes later, BisonNotes saves microphone audio only.",
-                    systemImage: "rectangle.dashed.badge.record",
-                    tint: .orange
-                )
-            }
             #else
             if recorderVM.availableInputs.isEmpty {
                 ModernInlineStatus(
@@ -331,6 +308,33 @@ struct SettingsView: View {
                     .font(.caption.weight(.semibold))
             }
             .buttonStyle(.bordered)
+
+            Divider()
+            #endif
+
+            #if targetEnvironment(macCatalyst) || os(macOS)
+            Toggle(isOn: Binding(
+                get: { recorderVM.isMacSystemAudioCaptureEnabled },
+                set: { handleMacSystemAudioCaptureToggle($0) }
+            )) {
+                ModernSettingsLabel(
+                    title: "Record Meeting Audio",
+                    subtitle: "Capture audio playing from other Mac apps while recording",
+                    systemImage: "macwindow.on.rectangle",
+                    tint: .purple
+                )
+            }
+            .disabled(recorderVM.isRecording)
+            .accessibilityValue(AccessibilitySupport.statusValue(isOn: recorderVM.isMacSystemAudioCaptureEnabled))
+
+            if recorderVM.isMacSystemAudioCaptureEnabled {
+                ModernInlineStatus(
+                    title: "Meeting audio capture is enabled",
+                    subtitle: "If macOS permission changes later, BisonNotes saves microphone audio only.",
+                    systemImage: "rectangle.dashed.badge.record",
+                    tint: .orange
+                )
+            }
 
             Divider()
             #endif

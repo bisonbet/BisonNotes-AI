@@ -41,6 +41,9 @@ struct OnDeviceAIDownloadView: View {
         }
         #if targetEnvironment(macCatalyst)
         .frame(minWidth: 520, minHeight: 640)
+        #elseif os(macOS)
+        .frame(minWidth: 520, minHeight: 480)
+        .presentationSizing(.page)
         #endif
         .onAppear {
             // Ensure MLX is configured to use the 4B model before checking download state.

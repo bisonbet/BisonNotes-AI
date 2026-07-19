@@ -112,6 +112,14 @@ struct SummariesView: View {
                         ),
                         summaryData: enhancedSummary
                     )
+                    #if os(macOS)
+                    // Native macOS otherwise content-fits this sheet to the
+                    // full Form height, which can extend beyond the screen.
+                    // A page-sized presentation gives the Form a bounded,
+                    // resizable viewport so its built-in scrolling can work.
+                    .frame(minWidth: 640, minHeight: 480)
+                    .presentationSizing(.page)
+                    #endif
                 } else {
                     // FIX: Provide a View for the 'else' case to satisfy the ViewBuilder.
                     VStack(spacing: 16) {
