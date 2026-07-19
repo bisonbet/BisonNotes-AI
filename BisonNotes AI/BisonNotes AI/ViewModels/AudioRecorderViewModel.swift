@@ -495,6 +495,29 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	#if targetEnvironment(macCatalyst) || os(macOS)
 	@MainActor
 	private func requestMicPermissionAndRecord() {
+		#if os(macOS)
+		let status = AVCaptureDevice.authorizationStatus(for: .audio)
+		AppLog.shared.recording("Mac mic permission status: \(status.rawValue)")
+		switch status {
+		case .authorized:
+			didReceiveMicrophonePermission(granted: true)
+		case .notDetermined:
+			AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+				Task { @MainActor [weak self] in
+					AppLog.shared.recording("Mac mic permission result: \(granted)")
+					self?.didReceiveMicrophonePermission(granted: granted)
+				}
+			}
+		case .denied, .restricted:
+			AppLog.shared.recording("Mac mic permission denied", level: .error)
+			errorMessage = "Microphone access is denied. Open System Settings → "
+				+ "Privacy & Security → Microphone and enable BisonNotes AI, then try again."
+			finishRecordingStartup()
+		@unknown default:
+			finishRecordingStartup()
+			errorMessage = "Microphone permission could not be determined."
+		}
+		#else
 		let status = AVAudioApplication.shared.recordPermission
 		AppLog.shared.recording("Mac mic permission status: \(status.rawValue)")
 		switch status {
@@ -509,7 +532,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			}
 		case .denied:
 			AppLog.shared.recording("Mac mic permission denied", level: .error)
-			errorMessage = "Microphone access is denied. Open System Settings → Privacy & Security → Microphone and enable BisonNotes AI, then try again."
+			errorMessage = "Microphone access is denied. Open System Settings → "
+				+ "Privacy & Security → Microphone and enable BisonNotes AI, then try again."
 			finishRecordingStartup()
 		@unknown default:
 			AVAudioApplication.requestRecordPermission { [weak self] granted in
@@ -518,6 +542,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				}
 			}
 		}
+		#endif
 	}
 
 	@MainActor
@@ -528,10 +553,18 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			return
 		}
 		AppLog.shared.recording("startRecording: microphone permission granted")
-		// Skip AVAudioSession.setCategory/setActive on Mac — those calls communicate
-		// with mediaserverd via Mach ports that don't exist on macOS, flooding the
-		// log. AVAudioRecorder uses the default CoreAudio input directly on Mac.
+		// Skip AVAudioSession.setCategory/setActive on Mac. Native macOS applies
+		// the selected Core Audio input directly to AVAudioEngine; Catalyst uses
+		// its existing engine/default-input behavior.
+		#if os(macOS)
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			await self.applySelectedInputToSession()
+			self.setupRecording()
+		}
+		#else
 		setupRecording()
+		#endif
 	}
 	#endif
 

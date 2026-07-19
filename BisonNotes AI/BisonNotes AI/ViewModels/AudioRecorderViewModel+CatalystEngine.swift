@@ -90,6 +90,9 @@ extension AudioRecorderViewModel {
 
 	private func startCatalystEnginePipeline(at url: URL) throws {
 		let engine = AVAudioEngine()
+		#if os(macOS)
+		try enhancedAudioSessionManager.configureInputDevice(for: engine)
+		#endif
 		let inputNode = engine.inputNode
 		let inputFormat = inputNode.outputFormat(forBus: 0)
 
