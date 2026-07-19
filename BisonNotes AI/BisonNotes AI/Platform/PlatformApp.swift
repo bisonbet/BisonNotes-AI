@@ -136,6 +136,68 @@ enum PlatformAlert {
     }
 }
 
+#if os(macOS)
+// MARK: - Native Mac sharing
+
+/// Owns the AppKit sharing picker for manager-driven and SwiftUI export flows.
+/// Retaining the picker here keeps its delegate alive until a service is chosen
+/// or the popover is dismissed.
+@MainActor
+final class PlatformSharingPresenter: NSObject, NSSharingServicePickerDelegate {
+    static let shared = PlatformSharingPresenter()
+
+    private var picker: NSSharingServicePicker?
+    private var subject: String?
+    private var onDismiss: (() -> Void)?
+
+    @discardableResult
+    func present(
+        items: [Any],
+        subject: String? = nil,
+        onPresented: () -> Void = {},
+        onDismiss: @escaping () -> Void = {}
+    ) -> Bool {
+        guard picker == nil, !items.isEmpty, let anchorView = Self.anchorView else {
+            return false
+        }
+
+        self.subject = subject
+        self.onDismiss = onDismiss
+        let picker = NSSharingServicePicker(items: items)
+        picker.delegate = self
+        self.picker = picker
+
+        let anchorRect = NSRect(
+            x: anchorView.bounds.midX,
+            y: anchorView.bounds.midY,
+            width: 1,
+            height: 1
+        )
+        picker.show(relativeTo: anchorRect, of: anchorView, preferredEdge: .minY)
+        onPresented()
+        return true
+    }
+
+    func sharingServicePicker(
+        _ sharingServicePicker: NSSharingServicePicker,
+        didChoose service: NSSharingService?
+    ) {
+        service?.subject = subject
+        picker = nil
+        subject = nil
+        let completion = onDismiss
+        onDismiss = nil
+        completion?()
+    }
+
+    private static var anchorView: NSView? {
+        NSApp.keyWindow?.contentView
+            ?? NSApp.mainWindow?.contentView
+            ?? NSApp.windows.first(where: { $0.isVisible })?.contentView
+    }
+}
+#endif
+
 // MARK: - Device
 
 enum PlatformDevice {

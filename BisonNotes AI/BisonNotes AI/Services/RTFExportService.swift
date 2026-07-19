@@ -563,7 +563,6 @@ final class RTFExportService {
     }
 }
 #else
-// TODO(macos-phase2): native macOS RTF export via NSFont/NSAttributedString (plan §2.5).
 final class RTFExportService {
     static let shared = RTFExportService()
 
@@ -575,7 +574,31 @@ final class RTFExportService {
         locationData: LocationData?,
         locationAddress: String?
     ) throws -> Data {
-        throw RTFExportError.invalidDocumentData
+        AppLog.shared.fileManagement("RTFExportService: Starting native Mac document generation")
+        do {
+            let data = try MacSummaryExportRenderer.rtfData(
+                summaryData: summaryData,
+                locationData: locationData,
+                locationAddress: locationAddress
+            )
+            AppLog.shared.fileManagement("RTFExportService: Generated native Mac RTF (\(data.count) bytes)")
+            return data
+        } catch let error as MacSummaryExportRenderer.RenderError {
+            AppLog.shared.fileManagement(
+                "RTFExportService: Native Mac export failed: \(error.localizedDescription)",
+                level: .error
+            )
+            switch error {
+            case .documentTooLarge:
+                throw RTFExportError.memoryLimitExceeded
+            case .invalidDocument:
+                throw RTFExportError.invalidDocumentData
+            case .pdfContextUnavailable:
+                throw RTFExportError.documentGenerationFailed(error.localizedDescription)
+            }
+        } catch {
+            throw RTFExportError.documentGenerationFailed(error.localizedDescription)
+        }
     }
 }
 #endif

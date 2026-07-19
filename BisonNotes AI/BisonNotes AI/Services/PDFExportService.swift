@@ -984,7 +984,6 @@ class PDFExportService {
     }
 }
 #else
-// TODO(macos-phase2): native macOS PDF export via NSGraphicsContext/CoreText (plan §2.5).
 class PDFExportService {
     static let shared = PDFExportService()
 
@@ -994,11 +993,14 @@ class PDFExportService {
         locationData: LocationData?,
         locationAddress: String?
     ) async throws -> Data {
-        throw NSError(
-            domain: "PDFExportService",
-            code: -1,
-            userInfo: [NSLocalizedDescriptionKey: "PDF export is not yet available in the Mac version."]
+        AppLog.shared.fileManagement("PDFExportService: Starting native Mac PDF generation")
+        let data = try MacSummaryExportRenderer.pdfData(
+            summaryData: summaryData,
+            locationData: locationData,
+            locationAddress: locationAddress
         )
+        AppLog.shared.fileManagement("PDFExportService: Generated native Mac PDF (\(data.count) bytes)")
+        return data
     }
 }
 #endif

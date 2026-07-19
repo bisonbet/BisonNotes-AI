@@ -3594,7 +3594,7 @@ private final class ExportActivityItem: NSObject, UIActivityItemSource {
 }
 #else
 /// macOS twin of the iOS UIActivityItemSource: writes the export payload to a
-/// temp file so ShareSheet can reveal it. Full NSSharingServicePicker in Phase 2.5.
+/// temporary file that can be passed to NSSharingServicePicker.
 final class ExportActivityItem {
     let fileURL: URL?
 
@@ -3613,13 +3613,13 @@ final class ExportActivityItem {
     }
 }
 
-// TODO(macos-phase2): NSSharingServicePicker-based sharing (plan §2.5).
-// Interim macOS behavior: reveal file URLs in Finder; other items get a notice.
 struct ShareSheet: View {
     let activityItems: [Any]
     let subject: String?
 
     @Environment(\.dismiss) private var dismiss
+    @State private var didRequestSharing = false
+    @State private var shareUnavailable = false
 
     init(activityItems: [Any], subject: String? = nil) {
         self.activityItems = activityItems
@@ -3636,28 +3636,51 @@ struct ShareSheet: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Sharing")
+            Text("Share Export")
                 .font(.headline)
             if fileURLs.isEmpty {
-                Text("Sharing from the Mac app is coming soon.")
+                Text("The exported file could not be prepared for sharing.")
+                    .foregroundColor(.secondary)
+            } else if shareUnavailable {
+                Text("The sharing picker could not open. You can show the file in Finder instead.")
                     .foregroundColor(.secondary)
             } else {
-                Text("The exported file will be shown in Finder.")
+                Text("Choose a Mac sharing service for the exported file.")
                     .foregroundColor(.secondary)
             }
             HStack {
                 Button("Close") { dismiss() }
                 if !fileURLs.isEmpty {
+                    Button("Share…") {
+                        presentSharingPicker()
+                    }
+                    .keyboardShortcut(.defaultAction)
                     Button("Show in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting(fileURLs)
                         dismiss()
                     }
-                    .keyboardShortcut(.defaultAction)
                 }
             }
         }
         .padding(24)
-        .frame(minWidth: 320)
+        .frame(minWidth: 380)
+        .onAppear {
+            guard !didRequestSharing, !fileURLs.isEmpty else { return }
+            didRequestSharing = true
+            DispatchQueue.main.async {
+                presentSharingPicker()
+            }
+        }
+    }
+
+    @MainActor
+    private func presentSharingPicker() {
+        let presented = PlatformSharingPresenter.shared.present(
+            items: fileURLs,
+            subject: subject,
+            onDismiss: { dismiss() }
+        )
+        shareUnavailable = !presented
     }
 }
 #endif
