@@ -109,20 +109,23 @@ struct SummaryDetailView: View {
     }
 
     var body: some View {
-        // NavigationStack { Form } is the only sheet pattern that scrolls reliably
-        // on Mac Catalyst. See feedback_mac_catalyst_scrollview.md.
         NavigationStack {
-            Form {
-                Section { locationSection }
-                Section { headerSection }
-                Section { summarySection }
-                Section { tasksSection }
-                Section { remindersSection }
-                Section { titlesSection }
-                Section { attachmentsSection }
-                Section { dateTimeEditorSection }
-                Section { metadataSection }
-                Section { regenerateSection }
+            Group {
+                #if os(macOS)
+                // Native Form can size itself to all rows when hosted in a
+                // separate window. List supplies an explicit scrolling
+                // viewport while retaining Section styling and semantics.
+                List {
+                    summarySections
+                }
+                .listStyle(.inset)
+                #else
+                // NavigationStack { Form } is the only sheet pattern that
+                // scrolls reliably on Mac Catalyst.
+                Form {
+                    summarySections
+                }
+                #endif
             }
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
@@ -331,6 +334,20 @@ struct SummaryDetailView: View {
         } message: {
             Text(attachmentError ?? "")
         }
+    }
+
+    @ViewBuilder
+    private var summarySections: some View {
+        Section { locationSection }
+        Section { headerSection }
+        Section { summarySection }
+        Section { tasksSection }
+        Section { remindersSection }
+        Section { titlesSection }
+        Section { attachmentsSection }
+        Section { dateTimeEditorSection }
+        Section { metadataSection }
+        Section { regenerateSection }
     }
 
     // MARK: - Geocoding Helpers

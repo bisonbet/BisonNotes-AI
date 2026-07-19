@@ -141,9 +141,11 @@ enum PlatformAlert {
 
 /// Owns the AppKit sharing picker for manager-driven and SwiftUI export flows.
 /// Retaining the picker here keeps its delegate alive until a service is chosen
-/// or the popover is dismissed.
+/// or the popover is dismissed. AppKit delivers the legacy delegate callback on
+/// the main thread, but the protocol lacks actor annotations, so the conformance
+/// is explicitly imported with pre-concurrency isolation semantics.
 @MainActor
-final class PlatformSharingPresenter: NSObject, NSSharingServicePickerDelegate {
+final class PlatformSharingPresenter: NSObject, @preconcurrency NSSharingServicePickerDelegate {
     static let shared = PlatformSharingPresenter()
 
     private var picker: NSSharingServicePicker?

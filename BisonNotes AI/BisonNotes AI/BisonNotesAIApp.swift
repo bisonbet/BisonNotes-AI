@@ -627,6 +627,24 @@ struct BisonNotesAIApp: App {
                 .keyboardShortcut("3", modifiers: .command)
             }
         }
+
+        #if os(macOS)
+        WindowGroup("Summary", for: UUID.self) { $recordingID in
+            if let recordingID {
+                NativeSummaryWindowView(recordingID: recordingID)
+                    .environmentObject(appCoordinator)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            } else {
+                ContentUnavailableView(
+                    "Summary Not Available",
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text("Choose a summary from the main window.")
+                )
+            }
+        }
+        .defaultSize(width: 760, height: 700)
+        .windowResizability(.contentMinSize)
+        #endif
     }
 
     /// Tracks the last URL processed by handleOpenURL to prevent double imports

@@ -8,6 +8,9 @@ struct SummariesView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @Environment(\.isEmbeddedInSplitView) private var isEmbeddedInSplitView
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
     @ObservedObject private var iCloudManager = iCloudStorageManager.shared
@@ -112,14 +115,6 @@ struct SummariesView: View {
                         ),
                         summaryData: enhancedSummary
                     )
-                    #if os(macOS)
-                    // Native macOS otherwise content-fits this sheet to the
-                    // full Form height, which can extend beyond the screen.
-                    // A page-sized presentation gives the Form a bounded,
-                    // resizable viewport so its built-in scrolling can work.
-                    .frame(minWidth: 640, minHeight: 480)
-                    .presentationSizing(.page)
-                    #endif
                 } else {
                     // FIX: Provide a View for the 'else' case to satisfy the ViewBuilder.
                     VStack(spacing: 16) {
@@ -724,8 +719,14 @@ struct SummariesView: View {
     private func summaryActionView(recording: RecordingEntry, summary: EnhancedSummaryData?) -> some View {
         if summary != nil {
             Button(action: {
+                #if os(macOS)
+                if let recordingID = recording.id {
+                    openWindow(value: recordingID)
+                }
+                #else
                 selectedRecording = recording
                 showSummary = true
+                #endif
             }) {
                 Label("View Summary", systemImage: "doc.text.fill")
                     .font(.caption.weight(.semibold))
