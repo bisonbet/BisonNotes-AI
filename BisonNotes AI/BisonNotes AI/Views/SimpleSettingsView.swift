@@ -150,12 +150,14 @@ struct SimpleSettingsView: View {
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
                 .nativeMacModalSizing(width: 780, height: 720)
+                .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
             .nativeMacModalSizing(width: 760, height: 700)
+            .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingOnDeviceAIDownload) {
             OnDeviceAIDownloadView(

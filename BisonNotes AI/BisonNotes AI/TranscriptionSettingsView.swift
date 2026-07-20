@@ -37,24 +37,29 @@ struct TranscriptionSettingsView: View {
             .sheet(isPresented: $showingAWSSettings) {
                 AWSSettingsView()
                     .nativeMacModalSizing(width: 760, height: 700)
+                    .nativeMacModalDismissControl()
             }
             .sheet(isPresented: $showingWhisperSettings) {
                 WhisperSettingsView()
                     .nativeMacModalSizing(width: 760, height: 700)
+                    .nativeMacModalDismissControl()
             }
             .sheet(isPresented: $showingFluidAudioSettings) {
                 NavigationStack {
                     FluidAudioSettingsView()
                 }
                 .nativeMacModalSizing(width: 760, height: 700)
+                .nativeMacModalDismissControl()
             }
             .sheet(isPresented: $showingOpenAISettings) {
                 OpenAISettingsView()
                     .nativeMacModalSizing(width: 760, height: 700)
+                    .nativeMacModalDismissControl()
             }
             .sheet(isPresented: $showingMistralTranscribeSettings) {
                 MistralTranscribeSettingsView()
                     .nativeMacModalSizing(width: 760, height: 700)
+                    .nativeMacModalDismissControl()
             }
             .onChange(of: selectedTranscriptionEngine) { _, newValue in
                 handleEngineSelection(newValue)

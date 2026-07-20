@@ -27,6 +27,18 @@ extension View {
         #endif
     }
 
+    /// Navigation-style sheets can lose SwiftUI navigation toolbar items when
+    /// nested inside another native macOS sheet. Give those destinations a
+    /// content-level Done button and bind Escape to the same dismissal action.
+    @ViewBuilder
+    func nativeMacModalDismissControl(_ title: String = "Done") -> some View {
+        #if os(macOS)
+        modifier(NativeMacModalDismissModifier(title: title))
+        #else
+        self
+        #endif
+    }
+
     /// Full-screen covers are appropriate on iPhone but produce trapped,
     /// non-window-like experiences on macOS. Keep them as bounded sheets there.
     @ViewBuilder
@@ -45,6 +57,26 @@ extension View {
 }
 
 #if os(macOS)
+private struct NativeMacModalDismissModifier: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+
+    let title: String
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .topTrailing) {
+                Button(title) {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
+                .padding(.top, 18)
+                .padding(.trailing, 20)
+                .accessibilityIdentifier("nativeMacModalDismissButton")
+            }
+    }
+}
+
 struct NativeTranscriptWindowView: View {
     let recordingID: UUID
 

@@ -115,6 +115,7 @@ struct SettingsView: View {
             CloudReviewItemsView(includeAudioFiles: iCloudBackupIncludeAudioFiles)
                 .environmentObject(appCoordinator)
                 .nativeMacModalSizing(width: 780, height: 700)
+                .nativeMacModalDismissControl()
         }
         .onAppear {
             refreshEngineStatuses()
@@ -155,27 +156,33 @@ struct SettingsView: View {
             AISettingsView()
                 .environmentObject(recorderVM)
                 .nativeMacModalSizing(width: 780, height: 700)
+                .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingTranscriptionSettings) {
             TranscriptionSettingsView()
                 .nativeMacModalSizing(width: 780, height: 700)
+                .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingBackgroundProcessing) {
             BackgroundProcessingView()
                 .nativeMacModalSizing(width: 760, height: 680)
+                .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingDataMigration) {
             DataMigrationView()
                 .environmentObject(appCoordinator)
                 .nativeMacModalSizing(width: 800, height: 700)
+                .nativeMacModalDismissControl("Cancel")
         }
         .sheet(isPresented: $showingPreferences) {
             PreferencesView()
                 .nativeMacModalSizing(width: 700, height: 620)
+                .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingAcknowledgements) {
             AcknowledgementsView()
                 .nativeMacModalSizing(width: 700, height: 620)
+                .nativeMacModalDismissControl()
         }
         .overlay {
             if isPreparingLogs {

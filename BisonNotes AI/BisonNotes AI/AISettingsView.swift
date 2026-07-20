@@ -304,46 +304,54 @@ struct AISettingsView: View {
                 self.refreshEngineStatuses()
             })
             .nativeMacModalSizing(width: 760, height: 700)
+            .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingOpenAISettings) {
             OpenAISummarizationSettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
             .nativeMacModalSizing(width: 760, height: 700)
+            .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingOpenAICompatibleSettings) {
             OpenAICompatibleSettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
             .nativeMacModalSizing(width: 760, height: 700)
+            .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingGoogleAIStudioSettings) {
             GoogleAIStudioSettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
             .nativeMacModalSizing(width: 760, height: 700)
+            .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingMistralAISettings) {
             MistralAISettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
             .nativeMacModalSizing(width: 760, height: 700)
+            .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingAWSBedrockSettings) {
             AWSBedrockSettingsView()
                 .nativeMacModalSizing(width: 760, height: 700)
+                .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
             .nativeMacModalSizing(width: 760, height: 700)
+            .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingMLXSwiftSettings) {
             NavigationStack {
                 MLXSwiftSettingsView()
             }
             .nativeMacModalSizing(width: 760, height: 700)
+            .nativeMacModalDismissControl()
         }
         .platformFullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
