@@ -20,38 +20,55 @@ struct MLXModelOption: Identifiable {
     /// Minimum device RAM in GB required to run this model
     let requiredRAM: Double
 
-    static let available: [MLXModelOption] = [
-        MLXModelOption(
-            id: "prism-ml/Ternary-Bonsai-1.7B-mlx-2bit",
-            displayName: "Ternary Bonsai 1.7B",
-            description: "Compact model for devices with limited memory.",
-            downloadSize: "~470 MB",
-            downloadSizeBytes: 470_000_000,
-            parameters: "1.7B",
-            contextWindow: 16_384,
-            requiredRAM: 4.0
-        ),
-        MLXModelOption(
-            id: "prism-ml/Ternary-Bonsai-4B-mlx-2bit",
-            displayName: "Ternary Bonsai 4B",
-            description: "Fast, memory-efficient model for on-device summaries.",
-            downloadSize: "~1.1 GB",
-            downloadSizeBytes: 1_100_000_000,
-            parameters: "4B",
-            contextWindow: 16_384,
-            requiredRAM: 6.0
-        ),
-        MLXModelOption(
-            id: "prism-ml/Ternary-Bonsai-8B-mlx-2bit",
-            displayName: "Ternary Bonsai 8B",
-            description: "Slower but higher quality summaries.",
-            downloadSize: "~2.3 GB",
-            downloadSizeBytes: 2_300_000_000,
-            parameters: "8B",
-            contextWindow: 16_384,
-            requiredRAM: 8.0
-        )
-    ]
+    static let available: [MLXModelOption] = {
+        var models = [
+            MLXModelOption(
+                id: "prism-ml/Ternary-Bonsai-1.7B-mlx-2bit",
+                displayName: "Ternary Bonsai 1.7B",
+                description: "Compact model for devices with limited memory.",
+                downloadSize: "~470 MB",
+                downloadSizeBytes: 470_000_000,
+                parameters: "1.7B",
+                contextWindow: 16_384,
+                requiredRAM: 4.0
+            ),
+            MLXModelOption(
+                id: "prism-ml/Ternary-Bonsai-4B-mlx-2bit",
+                displayName: "Ternary Bonsai 4B",
+                description: "Fast, memory-efficient model for on-device summaries.",
+                downloadSize: "~1.1 GB",
+                downloadSizeBytes: 1_100_000_000,
+                parameters: "4B",
+                contextWindow: 16_384,
+                requiredRAM: 6.0
+            ),
+            MLXModelOption(
+                id: "prism-ml/Ternary-Bonsai-8B-mlx-2bit",
+                displayName: "Ternary Bonsai 8B",
+                description: "Slower but higher quality summaries.",
+                downloadSize: "~2.3 GB",
+                downloadSizeBytes: 2_300_000_000,
+                parameters: "8B",
+                contextWindow: 16_384,
+                requiredRAM: 8.0
+            )
+        ]
+
+        #if os(macOS)
+        models.append(MLXModelOption(
+            id: "prism-ml/Ternary-Bonsai-27B-mlx-2bit",
+            displayName: "Ternary Bonsai 27B",
+            description: "Laptop-class reasoning for high-memory Apple silicon Macs.",
+            downloadSize: "~8.5 GB",
+            downloadSizeBytes: 8_520_000_000,
+            parameters: "27B",
+            contextWindow: 262_144,
+            requiredRAM: 16.0
+        ))
+        #endif
+
+        return models
+    }()
 
     /// Identifier for the 1.7B model — used by both the device-default selection
     /// (4-6GB devices) and the experimental-models filter (6GB+ devices).
