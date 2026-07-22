@@ -23,48 +23,59 @@ struct TranscriptionSettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
+        Group {
             settingsContent
                 .navigationTitle("Transcription Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    #if !os(macOS)
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") {
                             dismiss()
                         }
                     }
+                    #endif
                 }
+            #if os(macOS)
+            .navigationDestination(isPresented: $showingAWSSettings) {
+                AWSSettingsView()
+            }
+            .navigationDestination(isPresented: $showingWhisperSettings) {
+                WhisperSettingsView()
+            }
+            .navigationDestination(isPresented: $showingFluidAudioSettings) {
+                FluidAudioSettingsView()
+            }
+            .navigationDestination(isPresented: $showingOpenAISettings) {
+                OpenAISettingsView()
+            }
+            .navigationDestination(isPresented: $showingMistralTranscribeSettings) {
+                MistralTranscribeSettingsView()
+            }
+            #else
             .sheet(isPresented: $showingAWSSettings) {
                 AWSSettingsView()
-                    .nativeMacModalSizing(width: 760, height: 700)
-                    .nativeMacModalDismissControl()
             }
             .sheet(isPresented: $showingWhisperSettings) {
                 WhisperSettingsView()
-                    .nativeMacModalSizing(width: 760, height: 700)
-                    .nativeMacModalDismissControl()
             }
             .sheet(isPresented: $showingFluidAudioSettings) {
                 NavigationStack {
                     FluidAudioSettingsView()
                 }
-                .nativeMacModalSizing(width: 760, height: 700)
-                .nativeMacModalDismissControl()
             }
             .sheet(isPresented: $showingOpenAISettings) {
                 OpenAISettingsView()
-                    .nativeMacModalSizing(width: 760, height: 700)
-                    .nativeMacModalDismissControl()
             }
             .sheet(isPresented: $showingMistralTranscribeSettings) {
                 MistralTranscribeSettingsView()
-                    .nativeMacModalSizing(width: 760, height: 700)
-                    .nativeMacModalDismissControl()
             }
+            #endif
             .onChange(of: selectedTranscriptionEngine) { _, newValue in
                 handleEngineSelection(newValue)
             }
         }
+        .platformSettingsNavigation()
     }
 
     @ViewBuilder

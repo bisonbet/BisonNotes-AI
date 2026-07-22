@@ -13,7 +13,7 @@ struct PreferencesView: View {
     @State private var showingTimeFormatExample = false
 
     var body: some View {
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     headerSection
@@ -29,12 +29,14 @@ struct PreferencesView: View {
             .background(Color(.systemGroupedBackground))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                #if !os(macOS)
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") {
                         dismiss()
                     }
                     .fontWeight(.medium)
                 }
+                #endif
             }
         }
     }

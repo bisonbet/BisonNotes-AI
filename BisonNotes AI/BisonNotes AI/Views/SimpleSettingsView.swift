@@ -69,6 +69,9 @@ enum ProcessingOption: String, CaseIterable {
 struct SimpleSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    #if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+    #endif
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var selectedOption: ProcessingOption = .chooseLater
@@ -144,14 +147,14 @@ struct SimpleSettingsView: View {
                 }
             }
         }
+        #if !os(macOS)
         .sheet(isPresented: $showingAdvancedSettings) {
             // SettingsView provides its own NavigationStack and Done toolbar.
             SettingsView()
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
-                .nativeMacModalSizing(width: 780, height: 720)
-                .nativeMacModalDismissControl()
         }
+        #endif
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
                 OnDeviceLLMSettingsView()
@@ -208,9 +211,7 @@ struct SimpleSettingsView: View {
 
             Spacer(minLength: 8)
 
-            Button(action: {
-                showingAdvancedSettings = true
-            }) {
+            Button(action: presentAdvancedSettings) {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -562,7 +563,7 @@ struct SimpleSettingsView: View {
                     // Immediately open the advanced settings page
                     try await Task.sleep(nanoseconds: 500_000_000) // Brief delay to show message
                     await MainActor.run {
-                        showingAdvancedSettings = true
+                        presentAdvancedSettings()
                     }
                 } else if selectedOption == .mistralAI {
                     // Mistral AI with existing key — activate as the selected engine
@@ -659,6 +660,15 @@ struct SimpleSettingsView: View {
                 }
             }
         }
+    }
+
+    @MainActor
+    private func presentAdvancedSettings() {
+        #if os(macOS)
+        openSettings()
+        #else
+        showingAdvancedSettings = true
+        #endif
     }
 }
 

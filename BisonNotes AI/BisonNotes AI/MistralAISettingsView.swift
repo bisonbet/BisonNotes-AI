@@ -33,7 +33,7 @@ struct MistralAISettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             Form {
                 if apiKey.isEmpty {
                     Section {
@@ -196,6 +196,7 @@ struct MistralAISettingsView: View {
                     .disabled(apiKey.isEmpty || isTestingConnection)
                 }
             }
+            .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Mistral AI")

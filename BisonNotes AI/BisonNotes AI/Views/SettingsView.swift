@@ -65,10 +65,30 @@ struct SettingsView: View {
                 .navigationTitle("Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    #if !os(macOS)
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") { dismiss() }
                     }
+                    #endif
                 }
+                #if os(macOS)
+                .navigationDestination(isPresented: $showingAISettings) {
+                    AISettingsView()
+                        .environmentObject(recorderVM)
+                }
+                .navigationDestination(isPresented: $showingTranscriptionSettings) {
+                    TranscriptionSettingsView()
+                }
+                .navigationDestination(isPresented: $showingBackgroundProcessing) {
+                    BackgroundProcessingView()
+                }
+                .navigationDestination(isPresented: $showingPreferences) {
+                    PreferencesView()
+                }
+                .navigationDestination(isPresented: $showingAcknowledgements) {
+                    AcknowledgementsView()
+                }
+                #endif
         }
         .alert("Regeneration Complete", isPresented: $regenerationManager.showingRegenerationAlert) {
             Button("OK") {
@@ -152,37 +172,29 @@ struct SettingsView: View {
                 SummaryManager.shared.setEngine(AIEngineType.appleNative.rawValue)
             }
         }
+        #if !os(macOS)
         .sheet(isPresented: $showingAISettings) {
             AISettingsView()
                 .environmentObject(recorderVM)
-                .nativeMacModalSizing(width: 780, height: 700)
-                .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingTranscriptionSettings) {
             TranscriptionSettingsView()
-                .nativeMacModalSizing(width: 780, height: 700)
-                .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingBackgroundProcessing) {
             BackgroundProcessingView()
-                .nativeMacModalSizing(width: 760, height: 680)
-                .nativeMacModalDismissControl()
         }
+        .sheet(isPresented: $showingPreferences) {
+            PreferencesView()
+        }
+        .sheet(isPresented: $showingAcknowledgements) {
+            AcknowledgementsView()
+        }
+        #endif
         .sheet(isPresented: $showingDataMigration) {
             DataMigrationView()
                 .environmentObject(appCoordinator)
                 .nativeMacModalSizing(width: 800, height: 700)
                 .nativeMacModalDismissControl("Cancel")
-        }
-        .sheet(isPresented: $showingPreferences) {
-            PreferencesView()
-                .nativeMacModalSizing(width: 700, height: 620)
-                .nativeMacModalDismissControl()
-        }
-        .sheet(isPresented: $showingAcknowledgements) {
-            AcknowledgementsView()
-                .nativeMacModalSizing(width: 700, height: 620)
-                .nativeMacModalDismissControl()
         }
         .overlay {
             if isPreparingLogs {
@@ -1774,6 +1786,10 @@ private struct ModernSettingsNavigationRow<Trailing: View>: View {
             value: subtitle,
             hint: "Opens \(title)."
         )
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            action()
+        }
     }
 }
 

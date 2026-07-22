@@ -103,7 +103,11 @@ struct MLXSwiftSettingsView: View {
     var body: some View {
         let isSupported = DeviceCapabilities.supportsMLX
 
-        return Form {
+        return Group {
+            #if os(macOS)
+            nativeMacContent(isSupported: isSupported)
+            #else
+            Form {
             // Info Section
             Section {
                 if isSupported {
@@ -147,17 +151,21 @@ struct MLXSwiftSettingsView: View {
                     advancedSettingsView
                 }
             }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
+            #endif
         }
-        .scrollContentBackground(.hidden)
-        .background(Color(.systemGroupedBackground))
         .navigationTitle(AIEngineType.mlxSwift.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            #if !os(macOS)
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") {
                     dismiss()
                 }
             }
+            #endif
         }
         .alert("Delete Model?", isPresented: $showingDeleteConfirmation, presenting: modelToDelete) { model in
             Button("Delete", role: .destructive) {
@@ -177,6 +185,96 @@ struct MLXSwiftSettingsView: View {
             downloadManager.refreshModelStatus()
         }
     }
+
+    #if os(macOS)
+    private func nativeMacContent(isSupported: Bool) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                nativeMacHeader
+
+                nativeSettingsCard(title: "Overview", systemImage: "cpu", tint: .indigo) {
+                    Label {
+                        Text(isSupported
+                            ? "Models download from Hugging Face on first use and run locally afterward."
+                            : "MLX Swift requires Apple silicon and at least 4 GB of memory.")
+                    } icon: {
+                        Image(systemName: isSupported ? "lock.shield.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(isSupported ? .green : .orange)
+                    }
+                    .font(.subheadline)
+                }
+
+                nativeSettingsCard(title: "Models", systemImage: "shippingbox", tint: .blue) {
+                    ForEach(Array(visibleModels.enumerated()), id: \.element.id) { index, model in
+                        if index > 0 {
+                            Divider()
+                        }
+                        modelRow(for: model)
+                    }
+                }
+
+                if downloadManager.isDownloading {
+                    nativeSettingsCard(title: "Download Progress", systemImage: "arrow.down.circle", tint: .blue) {
+                        downloadProgressView
+                    }
+                }
+
+                nativeSettingsCard(title: "Model Status", systemImage: "checkmark.seal", tint: .green) {
+                    modelStatusView
+                }
+
+                nativeSettingsCard(title: "Generation", systemImage: "slider.horizontal.3", tint: .purple) {
+                    temperatureSlider
+                }
+
+                nativeSettingsCard(title: "Advanced", systemImage: "gearshape.2", tint: .secondary) {
+                    DisclosureGroup("Advanced Generation Settings", isExpanded: $showingAdvancedSettings) {
+                        VStack(alignment: .leading, spacing: 16) {
+                            advancedSettingsView
+                        }
+                        .padding(.top, 14)
+                    }
+                }
+            }
+            .frame(maxWidth: 680)
+            .frame(maxWidth: .infinity, alignment: .top)
+            .padding(28)
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private var nativeMacHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(AIEngineType.mlxSwift.displayName)
+                .font(.largeTitle.bold())
+            Text("Private summarization optimized for Apple silicon.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func nativeSettingsCard<Content: View>(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .foregroundStyle(tint)
+
+            content()
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+    #endif
 
     // MARK: - Model Visibility
 

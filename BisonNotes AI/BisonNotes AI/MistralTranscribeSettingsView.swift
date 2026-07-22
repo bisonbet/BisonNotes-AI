@@ -24,7 +24,7 @@ struct MistralTranscribeSettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             #if os(macOS)
             nativeMacContent
             #else
@@ -34,6 +34,7 @@ struct MistralTranscribeSettingsView: View {
                 connectionTestSection
                 featuresSection
             }
+            .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Mistral Transcription")
@@ -58,7 +59,6 @@ struct MistralTranscribeSettingsView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                .padding(.trailing, 96)
 
                 nativeSettingsCard(
                     title: "API Configuration",

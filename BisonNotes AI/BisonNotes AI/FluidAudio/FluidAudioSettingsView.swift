@@ -26,7 +26,6 @@ struct FluidAudioSettingsView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                .padding(.trailing, 96)
 
                 nativeSettingsCard(
                     title: "Engine",

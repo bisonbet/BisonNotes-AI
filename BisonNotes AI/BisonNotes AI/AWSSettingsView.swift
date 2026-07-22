@@ -30,7 +30,7 @@ struct AWSSettingsView: View {
     ]
 
     var body: some View {
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             Form {
                 Section(header: Text("AWS Transcribe")) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -196,6 +196,7 @@ struct AWSSettingsView: View {
                     Link("AWS IAM Setup Guide", destination: URL(string: "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html")!)
                 }
             }
+            .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("AWS Settings")

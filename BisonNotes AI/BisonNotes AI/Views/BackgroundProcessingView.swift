@@ -15,7 +15,7 @@ struct BackgroundProcessingView: View {
 
     var body: some View {
         let _ = AppLog.shared.backgroundProcessing("BackgroundProcessingView body: activeJobs.count = \(processingManager.activeJobs.count)", level: .debug)
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             VStack(spacing: 0) {
                 // Header with overall status
                 headerSection

@@ -30,7 +30,7 @@ struct OpenAISummarizationSettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             Form {
                 authenticationSection
                 apiConfigurationSection
@@ -39,6 +39,7 @@ struct OpenAISummarizationSettingsView: View {
                 responseLimitsSection
                 connectionTestSection
             }
+            .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("OpenAI Settings")
@@ -412,7 +413,7 @@ struct OpenAICompatibleSettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             Form {
                 compatibilityGuideSection
                 authenticationSection
@@ -423,6 +424,7 @@ struct OpenAICompatibleSettingsView: View {
                 connectionTestSection
                 featuresSection
             }
+            .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("OpenAI Compatible")

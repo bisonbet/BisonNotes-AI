@@ -99,3 +99,24 @@ Verification for the follow-up build:
 - The Catalyst unit-test host stalled on the first existing Core Data regression test and was stopped without producing a test result. The same suite had passed before the final presentation-only layout refinement.
 
 On 2026-07-19, the user manually checked the corrected installed build and reported that the affected windows looked okay. This is recorded as a Phase 4.1 spot-check pass, not an exhaustive release sign-off. Broader manual validation—including additional recording playback and wider transcript, summary, and settings coverage—was explicitly deferred to a later session. The automated data comparisons found no need for a one-time data relocation.
+
+## Native Settings second-pass polish
+
+Screenshots captured on 2026-07-21 exposed a broader presentation problem than the first follow-up addressed. Opening Settings from Setup still presented a large sheet over the main window, and opening a provider or model panel stacked another sheet on top. SwiftUI `Form` also produced unsuitable native Mac geometry in Acknowledgements and MLX On Device AI: oversized empty title regions, centered or clipped content, controls stretched across the whole window, and advanced settings without useful grouping.
+
+The second pass establishes one macOS settings hierarchy:
+
+- Setup's settings action opens the app's dedicated SwiftUI `Settings` scene.
+- Settings, AI Settings, Transcription Settings, Preferences, Background Processing, and provider/model destinations push within one navigation stack on macOS. iOS and Catalyst retain their existing modal presentation behavior.
+- True tasks such as migration, cloud review, model download, and onboarding remain modal.
+- Acknowledgements and MLX On Device AI use purpose-built, bounded Mac layouts with readable cards, consistent spacing, and scrollable advanced content.
+- Remaining settings forms opt into grouped macOS form styling rather than inheriting the iOS sheet geometry.
+- Shared settings rows preserve their accessibility button role and activation action.
+
+Verification for this second pass:
+
+- Native macOS, iOS Simulator, and Mac Catalyst Debug builds passed.
+- The root native Settings window was launched and inspected live. It opened as a separate, correctly sized window with top-aligned cards and no dimmed or stacked parent sheet.
+- The first user walkthrough exposed that the root `navigationDestination` modifiers were attached to the outside of the `NavigationStack`, so SwiftUI ignored Display Preferences, AI Settings, Transcription Settings, and Acknowledgements. Moving the modifiers onto the stack's content resolved the console warnings.
+- A rebuilt live UI pass opened Display Preferences, AI Settings, Transcription Settings, Acknowledgements, and the separate Background Processing window successfully. Deeper provider controls still require the continuing panel-by-panel user walkthrough.
+- Normal SwiftLint passed with zero violations in 173 files, and the final whitespace check passed.

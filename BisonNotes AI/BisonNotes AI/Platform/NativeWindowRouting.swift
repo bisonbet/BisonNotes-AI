@@ -15,6 +15,25 @@ enum NativeWindowID {
     static let processingJob = "processing-job-detail"
 }
 
+/// Settings destinations own their navigation stack on iOS. On native macOS,
+/// the Settings scene owns one stack for the entire hierarchy so child panels
+/// push in place instead of creating nested navigation containers.
+struct PlatformSettingsNavigationStack<Content: View>: View {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        #if os(macOS)
+        content
+        #else
+        NavigationStack { content }
+        #endif
+    }
+}
+
 extension View {
     /// Gives true modal tasks a bounded Mac viewport. The modal's own List,
     /// Form, ScrollView, Map, or PDF view remains responsible for scrolling.
@@ -22,6 +41,34 @@ extension View {
     func nativeMacModalSizing(width: CGFloat = 700, height: CGFloat = 620) -> some View {
         #if os(macOS)
         frame(width: width, height: height)
+            .presentationSizing(.fitted)
+        #else
+        self
+        #endif
+    }
+
+    /// Preserve the iPhone/iPad navigation shell while allowing settings
+    /// destinations to participate in the single NavigationStack owned by the
+    /// native macOS Settings window.
+    @ViewBuilder
+    func platformSettingsNavigation() -> some View {
+        #if os(macOS)
+        self
+        #else
+        NavigationStack { self }
+        #endif
+    }
+
+    /// The default macOS Form style uses a two-column preference-grid layout.
+    /// That works for short label/control pairs, but badly distorts the rich,
+    /// multi-line provider panels used throughout BisonNotes. Grouped form
+    /// styling restores a readable full-width hierarchy and native scrolling.
+    @ViewBuilder
+    func nativeMacSettingsFormStyle() -> some View {
+        #if os(macOS)
+        formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
         #else
         self
         #endif
