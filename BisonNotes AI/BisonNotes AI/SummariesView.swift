@@ -4,6 +4,13 @@ import Speech
 import CoreLocation
 import NaturalLanguage
 
+private struct SummaryWithDate {
+    let recording: RecordingEntry
+    let transcript: TranscriptData?
+    let summary: EnhancedSummaryData?
+    let date: Date
+}
+
 struct SummariesView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
@@ -34,6 +41,8 @@ struct SummariesView: View {
     @State private var dateFilterEnd: Date = Date()
     @State private var isDateFilterActive = false
     @State private var expandedSummaryDateSections: Set<DateSection> = [.today]
+    @State private var isSummaryCandidatesExpanded = false
+    @State private var isSummaryArchiveExpanded = false
 
     @AppStorage("hasSeeniCloudPrompt") private var hasSeeniCloudPrompt = false
 
@@ -419,9 +428,9 @@ struct SummariesView: View {
     // MARK: - Recordings List View
 
     private func recordingsListView(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]) -> some View {
-        #if targetEnvironment(macCatalyst)
-        // On Mac Catalyst, the preview-+-NavigationLink-to-More pattern wedges the responder chain
-        // (destination renders but becomes unresponsive). Render everything inline instead.
+        #if os(macOS) || targetEnvironment(macCatalyst)
+        // A NavigationLink to a List with interactive section headers can wedge the
+        // responder chain on both Mac implementations. Keep the complete archive inline.
         return summariesSectionedScroll(filtered)
         #else
         // iOS / iPadOS: preview cards with "More" navigation to the full list page.
@@ -462,19 +471,18 @@ struct SummariesView: View {
         #endif
     }
 
-    /// Full date-sectioned scroll of summaries (Mac Catalyst inline view)
+    /// Full date-sectioned scroll used by both Mac implementations.
     private func summariesSectionedScroll(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]) -> some View {
-        // Filter out recordings with nil dates and create wrapper struct with non-optional dates
-        struct RecordingWithDate {
-            let recording: RecordingEntry
-            let transcript: TranscriptData?
-            let summary: EnhancedSummaryData?
-            let date: Date
-        }
+        let availableSummaries = filtered
+            .filter { $0.summary != nil }
+            .sorted { ($0.recording.recordingDate ?? .distantPast) > ($1.recording.recordingDate ?? .distantPast) }
+        let recentSummaries = Array(availableSummaries.prefix(3))
+        let archivedSummaries = Array(availableSummaries.dropFirst(recentSummaries.count))
+        let summaryCandidates = filtered.filter { $0.summary == nil && $0.transcript != nil }
 
-        let recordingsWithDates: [RecordingWithDate] = filtered.compactMap { item in
+        let recordingsWithDates: [SummaryWithDate] = archivedSummaries.compactMap { item in
             guard let date = item.recording.recordingDate else { return nil }
-            return RecordingWithDate(
+            return SummaryWithDate(
                 recording: item.recording,
                 transcript: item.transcript,
                 summary: item.summary,
@@ -487,21 +495,34 @@ struct SummariesView: View {
 
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
-                ForEach(sectioned, id: \.section) { sectionData in
-                    CollapsibleDateSectionHeader(
-                        title: sectionData.section.title,
-                        count: sectionData.items.count,
-                        isExpanded: isSummaryDateSectionExpanded(sectionData.section),
-                        isAlwaysExpanded: false,
-                        onToggle: { toggleSummaryDateSection(sectionData.section) }
-                    )
+                if !recentSummaries.isEmpty {
+                    summarySectionHeader(title: "Recent Summaries", count: availableSummaries.count)
 
-                    if isSummaryDateSectionExpanded(sectionData.section) {
-                        ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
-                            recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
-                        }
+                    ForEach(recentSummaries, id: \.recording.objectID) { item in
+                        recordingRowView(item)
                     }
                 }
+
+                if !archivedSummaries.isEmpty {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isSummaryArchiveExpanded.toggle()
+                        }
+                    } label: {
+                        inlineArchiveRow(
+                            title: isSummaryArchiveExpanded ? "Hide older summaries" : "Browse older summaries",
+                            count: archivedSummaries.count,
+                            isExpanded: isSummaryArchiveExpanded
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    if isSummaryArchiveExpanded {
+                        summaryArchiveSections(sectioned, candidates: [])
+                    }
+                }
+
+                summaryCandidatesSection(summaryCandidates)
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
@@ -517,19 +538,90 @@ struct SummariesView: View {
         .accessibilityIdentifier(BisonNotesAccessibilityID.summaryList)
     }
 
+    @ViewBuilder
+    private func summaryArchiveSections(
+        _ sectioned: [(section: DateSection, items: [SummaryWithDate])],
+        candidates: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]
+    ) -> some View {
+        ForEach(sectioned, id: \.section) { sectionData in
+            CollapsibleDateSectionHeader(
+                title: sectionData.section.title,
+                count: sectionData.items.count,
+                isExpanded: isSummaryDateSectionExpanded(sectionData.section),
+                isAlwaysExpanded: false,
+                onToggle: { toggleSummaryDateSection(sectionData.section) }
+            )
+
+            if isSummaryDateSectionExpanded(sectionData.section) {
+                ForEach(sectionData.items, id: \.recording.objectID) { item in
+                    recordingRowView(
+                        (recording: item.recording, transcript: item.transcript, summary: item.summary)
+                    )
+                }
+            }
+        }
+
+        summaryCandidatesSection(candidates)
+    }
+
+    @ViewBuilder
+    private func summaryCandidatesSection(
+        _ candidates: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]
+    ) -> some View {
+        if !candidates.isEmpty {
+            CollapsibleDateSectionHeader(
+                title: "Ready to Summarize",
+                count: candidates.count,
+                isExpanded: isSummaryCandidatesExpanded,
+                isAlwaysExpanded: false,
+                onToggle: { isSummaryCandidatesExpanded.toggle() }
+            )
+
+            if isSummaryCandidatesExpanded {
+                ForEach(candidates, id: \.recording.objectID) { item in
+                    recordingRowView(item)
+                }
+            }
+        }
+    }
+
+    private func inlineArchiveRow(title: String, count: Int, isExpanded: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "archivebox")
+                .font(.title3)
+                .foregroundColor(.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text("\(count) older \(count == 1 ? "summary" : "summaries")")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 15))
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(isExpanded ? "Collapses the summary archive." : "Expands the summary archive inline.")
+    }
+
     /// Full list page reached via the "More" row (matches TranscriptViews' full list pages).
     /// Respects the same date/search filters as the main page.
     private var summariesFullListView: some View {
-        struct RecordingWithDate {
-            let recording: RecordingEntry
-            let transcript: TranscriptData?
-            let summary: EnhancedSummaryData?
-            let date: Date
-        }
+        let availableSummaries = filteredRecordings.filter { $0.summary != nil }
+        let summaryCandidates = filteredRecordings.filter { $0.summary == nil && $0.transcript != nil }
 
-        let recordingsWithDates: [RecordingWithDate] = filteredRecordings.compactMap { item in
+        let recordingsWithDates: [SummaryWithDate] = availableSummaries.compactMap { item in
             guard let date = item.recording.recordingDate else { return nil }
-            return RecordingWithDate(
+            return SummaryWithDate(
                 recording: item.recording,
                 transcript: item.transcript,
                 summary: item.summary,
@@ -558,6 +650,27 @@ struct SummariesView: View {
                         if isSummaryDateSectionExpanded(sectionData.section) {
                             ForEach(sectionData.items, id: \.recording.objectID) { itemWithDate in
                                 recordingRowView((recording: itemWithDate.recording, transcript: itemWithDate.transcript, summary: itemWithDate.summary))
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
+                        }
+                    }
+                }
+
+                if !summaryCandidates.isEmpty {
+                    Section(
+                        header: CollapsibleDateSectionHeader(
+                            title: "Ready to Summarize",
+                            count: summaryCandidates.count,
+                            isExpanded: isSummaryCandidatesExpanded,
+                            isAlwaysExpanded: false,
+                            onToggle: { isSummaryCandidatesExpanded.toggle() }
+                        )
+                    ) {
+                        if isSummaryCandidatesExpanded {
+                            ForEach(summaryCandidates, id: \.recording.objectID) { item in
+                                recordingRowView(item)
                                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                                     .listRowSeparator(.hidden)
                                     .listRowBackground(Color.clear)
@@ -680,7 +793,10 @@ struct SummariesView: View {
     /// dropped entirely (they're section labels, not content), remaining
     /// markdown syntax is stripped, and whitespace is collapsed.
     private func summaryPreviewText(_ markdown: String) -> String {
-        let withoutHeaderLines = markdown
+        // A preview only renders a few lines. Bound the work so expanding an old
+        // month never runs markdown cleanup over dozens of complete summaries.
+        let previewSource = String(markdown.prefix(2_000))
+        let withoutHeaderLines = previewSource
             .components(separatedBy: .newlines)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
             .joined(separator: " ")

@@ -47,6 +47,8 @@ struct TranscriptsView: View {
     @State private var dateFilterEnd: Date = Date()
     @State private var isDateFilterActive = false
     @State private var expandedTranscriptDateSections: Set<DateSection> = [.today]
+    @State private var isPendingTranscriptsExpanded = false
+    @State private var isTranscriptArchiveExpanded = false
     /// Shared service that owns the serial audio-cleanup queue and transcription start.
     @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
     /// Recordings whose summary generation we kicked off and are still awaiting completion.
@@ -308,33 +310,10 @@ struct TranscriptsView: View {
     }
 
     private func transcriptsListView(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?)], _ filteredImported: [(recording: RecordingEntry, transcript: TranscriptData?)]) -> some View {
-        #if targetEnvironment(macCatalyst)
-        // On Mac Catalyst, the preview-+-NavigationLink-to-More pattern wedges the responder chain
-        // (destination renders but becomes unresponsive). Render everything inline instead.
-        let sectioned = DateSectionHelper.groupBySection(
-            transcriptItemsWithDates(filtered, source: .audio) + transcriptItemsWithDates(filteredImported, source: .imported),
-            dateKeyPath: \.date
-        )
-
-        return List {
-            ForEach(sectioned, id: \.section) { sectionData in
-                Section(
-                    header: CollapsibleDateSectionHeader(
-                        title: sectionData.section.title,
-                        count: sectionData.items.count,
-                        isExpanded: isTranscriptDateSectionExpanded(sectionData.section),
-                        isAlwaysExpanded: false,
-                        onToggle: { toggleTranscriptDateSection(sectionData.section) }
-                    )
-                ) {
-                    if isTranscriptDateSectionExpanded(sectionData.section) {
-                        transcriptDateSectionRows(sectionData.items)
-                    }
-                }
-            }
-        }
-        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
-        .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptList)
+        #if os(macOS) || targetEnvironment(macCatalyst)
+        // A NavigationLink to a List with interactive section headers can wedge the
+        // responder chain on both Mac implementations. Keep the complete archive inline.
+        return macTranscriptsListView(filtered, filteredImported)
         #else
         // iOS / iPadOS: preview cards with "More" navigation to the full list page.
         let recentRecordings = Array(filtered.prefix(3))
@@ -400,6 +379,132 @@ struct TranscriptsView: View {
         #endif
     }
 
+    private func macTranscriptsListView(
+        _ filtered: [(recording: RecordingEntry, transcript: TranscriptData?)],
+        _ filteredImported: [(recording: RecordingEntry, transcript: TranscriptData?)]
+    ) -> some View {
+        let availableRecordings = filtered.filter { $0.transcript != nil }
+        let availableImported = filteredImported.filter { $0.transcript != nil }
+        let pendingRecordings = filtered.filter { $0.transcript == nil }
+        let availableTranscripts = (
+            transcriptItemsWithDates(availableRecordings, source: .audio)
+                + transcriptItemsWithDates(availableImported, source: .imported)
+        ).sorted { $0.date > $1.date }
+        let recentTranscripts = Array(availableTranscripts.prefix(3))
+        let archivedTranscripts = Array(availableTranscripts.dropFirst(recentTranscripts.count))
+        let sectioned = DateSectionHelper.groupBySection(
+            archivedTranscripts,
+            dateKeyPath: \.date
+        )
+
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                if !recentTranscripts.isEmpty {
+                    transcriptSectionHeader(
+                        title: "Recent Transcripts",
+                        count: availableTranscripts.count,
+                        systemImage: "text.document.fill"
+                    )
+                    recentTranscriptRows(recentTranscripts)
+                }
+
+                if !archivedTranscripts.isEmpty {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isTranscriptArchiveExpanded.toggle()
+                        }
+                    } label: {
+                        inlineTranscriptArchiveRow(
+                            count: archivedTranscripts.count,
+                            isExpanded: isTranscriptArchiveExpanded
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    if isTranscriptArchiveExpanded {
+                        ForEach(sectioned, id: \.section) { sectionData in
+                            CollapsibleDateSectionHeader(
+                                title: sectionData.section.title,
+                                count: sectionData.items.count,
+                                isExpanded: isTranscriptDateSectionExpanded(sectionData.section),
+                                isAlwaysExpanded: false,
+                                onToggle: { toggleTranscriptDateSection(sectionData.section) }
+                            )
+
+                            if isTranscriptDateSectionExpanded(sectionData.section) {
+                                transcriptDateSectionRows(sectionData.items)
+                            }
+                        }
+                    }
+                }
+
+                if !pendingRecordings.isEmpty {
+                    CollapsibleDateSectionHeader(
+                        title: "Ready to Transcribe",
+                        count: pendingRecordings.count,
+                        isExpanded: isPendingTranscriptsExpanded,
+                        isAlwaysExpanded: false,
+                        onToggle: { isPendingTranscriptsExpanded.toggle() }
+                    )
+
+                    if isPendingTranscriptsExpanded {
+                        ForEach(pendingRecordings, id: \.recording.objectID) { item in
+                            recordingRowView(item)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 96)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Color(.systemGroupedBackground))
+        .refreshable { loadRecordings() }
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptList)
+    }
+
+    @ViewBuilder
+    private func recentTranscriptRows(_ items: [TranscriptWithDate]) -> some View {
+        ForEach(items, id: \.recording.objectID) { item in
+            if item.source == .audio {
+                recordingRowView((recording: item.recording, transcript: item.transcript))
+            } else {
+                importedTranscriptRowView((recording: item.recording, transcript: item.transcript))
+            }
+        }
+    }
+
+    private func inlineTranscriptArchiveRow(count: Int, isExpanded: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "archivebox")
+                .font(.title3)
+                .foregroundColor(.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isExpanded ? "Hide older transcripts" : "Browse older transcripts")
+                    .font(.subheadline.weight(.semibold))
+                Text("\(count) older \(count == 1 ? "transcript" : "transcripts")")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 15))
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(isExpanded ? "Collapses the transcript archive." : "Expands the transcript archive inline.")
+    }
+
     private var audioRecordingsFullListView: some View {
         struct RecordingWithDate {
             let recording: RecordingEntry
@@ -408,7 +513,10 @@ struct TranscriptsView: View {
         }
 
         // Respect the same date/search filters as the main page
-        let recordingsWithDates: [RecordingWithDate] = filteredRecordings.compactMap { item in
+        let availableRecordings = filteredRecordings.filter { $0.transcript != nil }
+        let pendingRecordings = filteredRecordings.filter { $0.transcript == nil }
+
+        let recordingsWithDates: [RecordingWithDate] = availableRecordings.compactMap { item in
             guard let date = item.recording.recordingDate else { return nil }
             return RecordingWithDate(recording: item.recording, transcript: item.transcript, date: date)
         }
@@ -441,6 +549,27 @@ struct TranscriptsView: View {
                         }
                     }
                 }
+
+                if !pendingRecordings.isEmpty {
+                    Section(
+                        header: CollapsibleDateSectionHeader(
+                            title: "Ready to Transcribe",
+                            count: pendingRecordings.count,
+                            isExpanded: isPendingTranscriptsExpanded,
+                            isAlwaysExpanded: false,
+                            onToggle: { isPendingTranscriptsExpanded.toggle() }
+                        )
+                    ) {
+                        if isPendingTranscriptsExpanded {
+                            ForEach(pendingRecordings, id: \.recording.objectID) { item in
+                                recordingRowView(item)
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
+                        }
+                    }
+                }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
@@ -466,6 +595,7 @@ struct TranscriptsView: View {
 
         // Respect the same date/search filters as the main page
         let importedWithDates: [ImportedWithDate] = filteredImportedTranscripts.compactMap { item in
+            guard item.transcript != nil else { return nil }
             guard let date = item.recording.recordingDate else { return nil }
             return ImportedWithDate(recording: item.recording, transcript: item.transcript, date: date)
         }
