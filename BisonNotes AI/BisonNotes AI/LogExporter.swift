@@ -29,6 +29,7 @@ struct LogExporter {
     /// 2. Persistent breadcrumb buffer (survives crashes)
     /// 3. Persistent error buffer (survives crashes)
     /// 4. MetricKit crash/hang diagnostics (if any)
+    /// 5. Recording recovery inventory (if any)
     static func exportLogs() async throws -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
@@ -106,6 +107,12 @@ struct LogExporter {
         } else {
             sections.append("\n" + sectionHeader("METRICKIT CRASH/HANG DIAGNOSTICS") + "\nNo MetricKit diagnostics available yet. iOS may deliver crash and hang payloads on a later launch.")
         }
+
+        // ── Section 5: Recording Recovery Inventory ──
+        sections.append(
+            "\n" + sectionHeader("RECORDING RECOVERY INVENTORY") + "\n" +
+            RecordingRecoveryStore.diagnosticInventory()
+        )
 
         // ── Write to file ──
         let text = sections.joined(separator: "\n")

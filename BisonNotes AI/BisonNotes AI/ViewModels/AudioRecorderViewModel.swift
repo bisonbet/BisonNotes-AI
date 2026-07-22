@@ -101,9 +101,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var catalystSystemAudioCapture: CatalystSystemAudioCapture?
 	var catalystSystemAudioURL: URL?
 	var catalystAudioSessionActivated = false
+	let catalystCaptureHealth = RecordingCaptureHealth()
+	var catalystCaptureHealthTimer: Timer?
+	var catalystAutomaticRecoveryAttempts = 0
+	var catalystAwaitingRecoveryBuffer = false
 	#if os(macOS)
 	var macInputDeviceChangeTask: Task<Void, Never>?
 	var isRecoveringMacInput = false
+	var pendingMacInputRecovery: (keepPaused: Bool, notify: Bool)?
 	#endif
 	#endif
 	let checkpointInterval: TimeInterval = 30.0 // Try to checkpoint every 30 seconds
@@ -256,6 +261,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	deinit {
+		#if targetEnvironment(macCatalyst) || os(macOS)
+		catalystCaptureHealthTimer?.invalidate()
+		#endif
 		#if os(macOS)
 		macInputDeviceChangeTask?.cancel()
 		enhancedAudioSessionManager.stopInputDeviceMonitoring()

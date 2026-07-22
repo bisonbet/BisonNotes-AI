@@ -63,14 +63,15 @@ extension AudioRecorderViewModel {
 	}
 
 	@MainActor
-	func recoverNativeMacInput(keepPaused: Bool) async {
+	func recoverNativeMacInput(keepPaused: Bool, forceRestart: Bool = false) async {
 		guard !isRecoveringMacInput, isRecording, let finalURL = recordingURL else { return }
 		isRecoveringMacInput = true
 		defer { isRecoveringMacInput = false }
 
 		let disconnectedAt: Date
 		let wasAlreadyWaiting: Bool
-		if case .waitingForMicrophone(let existingDisconnectedAt) = recordingState {
+		if !forceRestart,
+		   case .waitingForMicrophone(let existingDisconnectedAt) = recordingState {
 			wasAlreadyWaiting = true
 			disconnectedAt = existingDisconnectedAt
 		} else {
@@ -92,9 +93,14 @@ extension AudioRecorderViewModel {
 
 		do {
 			try startNativeMacContinuation(at: finalURL)
-			await finishNativeMacInputRecovery(keepPaused: keepPaused, notify: wasAlreadyWaiting)
+			catalystAwaitingRecoveryBuffer = true
+			pendingMacInputRecovery = (keepPaused: keepPaused, notify: wasAlreadyWaiting)
+			recordingState = .waitingForMicrophone(disconnectedAt: disconnectedAt)
+			errorMessage = "Microphone connected. Confirming that audio is being received…"
 		} catch {
 			discardFailedNativeMacContinuation()
+			pendingMacInputRecovery = nil
+			catalystAwaitingRecoveryBuffer = false
 			AppLog.shared.audioSession("Mac input recovery failed: \(error.localizedDescription)", level: .error)
 			recordingState = .waitingForMicrophone(disconnectedAt: disconnectedAt)
 			errorMessage = "Could not use the available microphone: \(error.localizedDescription)"
@@ -117,9 +123,11 @@ extension AudioRecorderViewModel {
 	}
 
 	@MainActor
-	private func finishNativeMacInputRecovery(keepPaused: Bool, notify: Bool) async {
+	func finishNativeMacInputRecovery(keepPaused: Bool, notify: Bool) async {
 		microphoneReconnectionTimer?.invalidate()
 		microphoneReconnectionTimer = nil
+		pendingMacInputRecovery = nil
+		catalystAwaitingRecoveryBuffer = false
 		if keepPaused {
 			pauseCatalystEngineRecording()
 			recordingState = .paused

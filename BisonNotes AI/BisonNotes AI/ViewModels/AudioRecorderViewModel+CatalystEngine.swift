@@ -21,7 +21,13 @@ extension AudioRecorderViewModel {
 	@MainActor
 	func setupCatalystRecording(at url: URL) async {
 		var systemAudioError: Error?
+		stopCatalystCaptureHealthMonitoring()
 		catalystScratchSegmentURLs = []
+		catalystAutomaticRecoveryAttempts = 0
+		catalystAwaitingRecoveryBuffer = false
+		catalystCaptureHealth.resetSession()
+		catalystSystemAudioCapture = nil
+		catalystSystemAudioURL = nil
 
 		if isMacSystemAudioCaptureEnabled {
 			let systemAudioURL = Self.catalystSystemAudioURL(for: url)
@@ -43,7 +49,6 @@ extension AudioRecorderViewModel {
 			// so we bypass AVAudioRecorder's broken converter setup. The scratch
 			// file is exported to M4A when recording stops.
 			try startCatalystEngineRecording(at: url)
-			markRecordingStarted()
 
 			if let systemAudioError {
 				errorMessage = "Meeting audio could not be captured: \(systemAudioError.localizedDescription). Recording microphone audio only."
@@ -54,13 +59,13 @@ extension AudioRecorderViewModel {
 					try? FileManager.default.removeItem(at: abandonedSystemAudioURL)
 				}
 			}
-				catalystSystemAudioCapture = nil
-				catalystSystemAudioURL = nil
-				finishRecordingStartup()
-				errorMessage = "Failed to start recording: \(error.localizedDescription)"
-				AppLog.shared.recording("Catalyst recording start failed: \(error.localizedDescription)", level: .error)
-			}
+			catalystSystemAudioCapture = nil
+			catalystSystemAudioURL = nil
+			finishRecordingStartup()
+			errorMessage = "Failed to start recording: \(error.localizedDescription)"
+			AppLog.shared.recording("Catalyst recording start failed: \(error.localizedDescription)", level: .error)
 		}
+	}
 
 	/// Start recording on Mac Catalyst using AVAudioEngine. Writes native PCM
 	/// into a temporary CAF file, which is exported to the caller's M4A URL in
@@ -128,11 +133,18 @@ extension AudioRecorderViewModel {
 		catalystAudioFile = audioFile
 		catalystEngineFormat = inputFormat
 		catalystScratchRecordingURL = scratchURL
+		catalystCaptureHealth.beginSegment()
 
 		installCatalystInputTap()
 
 		engine.prepare()
 		try engine.start()
+		startCatalystCaptureHealthMonitoring()
+		AppLog.shared.recording(
+			"Mac microphone engine started; awaiting first buffer " +
+			"(sampleRate=\(inputFormat.sampleRate), channels=\(inputFormat.channelCount), " +
+			"interleaved=\(inputFormat.isInterleaved))"
+		)
 	}
 
 	#if targetEnvironment(macCatalyst)
@@ -151,6 +163,8 @@ extension AudioRecorderViewModel {
 		guard let engine = catalystAudioEngine else { return }
 		engine.inputNode.removeTap(onBus: 0)
 		catalystSystemAudioCapture?.setPaused(true)
+		stopCatalystCaptureHealthMonitoring()
+		catalystCaptureHealth.suspend()
 	}
 
 	/// Resume Catalyst recording: re-install the tap on the same input node,
@@ -163,14 +177,23 @@ extension AudioRecorderViewModel {
 				userInfo: [NSLocalizedDescriptionKey: "Engine state was lost; cannot resume."]
 			)
 		}
+		catalystCaptureHealth.beginSegment()
 		installCatalystInputTap()
 		catalystSystemAudioCapture?.setPaused(false)
+		startCatalystCaptureHealthMonitoring()
 	}
 
 	/// Fully stop Catalyst recording. Closes the scratch file (via deinit) and
 	/// tears down the engine. The final M4A is produced later in
 	/// `finalizeCatalystRecording(at:)`.
 	func stopCatalystEngineRecording(closingFile: Bool = true) {
+		stopCatalystCaptureHealthMonitoring()
+		let health = catalystCaptureHealth.snapshot()
+		AppLog.shared.recording(
+			"Mac microphone engine stopping " +
+			"(segmentFrames=\(health.segmentFramesWritten), totalFrames=\(health.totalFramesWritten))",
+			level: health.totalFramesWritten > 0 ? .info : .error
+		)
 		if let engine = catalystAudioEngine {
 			engine.inputNode.removeTap(onBus: 0)
 			if engine.isRunning {
@@ -193,10 +216,9 @@ extension AudioRecorderViewModel {
 		}
 	}
 
-	#if os(macOS)
 	/// Closes the current PCM segment without discarding it. A replacement input
 	/// may expose a different native format, so recovery always starts a new CAF.
-	func sealNativeMacScratchSegment() {
+	func sealCatalystScratchSegment() {
 		let currentScratchURL = catalystScratchRecordingURL
 		stopCatalystEngineRecording()
 		if let currentScratchURL,
@@ -209,7 +231,7 @@ extension AudioRecorderViewModel {
 
 	/// Starts the next PCM segment on the currently resolved Core Audio input.
 	/// The original final URL is retained for the normal stop/finalize flow.
-	func startNativeMacContinuation(at finalURL: URL) throws {
+	func startCatalystContinuation(at finalURL: URL) throws {
 		let segmentIndex = catalystScratchSegmentURLs.count + 1
 		let scratchURL = Self.catalystScratchURL(for: finalURL, segmentIndex: segmentIndex)
 		try startCatalystEnginePipeline(
@@ -218,12 +240,20 @@ extension AudioRecorderViewModel {
 			removingFinalOutput: false
 		)
 	}
+
+	#if os(macOS)
+	func sealNativeMacScratchSegment() {
+		sealCatalystScratchSegment()
+	}
+
+	func startNativeMacContinuation(at finalURL: URL) throws {
+		try startCatalystContinuation(at: finalURL)
+	}
 	#endif
 
 	func stopCatalystSystemAudioCapture() async -> URL? {
 		guard let capture = catalystSystemAudioCapture else {
-			catalystSystemAudioURL = nil
-			return nil
+			return catalystSystemAudioURL
 		}
 
 		do {
@@ -234,95 +264,11 @@ extension AudioRecorderViewModel {
 		} catch {
 			AppLog.shared.recording("Catalyst system audio capture finalize failed: \(error.localizedDescription)", level: .error)
 			catalystSystemAudioCapture = nil
-			catalystSystemAudioURL = nil
-			return nil
-		}
-	}
-
-	/// Persist a Catalyst recording to Core Data after `stopRecording()`
-	/// finishes. Mirrors the iOS path in `audioRecorderDidFinishRecording`,
-	/// after exporting the native PCM scratch file to M4A.
-	@MainActor
-	func finalizeCatalystRecording(at url: URL) async {
-		let scratchURLs = allCatalystScratchURLs()
-		guard !scratchURLs.isEmpty else {
-			AppLog.shared.recording("Catalyst finalize: scratch recording URL is missing", level: .error)
-			errorMessage = "Recording was not saved because the temporary audio file was missing."
-			return
-		}
-
-		do {
-			if let systemAudioURL = catalystSystemAudioURL {
-				try await exportAndMixCatalystRecording(
-					microphoneScratchURLs: scratchURLs,
-					systemAudioURL: systemAudioURL,
-					finalURL: url
-				)
-			} else {
-				try await exportCatalystScratchRecordings(from: scratchURLs, to: url)
+			let partialURL = catalystSystemAudioURL.flatMap { url in
+				FileManager.default.fileExists(atPath: url.path) ? url : nil
 			}
-		} catch {
-			AppLog.shared.recording("Catalyst finalize: failed to export recording: \(error.localizedDescription)", level: .error)
-			errorMessage = "Recording could not be finalized: \(error.localizedDescription)"
-			removeCatalystScratchFiles(scratchURLs)
-			catalystScratchRecordingURL = nil
-			catalystScratchSegmentURLs = []
-			return
-		}
-
-		guard FileManager.default.fileExists(atPath: url.path) else {
-			AppLog.shared.recording("Catalyst finalize: recording file is missing at \(url.lastPathComponent)", level: .error)
-			errorMessage = "Recording was lost — file was not written."
-			return
-		}
-
-		saveLocationData(for: url)
-
-		guard let workflowManager = workflowManager else {
-			AppLog.shared.recording("WorkflowManager not set - Catalyst recording not saved", level: .error)
-			return
-		}
-
-		let fileSize = getFileSize(url: url)
-		let duration = getRecordingDuration(url: url)
-		let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-		let displayName = generateAppRecordingDisplayName()
-
-		let recordingId = workflowManager.createRecording(
-			url: url,
-			name: displayName,
-			date: currentRecordingDate(for: url),
-			fileSize: fileSize,
-			duration: duration,
-			quality: quality,
-			locationData: recordingLocationSnapshot()
-		)
-		AppLog.shared.recording("Catalyst recording created with workflow manager, ID: \(recordingId)")
-
-		resetCatalystFinalizationState()
-	}
-
-	private func resetCatalystFinalizationState() {
-		resetRecordingLocation()
-		recordingStartedAt = nil
-		recordingBeingProcessed = false
-		catalystScratchRecordingURL = nil
-		catalystScratchSegmentURLs = []
-		catalystSystemAudioURL = nil
-	}
-
-	private func allCatalystScratchURLs() -> [URL] {
-		var scratchURLs = catalystScratchSegmentURLs
-		if let currentScratchURL = catalystScratchRecordingURL,
-		   !scratchURLs.contains(currentScratchURL) {
-			scratchURLs.append(currentScratchURL)
-		}
-		return scratchURLs
-	}
-
-	private func removeCatalystScratchFiles(_ scratchURLs: [URL]) {
-		for scratchURL in scratchURLs {
-			try? FileManager.default.removeItem(at: scratchURL)
+			catalystSystemAudioURL = partialURL
+			return partialURL
 		}
 	}
 
@@ -338,11 +284,24 @@ extension AudioRecorderViewModel {
 			bufferSize: 4096,
 			format: format
 		) { [weak self] buffer, _ in
-			guard let file = self?.catalystAudioFile else { return }
+			guard let self, let file = self.catalystAudioFile else { return }
 			do {
 				try file.write(from: buffer)
+				let isFirstWrite = self.catalystCaptureHealth.recordSuccessfulWrite(
+					frameCount: Int64(buffer.frameLength)
+				)
+				if isFirstWrite {
+					DispatchQueue.main.async { [weak self] in
+						self?.handleCatalystFirstSuccessfulWrite()
+					}
+				}
 			} catch {
-				AppLog.shared.recording("Catalyst engine: file write failed: \(error.localizedDescription)", level: .error)
+				if self.catalystCaptureHealth.recordWriteFailure(error.localizedDescription) {
+					AppLog.shared.recording(
+						"Mac microphone file write failed: \(error.localizedDescription)",
+						level: .error
+					)
+				}
 			}
 		}
 	}
@@ -365,7 +324,7 @@ extension AudioRecorderViewModel {
 			.appendingPathExtension("m4a")
 	}
 
-	private func exportCatalystScratchRecording(from scratchURL: URL, to finalURL: URL) async throws {
+	func exportCatalystScratchRecording(from scratchURL: URL, to finalURL: URL) async throws {
 		let fileManager = FileManager.default
 		guard fileManager.fileExists(atPath: scratchURL.path) else {
 			throw NSError(
@@ -439,12 +398,11 @@ extension AudioRecorderViewModel {
 		}
 		try fileManager.moveItem(at: tempURL, to: finalURL)
 		AppFileProtection.apply(to: finalURL)
-		try? fileManager.removeItem(at: scratchURL)
 
 		AppLog.shared.recording("Catalyst recording exported to M4A: \(finalURL.lastPathComponent), duration: \(exportedDuration)s, size: \(exportedSize) bytes")
 	}
 
-	private func exportCatalystScratchRecordings(from scratchURLs: [URL], to finalURL: URL) async throws {
+	func exportCatalystScratchRecordings(from scratchURLs: [URL], to finalURL: URL) async throws {
 		guard scratchURLs.count > 1 else {
 			guard let scratchURL = scratchURLs.first else {
 				throw NSError(
@@ -487,7 +445,6 @@ extension AudioRecorderViewModel {
 		}
 		try fileManager.moveItem(at: tempURL, to: finalURL)
 		AppFileProtection.apply(to: finalURL)
-		removeCatalystScratchFiles(scratchURLs)
 		AppLog.shared.recording(
 			"Recovered Mac microphone segments exported to M4A: \(scratchURLs.count) segments, " +
 			"duration: \(exportedDuration)s, size: \(exportedSize) bytes"
@@ -525,26 +482,35 @@ extension AudioRecorderViewModel {
 		return (composition, insertionTime)
 	}
 
-	private func exportAndMixCatalystRecording(
+	func exportAndMixCatalystRecording(
 		microphoneScratchURLs: [URL],
 		systemAudioURL: URL,
 		finalURL: URL
 	) async throws {
-		let fileManager = FileManager.default
-
 		do {
 			try await mixCatalystAudioTracks(
 				microphoneScratchURLs: microphoneScratchURLs,
 				systemAudioURL: systemAudioURL,
 				finalURL: finalURL
 			)
-			removeCatalystScratchFiles(microphoneScratchURLs)
-			try? fileManager.removeItem(at: systemAudioURL)
-		} catch {
-			AppLog.shared.recording("Catalyst meeting audio mix failed; saving microphone track only: \(error.localizedDescription)", level: .error)
-			try await exportCatalystScratchRecordings(from: microphoneScratchURLs, to: finalURL)
-			errorMessage = "Meeting audio could not be mixed into this recording. Saved microphone audio only."
-			try? fileManager.removeItem(at: systemAudioURL)
+		} catch let mixError {
+			AppLog.shared.recording(
+				"Mac meeting audio mix failed; trying microphone-only salvage: " +
+				"\(mixError.localizedDescription)",
+				level: .error
+			)
+			do {
+				try await exportCatalystScratchRecordings(from: microphoneScratchURLs, to: finalURL)
+				errorMessage = "Meeting audio could not be mixed. Saved microphone audio only."
+			} catch let microphoneError {
+				AppLog.shared.recording(
+					"Microphone-only salvage failed; trying system-audio-only salvage: " +
+					"\(microphoneError.localizedDescription)",
+					level: .error
+				)
+				try await exportCatalystScratchRecording(from: systemAudioURL, to: finalURL)
+				errorMessage = "The microphone track could not be saved. Saved meeting/system audio only."
+			}
 		}
 	}
 

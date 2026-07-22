@@ -80,6 +80,8 @@ Simulator tests are not enough for these capabilities. Capture evidence for ever
 - iPhone/iPad: record with the real microphone, stop, verify playback duration is non-zero, and generate a transcript.
 - Mac Catalyst: record microphone-only audio, then record a real meeting/system-audio source with meeting-audio capture enabled; verify the final audio plays and has non-zero duration.
 - Native macOS: repeat the microphone-only and meeting/system-audio recordings; change the selected microphone, hot-plug an external input during recording, and verify the final audio has no clicks, clipping, gaps beyond the device transition, or duplicated system audio.
+- Native macOS capture integrity: start with the built-in input and each USB/Bluetooth input, including Poly Sync 10 when available. Confirm the UI does not enter the recording state until a real input buffer is committed. Mute or otherwise stall the active input and verify the app reports reconnection, retries the engine, and either resumes on confirmed audio or stops and saves the audio captured before the stall.
+- Native macOS salvage: with meeting-audio capture enabled, make one track unavailable at a time and confirm the usable microphone-only or system-only track is saved. Force a finalization failure in a development build and confirm the source media remains under Application Support/Recording Recovery and appears in the exported diagnostic inventory.
 - Apple Watch: tap to record, mute to pause, unmute to resume, stop, transfer to iPhone, and verify import appears once.
 - Parakeet: download or reuse the on-device model on a supported device and transcribe a short known audio fixture.
 - iCloud: verify eligible content syncs across two devices or matching TestFlight builds, and verify a recording marked Keep on This Device does not sync.
@@ -87,7 +89,7 @@ Simulator tests are not enough for these capabilities. Capture evidence for ever
 - System integrations: smoke-test Control Center recording and Action Button launch on supported devices.
 - Accessibility: complete common tasks with VoiceOver and Voice Control on iPhone/iPad; sample Switch Control; verify Full Keyboard Access on iPad keyboard, Mac Catalyst, and native macOS; test largest Dynamic Type sizes; test light/dark, Increase Contrast, Reduce Transparency, Bold Text, Grayscale, and Differentiate Without Color; enable Reduce Motion and verify recording indicators remain understandable; test Apple Watch VoiceOver for start, mute, stop, transfer progress, low battery, and error recovery.
 
-Record screenshots, resulting audio duration, transcript text, sync/import status, and relevant log excerpts for the release notes or PR.
+For every Mac recording case, capture the first-buffer log line, frame counts at stop, finalization-plan log line, resulting audio duration, and playback of each expected source. Also record screenshots, transcript text, sync/import status, and other relevant log excerpts for the release notes or PR.
 
 ## UI Test Launch Contract
 
