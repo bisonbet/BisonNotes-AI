@@ -6,12 +6,15 @@
 //
 
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 import PDFKit
 import MapKit
 import CoreLocation
 import CoreText
 
+#if canImport(UIKit)
 class PDFExportService {
     static let shared = PDFExportService()
 
@@ -980,3 +983,24 @@ class PDFExportService {
         }
     }
 }
+#else
+class PDFExportService {
+    static let shared = PDFExportService()
+
+    @MainActor
+    func generatePDF(
+        summaryData: EnhancedSummaryData,
+        locationData: LocationData?,
+        locationAddress: String?
+    ) async throws -> Data {
+        AppLog.shared.fileManagement("PDFExportService: Starting native Mac PDF generation")
+        let data = try MacSummaryExportRenderer.pdfData(
+            summaryData: summaryData,
+            locationData: locationData,
+            locationAddress: locationAddress
+        )
+        AppLog.shared.fileManagement("PDFExportService: Generated native Mac PDF (\(data.count) bytes)")
+        return data
+    }
+}
+#endif

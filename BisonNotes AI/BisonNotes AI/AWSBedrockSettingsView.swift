@@ -41,7 +41,7 @@ struct AWSBedrockSettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             Form {
                 headerSection
 
@@ -54,6 +54,7 @@ struct AWSBedrockSettingsView: View {
                     documentationSection
                 }
             }
+            .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("AWS Bedrock Settings")

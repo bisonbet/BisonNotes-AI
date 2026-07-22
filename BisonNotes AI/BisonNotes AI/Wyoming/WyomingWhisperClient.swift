@@ -7,7 +7,9 @@
 
 import Foundation
 import AVFoundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 @MainActor
 class WyomingWhisperClient: ObservableObject {
@@ -25,7 +27,7 @@ class WyomingWhisperClient: ObservableObject {
     private var currentTranscription: CheckedContinuation<TranscriptionResult, Error>?
     private var transcriptionResult = ""
     private var serverInfo: WyomingInfoData?
-    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundTaskID: PlatformBackgroundTask.ID = .invalid
     private var streamingTimeoutTask: Task<Void, Never>?
     private var isProcessingChunk = false
     private var shouldManageBackgroundTask = true // Can be disabled when called from another background context
@@ -833,7 +835,7 @@ class WyomingWhisperClient: ObservableObject {
             return
         }
 
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WyomingTranscription") { [weak self] in
+        backgroundTaskID = PlatformBackgroundTask.begin(name: "WyomingTranscription") { [weak self] in
             AppLog.shared.transcription("Wyoming background task is about to expire", level: .error)
             Task { @MainActor in
                 await self?.handleBackgroundTaskExpiration()
@@ -843,7 +845,7 @@ class WyomingWhisperClient: ObservableObject {
         if backgroundTaskID == .invalid {
             AppLog.shared.transcription("Failed to start Wyoming background task", level: .error)
         } else {
-            let remainingTime = UIApplication.shared.backgroundTimeRemaining
+            let remainingTime = PlatformBackgroundTask.remainingTime
             if remainingTime.isFinite {
                 AppLog.shared.transcription("Started Wyoming background task with \(String(format: "%.0f", remainingTime))s remaining", level: .debug)
             } else {
@@ -855,7 +857,7 @@ class WyomingWhisperClient: ObservableObject {
     private func endBackgroundTask() {
         if backgroundTaskID != .invalid {
             AppLog.shared.transcription("Ending Wyoming background task: \(backgroundTaskID.rawValue)", level: .debug)
-            UIApplication.shared.endBackgroundTask(backgroundTaskID)
+            PlatformBackgroundTask.end(backgroundTaskID)
             backgroundTaskID = .invalid
         }
     }

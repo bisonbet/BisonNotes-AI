@@ -14,6 +14,7 @@ import CoreGraphics
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var regenerationManager: SummaryRegenerationManager
@@ -64,10 +65,30 @@ struct SettingsView: View {
                 .navigationTitle("Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    #if !os(macOS)
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") { dismiss() }
                     }
+                    #endif
                 }
+                #if os(macOS)
+                .navigationDestination(isPresented: $showingAISettings) {
+                    AISettingsView()
+                        .environmentObject(recorderVM)
+                }
+                .navigationDestination(isPresented: $showingTranscriptionSettings) {
+                    TranscriptionSettingsView()
+                }
+                .navigationDestination(isPresented: $showingBackgroundProcessing) {
+                    BackgroundProcessingView()
+                }
+                .navigationDestination(isPresented: $showingPreferences) {
+                    PreferencesView()
+                }
+                .navigationDestination(isPresented: $showingAcknowledgements) {
+                    AcknowledgementsView()
+                }
+                #endif
         }
         .alert("Regeneration Complete", isPresented: $regenerationManager.showingRegenerationAlert) {
             Button("OK") {
@@ -113,6 +134,8 @@ struct SettingsView: View {
         .sheet(isPresented: $showingCloudReview) {
             CloudReviewItemsView(includeAudioFiles: iCloudBackupIncludeAudioFiles)
                 .environmentObject(appCoordinator)
+                .nativeMacModalSizing(width: 780, height: 700)
+                .nativeMacModalDismissControl()
         }
         .onAppear {
             refreshEngineStatuses()
@@ -149,6 +172,7 @@ struct SettingsView: View {
                 SummaryManager.shared.setEngine(AIEngineType.appleNative.rawValue)
             }
         }
+        #if !os(macOS)
         .sheet(isPresented: $showingAISettings) {
             AISettingsView()
                 .environmentObject(recorderVM)
@@ -159,15 +183,18 @@ struct SettingsView: View {
         .sheet(isPresented: $showingBackgroundProcessing) {
             BackgroundProcessingView()
         }
-        .sheet(isPresented: $showingDataMigration) {
-            DataMigrationView()
-                .environmentObject(appCoordinator)
-        }
         .sheet(isPresented: $showingPreferences) {
             PreferencesView()
         }
         .sheet(isPresented: $showingAcknowledgements) {
             AcknowledgementsView()
+        }
+        #endif
+        .sheet(isPresented: $showingDataMigration) {
+            DataMigrationView()
+                .environmentObject(appCoordinator)
+                .nativeMacModalSizing(width: 800, height: 700)
+                .nativeMacModalDismissControl("Cancel")
         }
         .overlay {
             if isPreparingLogs {
@@ -275,29 +302,6 @@ struct SettingsView: View {
                 systemImage: "mic.fill",
                 tint: .green
             )
-
-            Toggle(isOn: Binding(
-                get: { recorderVM.isMacSystemAudioCaptureEnabled },
-                set: { handleMacSystemAudioCaptureToggle($0) }
-            )) {
-                ModernSettingsLabel(
-                    title: "Record Meeting Audio",
-                    subtitle: "Capture audio playing from other Mac apps while recording",
-                    systemImage: "macwindow.on.rectangle",
-                    tint: .purple
-                )
-            }
-            .disabled(recorderVM.isRecording)
-            .accessibilityValue(AccessibilitySupport.statusValue(isOn: recorderVM.isMacSystemAudioCaptureEnabled))
-
-            if recorderVM.isMacSystemAudioCaptureEnabled {
-                ModernInlineStatus(
-                    title: "Meeting audio capture is enabled",
-                    subtitle: "If macOS permission changes later, BisonNotes saves microphone audio only.",
-                    systemImage: "rectangle.dashed.badge.record",
-                    tint: .orange
-                )
-            }
             #else
             if recorderVM.availableInputs.isEmpty {
                 ModernInlineStatus(
@@ -331,6 +335,33 @@ struct SettingsView: View {
                     .font(.caption.weight(.semibold))
             }
             .buttonStyle(.bordered)
+
+            Divider()
+            #endif
+
+            #if targetEnvironment(macCatalyst) || os(macOS)
+            Toggle(isOn: Binding(
+                get: { recorderVM.isMacSystemAudioCaptureEnabled },
+                set: { handleMacSystemAudioCaptureToggle($0) }
+            )) {
+                ModernSettingsLabel(
+                    title: "Record Meeting Audio",
+                    subtitle: "Capture audio playing from other Mac apps while recording",
+                    systemImage: "macwindow.on.rectangle",
+                    tint: .purple
+                )
+            }
+            .disabled(recorderVM.isRecording)
+            .accessibilityValue(AccessibilitySupport.statusValue(isOn: recorderVM.isMacSystemAudioCaptureEnabled))
+
+            if recorderVM.isMacSystemAudioCaptureEnabled {
+                ModernInlineStatus(
+                    title: "Meeting audio capture is enabled",
+                    subtitle: "If macOS permission changes later, BisonNotes saves microphone audio only.",
+                    systemImage: "rectangle.dashed.badge.record",
+                    tint: .orange
+                )
+            }
 
             Divider()
             #endif
@@ -545,7 +576,7 @@ struct SettingsView: View {
                 subtitle: "Manage transcription and summarization jobs",
                 systemImage: "gearshape.2",
                 tint: .blue,
-                action: { showingBackgroundProcessing = true }
+                action: { presentBackgroundProcessing() }
             )
 
             Button {
@@ -879,54 +910,39 @@ struct SettingsView: View {
 
                             if !cloudOnlySummaries.isEmpty {
                                 await MainActor.run {
-                                    let alert = UIAlertController(
+                                    PlatformAlert.present(
                                         title: "iCloud Data Found",
                                         message: "We found \(cloudOnlySummaries.count) summaries in your iCloud that aren't on this device. Would you like to download them?",
-                                        preferredStyle: .alert
-                                    )
-                                    alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-                                    alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
-                                        Task {
-                                            do {
-                                                let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
-                                                AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
-                                            } catch {
-                                                AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                                        actions: [
+                                            PlatformAlert.Action(title: "Cancel", isCancel: true),
+                                            PlatformAlert.Action(title: "Download") {
+                                                Task {
+                                                    do {
+                                                        let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
+                                                        AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
+                                                    } catch {
+                                                        AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                                                    }
+                                                }
                                             }
-                                        }
-                                    })
-                                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                       let rootViewController = windowScene.windows.first?.rootViewController {
-                                        rootViewController.present(alert, animated: true)
-                                    }
+                                        ]
+                                    )
                                 }
                             } else {
                                 await MainActor.run {
-                                    let alert = UIAlertController(
+                                    PlatformAlert.present(
                                         title: "No iCloud Data",
-                                        message: "No summaries were found in your iCloud account.",
-                                        preferredStyle: .alert
+                                        message: "No summaries were found in your iCloud account."
                                     )
-                                    alert.addAction(UIAlertAction(title: "OK", style: .default))
-                                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                       let rootViewController = windowScene.windows.first?.rootViewController {
-                                        rootViewController.present(alert, animated: true)
-                                    }
                                 }
                             }
                         } catch {
                             AppLog.shared.log("Failed to check for iCloud data: \(error)", level: .error, category: .general)
                             await MainActor.run {
-                                let alert = UIAlertController(
+                                PlatformAlert.present(
                                     title: "Check Failed",
-                                    message: "Could not check for iCloud data: \(error.localizedDescription)",
-                                    preferredStyle: .alert
+                                    message: "Could not check for iCloud data: \(error.localizedDescription)"
                                 )
-                                alert.addAction(UIAlertAction(title: "OK", style: .default))
-                                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                   let rootViewController = windowScene.windows.first?.rootViewController {
-                                    rootViewController.present(alert, animated: true)
-                                }
                             }
                         }
                     }
@@ -1001,7 +1017,7 @@ struct SettingsView: View {
             }
 
             Button {
-                showingBackgroundProcessing = true
+                presentBackgroundProcessing()
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1076,6 +1092,14 @@ struct SettingsView: View {
                     .foregroundColor(.red)
             }
         }
+    }
+
+    private func presentBackgroundProcessing() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.backgroundProcessing)
+        #else
+        showingBackgroundProcessing = true
+        #endif
     }
 
     private var aboutSection: some View {
@@ -1163,6 +1187,7 @@ struct SettingsView: View {
         }
     }
 
+    #if os(iOS)
     private func microphoneTypeDescription(for portType: AVAudioSession.Port) -> String {
         switch portType {
         case .builtInMic:
@@ -1187,6 +1212,7 @@ struct SettingsView: View {
             return portType.rawValue.capitalized
         }
     }
+    #endif
 
     private func handleMacSystemAudioCaptureToggle(_ enabled: Bool) {
         #if targetEnvironment(macCatalyst)
@@ -1221,7 +1247,7 @@ struct SettingsView: View {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else {
             return
         }
-        UIApplication.shared.open(url)
+        PlatformApp.open(url)
         #endif
     }
 
@@ -1346,54 +1372,39 @@ struct SettingsView: View {
 
                 if !cloudOnlySummaries.isEmpty {
                     await MainActor.run {
-                        let alert = UIAlertController(
+                        PlatformAlert.present(
                             title: "iCloud Data Found",
                             message: "We found \(cloudOnlySummaries.count) summaries in your iCloud that aren't on this device. Would you like to download them?",
-                            preferredStyle: .alert
-                        )
-                        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-                        alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
-                            Task {
-                                do {
-                                    let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
-                                    AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
-                                } catch {
-                                    AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                            actions: [
+                                PlatformAlert.Action(title: "Cancel", isCancel: true),
+                                PlatformAlert.Action(title: "Download") {
+                                    Task {
+                                        do {
+                                            let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
+                                            AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
+                                        } catch {
+                                            AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                                        }
+                                    }
                                 }
-                            }
-                        })
-                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                           let rootViewController = windowScene.windows.first?.rootViewController {
-                            rootViewController.present(alert, animated: true)
-                        }
+                            ]
+                        )
                     }
                 } else {
                     await MainActor.run {
-                        let alert = UIAlertController(
+                        PlatformAlert.present(
                             title: "No iCloud Data",
-                            message: "No summaries were found in your iCloud account.",
-                            preferredStyle: .alert
+                            message: "No summaries were found in your iCloud account."
                         )
-                        alert.addAction(UIAlertAction(title: "OK", style: .default))
-                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                           let rootViewController = windowScene.windows.first?.rootViewController {
-                            rootViewController.present(alert, animated: true)
-                        }
                     }
                 }
             } catch {
                 AppLog.shared.log("Failed to check for iCloud data: \(error)", level: .error, category: .general)
                 await MainActor.run {
-                    let alert = UIAlertController(
+                    PlatformAlert.present(
                         title: "Check Failed",
-                        message: "Could not check for iCloud data: \(error.localizedDescription)",
-                        preferredStyle: .alert
+                        message: "Could not check for iCloud data: \(error.localizedDescription)"
                     )
-                    alert.addAction(UIAlertAction(title: "OK", style: .default))
-                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                       let rootViewController = windowScene.windows.first?.rootViewController {
-                        rootViewController.present(alert, animated: true)
-                    }
                 }
             }
         }
@@ -1775,6 +1786,10 @@ private struct ModernSettingsNavigationRow<Trailing: View>: View {
             value: subtitle,
             hint: "Opens \(title)."
         )
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            action()
+        }
     }
 }
 

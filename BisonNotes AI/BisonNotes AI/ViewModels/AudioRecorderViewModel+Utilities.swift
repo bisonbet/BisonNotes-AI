@@ -170,6 +170,11 @@ extension AudioRecorderViewModel {
 				try await enhancedAudioSessionManager.setPreferredInput(input)
 				UserDefaults.standard.set(input.uid, forKey: preferredInputDefaultsKey)
 				try await enhancedAudioSessionManager.deactivateSession()
+				#if os(macOS)
+				await MainActor.run {
+					self.scheduleMacInputDeviceRefresh()
+				}
+				#endif
 			} catch {
 				errorMessage = "Failed to set preferred input: \(error.localizedDescription)"
 				try? await enhancedAudioSessionManager.deactivateSession()
@@ -216,25 +221,27 @@ extension AudioRecorderViewModel {
 				}
 			} else {
 				// Preferred input is no longer available, fall back to default
-				AppLog.shared.recording("Preferred input no longer available, falling back to iOS default")
+				AppLog.shared.recording("Preferred input no longer available, falling back to the system default")
 				inputToUse = nil
 			}
 		}
 
-		// If no preferred input or it's unavailable, let iOS use its default
-		// iOS will automatically use the built-in microphone when no preferred input is set
+		// If no preferred input or it's unavailable, use the platform default.
 		if inputToUse == nil {
 			do {
-				// Clear the preferred input to let iOS use its default
+				// Clear the preferred input to let the platform use its default.
 				try await enhancedAudioSessionManager.clearPreferredInput()
 				// Clear the stored preference since the device is no longer available
 				UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
 				// Update selectedInput to nil so UI reflects the fallback
 				selectedInput = nil
-				AppLog.shared.recording("Using iOS default microphone (preferred input unavailable)")
+				AppLog.shared.recording("Using the system default microphone (preferred input unavailable)")
 			} catch {
-				// If clearing fails, iOS will still use default, so just log it
-				AppLog.shared.recording("Could not clear preferred input, iOS will use default: \(error.localizedDescription)", level: .debug)
+				// If clearing fails, the platform still falls back to its default input.
+				AppLog.shared.recording(
+					"Could not clear preferred input; using the system default: \(error.localizedDescription)",
+					level: .debug
+				)
 				// Still clear the stored preference and update UI
 				UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
 				selectedInput = nil

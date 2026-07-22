@@ -83,6 +83,7 @@ The project uses Swift Package Manager for dependency management. Major dependen
 ### **On-Device AI**
 - **MLX Swift / MLX Swift LM**: Backs the default On Device AI summarization path in v2.0.
   - Models: Ternary Bonsai 1.7B (~470 MB, 4 GB+ RAM), 4B (~1.1 GB, 6 GB+ RAM, default), and 8B (~2.3 GB, 8 GB+ RAM)
+  - Native macOS also offers Ternary Bonsai 27B (~8.5 GB, 16 GB+ RAM); it is not available in the iOS or Mac Catalyst model catalog
   - Models download from Hugging Face on first use and run locally after download
   - 4-6 GB devices use the 1.7B model; 6 GB+ devices default to the 4B model; 8 GB+ devices can select the 8B model
 - **llama.cpp**: Embedded as a pre-compiled xcframework (`Frameworks/llama.xcframework`) for Metal-accelerated on-device LLM inference
@@ -291,6 +292,7 @@ The on-device AI feature enables completely private, offline AI processing. v2.1
 - **4GB+ RAM**: Ternary Bonsai 1.7B (~470 MB) - compact model for devices with limited memory
 - **6GB+ RAM**: Ternary Bonsai 4B (~1.1 GB) - default model for most supported devices
 - **8GB+ RAM**: Ternary Bonsai 8B (~2.3 GB) - slower but higher-quality summaries
+- **Native macOS, 16GB+ RAM**: Ternary Bonsai 27B (~8.5 GB) - laptop-class reasoning; unavailable on iOS and Mac Catalyst
 - **Context Window**: 16K tokens
 - **Migration**: Existing users on the removed LFM model or legacy llama on sub-6GB devices are moved to MLX 1.7B when possible. Devices below 4GB fall back to Mistral AI.
 

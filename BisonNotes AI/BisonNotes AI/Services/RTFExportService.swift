@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 import MapKit
 
 /// Errors that can occur during RTF document generation
@@ -20,6 +22,7 @@ enum RTFExportError: LocalizedError {
     }
 }
 
+#if canImport(UIKit)
 final class RTFExportService {
     static let shared = RTFExportService()
 
@@ -559,3 +562,43 @@ final class RTFExportService {
         document.append(list)
     }
 }
+#else
+final class RTFExportService {
+    static let shared = RTFExportService()
+
+    private init() {}
+
+    @MainActor
+    func generateDocument(
+        summaryData: EnhancedSummaryData,
+        locationData: LocationData?,
+        locationAddress: String?
+    ) throws -> Data {
+        AppLog.shared.fileManagement("RTFExportService: Starting native Mac document generation")
+        do {
+            let data = try MacSummaryExportRenderer.rtfData(
+                summaryData: summaryData,
+                locationData: locationData,
+                locationAddress: locationAddress
+            )
+            AppLog.shared.fileManagement("RTFExportService: Generated native Mac RTF (\(data.count) bytes)")
+            return data
+        } catch let error as MacSummaryExportRenderer.RenderError {
+            AppLog.shared.fileManagement(
+                "RTFExportService: Native Mac export failed: \(error.localizedDescription)",
+                level: .error
+            )
+            switch error {
+            case .documentTooLarge:
+                throw RTFExportError.memoryLimitExceeded
+            case .invalidDocument:
+                throw RTFExportError.invalidDocumentData
+            case .pdfContextUnavailable:
+                throw RTFExportError.documentGenerationFailed(error.localizedDescription)
+            }
+        } catch {
+            throw RTFExportError.documentGenerationFailed(error.localizedDescription)
+        }
+    }
+}
+#endif

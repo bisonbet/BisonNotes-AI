@@ -145,10 +145,16 @@ class EnhancedErrorHandler: ObservableObject {
     }
 
     private func getDeviceInfo() -> DeviceInfo {
-        let device = UIDevice.current
+        #if canImport(UIKit)
+        let model = UIDevice.current.model
+        let systemVersion = UIDevice.current.systemVersion
+        #else
+        let model = "Mac"
+        let systemVersion = ProcessInfo.processInfo.operatingSystemVersionString
+        #endif
         return DeviceInfo(
-            model: device.model,
-            systemVersion: device.systemVersion,
+            model: model,
+            systemVersion: systemVersion,
             appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown",
             availableMemory: getAvailableMemory(),
             availableStorage: getAvailableStorage()

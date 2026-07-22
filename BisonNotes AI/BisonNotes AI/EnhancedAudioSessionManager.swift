@@ -7,8 +7,15 @@
 
 import Foundation
 import AVFoundation
+#if os(macOS)
+import AudioToolbox
+import CoreAudio
+#endif
+#if canImport(UIKit)
 import UIKit
+#endif
 
+#if os(iOS)
 /// Enhanced audio session manager for recording, playback, and background operations.
 class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
@@ -511,6 +518,300 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         #endif
     }
 }
+
+#else
+
+// AVAudioSession does not exist on native macOS. AVAudioEngine records without
+// a session, while input discovery and selection use AVCaptureDevice + Core Audio.
+
+/// Minimal stand-in for AVAudioSessionPortDescription so the shared audio stack
+/// compiles on native macOS. Callers only use portName, uid, and portType.
+final class AVAudioSessionPortDescription: NSObject {
+    struct Port: Equatable {
+        let rawValue: String
+        static let builtInMic = Port(rawValue: "BuiltInMic")
+        static let bluetoothHFP = Port(rawValue: "BluetoothHFP")
+        static let headsetMic = Port(rawValue: "HeadsetMic")
+        static let usbAudio = Port(rawValue: "USBAudio")
+    }
+
+    let portName: String
+    let uid: String
+    let portType: Port
+    let audioDeviceID: AudioDeviceID
+
+    init(portName: String, uid: String, portType: Port, audioDeviceID: AudioDeviceID) {
+        self.portName = portName
+        self.uid = uid
+        self.portType = portType
+        self.audioDeviceID = audioDeviceID
+    }
+}
+
+class EnhancedAudioSessionManager: NSObject, ObservableObject {
+    @Published var isConfigured = false
+    @Published var isMixedAudioEnabled = false
+    @Published var isBackgroundRecordingEnabled = false
+    @Published var lastError: AudioProcessingError?
+
+    private var preferredInputDeviceID: AudioDeviceID?
+    private var configuredInputDeviceID: AudioDeviceID?
+    private var inputDeviceMonitor: MacInputDeviceMonitor?
+
+    deinit {
+        stopInputDeviceMonitoring()
+    }
+
+    func configureMixedAudioSession() async throws {
+        isConfigured = true
+        isMixedAudioEnabled = true
+        isBackgroundRecordingEnabled = false
+    }
+
+    func configureBackgroundRecording() async throws {
+        isConfigured = true
+        isMixedAudioEnabled = false
+        isBackgroundRecordingEnabled = true
+    }
+
+    func configurePlaybackSession() async throws {
+        isConfigured = true
+        isMixedAudioEnabled = false
+        isBackgroundRecordingEnabled = false
+    }
+
+    func configureBackgroundProcessingSession() async throws {
+        isConfigured = true
+        isMixedAudioEnabled = true
+        isBackgroundRecordingEnabled = false
+    }
+
+    func restoreAudioSession() async throws {}
+
+    func deactivateSession() async throws {
+        isConfigured = false
+        isMixedAudioEnabled = false
+        isBackgroundRecordingEnabled = false
+    }
+
+    func setPreferredInput(_ input: AVAudioSessionPortDescription) async throws {
+        guard getAvailableInputs().contains(where: { $0.audioDeviceID == input.audioDeviceID }) else {
+            let error = AudioProcessingError.audioSessionConfigurationFailed(
+                "The selected microphone is no longer available."
+            )
+            lastError = error
+            throw error
+        }
+
+        preferredInputDeviceID = input.audioDeviceID
+        AppLog.shared.audioSession("Preferred Mac input set to: \(input.portName) (\(input.uid))")
+    }
+
+    func clearPreferredInput() async throws {
+        preferredInputDeviceID = nil
+        AppLog.shared.audioSession("Preferred Mac input cleared; using the system default microphone")
+    }
+
+    func getAvailableInputs() -> [AVAudioSessionPortDescription] {
+        let defaultDeviceID = Self.defaultInputDeviceID()
+        let discoverySession = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.microphone, .external],
+            mediaType: .audio,
+            position: .unspecified
+        )
+
+        var seenDeviceIDs = Set<AudioDeviceID>()
+        let inputs = discoverySession.devices.compactMap { device -> AVAudioSessionPortDescription? in
+            guard let deviceID = Self.audioDeviceID(forUID: device.uniqueID),
+                  seenDeviceIDs.insert(deviceID).inserted else {
+                return nil
+            }
+
+            return AVAudioSessionPortDescription(
+                portName: device.localizedName,
+                uid: device.uniqueID,
+                portType: Self.portType(for: deviceID),
+                audioDeviceID: deviceID
+            )
+        }
+
+        return inputs.sorted { lhs, rhs in
+            if lhs.audioDeviceID == defaultDeviceID { return true }
+            if rhs.audioDeviceID == defaultDeviceID { return false }
+            return lhs.portName.localizedCaseInsensitiveCompare(rhs.portName) == .orderedAscending
+        }
+    }
+
+    func getActiveInput() -> AVAudioSessionPortDescription? {
+        let inputs = getAvailableInputs()
+        if let preferredInputDeviceID,
+           let preferredInput = inputs.first(where: { $0.audioDeviceID == preferredInputDeviceID }) {
+            return preferredInput
+        }
+
+        guard let defaultDeviceID = Self.defaultInputDeviceID() else {
+            return inputs.first
+        }
+        return inputs.first(where: { $0.audioDeviceID == defaultDeviceID }) ?? inputs.first
+    }
+
+    /// The device a newly created recording engine should use. A disconnected
+    /// preferred device automatically falls back to the current system default.
+    func resolvedInputDeviceID() -> AudioDeviceID? {
+        let availableDeviceIDs = Set(getAvailableInputs().map(\.audioDeviceID))
+        if let preferredInputDeviceID, availableDeviceIDs.contains(preferredInputDeviceID) {
+            return preferredInputDeviceID
+        }
+        return Self.defaultInputDeviceID()
+    }
+
+    /// True when the engine is still bound to the device the current preference
+    /// resolves to. Device-list and default-input listeners use this to ignore
+    /// unrelated audio-device changes.
+    func recordingInputNeedsRecovery() -> Bool {
+        guard let configuredInputDeviceID else { return false }
+        return configuredInputDeviceID != resolvedInputDeviceID()
+    }
+
+    func clearConfiguredInputDevice() {
+        configuredInputDeviceID = nil
+    }
+
+    /// Watches both the system default input and the complete Core Audio device
+    /// list. The latter is required for a selected non-default USB/Bluetooth mic.
+    func startInputDeviceMonitoring(onChange: @escaping () -> Void) {
+        stopInputDeviceMonitoring()
+        let monitor = MacInputDeviceMonitor(onChange: onChange)
+        monitor.start()
+        inputDeviceMonitor = monitor
+    }
+
+    func stopInputDeviceMonitoring() {
+        inputDeviceMonitor?.stop()
+        inputDeviceMonitor = nil
+    }
+
+    /// Applies the selected Mac input to this engine without changing the
+    /// user's system-wide default input device.
+    func configureInputDevice(for engine: AVAudioEngine) throws {
+        guard let deviceID = resolvedInputDeviceID() else {
+            let error = AudioProcessingError.audioSessionConfigurationFailed("No microphone is available.")
+            lastError = error
+            throw error
+        }
+        guard let audioUnit = engine.inputNode.audioUnit else {
+            let error = AudioProcessingError.audioSessionConfigurationFailed(
+                "The microphone audio unit could not be created."
+            )
+            lastError = error
+            throw error
+        }
+
+        var mutableDeviceID = deviceID
+        let status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &mutableDeviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        guard status == noErr else {
+            let systemError = NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+            let error = AudioProcessingError.audioSessionConfigurationFailed(
+                "Failed to select the microphone: \(systemError.localizedDescription)"
+            )
+            lastError = error
+            throw error
+        }
+        configuredInputDeviceID = deviceID
+
+        let inputName = getAvailableInputs()
+            .first(where: { $0.audioDeviceID == deviceID })?
+            .portName ?? "system default"
+        AppLog.shared.audioSession("Configured AVAudioEngine input: \(inputName)")
+    }
+
+    private static func defaultInputDeviceID() -> AudioDeviceID? {
+        var deviceID = AudioDeviceID(kAudioObjectUnknown)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &size,
+            &deviceID
+        )
+        guard status == noErr, deviceID != kAudioObjectUnknown else { return nil }
+        return deviceID
+    }
+
+    private static func audioDeviceID(forUID value: String) -> AudioDeviceID? {
+        var uid = value as CFString
+        var deviceID = AudioDeviceID(kAudioObjectUnknown)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDeviceForUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        let status: OSStatus = withUnsafeMutablePointer(to: &uid) { uidPointer in
+            withUnsafeMutablePointer(to: &deviceID) { deviceIDPointer in
+                var translation = AudioValueTranslation(
+                    mInputData: UnsafeMutableRawPointer(uidPointer),
+                    mInputDataSize: UInt32(MemoryLayout<CFString>.size),
+                    mOutputData: UnsafeMutableRawPointer(deviceIDPointer),
+                    mOutputDataSize: UInt32(MemoryLayout<AudioDeviceID>.size)
+                )
+                var size = UInt32(MemoryLayout<AudioValueTranslation>.size)
+                return AudioObjectGetPropertyData(
+                    AudioObjectID(kAudioObjectSystemObject),
+                    &address,
+                    0,
+                    nil,
+                    &size,
+                    &translation
+                )
+            }
+        }
+
+        guard status == noErr, deviceID != kAudioObjectUnknown else { return nil }
+        return deviceID
+    }
+
+    private static func portType(for deviceID: AudioDeviceID) -> AVAudioSessionPortDescription.Port {
+        var transportType: UInt32 = 0
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &transportType)
+        guard status == noErr else { return .headsetMic }
+
+        switch transportType {
+        case kAudioDeviceTransportTypeBuiltIn:
+            return .builtInMic
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+            return .bluetoothHFP
+        case kAudioDeviceTransportTypeUSB:
+            return .usbAudio
+        default:
+            return .headsetMic
+        }
+    }
+
+    func handleAudioInterruption(_ notification: Notification) {}
+}
+
+#endif
 
 // MARK: - Error Types
 

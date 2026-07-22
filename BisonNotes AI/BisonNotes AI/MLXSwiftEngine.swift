@@ -197,13 +197,66 @@ final class MLXSwiftEngine: SummarizationEngine, ConnectionTestable {
     }
 }
 
+// MARK: - Response Cleanup
+
+/// Removes reasoning-channel output that some thinking-capable models include
+/// in their decoded response. Summary parsing must only receive the final answer.
+enum MLXSwiftResponseCleaner {
+    private static let reasoningTags = ["think", "analysis", "reasoning"]
+
+    static func stripThinking(from text: String) -> String {
+        var cleaned = text
+
+        for tag in reasoningTags {
+            cleaned = cleaned.replacingOccurrences(
+                of: "(?is)<\(tag)>.*?</\(tag)>",
+                with: "",
+                options: .regularExpression
+            )
+
+            // A response can hit its token limit before the closing tag. Never
+            // surface a partial reasoning trace as the generated summary.
+            if let openTag = cleaned.range(of: "<\(tag)>", options: .caseInsensitive) {
+                cleaned.removeSubrange(openTag.lowerBound...)
+            }
+        }
+
+        cleaned = stripProseReasoningPreamble(from: cleaned)
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func stripProseReasoningPreamble(from text: String) -> String {
+        let reasoningPrefix =
+            #"(?is)^\s*(?:(?:here(?:'|’)s|here is)\s+(?:a\s+|the\s+|my\s+)?"#
+            + #"(?:thinking|reasoning)(?:\s+process)?|(?:thinking|reasoning)(?:\s+process)?)\s*:"#
+        guard text.range(of: reasoningPrefix, options: .regularExpression) != nil else {
+            return text
+        }
+
+        if let summaryHeader = text.range(of: #"(?im)^##\s+summary\s*$"#, options: .regularExpression) {
+            return String(text[summaryHeader.lowerBound...])
+        }
+
+        let finalAnswerMarker =
+            #"(?im)^\s*(?:(?:here(?:'|’)s|here is)\s+the\s+)?"#
+            + #"final\s+(?:answer|response|summary)\s*:\s*"#
+        if let finalAnswer = text.range(of: finalAnswerMarker, options: .regularExpression) {
+            return String(text[finalAnswer.upperBound...])
+        }
+
+        return text
+    }
+}
+
 // MARK: - Conditional MLXLLM Implementation
 
 #if canImport(MLXLLM) && canImport(MLXLMCommon)
 import MLXLLM
 import MLX
 import MLXLMCommon
+#if canImport(UIKit)
 import UIKit
+#endif
 import os
 
 // MARK: MLX Memory Configuration for iOS
@@ -265,6 +318,11 @@ extension MLXSwiftDownloadManager {
 // MARK: MLX Service Actor
 
 private actor MLXSwiftService {
+    private static let thinkingTokenAllowance = 4_096
+    #if os(macOS)
+    private static let thinkingModelId = "prism-ml/Ternary-Bonsai-27B-mlx-2bit"
+    #endif
+
     private var modelContainer: ModelContainer?
     private var loadedModelId: String?
     private var memoryObserver: NSObjectProtocol?
@@ -281,7 +339,7 @@ private actor MLXSwiftService {
         guard memoryObserver == nil else { return }
 
         let observer = NotificationCenter.default.addObserver(
-            forName: UIApplication.didReceiveMemoryWarningNotification,
+            forName: PlatformLifecycle.didReceiveMemoryWarningNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -347,7 +405,10 @@ private actor MLXSwiftService {
         // Use a hard cap well below the device context window to keep peak memory
         // manageable. MLX loads the full model into Metal buffers (no mmap), so
         // every token of KV cache and activation memory is additive.
-        let inputLimit = min(Self.mlxMaxInputTokens, max(1500, configuredContextTokens - configuredMaxTokens - 700))
+        let inputLimit = min(
+            Self.mlxMaxInputTokens,
+            max(1_500, configuredContextTokens - configuredGenerationTokenBudget - 700)
+        )
 
         AppLog.shared.summarization("[MLXSwift] Transcript: \(tokenCount) tokens, input limit: \(inputLimit) tokens/chunk")
 
@@ -534,6 +595,8 @@ private actor MLXSwiftService {
 
     CRITICAL:
     - Extract ONLY information that appears in the transcript itself
+    - Think carefully enough to catch every explicit task, reminder, deadline, title topic, and important detail
+    - Keep reasoning inside the model's thinking channel; after it closes, return only the final formatted sections
     - Do NOT generate placeholder text, examples, or generic content
     - Do NOT include tasks, reminders, or titles unless they are actually mentioned
     - If no tasks are mentioned, return an empty tasks section
@@ -553,7 +616,7 @@ private actor MLXSwiftService {
     private func generate(prompt: String) async throws -> String {
         let container = try await loadContainer()
         let parameters = GenerateParameters(
-            maxTokens: configuredMaxTokens,
+            maxTokens: configuredGenerationTokenBudget,
             maxKVSize: configuredContextTokens,
             kvBits: 4,
             kvGroupSize: 64,
@@ -563,10 +626,22 @@ private actor MLXSwiftService {
             repetitionPenalty: configuredRepetitionPenalty,
             prefillStepSize: 256
         )
+        let templateContext: [String: any Sendable]?
+        if isThinkingModeEnabled {
+            templateContext = ["enable_thinking": true]
+            AppLog.shared.summarization(
+                "[MLXSwift] Thinking mode enabled: \(Self.thinkingTokenAllowance)-token hidden reasoning allowance, "
+                + "\(configuredMaxTokens)-token final-output target"
+            )
+        } else {
+            templateContext = nil
+        }
+
         let session = ChatSession(
             container,
             instructions: Self.systemInstruction,
-            generateParameters: parameters
+            generateParameters: parameters,
+            additionalContext: templateContext
         )
 
         let response = try await session.respond(to: prompt)
@@ -580,10 +655,10 @@ private actor MLXSwiftService {
     private static let minimumAvailableMemory: UInt64 = 2_500_000_000
 
     /// Returns the amount of memory the process can safely use before loading.
-    /// On iOS this is the jetsam-limit headroom; on Mac Catalyst that API returns 0
-    /// (no jetsam limits on macOS), so we read host VM stats for actual free RAM.
+    /// On iOS this is the jetsam-limit headroom; on Mac (Catalyst or native) that
+    /// API is unavailable/returns 0, so we read host VM stats for actual free RAM.
     private static func availableMemoryForModelLoad() -> UInt64 {
-        #if targetEnvironment(macCatalyst)
+        #if targetEnvironment(macCatalyst) || os(macOS)
         var stats = vm_statistics64()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &stats) { ptr -> kern_return_t in
@@ -659,6 +734,21 @@ private actor MLXSwiftService {
         return MLXSwiftSettingsKeys.defaultMaxTokens
     }
 
+    private var configuredGenerationTokenBudget: Int {
+        let reasoningAllowance = isThinkingModeEnabled ? Self.thinkingTokenAllowance : 0
+        return configuredMaxTokens + reasoningAllowance
+    }
+
+    private var isThinkingModeEnabled: Bool {
+        #if os(macOS)
+        let modelId = UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
+            ?? MLXSwiftSettingsKeys.defaultModelId
+        return modelId == Self.thinkingModelId
+        #else
+        return false
+        #endif
+    }
+
     private var configuredContextTokens: Int {
         if UserDefaults.standard.object(forKey: MLXSwiftSettingsKeys.contextTokens) != nil {
             return UserDefaults.standard.integer(forKey: MLXSwiftSettingsKeys.contextTokens)
@@ -705,7 +795,7 @@ private struct MLXSwiftStructuredResponse {
     let contentType: ContentType
 }
 
-private enum MLXSwiftResponseParser {
+enum MLXSwiftResponseParser {
     static func parse(
         _ rawResponse: String,
         fallbackText: String
@@ -856,12 +946,7 @@ private enum MLXSwiftResponseParser {
     }
 
     static func stripThinking(from text: String) -> String {
-        text.replacingOccurrences(
-            of: #"(?is)<think>.*?</think>"#,
-            with: "",
-            options: .regularExpression
-        )
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+        MLXSwiftResponseCleaner.stripThinking(from: text)
     }
 
     private static func extractJSONObject(from text: String) -> String {

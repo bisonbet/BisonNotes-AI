@@ -6,24 +6,22 @@
 //
 
 import SwiftUI
-#if !targetEnvironment(macCatalyst)
-import SafariServices
-#endif
+import UniformTypeIdentifiers
 
 struct RecordingsView: View {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var importManager: FileImportManager
     @EnvironmentObject var transcriptImportManager: TranscriptImportManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
-    @StateObject private var textDocumentPickerCoordinator = DocumentPickerCoordinator()
-    @StateObject private var videoPickerCoordinator = DocumentPickerCoordinator()
+    @State private var showingAudioImporter = false
+    @State private var showingTranscriptImporter = false
     @StateObject private var webImportManager = WebImportManager()
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [AudioRecordingFile] = []
     @State private var showingRecordingsList = false
     @State private var showingBackgroundProcessing = false
-    @State private var showingHelpDocumentation = false
     @State private var showingWebImport = false
     @State private var showingRecorderError = false
     @State private var recorderErrorMessage = ""
@@ -146,6 +144,27 @@ struct RecordingsView: View {
         .accessibilityIdentifier(BisonNotesAccessibilityID.startRecordingButton)
     }
 
+    // File-importer URLs are security-scoped; hold access for the whole import.
+    private func handleImport(_ result: Result<[URL], Error>, using importFiles: @escaping ([URL]) async -> Void) {
+        guard case .success(let urls) = result, !urls.isEmpty else { return }
+        Task {
+            let accessedURLs = urls.filter { $0.startAccessingSecurityScopedResource() }
+            defer { accessedURLs.forEach { $0.stopAccessingSecurityScopedResource() } }
+            await importFiles(urls)
+        }
+    }
+
+    private static let transcriptContentTypes: [UTType] = {
+        var types: [UTType] = [.plainText, .text, .pdf]
+        types.append(UTType(importedAs: "org.openxmlformats.wordprocessingml.document"))
+        for ext in ["md", "markdown", "docx", "doc"] {
+            if let type = UTType(filenameExtension: ext) {
+                types.append(type)
+            }
+        }
+        return types
+    }()
+
     private func recordingActionButton(
         _ config: RecordingActionConfig,
         action: @escaping () -> Void
@@ -188,7 +207,9 @@ struct RecordingsView: View {
                         Spacer()
 
                         Button(action: {
-                            showingHelpDocumentation = true
+                            if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
+                                openURL(url)
+                            }
                         }) {
                             Image(systemName: "questionmark.circle")
                                 .font(.title3)
@@ -238,7 +259,7 @@ struct RecordingsView: View {
                                     accessibilityIdentifier: BisonNotesAccessibilityID.viewRecordingsButton
                                 )
                             ) {
-                                showingRecordingsList = true
+                                presentRecordingsLibrary()
                             }
 
                             homeActionButton(
@@ -250,14 +271,7 @@ struct RecordingsView: View {
                                     accessibilityIdentifier: BisonNotesAccessibilityID.importAudioButton
                                 )
                             ) {
-                                // Directly trigger document picker for audio files
-                                documentPickerCoordinator.selectAudioFiles { urls in
-                                    if !urls.isEmpty {
-                                        Task {
-                                            await importManager.importAudioFiles(from: urls)
-                                        }
-                                    }
-                                }
+                                showingAudioImporter = true
                             }
 
                             homeActionButton(
@@ -273,7 +287,6 @@ struct RecordingsView: View {
                             }
 
                             // Video import button hidden — feature not yet ready for users
-                            // videoPickerCoordinator.selectVideoFiles { ... }
 
                             homeActionButton(
                                 HomeActionConfig(
@@ -284,14 +297,7 @@ struct RecordingsView: View {
                                     accessibilityIdentifier: BisonNotesAccessibilityID.importTranscriptButton
                                 )
                             ) {
-                                // Trigger document picker for text files
-                                textDocumentPickerCoordinator.selectTextFiles { urls in
-                                    if !urls.isEmpty {
-                                        Task {
-                                            await transcriptImportManager.importTranscriptFiles(from: urls)
-                                        }
-                                    }
-                                }
+                                showingTranscriptImporter = true
                             }
                         }
 
@@ -311,11 +317,23 @@ struct RecordingsView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color(.systemGroupedBackground))
-            .sheet(isPresented: $documentPickerCoordinator.isShowingPicker) {
-                AudioDocumentPicker(isPresented: $documentPickerCoordinator.isShowingPicker, coordinator: documentPickerCoordinator)
+            .fileImporter(
+                isPresented: $showingAudioImporter,
+                allowedContentTypes: [.audio],
+                allowsMultipleSelection: true
+            ) { result in
+                handleImport(result) { urls in
+                    await importManager.importAudioFiles(from: urls)
+                }
             }
-            .sheet(isPresented: $textDocumentPickerCoordinator.isShowingPicker) {
-                TextDocumentPicker(isPresented: $textDocumentPickerCoordinator.isShowingPicker, coordinator: textDocumentPickerCoordinator)
+            .fileImporter(
+                isPresented: $showingTranscriptImporter,
+                allowedContentTypes: Self.transcriptContentTypes,
+                allowsMultipleSelection: true
+            ) { result in
+                handleImport(result) { urls in
+                    await transcriptImportManager.importTranscriptFiles(from: urls)
+                }
             }
             .sheet(isPresented: $showingWebImport) {
                 WebImportSheet(
@@ -323,26 +341,12 @@ struct RecordingsView: View {
                     fileImportManager: importManager,
                     transcriptImportManager: transcriptImportManager
                 )
+                .nativeMacModalSizing(width: 700, height: 620)
             }
-            // Video picker sheet hidden — feature not yet ready for users
-            // .sheet(isPresented: $videoPickerCoordinator.isShowingPicker) { ... }
+            // Video import hidden — feature not yet ready for users
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()
-            }
-            .sheet(isPresented: $showingHelpDocumentation) {
-                #if !targetEnvironment(macCatalyst)
-                if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
-                    SafariView(url: url)
-                }
-                #endif
-            }
-            .onChange(of: showingHelpDocumentation) { _, isShowing in
-                #if targetEnvironment(macCatalyst)
-                if isShowing, let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
-                    UIApplication.shared.open(url)
-                    showingHelpDocumentation = false
-                }
-                #endif
+                    .nativeMacModalSizing(width: 760, height: 680)
             }
             .alert("Audio Import Results", isPresented: $importManager.showingImportAlert) {
                 Button("OK", role: .cancel) {}
@@ -366,22 +370,10 @@ struct RecordingsView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportAudioFromMenu"))) { _ in
-                documentPickerCoordinator.selectAudioFiles { urls in
-                    if !urls.isEmpty {
-                        Task {
-                            await importManager.importAudioFiles(from: urls)
-                        }
-                    }
-                }
+                showingAudioImporter = true
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportTranscriptFromMenu"))) { _ in
-                textDocumentPickerCoordinator.selectTextFiles { urls in
-                    if !urls.isEmpty {
-                        Task {
-                            await transcriptImportManager.importTranscriptFiles(from: urls)
-                        }
-                    }
-                }
+                showingTranscriptImporter = true
             }
             .onReceive(
                 NotificationCenter.default.publisher(for: NSNotification.Name("ImportFromLinkFromMenu"))
@@ -405,6 +397,7 @@ struct RecordingsView: View {
             RecordingsListView()
                 .environment(\.isEmbeddedInSplitView, false)
                 .environmentObject(recorderVM)
+                .nativeMacModalSizing(width: 900, height: 720)
         }
     }
 
@@ -506,7 +499,7 @@ struct RecordingsView: View {
 
     private var backgroundProcessingIndicator: some View {
         Button(action: {
-            showingBackgroundProcessing = true
+            presentBackgroundProcessing()
         }) {
             HStack {
                 Image(systemName: "gear.circle.fill")
@@ -540,6 +533,22 @@ struct RecordingsView: View {
             .padding(.horizontal, 40)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+
+    private func presentRecordingsLibrary() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.recordings)
+        #else
+        showingRecordingsList = true
+        #endif
+    }
+
+    private func presentBackgroundProcessing() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.backgroundProcessing)
+        #else
+        showingBackgroundProcessing = true
+        #endif
     }
 
     // MARK: - Phase 5: UI Helper Methods
@@ -657,6 +666,3 @@ struct RecordingsView: View {
         .cornerRadius(8)
     }
 }
-
-// MARK: - Safari View Wrapper
-// SafariView is now in Views/SafariView.swift

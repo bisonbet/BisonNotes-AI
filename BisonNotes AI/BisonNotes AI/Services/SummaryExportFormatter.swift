@@ -1,6 +1,9 @@
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
+#if canImport(UIKit)
 enum SummaryExportFormatter {
     // MARK: - Cached Regex Patterns
 
@@ -304,3 +307,4 @@ private extension UIFont {
         return UIFont(descriptor: descriptor, size: pointSize)
     }
 }
+#endif

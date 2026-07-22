@@ -103,16 +103,19 @@ struct OnDeviceLLMSettingsView: View {
                 connectionTestButton
             }
         }
+        .nativeMacSettingsFormStyle()
         .scrollContentBackground(.hidden)
         .background(Color(.systemGroupedBackground))
         .navigationTitle(AIEngineType.onDeviceLLM.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            #if !os(macOS)
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") {
                     dismiss()
                 }
             }
+            #endif
         }
         .alert("Delete Model?", isPresented: $showingDeleteConfirmation, presenting: modelToDelete) { model in
             Button("Delete", role: .destructive) {

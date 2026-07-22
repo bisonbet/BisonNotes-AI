@@ -6,8 +6,12 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(BackgroundTasks)
 import BackgroundTasks
+#endif
 import UserNotifications
 import AppIntents
 import WidgetKit
@@ -20,12 +24,18 @@ import Darwin
 struct BisonNotesAIApp: App {
     let persistenceController = PersistenceController.shared
     @StateObject private var appCoordinator = AppDataCoordinator()
+    @StateObject private var recorderVM = AudioRecorderViewModel()
     @StateObject private var fileImportManager = FileImportManager()
     @StateObject private var transcriptImportManager = TranscriptImportManager()
     @State private var hasQueuedParakeetStartupRepair = false
+    @FocusedValue(\.summaryExportAction) private var summaryExportAction
 
     // Phase 6: Register AppDelegate for notification handling
+    #if canImport(UIKit)
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #else
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #endif
 
     /// Performs one-time migration of AWS Bedrock settings from legacy model identifiers
     /// This ensures UserDefaults is updated rather than migrating on every access
@@ -379,7 +389,7 @@ struct BisonNotesAIApp: App {
             return
         }
 
-        guard UIApplication.shared.isProtectedDataAvailable else {
+        guard PlatformApp.isProtectedDataAvailable else {
             return
         }
 
@@ -526,11 +536,12 @@ struct BisonNotesAIApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
                 .environmentObject(fileImportManager)
                 .environmentObject(transcriptImportManager)
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didFinishLaunchingNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didFinishLaunchingNotification)) { _ in
                     requestBackgroundAppRefreshPermission()
                     #if !targetEnvironment(macCatalyst)
                     setupWatchConnectivity()
@@ -543,13 +554,13 @@ struct BisonNotesAIApp: App {
                     appCoordinator.reconcileiCloudIfEnabled(reason: "app launch", force: true)
                 }
                 .onOpenURL(perform: handleOpenURL)
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didEnterBackgroundNotification)) { _ in
                     AppLog.shared.markCleanShutdown()
                 }
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.willTerminateNotification)) { _ in
                     AppLog.shared.markCleanShutdown()
                 }
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didBecomeActiveNotification)) { _ in
                     AppLog.shared.markSessionActive()
                     // Clear badge when the user actively opens the app. Using the
                     // scene-phase notification here (rather than AppDelegate
@@ -570,34 +581,45 @@ struct BisonNotesAIApp: App {
                     NSLog("📎 Darwin notification received from Share Extension")
                     scanSharedContainerForImports(trigger: .pendingToken)
                 }
+                .nativeMainWindowSizing()
         }
+        #if os(macOS)
+        .defaultSize(width: 1_100, height: 720)
+        .windowResizability(.contentMinSize)
+        #endif
         .commands {
             // MARK: - Mac Menu Bar Commands
+            // Keep the system undo/redo and pasteboard groups untouched so
+            // focused TextField/TextEditor controls retain standard Edit-menu behavior.
             CommandGroup(replacing: .newItem) {
                 Button("New Recording") {
-                    NotificationCenter.default.post(name: NSNotification.Name("ToggleRecording"), object: nil)
+                    postRecordingCommand(named: "ToggleRecording")
                 }
-                .keyboardShortcut("r", modifiers: .command)
+                .keyboardShortcut("n", modifiers: .command)
 
                 Divider()
 
                 Button("Import Audio...") {
-                    NotificationCenter.default.post(name: NSNotification.Name("ImportAudioFromMenu"), object: nil)
+                    postRecordingCommand(named: "ImportAudioFromMenu")
                 }
                 .keyboardShortcut("i", modifiers: .command)
 
                 Button("Import Transcript...") {
-                    NotificationCenter.default.post(name: NSNotification.Name("ImportTranscriptFromMenu"), object: nil)
+                    postRecordingCommand(named: "ImportTranscriptFromMenu")
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
 
                 Button("Import From Link...") {
-                    let switchName = NSNotification.Name("SwitchToRecordTabForImport")
-                    let importName = NSNotification.Name("ImportFromLinkFromMenu")
-                    NotificationCenter.default.post(name: switchName, object: nil)
-                    NotificationCenter.default.post(name: importName, object: nil)
+                    postRecordingCommand(named: "ImportFromLinkFromMenu")
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Export Summary...") {
+                    summaryExportAction?.perform()
+                }
+                .disabled(summaryExportAction == nil)
             }
 
             CommandGroup(after: .sidebar) {
@@ -618,6 +640,100 @@ struct BisonNotesAIApp: App {
                 }
                 .keyboardShortcut("3", modifiers: .command)
             }
+        }
+
+        #if os(macOS)
+        Settings {
+            SettingsView()
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .frame(minWidth: 680, minHeight: 600)
+        }
+        .defaultSize(width: 760, height: 700)
+
+        WindowGroup("Summary", id: NativeWindowID.summary, for: UUID.self) { $recordingID in
+            if let recordingID {
+                NativeSummaryWindowView(recordingID: recordingID)
+                    .environmentObject(appCoordinator)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            } else {
+                ContentUnavailableView(
+                    "Summary Not Available",
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text("Choose a summary from the main window.")
+                )
+            }
+        }
+        .defaultSize(width: 760, height: 700)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("Transcript", id: NativeWindowID.transcript, for: UUID.self) { $recordingID in
+            if let recordingID {
+                NativeTranscriptWindowView(recordingID: recordingID)
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            }
+        }
+        .defaultSize(width: 820, height: 720)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("Recording", id: NativeWindowID.recording, for: UUID.self) { $recordingID in
+            if let recordingID {
+                NativeRecordingWindowView(recordingID: recordingID)
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            }
+        }
+        .defaultSize(width: 720, height: 680)
+        .windowResizability(.contentMinSize)
+
+        Window("Recordings", id: NativeWindowID.recordings) {
+            RecordingsListView()
+                .environment(\.isEmbeddedInSplitView, false)
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .frame(minWidth: 720, minHeight: 520)
+        }
+        .defaultSize(width: 900, height: 720)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("Location", id: NativeWindowID.location, for: LocationData.self) { $locationData in
+            if let locationData {
+                LocationDetailView(locationData: locationData)
+                    .frame(minWidth: 560, minHeight: 480)
+            }
+        }
+        .defaultSize(width: 680, height: 620)
+        .windowResizability(.contentMinSize)
+
+        Window("Background Processing", id: NativeWindowID.backgroundProcessing) {
+            BackgroundProcessingView()
+                .frame(minWidth: 620, minHeight: 500)
+        }
+        .defaultSize(width: 760, height: 680)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("Processing Job", id: NativeWindowID.processingJob, for: UUID.self) { $jobID in
+            if let jobID {
+                NativeProcessingJobWindowView(jobID: jobID)
+            }
+        }
+        .defaultSize(width: 620, height: 540)
+        .windowResizability(.contentMinSize)
+        #endif
+    }
+
+    private func postRecordingCommand(named name: String) {
+        NotificationCenter.default.post(
+            name: NSNotification.Name("SwitchToRecordTabForImport"),
+            object: nil
+        )
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: NSNotification.Name(name), object: nil)
         }
     }
 
@@ -864,6 +980,7 @@ struct BisonNotesAIApp: App {
     }
 
     private func setupBackgroundTasks() {
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         // Register background task identifiers
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.bisonai.audio-processing", using: nil) { task in
             handleBackgroundProcessing(task: task as! BGProcessingTask)
@@ -872,14 +989,21 @@ struct BisonNotesAIApp: App {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.bisonai.app-refresh", using: nil) { task in
             handleAppRefresh(task: task as! BGAppRefreshTask)
         }
+        #endif
+        // macOS: no BGTaskScheduler — the app keeps running; jobs continue in-process.
     }
 
     private func requestBackgroundAppRefreshPermission() {
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         // Background app refresh is now handled via BGTaskScheduler in setupBackgroundTasks()
         // No need for the deprecated setMinimumBackgroundFetchInterval
         AppLog.shared.general("Background app refresh configured via BGTaskScheduler")
+        #else
+        AppLog.shared.general("Mac background jobs continue in-process", level: .debug)
+        #endif
     }
 
+    #if os(iOS) && !targetEnvironment(macCatalyst)
     private func handleBackgroundProcessing(task: BGProcessingTask) {
         AppLog.shared.general("Background processing task started: \(task.identifier)")
 
@@ -930,6 +1054,7 @@ struct BisonNotesAIApp: App {
             task.setTaskCompleted(success: true)
         }
     }
+    #endif
 
     private func setupWatchConnectivity() {
         AppLog.shared.general("setupWatchConnectivity() called in BisonNotesAIApp")
@@ -974,7 +1099,7 @@ struct BisonNotesAIApp: App {
             AppShortcuts.updateAppShortcutParameters()
         }
 
-        #if !targetEnvironment(macCatalyst)
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         if #available(iOS 18.0, *) {
             if let plugInsURL = Bundle.main.builtInPlugInsURL,
                let _ = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {
@@ -1006,4 +1131,15 @@ struct BisonNotesAIApp: App {
         AppLog.shared.general("Code coverage output redirected to \(destination)", level: .debug)
     }
 #endif
+}
+
+private extension View {
+    @ViewBuilder
+    func nativeMainWindowSizing() -> some View {
+        #if os(macOS)
+        frame(minWidth: 860, minHeight: 560)
+        #else
+        self
+        #endif
+    }
 }

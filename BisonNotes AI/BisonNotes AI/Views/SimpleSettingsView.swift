@@ -6,10 +6,6 @@
 //
 
 import SwiftUI
-import UIKit
-#if !targetEnvironment(macCatalyst)
-import SafariServices
-#endif
 
 enum ProcessingOption: String, CaseIterable {
     case openai = "OpenAI"
@@ -72,6 +68,10 @@ enum ProcessingOption: String, CaseIterable {
 
 struct SimpleSettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    #if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+    #endif
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var selectedOption: ProcessingOption = .chooseLater
@@ -83,7 +83,6 @@ struct SimpleSettingsView: View {
     @State private var isFirstLaunch = false
     @State private var deviceSupported = false
     @State private var showingOnDeviceLLMSettings = false
-    @State private var showingHelpDocumentation = false
     @State private var showingOnDeviceAIDownload = false
     @State private var showingMistralOnboarding = false
 
@@ -148,31 +147,20 @@ struct SimpleSettingsView: View {
                 }
             }
         }
+        #if !os(macOS)
         .sheet(isPresented: $showingAdvancedSettings) {
             // SettingsView provides its own NavigationStack and Done toolbar.
             SettingsView()
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
         }
+        #endif
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
-        }
-        .sheet(isPresented: $showingHelpDocumentation) {
-            #if !targetEnvironment(macCatalyst)
-            if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
-                SafariView(url: url)
-            }
-            #endif
-        }
-        .onChange(of: showingHelpDocumentation) { _, isShowing in
-            #if targetEnvironment(macCatalyst)
-            if isShowing, let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
-                UIApplication.shared.open(url)
-                showingHelpDocumentation = false
-            }
-            #endif
+            .nativeMacModalSizing(width: 760, height: 700)
+            .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingOnDeviceAIDownload) {
             OnDeviceAIDownloadView(
@@ -182,8 +170,9 @@ struct SimpleSettingsView: View {
                     showingOnDeviceAIDownload = false
                 }
             )
+            .nativeMacModalSizing(width: 700, height: 620)
         }
-        .fullScreenCover(isPresented: $showingMistralOnboarding) {
+        .platformFullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
                 // Mistral onboarding completed — mark first setup done and navigate
                 UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
@@ -222,9 +211,7 @@ struct SimpleSettingsView: View {
 
             Spacer(minLength: 8)
 
-            Button(action: {
-                showingAdvancedSettings = true
-            }) {
+            Button(action: presentAdvancedSettings) {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -393,7 +380,9 @@ struct SimpleSettingsView: View {
             }
 
             Button(action: {
-                showingHelpDocumentation = true
+                if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
+                    openURL(url)
+                }
             }) {
                 Label {
                     Text("Learn More About Processing Options")
@@ -574,7 +563,7 @@ struct SimpleSettingsView: View {
                     // Immediately open the advanced settings page
                     try await Task.sleep(nanoseconds: 500_000_000) // Brief delay to show message
                     await MainActor.run {
-                        showingAdvancedSettings = true
+                        presentAdvancedSettings()
                     }
                 } else if selectedOption == .mistralAI {
                     // Mistral AI with existing key — activate as the selected engine
@@ -671,6 +660,15 @@ struct SimpleSettingsView: View {
                 }
             }
         }
+    }
+
+    @MainActor
+    private func presentAdvancedSettings() {
+        #if os(macOS)
+        openSettings()
+        #else
+        showingAdvancedSettings = true
+        #endif
     }
 }
 

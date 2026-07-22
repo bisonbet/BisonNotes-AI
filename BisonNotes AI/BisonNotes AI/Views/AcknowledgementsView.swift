@@ -10,7 +10,10 @@ struct AcknowledgementsView: View {
     @State private var showTransitiveDependencies = false
 
     var body: some View {
-        NavigationStack {
+        Group {
+            #if os(macOS)
+            nativeMacContent
+            #else
             Form {
                 Section {
                     Text("BisonNotes AI is built on the shoulders of outstanding open-source projects.")
@@ -68,8 +71,119 @@ struct AcknowledgementsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            #endif
+        }
+        .platformSettingsNavigation()
+    }
+
+    #if os(macOS)
+    private var nativeMacContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Acknowledgements")
+                        .font(.largeTitle.bold())
+                    Text("Open-source software that makes BisonNotes AI possible.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                acknowledgementCard(title: "Direct Dependencies", systemImage: "shippingbox") {
+                    ForEach(Array(directDependencies.enumerated()), id: \.element.id) { index, dependency in
+                        if index > 0 {
+                            Divider()
+                        }
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(dependency.name)
+                                    .font(.headline)
+                                Spacer()
+                                Text(dependency.license)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Text(dependency.description)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            Link(dependency.linkText, destination: dependency.url)
+                                .font(.caption)
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+
+                acknowledgementCard(title: "Transitive Dependencies", systemImage: "square.stack.3d.up") {
+                    DisclosureGroup(isExpanded: $showTransitiveDependencies) {
+                        VStack(alignment: .leading, spacing: 18) {
+                            ForEach(transitiveDependencyGroups) { group in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(group.title)
+                                        .font(.subheadline.weight(.semibold))
+
+                                    LazyVGrid(
+                                        columns: [
+                                            GridItem(.flexible(), alignment: .leading),
+                                            GridItem(.flexible(), alignment: .leading)
+                                        ],
+                                        alignment: .leading,
+                                        spacing: 7
+                                    ) {
+                                        ForEach(group.projects) { project in
+                                            Link(project.name, destination: project.url)
+                                                .font(.caption)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.top, 12)
+                    } label: {
+                        Text(showTransitiveDependencies ? "Hide dependency list" : "Show dependency list")
+                            .fontWeight(.medium)
+                    }
+
+                    Text(
+                        "These projects arrive through the direct dependencies above. "
+                            + "Each is licensed under MIT or Apache 2.0; follow its repository link for complete terms."
+                    )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: 680)
+            .frame(maxWidth: .infinity, alignment: .top)
+            .padding(28)
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Acknowledgements")
+    }
+
+    private func acknowledgementCard<Content: View>(
+        title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .foregroundStyle(.indigo)
+
+            content()
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
+    #endif
 }
 
 private struct DependencyCard: Identifiable {

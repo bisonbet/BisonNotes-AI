@@ -296,7 +296,7 @@ class iCloudStorageManager: ObservableObject {
     }
 
     init() {
-        self.deviceIdentifier = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+        self.deviceIdentifier = PlatformDevice.vendorIdentifier
 
         // Load saved settings
         self.isEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")

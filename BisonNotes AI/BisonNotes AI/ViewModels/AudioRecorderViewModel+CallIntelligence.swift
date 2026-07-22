@@ -8,8 +8,10 @@
 import Foundation
 import UserNotifications
 
-#if !targetEnvironment(macCatalyst)
+#if os(iOS) && !targetEnvironment(macCatalyst)
+#if canImport(CallKit) && os(iOS)
 import CallKit
+#endif
 
 // MARK: - CallKit Observer Delegate (Phase 1)
 

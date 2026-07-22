@@ -12,6 +12,168 @@ import Foundation
 
 extension AudioRecorderViewModel {
 
+	#if os(macOS)
+	func setupMacInputDeviceMonitoring() {
+		enhancedAudioSessionManager.startInputDeviceMonitoring { [weak self] in
+			self?.scheduleMacInputDeviceRefresh()
+		}
+		scheduleMacInputDeviceRefresh()
+	}
+
+	/// Core Audio may emit several device-list/default-input callbacks for one
+	/// physical connect or disconnect. Coalescing avoids rebuilding the engine
+	/// more than once for the same change.
+	func scheduleMacInputDeviceRefresh() {
+		macInputDeviceChangeTask?.cancel()
+		macInputDeviceChangeTask = Task { @MainActor [weak self] in
+			do {
+				try await Task.sleep(for: .milliseconds(250))
+			} catch {
+				return
+			}
+			await self?.handleMacInputDevicesChanged()
+		}
+	}
+
+	@MainActor
+	func handleMacInputDevicesChanged() async {
+		availableInputs = enhancedAudioSessionManager.getAvailableInputs()
+
+		if let storedUID = UserDefaults.standard.string(forKey: preferredInputDefaultsKey) {
+			if let preferredInput = availableInputs.first(where: { $0.uid == storedUID }) {
+				selectedInput = preferredInput
+			} else {
+				AppLog.shared.audioSession("Preferred Mac microphone disconnected; falling back to the system default")
+				try? await enhancedAudioSessionManager.clearPreferredInput()
+				UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
+				selectedInput = nil
+			}
+		}
+
+		switch recordingState {
+		case .recording, .paused:
+			guard enhancedAudioSessionManager.recordingInputNeedsRecovery() else { return }
+			await recoverNativeMacInput(keepPaused: isPaused)
+		case .waitingForMicrophone:
+			guard enhancedAudioSessionManager.resolvedInputDeviceID() != nil else { return }
+			await recoverNativeMacInput(keepPaused: false)
+		default:
+			break
+		}
+	}
+
+	@MainActor
+	func recoverNativeMacInput(keepPaused: Bool) async {
+		guard !isRecoveringMacInput, isRecording, let finalURL = recordingURL else { return }
+		isRecoveringMacInput = true
+		defer { isRecoveringMacInput = false }
+
+		let disconnectedAt: Date
+		let wasAlreadyWaiting: Bool
+		if case .waitingForMicrophone(let existingDisconnectedAt) = recordingState {
+			wasAlreadyWaiting = true
+			disconnectedAt = existingDisconnectedAt
+		} else {
+			wasAlreadyWaiting = false
+			disconnectedAt = Date()
+		}
+
+		if !wasAlreadyWaiting {
+			AppLog.shared.audioSession("Mac recording input changed; sealing the current audio segment")
+			catalystSystemAudioCapture?.setPaused(true)
+			stopRecordingTimer()
+			sealNativeMacScratchSegment()
+		}
+
+		guard enhancedAudioSessionManager.resolvedInputDeviceID() != nil else {
+			await waitForNativeMacInput(disconnectedAt: disconnectedAt, notify: !wasAlreadyWaiting)
+			return
+		}
+
+		do {
+			try startNativeMacContinuation(at: finalURL)
+			await finishNativeMacInputRecovery(keepPaused: keepPaused, notify: wasAlreadyWaiting)
+		} catch {
+			discardFailedNativeMacContinuation()
+			AppLog.shared.audioSession("Mac input recovery failed: \(error.localizedDescription)", level: .error)
+			recordingState = .waitingForMicrophone(disconnectedAt: disconnectedAt)
+			errorMessage = "Could not use the available microphone: \(error.localizedDescription)"
+			startNativeMacInputRecoveryMonitoring()
+		}
+	}
+
+	@MainActor
+	private func waitForNativeMacInput(disconnectedAt: Date, notify: Bool) async {
+		recordingState = .waitingForMicrophone(disconnectedAt: disconnectedAt)
+		errorMessage = "Microphone disconnected. Recording will resume when an input is available."
+		if notify {
+			await sendWarningNotification(
+				title: "Microphone Disconnected",
+				body: "Waiting for a microphone to reconnect...",
+				isCritical: false
+			)
+		}
+		startNativeMacInputRecoveryMonitoring()
+	}
+
+	@MainActor
+	private func finishNativeMacInputRecovery(keepPaused: Bool, notify: Bool) async {
+		microphoneReconnectionTimer?.invalidate()
+		microphoneReconnectionTimer = nil
+		if keepPaused {
+			pauseCatalystEngineRecording()
+			recordingState = .paused
+		} else {
+			catalystSystemAudioCapture?.setPaused(false)
+			recordingState = .recording
+			startRecordingTimer()
+		}
+		errorMessage = "Recording continued with the available microphone."
+		AppLog.shared.audioSession("Mac recording resumed on the available input")
+		if notify {
+			await sendWarningNotification(
+				title: "Recording Resumed",
+				body: "A microphone is available and recording has resumed.",
+				isCritical: false
+			)
+		}
+	}
+
+	private func discardFailedNativeMacContinuation() {
+		let failedScratchURL = catalystScratchRecordingURL
+		stopCatalystEngineRecording()
+		if let failedScratchURL {
+			try? FileManager.default.removeItem(at: failedScratchURL)
+		}
+		catalystScratchRecordingURL = nil
+	}
+
+	func startNativeMacInputRecoveryMonitoring() {
+		guard microphoneReconnectionTimer == nil else { return }
+		microphoneReconnectionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
+			Task { @MainActor in
+				guard let self else {
+					timer.invalidate()
+					return
+				}
+				guard case .waitingForMicrophone(let disconnectedAt) = self.recordingState else {
+					timer.invalidate()
+					self.microphoneReconnectionTimer = nil
+					return
+				}
+				guard Date().timeIntervalSince(disconnectedAt) <= self.MICROPHONE_RECONNECTION_TIMEOUT else {
+					timer.invalidate()
+					self.microphoneReconnectionTimer = nil
+					self.errorMessage = "Recording stopped because no microphone was available for 5 minutes."
+					self.stopRecording()
+					return
+				}
+				await self.handleMacInputDevicesChanged()
+			}
+		}
+	}
+	#endif
+
 	@MainActor
 	func handleMicrophoneDisconnected() async {
 		guard case .recording = recordingState else {

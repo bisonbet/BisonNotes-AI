@@ -53,7 +53,7 @@ struct OllamaSettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             Form {
                 headerSection
                 serverConfigurationSection
@@ -62,6 +62,7 @@ struct OllamaSettingsView: View {
                 }
                 helpSection
             }
+            .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Ollama Settings")

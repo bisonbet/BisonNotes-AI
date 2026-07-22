@@ -1,6 +1,6 @@
 # BisonNotes Regression Testing Regimen
 
-This regimen protects the release-critical paths that are expensive to rediscover manually: recording file validity, transcription flow, iCloud exclusions, watch transfer state, share import, Catalyst audio, and launch/navigation smoke coverage.
+This regimen protects the release-critical paths that are expensive to rediscover manually: recording file validity, transcription flow, iCloud exclusions, watch transfer state, share import, Catalyst and native Mac behavior, and launch/navigation smoke coverage.
 
 ## Local Pre-Merge Gate
 
@@ -36,9 +36,42 @@ Run the local pre-merge gate, then run:
 ```bash
 xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI Watch App" -destination 'platform=watchOS Simulator,name=Apple Watch Series 11 (46mm)' -derivedDataPath /private/tmp/bisonnotes-watch-test-derived
 xcodebuild -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=macOS,variant=Mac Catalyst' -configuration Debug -derivedDataPath /private/tmp/bisonnotes-catalyst-derived build
+xcodebuild -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI macOS" -destination 'platform=macOS' -configuration Debug -derivedDataPath /private/tmp/bisonnotes-native-mac-derived build
 ```
 
-Expected result: watch metadata tests pass, the watch scheme builds, and the Catalyst build compiles with the current SwiftPM package graph.
+Expected result: watch metadata tests pass, the watch scheme builds, and both Mac targets compile with the current SwiftPM package graph.
+
+Before a native Mac beta or cutover candidate, also archive the native app:
+
+```bash
+xcodebuild archive -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI macOS" -destination 'generic/platform=macOS' -archivePath /private/tmp/BisonNotes-Native-Mac.xcarchive ONLY_ACTIVE_ARCH=NO EXCLUDED_ARCHS=x86_64
+```
+
+## Native macOS Phase 3 Exit Gate
+
+Use a signed native build. The Phase 3 gate is complete only when the automated checks are green and every interaction below has been exercised. Record results in `docs/macos-phase-3-exit-report.md`.
+
+### Automated and product inspection
+
+- Run `git diff --check` and normal SwiftLint from `BisonNotes AI/BisonNotes AI` using the committed baseline.
+- Build native macOS, iOS Simulator, and Mac Catalyst; run the iOS unit-test target.
+- Inspect the native product's `Metadata.appintents/extract.actionsdata` for `StartRecordingIntent` and its App Shortcut phrases.
+- Inspect the compiled asset catalog for every Mac AppIcon rendition from 16×16 through 512×512 points at 1x/2x.
+- Confirm the main window is resizable, honors its minimum size, and reopens after its last window is closed.
+
+### Mac-native interaction pass
+
+- Open Settings with Command-comma; confirm it is a separate, closable Settings window and controls remain scrollable.
+- Verify File-menu commands and key equivalents: New Recording (Command-N), Import Audio (Command-I), Import Transcript (Shift-Command-I), and Import From Link (Shift-Command-L).
+- Open Import From Link from the File menu and confirm it is a bounded modal attached to the main window.
+- Verify Command-1/2/3 navigation and the standard Undo, Redo, Cut, Copy, Paste, and Select All Edit commands in a text field.
+- Open summary, transcript, recording/player, recordings-library, location, background-processing, and processing-job windows where data is available. Move and resize them, confirm their whole content scrolls at minimum size, and confirm they close normally.
+- From Edit Transcript, open its summary, then close it with both Done and Escape.
+- Exercise one representative bounded modal for import, settings/configuration, and content editing.
+- In the Shortcuts app, find BisonNotes AI's Start Recording action. Run it once while the app is closed and once while it is already open; each run must activate the native app and start exactly one recording.
+- Verify the Dock/Finder icon is the BisonNotes icon rather than a blank placeholder.
+
+Phase 2 hardware/runtime cases such as external-microphone hot swap, ScreenCaptureKit meeting audio, long background processing, export/share destinations, and archive bookmark restoration remain mandatory before Phase 4 beta even if the Phase 3 Mac-idiom gate is green.
 
 ## Manual Hardware Validation
 
@@ -46,12 +79,13 @@ Simulator tests are not enough for these capabilities. Capture evidence for ever
 
 - iPhone/iPad: record with the real microphone, stop, verify playback duration is non-zero, and generate a transcript.
 - Mac Catalyst: record microphone-only audio, then record a real meeting/system-audio source with meeting-audio capture enabled; verify the final audio plays and has non-zero duration.
+- Native macOS: repeat the microphone-only and meeting/system-audio recordings; change the selected microphone, hot-plug an external input during recording, and verify the final audio has no clicks, clipping, gaps beyond the device transition, or duplicated system audio.
 - Apple Watch: tap to record, mute to pause, unmute to resume, stop, transfer to iPhone, and verify import appears once.
 - Parakeet: download or reuse the on-device model on a supported device and transcribe a short known audio fixture.
 - iCloud: verify eligible content syncs across two devices or matching TestFlight builds, and verify a recording marked Keep on This Device does not sync.
 - Share extension: import audio from Voice Memos or Files, then verify the app creates a recording without scanning unrelated shared-container files.
 - System integrations: smoke-test Control Center recording and Action Button launch on supported devices.
-- Accessibility: complete common tasks with VoiceOver and Voice Control on iPhone/iPad; sample Switch Control; verify Full Keyboard Access on iPad keyboard and Mac Catalyst; test largest Dynamic Type sizes; test light/dark, Increase Contrast, Reduce Transparency, Bold Text, Grayscale, and Differentiate Without Color; enable Reduce Motion and verify recording indicators remain understandable; test Apple Watch VoiceOver for start, mute, stop, transfer progress, low battery, and error recovery.
+- Accessibility: complete common tasks with VoiceOver and Voice Control on iPhone/iPad; sample Switch Control; verify Full Keyboard Access on iPad keyboard, Mac Catalyst, and native macOS; test largest Dynamic Type sizes; test light/dark, Increase Contrast, Reduce Transparency, Bold Text, Grayscale, and Differentiate Without Color; enable Reduce Motion and verify recording indicators remain understandable; test Apple Watch VoiceOver for start, mute, stop, transfer progress, low battery, and error recovery.
 
 Record screenshots, resulting audio duration, transcript text, sync/import status, and relevant log excerpts for the release notes or PR.
 

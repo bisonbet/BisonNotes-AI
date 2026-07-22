@@ -7,7 +7,9 @@
 
 import Foundation
 @preconcurrency import AVFoundation
+#if canImport(UIKit)
 import UIKit
+#endif
 import SwiftUI
 import CoreData
 

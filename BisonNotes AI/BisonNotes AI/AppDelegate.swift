@@ -6,18 +6,24 @@
 //  Phase 6: Notification Action Handling
 //
 
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import UserNotifications
 import MetricKit
 
-class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate, MXMetricManagerSubscriber {
+/// Platform-neutral app-delegate logic (notification actions, MetricKit,
+/// badge clearing). The platform-specific AppDelegate subclasses below only
+/// differ in the launch callback that triggers `completeLaunchSetup()`.
+class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManagerSubscriber {
 
     // Reference to AudioRecorderViewModel for handling resume actions
     // This will be set by the main app
     static weak var recorderViewModel: AudioRecorderViewModel?
 
-    func application(_ application: UIApplication,
-                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+    func completeLaunchSetup() {
         // Set notification delegate
         UNUserNotificationCenter.current().delegate = self
 
@@ -28,8 +34,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         AppLog.shared.markLaunch()
 
         NSLog("✅ AppDelegate initialized - notification delegate set")
-
-        return true
     }
 
     // MARK: - MetricKit
@@ -101,7 +105,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 
         if categoryIdentifier == "RESUME_RECORDING" {
             Task { @MainActor in
-                guard let recorderVM = AppDelegate.recorderViewModel else {
+                guard let recorderVM = AppDelegateCore.recorderViewModel else {
                     AppLog.shared.general("AudioRecorderViewModel not available for notification action", level: .error)
                     completionHandler()
                     return
@@ -139,10 +143,24 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         // Show notification even when app is in foreground
-        if #available(iOS 14.0, *) {
-            completionHandler([.banner, .sound, .badge])
-        } else {
-            completionHandler([.alert, .sound, .badge])
-        }
+        completionHandler([.banner, .sound, .badge])
     }
 }
+
+#if canImport(UIKit)
+class AppDelegate: AppDelegateCore, UIApplicationDelegate {
+
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        completeLaunchSetup()
+        return true
+    }
+}
+#else
+class AppDelegate: AppDelegateCore, NSApplicationDelegate {
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        completeLaunchSetup()
+    }
+}
+#endif

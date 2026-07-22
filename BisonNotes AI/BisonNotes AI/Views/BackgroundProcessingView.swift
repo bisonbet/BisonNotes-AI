@@ -8,13 +8,14 @@
 import SwiftUI
 
 struct BackgroundProcessingView: View {
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var selectedJob: ProcessingJob?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let _ = AppLog.shared.backgroundProcessing("BackgroundProcessingView body: activeJobs.count = \(processingManager.activeJobs.count)", level: .debug)
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             VStack(spacing: 0) {
                 // Header with overall status
                 headerSection
@@ -62,6 +63,7 @@ struct BackgroundProcessingView: View {
             }
             .sheet(item: $selectedJob) { job in
                 JobDetailView(job: job)
+                    .nativeMacModalSizing(width: 620, height: 540)
             }
         }
     }
@@ -152,7 +154,11 @@ struct BackgroundProcessingView: View {
                 LazyVStack(spacing: 12) {
                     ForEach(processingManager.activeJobs) { job in
                         JobCard(job: job) {
+                            #if os(macOS)
+                            openWindow(id: NativeWindowID.processingJob, value: job.id)
+                            #else
                             selectedJob = job
+                            #endif
                         }
                     }
                 }

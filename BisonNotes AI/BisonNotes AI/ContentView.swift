@@ -9,7 +9,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var recorderVM = AudioRecorderViewModel()
+    @EnvironmentObject private var recorderVM: AudioRecorderViewModel
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @EnvironmentObject var appCoordinator: AppDataCoordinator
@@ -147,6 +147,7 @@ struct ContentView: View {
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .alert("Switched to Parakeet", isPresented: $showingWhisperKitSwitchedAlert) {
             Button("OK") { }
@@ -173,6 +174,7 @@ struct ContentView: View {
             NavigationStack {
                 FluidAudioSettingsView()
             }
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .alert("Download Complete", isPresented: Binding(
             get: { downloadMonitor.showingCompletionAlert && !recorderVM.isRecording },
@@ -421,6 +423,7 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
+        .environmentObject(AudioRecorderViewModel())
         .environmentObject(AppDataCoordinator())
         .environmentObject(FileImportManager())
         .environmentObject(TranscriptImportManager())

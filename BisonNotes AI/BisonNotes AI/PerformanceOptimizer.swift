@@ -9,24 +9,19 @@ import Foundation
 import SwiftUI
 import os.log
 
-extension UIDevice {
-    /// True when the app is running on a Mac (Mac Catalyst or "Designed for iPad" on Apple Silicon).
-    /// Battery APIs return unreliable values in both cases — `batteryLevel` reports ~0.01
-    /// and `batteryState` spams "Error retrieving battery status" to the log.
-    static var isRunningOnMac: Bool {
-        #if targetEnvironment(macCatalyst)
-        return true
-        #else
-        return ProcessInfo.processInfo.isiOSAppOnMac
-        #endif
-    }
-}
-
 // MARK: - Battery Monitor
+
+#if canImport(UIKit)
+typealias PlatformBatteryState = UIDevice.BatteryState
+#else
+enum PlatformBatteryState {
+    case unknown, unplugged, charging, full
+}
+#endif
 
 struct BatteryInfo {
     let level: Float
-    let state: UIDevice.BatteryState
+    let state: PlatformBatteryState
     let isLowPowerMode: Bool
 
     var isLowBattery: Bool {
@@ -95,7 +90,11 @@ class PerformanceOptimizer: ObservableObject {
     @Published var isProcessing = false
     @Published var processingProgress: Double = 0.0
     @Published var memoryUsage: MemoryUsage = MemoryUsage()
-    @Published var batteryInfo: BatteryInfo = BatteryInfo(level: 1.0, state: .unknown, isLowPowerMode: false)
+    @Published var batteryInfo: BatteryInfo = BatteryInfo(
+        level: 1.0,
+        state: PlatformDevice.isRunningOnMac ? .full : .unknown,
+        isLowPowerMode: false
+    )
     @Published var performanceMetrics: PerformanceMetrics = PerformanceMetrics()
     @Published var optimizationLevel: OptimizationLevel = .balanced
 
@@ -143,11 +142,18 @@ class PerformanceOptimizer: ObservableObject {
     // MARK: - Battery Monitoring
 
     private func startBatteryMonitoring() {
-        // No reliable battery API on Mac — leave default battery info (treated as full/charged)
-        // and skip the polling timer to avoid "Error retrieving battery status" logs.
-        if UIDevice.isRunningOnMac { return }
+        // No reliable cross-Mac battery API — report plugged in/full and
+        // respect Low Power Mode without starting an iOS battery polling timer.
+        if PlatformDevice.isRunningOnMac {
+            Task { @MainActor in
+                await updateBatteryInfo()
+            }
+            return
+        }
 
+        #if canImport(UIKit)
         UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
 
         batteryMonitorTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -162,11 +168,12 @@ class PerformanceOptimizer: ObservableObject {
     }
 
     private func updateBatteryInfo() async {
-        if UIDevice.isRunningOnMac {
-            // Battery state is not available on Mac; only respect Low Power Mode.
+        if PlatformDevice.isRunningOnMac {
+            // Battery state is not available consistently on Mac. Report the
+            // app as plugged in/full and only respect Low Power Mode.
             let batteryInfo = BatteryInfo(
                 level: 1.0,
-                state: .unknown,
+                state: .full,
                 isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
             )
             self.batteryInfo = batteryInfo
@@ -174,12 +181,20 @@ class PerformanceOptimizer: ObservableObject {
             return
         }
 
+        #if canImport(UIKit)
         let device = UIDevice.current
         let batteryInfo = BatteryInfo(
             level: device.batteryLevel,
             state: device.batteryState,
             isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
         )
+        #else
+        let batteryInfo = BatteryInfo(
+            level: 1.0,
+            state: .unknown,
+            isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+        )
+        #endif
 
         self.batteryInfo = batteryInfo
 
@@ -495,9 +510,11 @@ class PerformanceOptimizer: ObservableObject {
         batteryMonitorTimer = nil
         optimizationTimer = nil
 
-        if !UIDevice.isRunningOnMac {
+        #if canImport(UIKit)
+        if !PlatformDevice.isRunningOnMac {
             UIDevice.current.isBatteryMonitoringEnabled = false
         }
+        #endif
     }
 
     // MARK: - Chunked Processing

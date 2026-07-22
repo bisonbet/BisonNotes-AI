@@ -256,18 +256,21 @@ struct AISettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        Group {
             settingsContent
                 .navigationTitle("AI Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    #if !os(macOS)
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") {
                             dismiss()
                         }
                     }
+                    #endif
                 }
         }
+        .platformSettingsNavigation()
         .alert("Regeneration Complete", isPresented: $viewModel.regenerationManager.showingRegenerationAlert) {
             Button("OK") { viewModel.regenerationManager.regenerationResults = nil }
         } message: {
@@ -299,6 +302,42 @@ struct AISettingsView: View {
         } message: {
             Text(errorHandler.currentError?.localizedDescription ?? "An unknown error occurred.")
         }
+        #if os(macOS)
+        .navigationDestination(isPresented: $showingOllamaSettings) {
+            OllamaSettingsView(onConfigurationChanged: {
+                self.refreshEngineStatuses()
+            })
+        }
+        .navigationDestination(isPresented: $showingOpenAISettings) {
+            OpenAISummarizationSettingsView(onConfigurationChanged: {
+                Task { refreshEngineStatuses() }
+            })
+        }
+        .navigationDestination(isPresented: $showingOpenAICompatibleSettings) {
+            OpenAICompatibleSettingsView(onConfigurationChanged: {
+                Task { refreshEngineStatuses() }
+            })
+        }
+        .navigationDestination(isPresented: $showingGoogleAIStudioSettings) {
+            GoogleAIStudioSettingsView(onConfigurationChanged: {
+                Task { refreshEngineStatuses() }
+            })
+        }
+        .navigationDestination(isPresented: $showingMistralAISettings) {
+            MistralAISettingsView(onConfigurationChanged: {
+                Task { refreshEngineStatuses() }
+            })
+        }
+        .navigationDestination(isPresented: $showingAWSBedrockSettings) {
+            AWSBedrockSettingsView()
+        }
+        .navigationDestination(isPresented: $showingOnDeviceLLMSettings) {
+            OnDeviceLLMSettingsView()
+        }
+        .navigationDestination(isPresented: $showingMLXSwiftSettings) {
+            MLXSwiftSettingsView()
+        }
+        #else
         .sheet(isPresented: $showingOllamaSettings) {
             OllamaSettingsView(onConfigurationChanged: {
                 self.refreshEngineStatuses()
@@ -337,7 +376,8 @@ struct AISettingsView: View {
                 MLXSwiftSettingsView()
             }
         }
-        .fullScreenCover(isPresented: $showingMistralOnboarding) {
+        #endif
+        .platformFullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
                 refreshEngineStatuses()
             })

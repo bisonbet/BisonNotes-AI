@@ -8,11 +8,15 @@
 import Foundation
 import SwiftUI
 import UserNotifications
+#if canImport(UIKit)
 import UIKit
+#endif
 import CoreData
 import AVFoundation
 import AVKit
+#if canImport(BackgroundTasks)
 import BackgroundTasks
+#endif
 
 // MARK: - Processing Job Models
 
@@ -310,17 +314,25 @@ class BackgroundProcessingManager: ObservableObject {
     // and accessing .batteryState spams "Error retrieving battery status" to the log.
     // Applies to both Mac Catalyst and "Designed for iPad" on Apple Silicon.
     fileprivate static var batteryLevelString: String {
-        if UIDevice.isRunningOnMac {
+        if PlatformDevice.isRunningOnMac {
             return "n/a (Mac)"
         }
+        #if canImport(UIKit)
         return "\(UIDevice.current.batteryLevel)"
+        #else
+        return "n/a"
+        #endif
     }
 
     fileprivate static var batteryStateString: String {
-        if UIDevice.isRunningOnMac {
+        if PlatformDevice.isRunningOnMac {
             return "n/a (Mac)"
         }
+        #if canImport(UIKit)
         return "\(UIDevice.current.batteryState.rawValue)"
+        #else
+        return "n/a"
+        #endif
     }
 
     // MARK: - Published Properties
@@ -341,7 +353,7 @@ class BackgroundProcessingManager: ObservableObject {
     private var cancellationReason: String?
     /// Maps job ID → old summary ID for regeneration jobs (delete old summary before saving new)
     private var regenerationSummaryIds: [UUID: UUID] = [:]
-    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundTaskID: PlatformBackgroundTask.ID = .invalid
     private var backgroundTaskStartTime: Date?
     private var backgroundTimeMonitor: Task<Void, Never>?
     private var staleJobMonitor: Task<Void, Never>?
@@ -1724,21 +1736,21 @@ class BackgroundProcessingManager: ObservableObject {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appDidEnterBackground),
-            name: UIApplication.didEnterBackgroundNotification,
+            name: PlatformLifecycle.didEnterBackgroundNotification,
             object: nil
         )
 
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appWillEnterForeground),
-            name: UIApplication.willEnterForegroundNotification,
+            name: PlatformLifecycle.willEnterForegroundNotification,
             object: nil
         )
 
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appWillTerminate),
-            name: UIApplication.willTerminateNotification,
+            name: PlatformLifecycle.willTerminateNotification,
             object: nil
         )
     }
@@ -1804,6 +1816,7 @@ class BackgroundProcessingManager: ObservableObject {
 
     /// Schedule background processing task for queued jobs
     private func scheduleBackgroundProcessingIfNeeded() async {
+        #if os(iOS) && !targetEnvironment(macCatalyst)
         guard !activeJobs.filter({ $0.status == .queued }).isEmpty else { return }
 
         let request = BGProcessingTaskRequest(identifier: "com.bisonai.audio-processing")
@@ -1817,6 +1830,8 @@ class BackgroundProcessingManager: ObservableObject {
         } catch {
             AppLog.shared.backgroundProcessing("Failed to schedule background processing: \(error.localizedDescription)", level: .error)
         }
+        #endif
+        // macOS: jobs keep running in-process; no scheduler needed.
     }
 
     private func handleAppForegrounding() async {
@@ -2180,10 +2195,10 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     private func enableBackgroundAudioKeepAliveIfNeeded() async {
-        #if targetEnvironment(macCatalyst)
+        #if targetEnvironment(macCatalyst) || os(macOS)
         return
         #else
-        guard UIApplication.shared.applicationState != .active else {
+        guard !PlatformApp.isActive else {
             AppLog.shared.backgroundProcessing("Skipping keep-alive audio while app is active", level: .debug)
             return
         }
@@ -2199,7 +2214,7 @@ class BackgroundProcessingManager: ObservableObject {
             backgroundAudioKeepAliveActive = true
             AppLog.shared.backgroundProcessing("Playback audio session configured for background processing")
 
-            let backgroundTime = UIApplication.shared.backgroundTimeRemaining
+            let backgroundTime = PlatformBackgroundTask.remainingTime
             if backgroundTime != Double.greatestFiniteMagnitude {
                 AppLog.shared.backgroundProcessing("After audio session config: \(Int(backgroundTime))s background time", level: .debug)
             } else {
@@ -2214,7 +2229,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     private func disableBackgroundAudioKeepAliveIfNeeded() async {
-        #if targetEnvironment(macCatalyst)
+        #if targetEnvironment(macCatalyst) || os(macOS)
         return
         #else
         guard backgroundAudioKeepAliveActive || keepAlivePlayer != nil else { return }
@@ -2234,7 +2249,9 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - Background Task Management
 
     private func beginBackgroundTask() async {
-        #if targetEnvironment(macCatalyst)
+        #if os(macOS)
+        beginMacProcessingActivity()
+        #elseif targetEnvironment(macCatalyst)
         // Mac apps don't get suspended by the OS, so the iOS background-task
         // machinery (UIApplication.beginBackgroundTask, AVAudioSession-backed
         // keep-alive audio) is unnecessary here and just spams the log with
@@ -2249,12 +2266,13 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Create descriptive task name based on current job
         let taskName = if let currentJob = currentJob {
-            "AudioProcessing-\(currentJob.type.displayName.replacingOccurrences(of: " ", with: ""))-\(currentJob.recordingName.prefix(20))"
+            "AudioProcessing-\(currentJob.type.displayName.replacingOccurrences(of: " ", with: ""))-" +
+            "\(currentJob.recordingName.prefix(20))"
         } else {
             "AudioProcessing-JobQueue"
         }
 
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: taskName) { [weak self] in
+        backgroundTaskID = PlatformBackgroundTask.begin(name: taskName) { [weak self] in
             AppLog.shared.backgroundProcessing("Background task is about to expire", level: .error)
             Task { @MainActor in
                 await self?.handleBackgroundTaskExpiration()
@@ -2270,7 +2288,7 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Started background task: \(backgroundTaskID.rawValue)")
 
             // Check remaining background time immediately
-            let remainingTime = UIApplication.shared.backgroundTimeRemaining
+            let remainingTime = PlatformBackgroundTask.remainingTime
             if remainingTime == Double.greatestFiniteMagnitude {
                 AppLog.shared.backgroundProcessing("Background time: Unlimited (likely in foreground or audio session active)", level: .debug)
             } else {
@@ -2294,8 +2312,42 @@ class BackgroundProcessingManager: ObservableObject {
         #endif
     }
 
+    #if os(macOS)
+    private func beginMacProcessingActivity() {
+        guard backgroundTaskID == .invalid else {
+            AppLog.shared.backgroundProcessing(
+                "macOS processing activity already running: \(backgroundTaskID.rawValue)",
+                level: .debug
+            )
+            return
+        }
+
+        let activityName = if let currentJob {
+            "AudioProcessing-\(currentJob.type.displayName.replacingOccurrences(of: " ", with: ""))-" +
+            "\(currentJob.recordingName.prefix(20))"
+        } else {
+            "AudioProcessing-JobQueue"
+        }
+        backgroundTaskID = PlatformBackgroundTask.begin(name: activityName)
+        backgroundTaskStartTime = Date()
+        AppLog.shared.backgroundProcessing(
+            "Started macOS processing activity: \(backgroundTaskID.rawValue)",
+            level: .debug
+        )
+    }
+    #endif
+
     private func endBackgroundTask() async {
-        #if targetEnvironment(macCatalyst)
+        #if os(macOS)
+        guard backgroundTaskID != .invalid else { return }
+        AppLog.shared.backgroundProcessing(
+            "Ending macOS processing activity: \(backgroundTaskID.rawValue)",
+            level: .debug
+        )
+        PlatformBackgroundTask.end(backgroundTaskID)
+        backgroundTaskID = .invalid
+        backgroundTaskStartTime = nil
+        #elseif targetEnvironment(macCatalyst)
         // beginBackgroundTask is a no-op on Catalyst; nothing to tear down.
         return
         #else
@@ -2307,7 +2359,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         if backgroundTaskID != .invalid {
             AppLog.shared.backgroundProcessing("Ending background task: \(backgroundTaskID.rawValue)")
-            UIApplication.shared.endBackgroundTask(backgroundTaskID)
+            PlatformBackgroundTask.end(backgroundTaskID)
             backgroundTaskID = .invalid
             backgroundTaskStartTime = nil
 
@@ -2329,7 +2381,7 @@ class BackgroundProcessingManager: ObservableObject {
     private func monitorBackgroundTime() {
         guard backgroundTaskID != .invalid else { return }
 
-        let remainingTime = UIApplication.shared.backgroundTimeRemaining
+        let remainingTime = PlatformBackgroundTask.remainingTime
 
         // Skip monitoring and refreshing if we have unlimited time (app is likely in foreground or has special privileges/audio session active)
         guard remainingTime != Double.greatestFiniteMagnitude else { return }
@@ -2375,6 +2427,10 @@ class BackgroundProcessingManager: ObservableObject {
     /// Refresh the background task to avoid iOS warnings about long-running tasks
     /// This ends the current task and immediately starts a new one
     private func refreshBackgroundTask() async {
+        #if os(macOS) || targetEnvironment(macCatalyst)
+        // Mac activities cover the whole queue and do not expire on a timer.
+        return
+        #else
         guard backgroundTaskID != .invalid else { return }
 
         AppLog.shared.backgroundProcessing("Refreshing background task to avoid iOS 30-second warning", level: .debug)
@@ -2384,7 +2440,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         // End the current background task
         let oldTaskID = backgroundTaskID
-        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        PlatformBackgroundTask.end(backgroundTaskID)
         backgroundTaskID = .invalid
         backgroundTaskStartTime = nil
         AppLog.shared.backgroundProcessing("Ended old task: \(oldTaskID.rawValue)", level: .debug)
@@ -2394,6 +2450,7 @@ class BackgroundProcessingManager: ObservableObject {
             // Don't cancel the monitor, we'll keep using it
             await beginBackgroundTask()
         }
+        #endif
     }
 
     // MARK: - Notifications

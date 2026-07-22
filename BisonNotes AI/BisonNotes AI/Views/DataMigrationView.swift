@@ -14,6 +14,7 @@ enum MigrationMode {
 }
 
 struct DataMigrationView: View {
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var migrationManager = DataMigrationManager()
     @ObservedObject private var legacyiCloudManager = iCloudStorageManager.shared
@@ -442,7 +443,7 @@ struct DataMigrationView: View {
 
                 // Background Processing
                 Button(action: {
-                    showingBackgroundProcessing = true
+                    presentBackgroundProcessing()
                 }) {
                     HStack {
                         Image(systemName: "gearshape.2")
@@ -626,6 +627,7 @@ struct DataMigrationView: View {
         }
         .sheet(isPresented: $showingBackgroundProcessing) {
             BackgroundProcessingView()
+                .nativeMacModalSizing(width: 760, height: 680)
         }
         .alert("iCloud Sync Verification", isPresented: $showingSyncVerification) {
             Button("OK") {
@@ -652,6 +654,14 @@ struct DataMigrationView: View {
                 Text("Verifying sync status...")
             }
         }
+    }
+
+    private func presentBackgroundProcessing() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.backgroundProcessing)
+        #else
+        showingBackgroundProcessing = true
+        #endif
     }
 
     private var integrityCheckSection: some View {
@@ -1145,17 +1155,10 @@ struct DataMigrationView: View {
         } catch {
             AppLog.shared.dataMigration("Failed to verify iCloud sync: \(error)", level: .error)
             await MainActor.run {
-                let alert = UIAlertController(
+                PlatformAlert.present(
                     title: "Verification Failed",
-                    message: "Could not verify iCloud sync: \(error.localizedDescription)",
-                    preferredStyle: .alert
+                    message: "Could not verify iCloud sync: \(error.localizedDescription)"
                 )
-                alert.addAction(UIAlertAction(title: "OK", style: .default))
-
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let rootViewController = windowScene.windows.first?.rootViewController {
-                    rootViewController.present(alert, animated: true)
-                }
             }
         }
     }
@@ -1185,17 +1188,10 @@ struct DataMigrationView: View {
         } catch {
             AppLog.shared.dataMigration("Failed to sync missing summaries: \(error)", level: .error)
             await MainActor.run {
-                let alert = UIAlertController(
+                PlatformAlert.present(
                     title: "Sync Failed",
-                    message: "Could not sync summaries to iCloud: \(error.localizedDescription)",
-                    preferredStyle: .alert
+                    message: "Could not sync summaries to iCloud: \(error.localizedDescription)"
                 )
-                alert.addAction(UIAlertAction(title: "OK", style: .default))
-
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let rootViewController = windowScene.windows.first?.rootViewController {
-                    rootViewController.present(alert, animated: true)
-                }
             }
         }
     }

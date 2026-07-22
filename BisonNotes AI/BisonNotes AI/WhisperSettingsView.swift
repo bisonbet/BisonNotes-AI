@@ -50,7 +50,7 @@ struct WhisperSettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             Form {
                 Section(header: Text("Whisper Service")) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -327,6 +327,7 @@ struct WhisperSettingsView: View {
                     Link("Whisper Model Information", destination: URL(string: "https://openai.com/research/whisper")!)
                 }
             }
+            .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Whisper Settings")

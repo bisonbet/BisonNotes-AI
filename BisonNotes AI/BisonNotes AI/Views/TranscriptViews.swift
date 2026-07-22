@@ -23,6 +23,7 @@ private struct TranscriptWithDate {
 }
 
 struct TranscriptsView: View {
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
@@ -46,6 +47,8 @@ struct TranscriptsView: View {
     @State private var dateFilterEnd: Date = Date()
     @State private var isDateFilterActive = false
     @State private var expandedTranscriptDateSections: Set<DateSection> = [.today]
+    @State private var isPendingTranscriptsExpanded = false
+    @State private var isTranscriptArchiveExpanded = false
     /// Shared service that owns the serial audio-cleanup queue and transcription start.
     @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
     /// Recordings whose summary generation we kicked off and are still awaiting completion.
@@ -61,14 +64,17 @@ struct TranscriptsView: View {
                 EditableTranscriptView(recording: recording, transcript: transcript, transcriptManager: TranscriptManager.shared)
                     .environmentObject(appCoordinator)
                     .environmentObject(recorderVM)
+                    .nativeMacModalSizing(width: 820, height: 720)
             } else {
                 TranscriptDetailView(recording: recording, transcriptText: "")
                     .environmentObject(appCoordinator)
                     .environmentObject(recorderVM)
+                    .nativeMacModalSizing(width: 820, height: 720)
             }
         }
         .sheet(item: $selectedLocationData) { locationData in
             LocationDetailView(locationData: locationData)
+                .nativeMacModalSizing(width: 680, height: 620)
         }
         .confirmationDialog(
             "Clean Audio Before Transcribing?",
@@ -135,6 +141,7 @@ struct TranscriptsView: View {
         }
         .sheet(isPresented: $showDateFilter) {
             dateFilterSheet
+                .nativeMacModalSizing(width: 520, height: 440)
         }
         .onAppear {
             loadRecordings()
@@ -303,33 +310,10 @@ struct TranscriptsView: View {
     }
 
     private func transcriptsListView(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?)], _ filteredImported: [(recording: RecordingEntry, transcript: TranscriptData?)]) -> some View {
-        #if targetEnvironment(macCatalyst)
-        // On Mac Catalyst, the preview-+-NavigationLink-to-More pattern wedges the responder chain
-        // (destination renders but becomes unresponsive). Render everything inline instead.
-        let sectioned = DateSectionHelper.groupBySection(
-            transcriptItemsWithDates(filtered, source: .audio) + transcriptItemsWithDates(filteredImported, source: .imported),
-            dateKeyPath: \.date
-        )
-
-        return List {
-            ForEach(sectioned, id: \.section) { sectionData in
-                Section(
-                    header: CollapsibleDateSectionHeader(
-                        title: sectionData.section.title,
-                        count: sectionData.items.count,
-                        isExpanded: isTranscriptDateSectionExpanded(sectionData.section),
-                        isAlwaysExpanded: false,
-                        onToggle: { toggleTranscriptDateSection(sectionData.section) }
-                    )
-                ) {
-                    if isTranscriptDateSectionExpanded(sectionData.section) {
-                        transcriptDateSectionRows(sectionData.items)
-                    }
-                }
-            }
-        }
-        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
-        .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptList)
+        #if os(macOS) || targetEnvironment(macCatalyst)
+        // A NavigationLink to a List with interactive section headers can wedge the
+        // responder chain on both Mac implementations. Keep the complete archive inline.
+        return macTranscriptsListView(filtered, filteredImported)
         #else
         // iOS / iPadOS: preview cards with "More" navigation to the full list page.
         let recentRecordings = Array(filtered.prefix(3))
@@ -395,6 +379,132 @@ struct TranscriptsView: View {
         #endif
     }
 
+    private func macTranscriptsListView(
+        _ filtered: [(recording: RecordingEntry, transcript: TranscriptData?)],
+        _ filteredImported: [(recording: RecordingEntry, transcript: TranscriptData?)]
+    ) -> some View {
+        let availableRecordings = filtered.filter { $0.transcript != nil }
+        let availableImported = filteredImported.filter { $0.transcript != nil }
+        let pendingRecordings = filtered.filter { $0.transcript == nil }
+        let availableTranscripts = (
+            transcriptItemsWithDates(availableRecordings, source: .audio)
+                + transcriptItemsWithDates(availableImported, source: .imported)
+        ).sorted { $0.date > $1.date }
+        let recentTranscripts = Array(availableTranscripts.prefix(3))
+        let archivedTranscripts = Array(availableTranscripts.dropFirst(recentTranscripts.count))
+        let sectioned = DateSectionHelper.groupBySection(
+            archivedTranscripts,
+            dateKeyPath: \.date
+        )
+
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                if !recentTranscripts.isEmpty {
+                    transcriptSectionHeader(
+                        title: "Recent Transcripts",
+                        count: availableTranscripts.count,
+                        systemImage: "text.document.fill"
+                    )
+                    recentTranscriptRows(recentTranscripts)
+                }
+
+                if !archivedTranscripts.isEmpty {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isTranscriptArchiveExpanded.toggle()
+                        }
+                    } label: {
+                        inlineTranscriptArchiveRow(
+                            count: archivedTranscripts.count,
+                            isExpanded: isTranscriptArchiveExpanded
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    if isTranscriptArchiveExpanded {
+                        ForEach(sectioned, id: \.section) { sectionData in
+                            CollapsibleDateSectionHeader(
+                                title: sectionData.section.title,
+                                count: sectionData.items.count,
+                                isExpanded: isTranscriptDateSectionExpanded(sectionData.section),
+                                isAlwaysExpanded: false,
+                                onToggle: { toggleTranscriptDateSection(sectionData.section) }
+                            )
+
+                            if isTranscriptDateSectionExpanded(sectionData.section) {
+                                transcriptDateSectionRows(sectionData.items)
+                            }
+                        }
+                    }
+                }
+
+                if !pendingRecordings.isEmpty {
+                    CollapsibleDateSectionHeader(
+                        title: "Ready to Transcribe",
+                        count: pendingRecordings.count,
+                        isExpanded: isPendingTranscriptsExpanded,
+                        isAlwaysExpanded: false,
+                        onToggle: { isPendingTranscriptsExpanded.toggle() }
+                    )
+
+                    if isPendingTranscriptsExpanded {
+                        ForEach(pendingRecordings, id: \.recording.objectID) { item in
+                            recordingRowView(item)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 96)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Color(.systemGroupedBackground))
+        .refreshable { loadRecordings() }
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptList)
+    }
+
+    @ViewBuilder
+    private func recentTranscriptRows(_ items: [TranscriptWithDate]) -> some View {
+        ForEach(items, id: \.recording.objectID) { item in
+            if item.source == .audio {
+                recordingRowView((recording: item.recording, transcript: item.transcript))
+            } else {
+                importedTranscriptRowView((recording: item.recording, transcript: item.transcript))
+            }
+        }
+    }
+
+    private func inlineTranscriptArchiveRow(count: Int, isExpanded: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "archivebox")
+                .font(.title3)
+                .foregroundColor(.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isExpanded ? "Hide older transcripts" : "Browse older transcripts")
+                    .font(.subheadline.weight(.semibold))
+                Text("\(count) older \(count == 1 ? "transcript" : "transcripts")")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 15))
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(isExpanded ? "Collapses the transcript archive." : "Expands the transcript archive inline.")
+    }
+
     private var audioRecordingsFullListView: some View {
         struct RecordingWithDate {
             let recording: RecordingEntry
@@ -403,7 +513,10 @@ struct TranscriptsView: View {
         }
 
         // Respect the same date/search filters as the main page
-        let recordingsWithDates: [RecordingWithDate] = filteredRecordings.compactMap { item in
+        let availableRecordings = filteredRecordings.filter { $0.transcript != nil }
+        let pendingRecordings = filteredRecordings.filter { $0.transcript == nil }
+
+        let recordingsWithDates: [RecordingWithDate] = availableRecordings.compactMap { item in
             guard let date = item.recording.recordingDate else { return nil }
             return RecordingWithDate(recording: item.recording, transcript: item.transcript, date: date)
         }
@@ -436,6 +549,27 @@ struct TranscriptsView: View {
                         }
                     }
                 }
+
+                if !pendingRecordings.isEmpty {
+                    Section(
+                        header: CollapsibleDateSectionHeader(
+                            title: "Ready to Transcribe",
+                            count: pendingRecordings.count,
+                            isExpanded: isPendingTranscriptsExpanded,
+                            isAlwaysExpanded: false,
+                            onToggle: { isPendingTranscriptsExpanded.toggle() }
+                        )
+                    ) {
+                        if isPendingTranscriptsExpanded {
+                            ForEach(pendingRecordings, id: \.recording.objectID) { item in
+                                recordingRowView(item)
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
+                        }
+                    }
+                }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
@@ -461,6 +595,7 @@ struct TranscriptsView: View {
 
         // Respect the same date/search filters as the main page
         let importedWithDates: [ImportedWithDate] = filteredImportedTranscripts.compactMap { item in
+            guard item.transcript != nil else { return nil }
             guard let date = item.recording.recordingDate else { return nil }
             return ImportedWithDate(recording: item.recording, transcript: item.transcript, date: date)
         }
@@ -655,7 +790,7 @@ struct TranscriptsView: View {
     ) -> some View {
         HStack(alignment: .center, spacing: 12) {
             Button(action: {
-                selectedRecording = recordingData.recording
+                presentTranscript(recordingData.recording)
             }) {
                 importedTranscriptRowContent(recordingData, showsChevron: onDelete == nil)
             }
@@ -790,7 +925,7 @@ struct TranscriptsView: View {
 
     private func locationButtonView(_ locationData: LocationData, recordingURL: URL) -> some View {
         Button(action: {
-            selectedLocationData = locationData
+            presentLocation(locationData)
         }) {
             HStack {
                 Image(systemName: "location.fill")
@@ -817,7 +952,7 @@ struct TranscriptsView: View {
         return Button(action: {
             if hasTranscript {
                 // Show existing transcript for editing - always allowed
-                selectedRecording = recordingData.recording
+                presentTranscript(recordingData.recording)
             } else {
                 // Generate new transcript - only if this recording doesn't already have an active job
                 if !isProcessing {
@@ -853,6 +988,23 @@ struct TranscriptsView: View {
         )
         .accessibilityValue(isProcessing && !hasTranscript ? "In progress" : "Ready")
         .id("\(recordingData.recording.id?.uuidString ?? "unknown")-\(hasTranscript)-\(hasActiveJob)-\(isCleaning)-\(isQueuedForCleanup)-\(refreshTrigger)")
+    }
+
+    private func presentTranscript(_ recording: RecordingEntry) {
+        #if os(macOS)
+        guard let recordingID = recording.id else { return }
+        openWindow(id: NativeWindowID.transcript, value: recordingID)
+        #else
+        selectedRecording = recording
+        #endif
+    }
+
+    private func presentLocation(_ locationData: LocationData) {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.location, value: locationData)
+        #else
+        selectedLocationData = locationData
+        #endif
     }
 
     /// Returns the appropriate label for the processing button based on current phase
@@ -1406,86 +1558,22 @@ struct EditableTranscriptView: View {
     }
 
     var body: some View {
-        // NavigationStack { Form } is the only sheet pattern that scrolls reliably
-        // on Mac Catalyst. See feedback_mac_catalyst_scrollview.md.
         NavigationStack {
-            Form {
-                Section {
-                    recordingTitleEditor
+            Group {
+                #if os(macOS)
+                // Native macOS needs one explicit scroll owner for the full
+                // transcript. Each segment editor expands instead of scrolling.
+                List {
+                    transcriptSections
                 }
-
-                if editedSegments.isEmpty {
-                    Section {
-                        VStack(spacing: 16) {
-                            Image(systemName: "doc.text")
-                                .font(.system(size: 48))
-                                .foregroundColor(.accentColor)
-                            Text("No transcript content available")
-                                .font(.title3)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.secondary)
-                            Text("Transcript segments: \(editedSegments.count)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
-                    }
-                } else {
-                    if !uniqueSpeakers.isEmpty {
-                        Section {
-                            Button {
-                                showingSpeakerEditor = true
-                            } label: {
-                                HStack {
-                                    Image(systemName: "person.2.fill")
-                                        .foregroundColor(.purple)
-                                    Text("Edit Speakers (\(uniqueSpeakers.count))")
-                                        .foregroundColor(.primary)
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Edit Speakers")
-                            .accessibilityValue(
-                                AccessibilitySupport.itemCount(uniqueSpeakers.count, singular: "speaker")
-                            )
-                        }
-                    }
-
-                    Section("Segments") {
-                        ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, _ in
-                            TranscriptSegmentView(segment: $editedSegments[index], speakerMappings: speakerMappings)
-                        }
-                    }
-                    .id("transcript-\(editedSegments.count)-\(editedSegments.first?.text.prefix(10).hashValue ?? 0)")
+                .listStyle(.inset)
+                .scrollIndicators(.visible)
+                #else
+                // Form preserves the established iOS and Catalyst behavior.
+                Form {
+                    transcriptSections
                 }
-
-                summarySection
-
-                Section {
-                    Button {
-                        showingRerunAlert = true
-                    } label: {
-                        HStack {
-                            if isRerunningTranscription {
-                                ProgressView().scaleEffect(0.8)
-                                Text("Rerunning Transcription...")
-                            } else {
-                                Image(systemName: "arrow.clockwise")
-                                Text("Rerun Transcription")
-                            }
-                            Spacer()
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isRerunningTranscription)
-                }
+                #endif
             }
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
@@ -1546,9 +1634,37 @@ struct EditableTranscriptView: View {
                 speakerIds: uniqueSpeakers,
                 speakerMappings: $speakerMappings
             )
+            .nativeMacModalSizing(width: 620, height: 560)
         }
         .sheet(isPresented: $showSummarySheet) {
+            #if os(macOS)
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Summary")
+                        .font(.headline)
+                    Spacer()
+                    Button("Done") {
+                        showSummarySheet = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityHint("Closes the summary and returns to the transcript.")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.bar)
+
+                Divider()
+
+                summarySheetContent
+            }
+            .onExitCommand {
+                showSummarySheet = false
+            }
+            .nativeMacModalSizing(width: 760, height: 680)
+            #else
             summarySheetContent
+                .nativeMacModalSizing(width: 760, height: 680)
+            #endif
         }
         .alert("Unable to Generate Summary", isPresented: Binding(
             get: { summaryGenerationError != nil },
@@ -1584,6 +1700,86 @@ struct EditableTranscriptView: View {
         }
         .onAppear {
             refreshTranscriptFromCoreData()
+        }
+    }
+
+    @ViewBuilder
+    private var transcriptSections: some View {
+        Section {
+            recordingTitleEditor
+        }
+
+        if editedSegments.isEmpty {
+            Section {
+                VStack(spacing: 16) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 48))
+                        .foregroundColor(.accentColor)
+                    Text("No transcript content available")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                    Text("Transcript segments: \(editedSegments.count)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+            }
+        } else {
+            if !uniqueSpeakers.isEmpty {
+                Section {
+                    Button {
+                        showingSpeakerEditor = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "person.2.fill")
+                                .foregroundColor(.purple)
+                            Text("Edit Speakers (\(uniqueSpeakers.count))")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Edit Speakers")
+                    .accessibilityValue(
+                        AccessibilitySupport.itemCount(uniqueSpeakers.count, singular: "speaker")
+                    )
+                }
+            }
+
+            Section("Segments") {
+                ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, _ in
+                    TranscriptSegmentView(segment: $editedSegments[index], speakerMappings: speakerMappings)
+                }
+            }
+            .id("transcript-\(editedSegments.count)-\(editedSegments.first?.text.prefix(10).hashValue ?? 0)")
+        }
+
+        summarySection
+
+        Section {
+            Button {
+                showingRerunAlert = true
+            } label: {
+                HStack {
+                    if isRerunningTranscription {
+                        ProgressView().scaleEffect(0.8)
+                        Text("Rerunning Transcription...")
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Rerun Transcription")
+                    }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isRerunningTranscription)
         }
     }
 
@@ -2024,12 +2220,7 @@ struct TranscriptSegmentView: View {
                 Spacer()
             }
 
-            TextEditor(text: Binding(
-                get: { segment.text },
-                set: { segment = TranscriptSegment(speaker: segment.speaker, text: $0, startTime: segment.startTime, endTime: segment.endTime) }
-            ))
-            .font(.body)
-            .frame(minHeight: max(120, calculateTextHeight(for: segment.text)))
+            transcriptTextEditor
             .padding(12)
             .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
@@ -2044,6 +2235,39 @@ struct TranscriptSegmentView: View {
         }
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var transcriptTextEditor: some View {
+        #if os(macOS)
+        // A multiline TextField expands and is not backed by its own scroll
+        // view, so wheel/trackpad events always reach the transcript List.
+        TextField("Transcript segment", text: segmentTextBinding, axis: .vertical)
+            .font(.body)
+            .textFieldStyle(.plain)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: 120, alignment: .topLeading)
+        #else
+        TextEditor(text: segmentTextBinding)
+            .font(.body)
+            .frame(minHeight: max(120, calculateTextHeight(for: segment.text)))
+        #endif
+    }
+
+    private var segmentTextBinding: Binding<String> {
+        Binding(
+            get: { segment.text },
+            set: {
+                segment = TranscriptSegment(
+                    speaker: segment.speaker,
+                    text: $0,
+                    startTime: segment.startTime,
+                    endTime: segment.endTime
+                )
+            }
+        )
     }
 
     private func formatTime(_ time: TimeInterval) -> String {
@@ -2297,7 +2521,7 @@ struct TitleRowView: View {
 
                     // Copy button
                     Button(action: {
-                        UIPasteboard.general.string = title.text
+                        PlatformPasteboard.string = title.text
                     }) {
                         Image(systemName: "doc.on.doc")
                             .font(.caption2)
@@ -2366,7 +2590,7 @@ struct EnhancedTitleRowView: View {
 
                     // Copy button
                     Button(action: {
-                        UIPasteboard.general.string = title.text
+                        PlatformPasteboard.string = title.text
                     }) {
                         Image(systemName: "doc.on.doc")
                             .font(.caption2)

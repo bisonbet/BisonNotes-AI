@@ -6,7 +6,9 @@
 //
 
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // MARK: - Phase 4: Background Task Management
 
@@ -21,7 +23,7 @@ extension AudioRecorderViewModel {
 		#else
 		guard backgroundTask == .invalid else { return }
 		AppLog.shared.backgroundProcessing("Starting background task for recording")
-		backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Recording") { [weak self] in
+		backgroundTask = PlatformBackgroundTask.begin(name: "Recording") { [weak self] in
 			AppLog.shared.backgroundProcessing("Recording background task expiring", level: .error)
 			self?.endBackgroundTask()
 		}
@@ -34,7 +36,7 @@ extension AudioRecorderViewModel {
 		#else
 		guard backgroundTask != .invalid else { return }
 		AppLog.shared.backgroundProcessing("Ending recording background task")
-		UIApplication.shared.endBackgroundTask(backgroundTask)
+		PlatformBackgroundTask.end(backgroundTask)
 		backgroundTask = .invalid
 		#endif
 	}
@@ -42,7 +44,7 @@ extension AudioRecorderViewModel {
 	// MARK: - Background Time Monitoring
 
 	func startBackgroundTimeMonitoring() {
-		#if targetEnvironment(macCatalyst)
+		#if targetEnvironment(macCatalyst) || os(macOS)
 		// No iOS-style background time limit on Mac — skip polling.
 		return
 		#else
@@ -50,7 +52,7 @@ extension AudioRecorderViewModel {
 
 		// Check remaining background time every 30 seconds
 		backgroundTimeMonitor = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-			let remaining = UIApplication.shared.backgroundTimeRemaining
+			let remaining = PlatformBackgroundTask.remainingTime
 
 			// Only log/warn if actually limited (not infinite)
 			if remaining < Double.greatestFiniteMagnitude {

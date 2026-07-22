@@ -8,7 +8,9 @@
 import Foundation
 import CoreData
 import AVFoundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // MARK: - Data Integrity Structures
 

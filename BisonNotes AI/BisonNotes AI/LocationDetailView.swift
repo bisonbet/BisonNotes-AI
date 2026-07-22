@@ -125,7 +125,7 @@ struct LocationDetailView: View {
     }
 
     private func copyCoordinates() {
-        UIPasteboard.general.string = locationData.coordinateString
+        PlatformPasteboard.string = locationData.coordinateString
     }
 }
 
