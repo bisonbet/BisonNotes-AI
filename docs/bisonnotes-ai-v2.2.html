@@ -1,0 +1,162 @@
+<!-- BisonNotes AI v2.2 - WordPress Release and Upgrade Guide -->
+<!-- Paste everything below into a WordPress Custom HTML block or HTML editor. -->
+<!-- Keep the CSS inside the style tag on one line: WordPress auto-paragraph formatting can break multi-line CSS. -->
+
+<style>.bn22 *,.bn22 *::before,.bn22 *::after{box-sizing:border-box}.bn22{max-width:960px;margin:0 auto;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;font-size:clamp(17px,1rem + .35vw,19px);line-height:1.7;color:#1a1a1a;overflow-wrap:anywhere}.entry-content>.bn22,.post-inner .bn22,.page-content .bn22,.section-inner .bn22,.wp-block-post-content .bn22,.entry-content .bn22{max-width:960px!important;width:100%!important}.entry-content>*:has(.bn22),.post-inner:has(.bn22),.section-inner:has(.bn22){max-width:none!important;width:100%!important}.post-inner .entry-header,.singular .entry-header,.entry-header .entry-title,body.page .entry-header{display:none!important}.bn22 h2{font-size:1.35rem;font-weight:750;margin:2.2rem 0 .75rem;padding-bottom:.35rem;border-bottom:2px solid #c0392b;color:#111}.bn22 h3{font-size:1.1rem;font-weight:700;margin:1.4rem 0 .45rem;color:#222}.bn22 p{margin:.55rem 0}.bn22 ul,.bn22 ol{margin:.4rem 0 .75rem;padding-left:1.4rem}.bn22 li{margin:.3rem 0}.bn22 a{color:#b33125;text-decoration:underline;text-decoration-thickness:.08em;text-underline-offset:.13em}.bn22 code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:.88em;word-break:break-all}.bn22-hero{text-align:center;padding:1.7rem 1rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 52%,#0f3460 100%);color:#fff;border-radius:12px;margin-bottom:1.4rem}.bn22-hero h1{color:#fff!important;font-size:1.65rem;line-height:1.25;margin:0;border:0!important;padding:0!important}.bn22-hero p{margin:.3rem 0 0;color:#fff;opacity:.88}.bn22-badge{display:inline-block;margin-top:.7rem;padding:.18rem .7rem;border-radius:999px;background:#c0392b;color:#fff;font-size:.78rem;font-weight:750}.bn22-toc{background:#f7f8f9;border:1px solid #dde1e5;border-radius:9px;padding:.9rem 1rem;margin:0 0 1.7rem}.bn22-toc strong{display:block;margin-bottom:.25rem}.bn22-toc ol{margin:0}.bn22-card,.bn22-info,.bn22-ok,.bn22-warn{border-radius:8px;padding:.85rem 1rem;margin:.8rem 0}.bn22-card{background:#f7f8f9;border:1px solid #dde1e5}.bn22-info{background:#eaf3fc;border-left:4px solid #2563eb}.bn22-ok{background:#eaf7ec;border-left:4px solid #238b45}.bn22-warn{background:#fef7e0;border-left:4px solid #d5960b}.bn22-grid{display:grid;grid-template-columns:1fr;gap:.75rem;margin:.8rem 0}.bn22-grid>div{background:#fff;border:1px solid #dde1e5;border-radius:9px;padding:.85rem 1rem}.bn22-grid h3{margin:0 0 .3rem}.bn22-grid p,.bn22-grid ul{font-size:.94rem}.bn22-steps{counter-reset:step;list-style:none;padding-left:0!important}.bn22-steps>li{counter-increment:step;position:relative;padding-left:2.4rem;margin:.8rem 0}.bn22-steps>li::before{content:counter(step);position:absolute;left:0;top:.05rem;width:1.65rem;height:1.65rem;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#c0392b;color:#fff;font-weight:750;font-size:.82rem}.bn22 small{font-size:.84rem;color:#555}@media(min-width:620px){.bn22-grid{grid-template-columns:1fr 1fr}}@media(max-width:619px){.bn22{padding:.7rem}.bn22-hero{padding:1.35rem .75rem}.bn22-hero h1{font-size:1.4rem}.bn22 h2{font-size:1.25rem}}</style>
+
+<div class="bn22">
+
+<div class="bn22-hero">
+  <h1>BisonNotes AI v2.2</h1>
+  <p>Release and Upgrade Guide for iPhone, iPad, Apple Watch, and Mac</p>
+  <span class="bn22-badge">Native Mac app &bull; safer recording &bull; accessible workflows</span>
+</div>
+
+<div class="bn22-toc">
+  <strong>On this page</strong>
+  <ol>
+    <li><a href="#bn22-overview">Release overview</a></li>
+    <li><a href="#bn22-mac">The native Mac app</a></li>
+    <li><a href="#bn22-recording">Recording reliability</a></li>
+    <li><a href="#bn22-import">Import From Link</a></li>
+    <li><a href="#bn22-accessibility">Accessibility</a></li>
+    <li><a href="#bn22-upgrade">Upgrade checklist</a></li>
+    <li><a href="#bn22-help">Troubleshooting and help</a></li>
+  </ol>
+</div>
+
+<h2 id="bn22-overview">Release Overview</h2>
+
+<p>Version 2.2 is a major Mac, recording-reliability, web-import, and accessibility release. The Mac app has moved from Mac Catalyst to a native macOS target while keeping the same app identity and data location. iPhone, iPad, and Apple Watch continue to use the familiar BisonNotes workflow.</p>
+
+<div class="bn22-grid">
+  <div>
+    <h3>Native on Mac</h3>
+    <p>Mac-native windows, Settings, menus, keyboard commands, export, sharing, archive access, microphone selection, and local AI options.</p>
+  </div>
+  <div>
+    <h3>Recording safeguards</h3>
+    <p>The Mac recorder verifies that microphone audio actually starts, watches for capture stalls, and can save one usable track if the other fails.</p>
+  </div>
+  <div>
+    <h3>Import From Link</h3>
+    <p>Import supported audio, video, transcript documents, and public YouTube captions from a web address.</p>
+  </div>
+  <div>
+    <h3>Accessible workflows</h3>
+    <p>Clearer VoiceOver labels, Voice Control names, non-color state cues, reduced motion, and an adjustable playback scrubber.</p>
+  </div>
+  <div>
+    <h3>Durable iCloud deletion</h3>
+    <p>Summary-only deletions queue removal of live and backup CloudKit records if iCloud is temporarily unavailable.</p>
+  </div>
+  <div>
+    <h3>Clean local-AI output</h3>
+    <p>Thinking-capable MLX models keep reasoning internal; summaries and extracted actions show only the final response.</p>
+  </div>
+</div>
+
+<p>v2.2 also improves iPad navigation, playback controls, state contrast, deterministic accessibility-test startup, native Mac archive presentation, and Settings navigation.</p>
+
+<h2 id="bn22-mac">The Native Mac App</h2>
+
+<div class="bn22-ok"><strong>Your existing Mac library is preserved.</strong> The native app uses the same bundle identity, app container, Core Data store, and iCloud container as the previous Catalyst version. Installing the matching v2.2 release upgrades BisonNotes instead of creating a separate empty library.</div>
+
+<h3>A more natural Mac workspace</h3>
+<ul>
+  <li>Summaries, transcripts, players, library views, location details, and processing views can open in movable and resizable windows where appropriate.</li>
+  <li>Settings opens in a dedicated Mac Settings window.</li>
+  <li>Standard File and Edit menus expose import, export, navigation, and editing commands, with keyboard shortcuts where available.</li>
+  <li>Native RTF and PDF export use the Mac save workflow, and AppKit sharing sends content to compatible Mac apps and services.</li>
+  <li>Archive locations use security-scoped bookmarks so BisonNotes can restore access after relaunch.</li>
+</ul>
+
+<h3>Local AI on Apple silicon</h3>
+<p>MLX Swift remains the default local summarization engine on supported hardware. Native Mac users with at least 16 GB RAM can also select Ternary Bonsai 27B, an approximately 8.5 GB local model intended for laptop-class processing. It is not offered on iPhone, iPad, or the legacy Catalyst target.</p>
+
+<div class="bn22-info"><strong>iCloud note:</strong> Mac, iPhone, and iPad must use the same Apple ID and CloudKit environment. Local Debug builds use CloudKit development; TestFlight and App Store builds use production, so records do not cross between those environments.</div>
+
+<p>If you delete only a summary while keeping its recording and transcript, BisonNotes now queues removal of the summary&rsquo;s live record, backup record, and content-index reference. When iCloud is temporarily unavailable, that removal is retried later.</p>
+
+<h2 id="bn22-recording">Recording Reliability on Mac</h2>
+
+<p>The v2.2 Mac recorder is designed to fail safely when a microphone, USB interface, Bluetooth device, or system-audio source changes unexpectedly.</p>
+
+<ul>
+  <li><strong>Selectable input:</strong> Choose the built-in microphone or an available USB/Bluetooth input in Transcription Settings.</li>
+  <li><strong>Confirmed start:</strong> BisonNotes does not treat recording as healthy until the first microphone buffer has been written successfully.</li>
+  <li><strong>Health monitoring:</strong> A watchdog detects a missing first buffer, later capture stalls, and write failures.</li>
+  <li><strong>Device recovery:</strong> If the active input changes or disconnects, completed PCM segments are preserved while BisonNotes attempts a bounded reconnection or falls back to the system default.</li>
+  <li><strong>Independent track checks:</strong> Microphone and system audio are validated separately. If only one track is usable, BisonNotes saves that track instead of rejecting the whole recording.</li>
+  <li><strong>Recoverable source media:</strong> If final export still fails, source segments are retained in Application Support and the recovery session is included in exported diagnostic logs.</li>
+</ul>
+
+<h3>Optional meeting audio</h3>
+<p>Enable <strong>Record Meeting Audio</strong> in Recording settings to capture audio playing from other Mac apps along with your microphone. macOS requires Screen &amp; System Audio Recording permission. BisonNotes captures audio only; it does not save screen video.</p>
+
+<div class="bn22-warn"><strong>Always confirm the live recording state before leaving a meeting unattended.</strong> Hardware, permissions, cables, Bluetooth connections, and conferencing apps remain outside BisonNotes&rsquo; control. For an important first recording on new hardware, make a short test, stop it, and play it back.</div>
+
+<h2 id="bn22-import">Import From Link</h2>
+
+<p>Choose <strong>Import From Link</strong> on the Recordings screen, or <strong>File &gt; Import From Link&hellip;</strong> on Mac.</p>
+
+<ul>
+  <li><strong>Audio and video:</strong> Direct HTTPS links can import supported M4A, MP3, WAV, CAF, AIFF/AIF, MP4, MOV, M4V, AVI, and MKV files. Video audio is extracted to M4A.</li>
+  <li><strong>Transcript documents:</strong> Direct links can import TXT, MD, VTT, SRT, PDF, DOC, and DOCX documents. A transcript can be summarized without an audio file.</li>
+  <li><strong>YouTube captions:</strong> Public YouTube links can be checked for caption tracks. BisonNotes does not download YouTube audio or video.</li>
+  <li><strong>Pasted-transcript fallback:</strong> If YouTube blocks the caption request, BisonNotes can open the video and guide you through copying and pasting its transcript.</li>
+  <li><strong>Safer downloads:</strong> Imports use HTTPS or an explicitly allowed local/private address, enforce media/document size limits, validate redirects and downloaded content, preserve useful server filenames, and clean up rejected temporary files.</li>
+</ul>
+
+<h2 id="bn22-accessibility">Accessibility</h2>
+
+<p>Version 2.2 expands accessibility semantics and automated audit coverage across setup, recording, imports, recordings, playback, transcripts, summaries, settings, and Apple Watch recording.</p>
+
+<ul>
+  <li><strong>VoiceOver:</strong> Main controls, content rows, playback actions, setup choices, settings, transcript/summary actions, and Watch recording states expose clearer labels, values, and hints.</li>
+  <li><strong>Voice Control:</strong> Repeated actions include the associated recording, transcript, or summary title when useful, making them easier to target by name.</li>
+  <li><strong>Adjustable scrubber:</strong> The audio scrubber announces elapsed and remaining time and supports 15-second accessibility seek increments.</li>
+  <li><strong>Non-color status:</strong> Availability, local-only state, transcript/summary presence, recording state, transfer progress, low battery, and error recovery are expressed with text or accessibility values instead of color alone.</li>
+  <li><strong>Reduce Motion:</strong> Recording indicators retain their meaning without relying on pulsing animation.</li>
+  <li><strong>Keyboard access:</strong> iPad and Mac users can use standard keyboard navigation and Full Keyboard Access across common SwiftUI controls; Mac-native windows and menus should also be included in release testing.</li>
+</ul>
+
+<h2 id="bn22-upgrade">Upgrade Checklist</h2>
+
+<ol class="bn22-steps">
+  <li><strong>Let current work finish.</strong> Complete active recordings, transcriptions, summaries, and iCloud jobs before installing the update.</li>
+  <li><strong>Keep a copy of critical audio.</strong> Export any irreplaceable meeting recording before a major app or operating-system update.</li>
+  <li><strong>Install v2.2 normally.</strong> On Mac, install the new build over the existing BisonNotes app; do not delete the old app&rsquo;s container or support files.</li>
+  <li><strong>Open the library first.</strong> Confirm that expected recordings, transcripts, summaries, settings, and Keep on This Device states are present.</li>
+  <li><strong>Review Mac permissions.</strong> Confirm Microphone access. If you use meeting-audio capture, also confirm Screen &amp; System Audio Recording access in macOS System Settings.</li>
+  <li><strong>Run a short recording test.</strong> Record speech, optionally play system audio, stop, play back the result, and verify the duration before relying on the setup for a long meeting.</li>
+  <li><strong>Check selected engines.</strong> Confirm the chosen transcription and summarization engines, especially after downloading or changing a local model.</li>
+</ol>
+
+<h2 id="bn22-help">Troubleshooting and Help</h2>
+
+<h3>A Mac recording has no microphone audio</h3>
+<ul>
+  <li>Check macOS System Settings &gt; Privacy &amp; Security &gt; Microphone.</li>
+  <li>Open BisonNotes Transcription Settings and confirm the intended input device.</li>
+  <li>If a USB or Bluetooth device disconnected, reconnect it and make a short test recording.</li>
+  <li>Export diagnostic logs before clearing settings or reinstalling; the log report lists retained recording-recovery sessions.</li>
+</ul>
+
+<h3>Meeting audio is missing but the microphone was saved</h3>
+<p>Confirm Screen &amp; System Audio Recording permission and that the other app was producing sustained audible output. If the system track is silent or unavailable, v2.2 intentionally finalizes the usable microphone recording instead of discarding it.</p>
+
+<h3>A web import is rejected</h3>
+<p>Confirm the address points directly to a supported file over HTTPS, is within the supported size limit, and does not require an interactive login. Signed download links are supported when the final response is valid media or a supported transcript document.</p>
+
+<div class="bn22-info"><strong>Need more detail?</strong> See the complete BisonNotes AI User Guide for engine setup, transcription, summaries, iCloud, privacy, archiving, playback, Watch features, and advanced workflows.</div>
+
+<div class="bn22-card">
+  <strong>Support</strong>
+  <p>When reporting a problem, include the device model, OS version, BisonNotes version, the feature being used, and exported diagnostic logs when safe to share. Do not include private meeting audio or credentials.</p>
+  <p><a href="https://github.com/bisonbet/BisonNotes-AI/issues" target="_blank" rel="noopener">Report an issue on GitHub</a></p>
+</div>
+
+<p style="text-align:center"><small>Last updated for BisonNotes AI v2.2. Features can vary by device capability, permissions, selected engine, and operating-system version.</small></p>
+
+</div>

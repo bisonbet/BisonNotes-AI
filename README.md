@@ -1,14 +1,20 @@
 # BisonNotes AI
 
-SwiftUI app for recording audio, transcribing it with local or cloud engines, and generating summaries, tasks, and reminders. Ships on **iOS, iPadOS, watchOS, and macOS (Mac Catalyst)**. Core Data powers persistence; background jobs handle long/complex processing; WatchConnectivity imports complete watch recordings back to the phone.
+SwiftUI app for recording audio, transcribing it with local or cloud engines, and generating summaries, tasks, and reminders. Ships on **iOS, iPadOS, watchOS, and native macOS**. Core Data powers persistence; background jobs handle long/complex processing; WatchConnectivity imports complete watch recordings back to the phone.
 
 AVAILABLE ON THE APP STORE: https://apps.apple.com/us/app/bisonnotes-ai-voice-notes/id6749189425
 
-Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Accessibility Matrix](docs/accessibility-matrix.md) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Regression Testing Regimen](docs/testing-regimen.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
+Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.2 Release Guide (WordPress)](docs/bisonnotes-ai-v2.2.html) • [Accessibility Matrix](docs/accessibility-matrix.md) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Regression Testing Regimen](docs/testing-regimen.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
 
 ## v2.2 Highlights
+- The Mac app is now a native macOS app while retaining the same bundle identity, app container, Core Data store, and iCloud container used by the previous Catalyst build. It adds native windows, a dedicated Settings window, standard File/Edit commands, keyboard shortcuts, persistent archive bookmarks, AppKit sharing, and native RTF/PDF export.
+- Native Mac recording uses selectable Core Audio inputs plus ScreenCaptureKit meeting-audio capture. It monitors input-device changes, preserves microphone segments across a device recovery, validates microphone and system tracks independently, saves whichever usable track remains, and retains failed source media in Application Support for recovery.
+- Native macOS can run the Ternary Bonsai 27B MLX model on Macs with at least 16 GB RAM; the approximately 8.5 GB model remains excluded from iPhone, iPad, and Catalyst catalogs.
 - Import from web links can now bring in direct audio/video files, transcript documents, and public YouTube captions, with a guided pasted-transcript recovery flow when YouTube blocks automated caption downloads.
-- Common iPhone, iPad, Mac Catalyst, and Apple Watch tasks now have explicit VoiceOver labels, values, hints, and non-color state cues across setup, recording, imports, recordings, playback, transcripts, summaries, settings, and watch recording.
+- Web downloads are bounded by content type and size, use isolated sessions, validate redirects and final media before persistence, preserve server-provided filenames, and clean up temporary files when downstream import fails.
+- Summary-only deletions now queue removal of both live and backup CloudKit records, including content-index cleanup, so an offline deletion can be completed when iCloud becomes available instead of restoring the deleted summary later.
+- Thinking-capable MLX models keep their reasoning internal. Reasoning tags, partial traces, and prose preambles are stripped before summaries, tasks, reminders, and suggested titles are parsed or displayed.
+- Common iPhone, iPad, Mac, and Apple Watch tasks now have explicit VoiceOver labels, values, hints, and non-color state cues across setup, recording, imports, recordings, playback, transcripts, summaries, settings, and watch recording.
 - The custom audio scrubber remains visually unchanged but is exposed as an adjustable accessibility control with current/remaining time and 15-second seek increments.
 - Recording, transcript, and summary rows expose contextual status such as duration, file size, archive/local audio, iCloud/local-only state, transcript availability, summary availability, task/reminder counts, and location availability.
 - Apple Watch recording now exposes state for the main record/stop control, mute/pause, transfer progress, low battery, and error recovery, and the pulsing recording indicators respect Reduce Motion.
@@ -33,12 +39,12 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Accessibility
 - Data: Core Data model at `BisonNotes AI/BisonNotes_AI.xcdatamodeld` stores recordings, transcripts, summaries, and jobs. Sensitive credentials (API keys, AWS access keys, Bedrock session tokens) live in the iOS Keychain, never on disk in plaintext.
 - Engines: Pluggable services for On Device transcription, OpenAI, OpenAI-compatible APIs, Mistral AI, Google AI Studio, AWS Bedrock/Transcribe, Whisper (REST), Wyoming streaming, Ollama, On Device AI (MLX Swift), On Device AI Legacy (llama.cpp), and Apple Native (Foundation Models). Each engine pairs a service with a settings view.
 - Background: `BackgroundProcessingManager` coordinates queued work with retries, timeouts, and recovery. Large files are chunked and processed streaming‑first.
-- Recording: A platform-aware audio pipeline — `AVAudioRecorder` on iOS/iPadOS, `AVAudioEngine` on Mac Catalyst (`AudioRecorderViewModel+CatalystEngine.swift`) — with shared Pause/Resume support, optional Mac meeting-audio capture through `CatalystSystemAudioCapture`, and crash-safe interruption handling.
+- Recording: A platform-aware audio pipeline — `AVAudioRecorder` on iOS/iPadOS and `AVAudioEngine`/`AVAudioFile` on native macOS and Mac Catalyst (`AudioRecorderViewModel+CatalystEngine.swift`) — with shared Pause/Resume support, optional Mac meeting-audio capture through `CatalystSystemAudioCapture`, first-buffer and stall monitoring, independent track validation, recoverable PCM segments, and crash-safe interruption handling.
 - Watch Sync: `WatchConnectivityManager` (on iOS and watch targets) manages reachability, complete-file transfers, duplicate protection, queued acknowledgments, and import recovery. Watch complications and a Control Center recording widget are bundled as separate targets.
 - UI: SwiftUI views under `Views/` implement recording, summaries, transcripts, setup, and settings. AI-generated content uses MarkdownUI for professional formatting. View models isolate state and side effects.
 
 ## Project Structure
-- `BisonNotes AI/`: iOS / iPadOS / Mac Catalyst app source
+- `BisonNotes AI/`: shared iOS / iPadOS / native macOS / Mac Catalyst app source
   - Notable folders: `Models/`, `Views/`, `ViewModels/`, `OpenAI/`, `AWS/`, `Wyoming/`, `WatchConnectivity/`, `OnDeviceLLM/`, `FluidAudio/`, `Services/`
   - Assets: `Assets.xcassets`; config: `Info.plist`, `.entitlements`
   - Uses Xcode's file-system synchronized groups, so dropping new Swift files into these folders automatically adds them to the project—no manual `.xcodeproj` edits are necessary.
@@ -52,13 +58,15 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Accessibility
 - Open in Xcode: `open "BisonNotes AI/BisonNotes AI.xcodeproj"`
 - Build (iOS): `xcodebuild -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -configuration Debug build`
 - Test (iOS): `xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=iOS Simulator,name=iPhone 15'`
+- Build (native macOS): `xcodebuild -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI macOS" -destination 'platform=macOS' -configuration Debug build`
+- Archive (native macOS): `xcodebuild archive -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI macOS" -destination 'generic/platform=macOS' -configuration Release`
 - Build (Mac Catalyst): `xcodebuild -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=macOS,variant=Mac Catalyst' -configuration Debug build`
-- Archive (Mac Catalyst): `Scripts/archive-catalyst.sh`. Use this script instead of Product > Archive so the arm64-only Catalyst setting reaches SwiftPM package targets.
+- Archive (legacy Mac Catalyst): `Scripts/archive-catalyst.sh`. Use this script instead of Product > Archive so the arm64-only Catalyst setting reaches SwiftPM package targets.
 - Use the watch app scheme to run the watch target. SwiftPM resolves automatically in Xcode.
-- Release validation should follow [docs/testing-regimen.md](docs/testing-regimen.md), including app/watch test plans, Mac Catalyst build coverage, and manual hardware checks for microphone, watch transfer, iCloud, Parakeet, share import, Control Center, Action Button, and Mac meeting audio.
+- Release validation should follow [docs/testing-regimen.md](docs/testing-regimen.md), including app/watch test plans, native macOS and Catalyst build coverage, and manual hardware checks for microphone/device switching, watch transfer, iCloud, Parakeet, share import, Control Center, Action Button, Mac meeting audio, archive restore, and long hidden-window processing.
 - Accessibility validation should include the automated UI audit class:
   `xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"BisonNotes AIUITests/BisonNotesAIAccessibilityTests"`
-- Real-device accessibility release checks are still required for VoiceOver, Voice Control, Switch Control sampling, Full Keyboard Access on iPad/Mac Catalyst, largest Dynamic Type, light/dark contrast modes, Reduce Motion, Apple Watch VoiceOver, Control Center, and Action Button.
+- Real-device accessibility release checks are still required for VoiceOver, Voice Control, Switch Control sampling, Full Keyboard Access on iPad/macOS, largest Dynamic Type, light/dark contrast modes, Reduce Motion, Apple Watch VoiceOver, Control Center, and Action Button.
 - See `CLAUDE.md` for the manual `llama.xcframework` Mac Catalyst slice, duplicate-library modulemap cleanup, AWS/Smithy archive constraint, and `bisonbet/textual` Catalyst guards if you rebuild dependencies.
 
 ## Accessibility Development Notes
@@ -66,7 +74,7 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [Accessibility
 - Stable automation identifiers live in `BisonNotes AI/BisonNotes AI/AccessibilityIdentifiers.swift`. Add identifiers only for surfaces needed by UI tests, audit navigation, or repeated external automation.
 - Deterministic accessibility UI tests live in `BisonNotes AI/BisonNotes AIUITests/BisonNotesAIAccessibilityTests.swift` and use DEBUG launch arguments from `UITestSupport.swift`, including `--show-first-setup`.
 - App Store accessibility evidence lives in `docs/accessibility-matrix.md` and `docs/app-store-accessibility.md`. Keep those files and the public `docs/accessibility.html` page aligned with implemented behavior before claiming Accessibility Nutrition Labels.
-- The shared SwiftUI app surfaces carry over to Mac Catalyst, but Catalyst still needs manual VoiceOver, Full Keyboard Access, keyboard navigation, window resizing, and real iCloud/file import validation on a Mac.
+- The shared SwiftUI app surfaces carry over to native macOS, but the Mac release still needs manual VoiceOver, Full Keyboard Access, keyboard navigation, multi-window resizing, and real iCloud/file import validation.
 
 ## Dependencies
 
@@ -118,9 +126,9 @@ All external dependencies are resolved automatically via Swift Package Manager w
 
 ## Key Features
 - **Modern v2.0 UI**: Recordings, Transcripts, Summaries, Setup, and Settings use refreshed SwiftUI layouts with clearer action placement, sectioned date lists, and Catalyst-friendly navigation.
-- **Accessibility-ready task flows (v2.2)**: VoiceOver and Voice Control labels, values, hints, contextual row summaries, adjustable playback scrubber support, Reduce Motion handling, accessibility UI audits, and App Store accessibility evidence docs cover the common iPhone/iPad, Mac Catalyst, and Apple Watch workflows.
-- **Mac Catalyst (v2.1)**: Native Apple Silicon Mac build with a Catalyst-specific audio pipeline, optional meeting-audio capture from other Mac apps, sandbox entitlements, iCloud archive support, and an arm64-only archive path.
-- **Pause and Resume Recording**: Pause mid-meeting without stopping the file. Resume seamlessly across iOS, iPadOS, watchOS mute/resume, and Mac Catalyst (separate `AVAudioEngine` path on Catalyst).
+- **Accessibility-ready task flows (v2.2)**: VoiceOver and Voice Control labels, values, hints, contextual row summaries, adjustable playback scrubber support, Reduce Motion handling, accessibility UI audits, and App Store accessibility evidence docs cover the common iPhone/iPad, Mac, and Apple Watch workflows.
+- **Native macOS app (v2.2)**: Native Apple Silicon Mac target with movable/resizable content windows, dedicated Settings, Mac commands and shortcuts, persistent archive bookmarks, native export/sharing, selectable microphones, optional ScreenCaptureKit meeting audio, and Mac-aware capture recovery.
+- **Pause and Resume Recording**: Pause mid-meeting without stopping the file. Resume seamlessly across iOS, iPadOS, watchOS mute/resume, and Mac (`AVAudioEngine`/PCM segment path).
 - **Hardened Credential Storage (v1.11)**: API keys, AWS credentials, and Bedrock session tokens stored in the iOS Keychain. Legacy values are migrated automatically and kept out of iCloud settings backups. File protection is applied to recordings, transcripts, notes, attachments, and the Core Data SQLite files.
 - **Endpoint Safety (v1.11)**: User-configurable OpenAI, OpenAI-compatible, Ollama, and Whisper endpoints are validated — public cleartext (HTTP/WS) destinations are blocked by default; local/private endpoints stay allowed, with a Development Mode toggle for power users.
 - **Source-Centric Workflow (v1.11)**: "Generate Transcript" lives on the recording row; "Generate Summary" lives on the transcript. Buttons only appear where they apply and disappear once the artifact exists — regeneration happens from the existing detail view.
@@ -146,12 +154,12 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - **Combine Recordings**: Merge two separate recordings into a single continuous audio file
 - **PDF Export**: Professional PDF reports with three-pane header (metadata, local map, regional map), pagination, and dedicated tasks/reminders sections
 - **Background Processing**: Long recordings and complex processing handled automatically in the background with intelligent stale job detection and automatic recovery
-- **iCloud Backup & Sync**: Automatic backup and cross-device reconcile on app activation, CloudKit summary sync with paginated queries and schema-safe fallback, deferred auto-backup, and a per-recording **Keep on This Device** tag that excludes a recording, transcript, and summary from BisonNotes iCloud sync and backup. Sensitive settings (API keys, AWS credentials) are excluded from iCloud settings backups by default.
+- **iCloud Backup & Sync**: Automatic backup and cross-device reconcile on app activation, CloudKit summary sync with paginated queries and schema-safe fallback, deferred auto-backup, durable recording and summary deletion queues, and a per-recording **Keep on This Device** tag that excludes a recording, transcript, and summary from BisonNotes iCloud sync and backup. Sensitive settings (API keys, AWS credentials) are excluded from iCloud settings backups by default.
 - **Search Functionality**: Powerful search across recordings, transcripts, and summaries. Search by recording name, transcript text, summary content, tasks, reminders, and titles.
 - **Date Filters**: Filter recordings, transcripts, and summaries by date range. Select start and end dates to quickly find content from specific time periods.
 
 ## Key Modules
-- Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel` (+ `+CatalystEngine`, `+Interruptions`, `+Background`, `+CallIntelligence`, `+Warnings`), `CatalystSystemAudioCapture`, `RecordingCombiner`, `TranscriptionStarter`
+- Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel` (+ `+CatalystEngine`, `+MacCaptureHealth`, `+MacFinalization`, `+MicrophoneReconnection`, `+Interruptions`, `+Background`, `+CallIntelligence`, `+Warnings`), `MacRecordingReliability`, `CatalystSystemAudioCapture`, `MacInputDeviceMonitor`, `RecordingCombiner`, `TranscriptionStarter`
 - Transcription: `FluidAudioManager` (Parakeet), `OpenAITranscribeService`, `MistralTranscribeService`, `WhisperService`, `WyomingWhisperClient`, `AWSTranscribeService`, `LiveTranscriptionService`
 - Web Import: `WebImportManager`, `WebImportDownloader`, `WebImportURLClassifier`, `YouTubeImportService`, `YouTubePlayerResponseParser`, `TranscriptCaptionTextCleaner`
 - Summarization: `OpenAISummarizationService`, `MistralAISummarizationService`, `GoogleAIStudioService`, `AWSBedrockService`, `OnDeviceLLMService`, `MLXSwiftEngine`, `AppleNativeEngine`
@@ -183,7 +191,9 @@ To keep a specific item out of BisonNotes iCloud sync and backup, mark its recor
 
 When iCloud Sync is enabled, BisonNotes automatically reconciles eligible recordings, transcripts, and summaries when the app launches or becomes active. The **Include audio files in backup** checkbox controls whether audio files are uploaded and restored; transcripts and summaries are included in app-managed iCloud sync unless the recording is marked **Keep on This Device**. Deleting a recording writes an iCloud deletion marker and removes known app-created iCloud records so other devices on the same iCloud account can apply the deletion before they upload their local state. The app only cleans up records it can prove were deleted or explicitly excluded; active cloud-only records without a deletion marker are restored, while older untrusted cloud-only records are held for review.
 
-iOS, iPadOS, and Mac Catalyst builds use the shared iCloud container `iCloud.Bison-Networking.BisonNotes-AI` for app-managed CloudKit sync. Devices must be signed into the same Apple ID and use the same CloudKit environment to see the same records. A local Debug build uses the CloudKit development environment, while TestFlight and App Store builds use production, so a Debug Mac Catalyst install will not see records created by a production iPhone or iPad build until the build channel/environment matches.
+Deleting only a summary also creates a durable pending iCloud removal. BisonNotes removes the summary's live record, backup record, and content-index reference immediately when possible, or retries the queued removal when iCloud becomes available.
+
+iOS, iPadOS, native macOS, and Mac Catalyst builds use the shared iCloud container `iCloud.Bison-Networking.BisonNotes-AI` for app-managed CloudKit sync. Devices must be signed into the same Apple ID and use the same CloudKit environment to see the same records. A local Debug build uses the CloudKit development environment, while TestFlight and App Store builds use production, so a Debug Mac install will not see records created by a production iPhone or iPad build until the build channel/environment matches.
 
 Production iCloud sync requires the CloudKit production schema for `iCloud.Bison-Networking.BisonNotes-AI` to include the app-managed backup record types `CD_BackupRecording`, `CD_BackupTranscript`, `CD_BackupSummary`, `CD_BackupSettings`, `CD_BackupContentIndex`, and `CD_BackupDeletion`. Before shipping TestFlight or App Store builds that use these records, create/verify them in the development environment and deploy the CloudKit schema changes to production from CloudKit Dashboard. Production clients cannot create new record types themselves.
 

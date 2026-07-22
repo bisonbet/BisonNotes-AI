@@ -25,7 +25,7 @@
     </li>
     <li><a href="#bn-recording">Recording Features</a>
       <ul>
-        <li><a href="#bn-mac">Mac Catalyst</a></li>
+        <li><a href="#bn-mac">Native Mac App</a></li>
         <li><a href="#bn-pause">Pause &amp; Resume</a></li>
         <li><a href="#bn-action-btn">Action Button</a></li>
         <li><a href="#bn-import-link">Import From Link</a></li>
@@ -53,14 +53,19 @@
 <div class="bn-ok">
   <strong>What&rsquo;s new in v2.2:</strong>
   <ul>
+    <li><strong>Native Mac app.</strong> BisonNotes now runs as a native macOS app with Mac windows, dedicated Settings, standard File/Edit commands and shortcuts, native export and sharing, persistent archive access, and continuity with the data used by the previous Catalyst build.</li>
+    <li><strong>Safer Mac recording.</strong> Selectable microphones, input-device monitoring, first-buffer and stall detection, bounded reconnection, and independent microphone/system-audio validation help preserve a usable recording when one capture source fails.</li>
+    <li><strong>Larger local Mac model.</strong> Macs with at least 16 GB RAM can select Ternary Bonsai 27B for local MLX processing.</li>
+    <li><strong>Clean local-AI output.</strong> Thinking-capable MLX models keep their reasoning internal; partial reasoning traces and preambles are removed before summaries, tasks, reminders, and suggested titles are shown.</li>
+    <li><strong>Durable summary deletion.</strong> Deleting only a summary now queues removal of its live and backup iCloud records so an offline deletion can finish the next time iCloud is available.</li>
     <li><strong>Accessibility-ready task flows.</strong> Recording, playback, imports, recordings, transcripts, summaries, setup, settings, and Apple Watch recording now expose clearer VoiceOver labels, values, hints, and non-color status cues.</li>
-    <li><strong>Import from web links.</strong> Direct audio, video, and transcript URLs can be imported from the Recordings screen or Mac File menu. YouTube links are parsed for public caption import, with a guided pasted-transcript recovery flow if YouTube blocks automated caption downloads.</li>
+    <li><strong>Import from web links.</strong> Direct audio, video, and transcript URLs can be imported from the Recordings screen or Mac File menu. Downloads are size-bounded and validated before they are saved. YouTube links are parsed for public caption import, with a guided pasted-transcript recovery flow if YouTube blocks automated caption downloads.</li>
     <li><strong>Voice Control-friendly action names.</strong> Repeated actions now include context such as the recording, transcript, or summary title, making commands easier to target by name.</li>
     <li><strong>Adjustable playback scrubber.</strong> The custom audio scrubber now announces elapsed and remaining time and supports 15-second accessibility seek increments.</li>
     <li><strong>Reduce Motion support.</strong> Recording indicators on iPhone, iPad, and Apple Watch keep their meaning when Reduce Motion is enabled.</li>
     <li><strong>Accessibility evidence.</strong> BisonNotes now includes an accessibility matrix, App Store accessibility artifact, public accessibility page, and automated accessibility UI audit coverage for the main app surfaces.</li>
   </ul>
-  <p><strong>Also included from v2.1:</strong> Mac meeting audio capture, stronger iCloud sync controls, more reliable Parakeet transcription, safer recording recovery, and the documented regression testing regimen.</p>
+  <p><strong>Also retained from v2.1:</strong> optional Mac meeting-audio capture, stronger iCloud sync controls, more reliable Parakeet transcription, crash-safe recording recovery, and the documented regression testing regimen.</p>
 </div>
 
 <!-- ============================================================ -->
@@ -170,17 +175,20 @@
 <!-- ============================================================ -->
 <h2 id="bn-recording">Recording Features</h2>
 
-<h3 id="bn-mac">Mac Catalyst (v2.1)</h3>
-<p>BisonNotes AI runs natively on Apple Silicon Macs as a Mac Catalyst app. The Mac build uses an <code>AVAudioEngine</code>-based recording pipeline tuned for desktop audio sessions:</p>
+<h3 id="bn-mac">Native Mac App (v2.2)</h3>
+<p>BisonNotes AI now runs as a native Apple Silicon macOS app. It keeps the same app identity, local data container, Core Data store, and iCloud container used by the previous Catalyst release, so installing the matching v2.2 Mac build upgrades the app instead of creating a separate empty library.</p>
 <ul>
-  <li><strong>Same Core Data store</strong> &mdash; Recordings, transcripts, and summaries sync with iPhone/iPad through iCloud (if enabled).</li>
+  <li><strong>Mac-native workspace</strong> &mdash; Summaries, transcripts, players, library views, location details, and processing views can use movable and resizable windows. Settings opens in its own Mac Settings window.</li>
+  <li><strong>Commands and shortcuts</strong> &mdash; Standard File and Edit menus provide import, export, navigation, and editing commands where available.</li>
+  <li><strong>Data continuity</strong> &mdash; Existing Mac recordings, transcripts, summaries, settings, and iCloud configuration remain in the shared app container.</li>
   <li><strong>Pause &amp; Resume</strong> &mdash; Full pause/resume support, the same as on iOS.</li>
   <li><strong>Microphone selection</strong> &mdash; Choose your built-in mic, USB interface, or Bluetooth device from Transcription Settings.</li>
-  <li><strong>Record Meeting Audio</strong> &mdash; Optionally capture audio playing from other Mac apps while your microphone records your local speech. BisonNotes mixes both tracks into one M4A recording.</li>
-  <li><strong>macOS permission</strong> &mdash; Meeting audio capture requires Screen &amp; System Audio Recording permission. BisonNotes records audio only and does not save screen video. If permission changes or capture fails, the app saves microphone audio only.</li>
-  <li><strong>Local AI</strong> &mdash; On Device AI uses MLX Swift by default. The legacy llama.cpp engine remains available for higher-memory devices.</li>
-  <li><strong>Archive support</strong> &mdash; The Mac build includes Catalyst sandbox, microphone, networking, calendar, file access, and iCloud entitlements for archive workflows.</li>
-  <li><strong>Settings and lists</strong> &mdash; Setup, Settings, Summaries, and Transcripts use Mac-friendly scrolling, navigation, and button hit targets.</li>
+  <li><strong>Device-change recovery</strong> &mdash; BisonNotes monitors the selected/default input. If an input changes or disconnects, it preserves completed PCM segments and attempts a bounded reconnection or fallback to the system default.</li>
+  <li><strong>Record Meeting Audio</strong> &mdash; Optionally capture audio playing from other Mac apps while your microphone records your local speech. BisonNotes combines usable tracks into one M4A recording.</li>
+  <li><strong>macOS permission</strong> &mdash; Meeting audio capture requires Screen &amp; System Audio Recording permission. BisonNotes records audio only and does not save screen video.</li>
+  <li><strong>Track-safe finalization</strong> &mdash; Microphone and system audio are checked independently. If only one track is usable, that track is saved instead of discarding the entire meeting. Failed source media is retained in Application Support for recovery and is listed in exported diagnostic logs.</li>
+  <li><strong>Local AI</strong> &mdash; On Device AI uses MLX Swift by default. Macs with 16 GB or more RAM can select Ternary Bonsai 27B (~8.5 GB).</li>
+  <li><strong>Archive and export</strong> &mdash; Security-scoped archive locations survive relaunch, and native Mac RTF/PDF export and AppKit sharing are available.</li>
 </ul>
 
 <h3 id="bn-pause">Pause &amp; Resume Recording</h3>
@@ -837,7 +845,7 @@ docker run -d -p 9000:9000 \
   <li><strong>Larger Text:</strong> BisonNotes uses SwiftUI system text styles and wrapping layouts across the main app surfaces.</li>
   <li><strong>Reduced Motion:</strong> Recording indicators on iPhone, iPad, and Apple Watch avoid relying on pulsing animation when Reduce Motion is enabled.</li>
   <li><strong>Contrast and non-color state:</strong> Important states such as recording availability, local-only status, transcript/summary availability, and sync state are exposed as text, not color alone.</li>
-  <li><strong>Keyboard access:</strong> Mac Catalyst and iPad keyboard users should be able to move through standard buttons, lists, settings, dialogs, and forms with keyboard navigation and Full Keyboard Access.</li>
+  <li><strong>Keyboard access:</strong> Native Mac and iPad keyboard users should be able to move through standard buttons, lists, settings, dialogs, and forms with keyboard navigation and Full Keyboard Access.</li>
 </ul>
 
 <h3>Common accessible workflows</h3>
@@ -863,7 +871,7 @@ docker run -d -p 9000:9000 \
 <h3>Platform notes</h3>
 <ul>
   <li><strong>iPhone and iPad:</strong> Accessibility coverage includes setup, recording, imports, recordings, playback, transcripts, summaries, and settings. Control Center and Action Button recording still require a supported real device.</li>
-  <li><strong>Mac Catalyst:</strong> The shared SwiftUI surfaces use the same accessibility labels and values as iPad. For releases, also test macOS VoiceOver, Full Keyboard Access, keyboard navigation, file import, microphone recording, and window resizing on a real Mac.</li>
+  <li><strong>Native macOS:</strong> The shared SwiftUI surfaces use the same accessibility labels and values as iPad, with Mac-native windows, menus, and Settings. For releases, also test macOS VoiceOver, Full Keyboard Access, keyboard navigation, file import, microphone recording, and window resizing on a real Mac.</li>
   <li><strong>Apple Watch:</strong> The watch app supports VoiceOver-friendly recording state and reduced motion behavior, but watch flows must be verified on a physical watch.</li>
 </ul>
 
@@ -1056,11 +1064,12 @@ docker run -d -p 9000:9000 \
       <li><strong>Auto-Backup</strong> (v1.7) &mdash; Automatically backs up when new recordings are created</li>
       <li><strong>Automatic cross-device sync</strong> &mdash; When iCloud Sync is enabled, BisonNotes reconciles eligible recordings, transcripts, and summaries when the app launches or becomes active. The Include audio files checkbox controls whether audio files are uploaded and restored.</li>
       <li><strong>CloudKit Sync</strong> &mdash; Optional summary synchronization across devices with paginated queries and schema-safe fallback for reliability</li>
-      <li><strong>Mac, iPhone, and iPad sync</strong> &mdash; iOS, iPadOS, and Mac Catalyst builds use the shared iCloud container <code>iCloud.Bison-Networking.BisonNotes-AI</code>. Devices must use the same Apple ID and CloudKit environment. Local Debug builds use the CloudKit development environment, while TestFlight and App Store builds use production, so a Debug Mac build will not see production iPhone or iPad records until the build channel/environment matches.</li>
+      <li><strong>Mac, iPhone, and iPad sync</strong> &mdash; iOS, iPadOS, native macOS, and legacy Mac Catalyst builds use the shared iCloud container <code>iCloud.Bison-Networking.BisonNotes-AI</code>. Devices must use the same Apple ID and CloudKit environment. Local Debug builds use the CloudKit development environment, while TestFlight and App Store builds use production, so a Debug Mac build will not see production iPhone or iPad records until the build channel/environment matches.</li>
       <li><strong>Production schema required</strong> &mdash; TestFlight and App Store builds require the CloudKit production schema to include the app-managed backup record types before sync can save new backup records. Production clients cannot create new CloudKit record types at runtime.</li>
       <li><strong>Review iCloud Items</strong> &mdash; Current app versions mark synced content as active before it is automatically restored on other devices. Older cloud-only items that are not marked active are held in Settings, where they can be restored or deleted from BisonNotes iCloud sync records.</li>
       <li><strong>Keep on This Device</strong> &mdash; Mark an individual recording from its recording row or audio player to exclude that recording, transcript, and summary from BisonNotes iCloud sync and backup. When enabled, BisonNotes skips future app-managed iCloud sync/backup for that item and removes known app-created iCloud records when iCloud is available.</li>
       <li><strong>Deleted item cleanup</strong> &mdash; Deleting a recording writes an iCloud deletion marker and removes known app-created iCloud records. Other devices apply that marker before uploading so deleted items are not silently re-created. Active cloud-only records without a deletion marker are restored, while older untrusted cloud-only records are held for review.</li>
+      <li><strong>Summary-only cleanup</strong> &mdash; Deleting a summary while keeping its recording/transcript queues removal of the summary&rsquo;s live record, backup record, and content-index reference. If iCloud is unavailable, BisonNotes retries the queued removal later.</li>
       <li><strong>Sensitive data excluded</strong> (v1.11) &mdash; API keys and AWS credentials are never written into iCloud settings backups; if a previous backup contained them, they are restored into the Keychain instead.</li>
       <li>Prompted after generating your first summary</li>
     </ul>
