@@ -19,7 +19,11 @@ struct OllamaSettingsView: View {
 
     var onConfigurationChanged: (() -> Void)?
 
-    @State private var ollamaService: OllamaService
+    /// Built lazily from the current settings only when the service is actually
+    /// needed (connection test / config changes). Constructing it eagerly in
+    /// `init` would rebuild the service — and its URLSession — on every parent
+    /// re-render of the AI settings screen.
+    @State private var ollamaService: OllamaService?
     @State private var isTestingConnection = false
     @State private var isLoadingModels = false
     @State private var testResult: String?
@@ -30,26 +34,6 @@ struct OllamaSettingsView: View {
 
     init(onConfigurationChanged: (() -> Void)? = nil) {
         self.onConfigurationChanged = onConfigurationChanged
-
-        // Initialize with current settings
-        let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
-        let port = UserDefaults.standard.integer(forKey: "ollamaPort")
-        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "gpt-oss:20b"
-        let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
-        let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
-        let contextTokens = UserDefaults.standard.integer(forKey: "ollamaContextTokens")
-
-        let config = OllamaConfig(
-            serverURL: serverURL,
-            port: port > 0 ? port : 11434,
-            modelName: modelName,
-            maxTokens: maxTokens > 0 ? maxTokens : 2048,
-            temperature: temperature > 0 ? temperature : 0.1,
-            maxContextTokens: contextTokens > 0 ? contextTokens : 4096,
-            timeoutInterval: SummarizationTimeouts.current()
-        )
-
-        _ollamaService = State(initialValue: OllamaService(config: config))
     }
 
     var body: some View {
@@ -57,7 +41,7 @@ struct OllamaSettingsView: View {
             Form {
                 headerSection
                 serverConfigurationSection
-                if ollamaService.isConnected {
+                if ollamaService?.isConnected == true {
                     modelConfigurationSection
                 }
                 helpSection
@@ -234,7 +218,7 @@ struct OllamaSettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-            } else if ollamaService.availableModels.isEmpty {
+            } else if (ollamaService?.availableModels ?? []).isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("No models found on server")
                         .font(.caption)
@@ -245,7 +229,7 @@ struct OllamaSettingsView: View {
                 }
             } else {
                 Picker("Select Model", selection: $selectedModel) {
-                    ForEach(ollamaService.availableModels, id: \.name) { model in
+                    ForEach(ollamaService?.availableModels ?? [], id: \.name) { model in
                         VStack(alignment: .leading) {
                             Text(model.displayName)
                                 .font(.subheadline)
@@ -355,11 +339,12 @@ struct OllamaSettingsView: View {
         isTestingConnection = true
         testResult = nil
 
-        // Update the ollamaService with current configuration
-        updateOllamaServiceConfiguration()
+        // Rebuild the service from the current configuration.
+        let service = makeOllamaService()
+        ollamaService = service
 
         Task {
-            let success = await ollamaService.testConnection()
+            let success = await service.testConnection()
 
             await MainActor.run {
                 isTestingConnection = false
@@ -368,20 +353,20 @@ struct OllamaSettingsView: View {
                     testResult = "✅ Connection successful! Server is reachable."
                     loadModelsIfConnected()
                 } else {
-                    testResult = "❌ Connection failed: \(ollamaService.connectionError ?? "Unknown error")"
+                    testResult = "❌ Connection failed: \(service.connectionError ?? "Unknown error")"
                 }
             }
         }
     }
 
     private func loadModelsIfConnected() {
-        guard ollamaService.isConnected else { return }
+        guard let service = ollamaService, service.isConnected else { return }
 
         isLoadingModels = true
 
         Task {
             do {
-                _ = try await ollamaService.loadAvailableModels()
+                _ = try await service.loadAvailableModels()
                 await MainActor.run {
                     isLoadingModels = false
                 }
@@ -396,15 +381,15 @@ struct OllamaSettingsView: View {
     }
 
     private func resetConnection() {
-        // Update the ollamaService with current configuration
-        updateOllamaServiceConfiguration()
-
-        ollamaService.isConnected = false
-        ollamaService.availableModels = []
+        // Rebuild the service from the current configuration in a fresh,
+        // disconnected state.
+        ollamaService = makeOllamaService()
         testResult = nil
     }
 
-    private func updateOllamaServiceConfiguration() {
+    /// Builds an `OllamaService` from the current settings. Constructed lazily so
+    /// the service (and its URLSession) is not rebuilt on every view re-render.
+    private func makeOllamaService() -> OllamaService {
         let config = OllamaConfig(
             serverURL: serverURL,
             port: port,
@@ -415,8 +400,7 @@ struct OllamaSettingsView: View {
             timeoutInterval: SummarizationTimeouts.current()
         )
 
-        // Create a new OllamaService instance with the updated configuration
-        ollamaService = OllamaService(config: config)
+        return OllamaService(config: config)
     }
 
     private func formatFileSize(_ bytes: Int64) -> String {
