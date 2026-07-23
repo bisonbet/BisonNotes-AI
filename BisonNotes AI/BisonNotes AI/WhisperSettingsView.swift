@@ -22,31 +22,26 @@ struct WhisperSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var testResult: String?
     @State private var isTesting = false
-    @State private var whisperService: WhisperService
+    /// Built lazily, only when the user taps "Test Connection" — never in `init`. This view
+    /// lives inside eagerly-evaluated `.navigationDestination` builders, so constructing a live
+    /// WhisperService (and its Wyoming TCP client) in `init` caused repeated init/deinit churn
+    /// and stray connection attempts on every re-render of the parent settings screen.
+    @State private var whisperService: WhisperService?
 
-    init() {
-        // Initialize with current settings
-        let serverURL = UserDefaults.standard.string(forKey: "whisperServerURL") ?? "localhost"
-        let port = UserDefaults.standard.integer(forKey: "whisperPort")
-        let protocolString = UserDefaults.standard.string(forKey: "whisperProtocol") ?? WhisperProtocol.rest.rawValue
-        let selectedProtocol = WhisperProtocol(rawValue: protocolString) ?? .rest
-
-        // Use default port if not set (UserDefaults.integer returns 0 if key doesn't exist)
+    /// Build a WhisperService from the current settings. Mirrors the previous `init` logic:
+    /// protocol-aware default port and an `http://` prefix for REST URLs.
+    private func makeWhisperService() -> WhisperService {
         let effectivePort = port > 0 ? port : (selectedProtocol == .wyoming ? 10300 : 9000)
-
-        // Ensure URL format matches protocol
         var processedServerURL = serverURL
         if selectedProtocol == .rest && !serverURL.hasPrefix("http://") && !serverURL.hasPrefix("https://") {
             processedServerURL = "http://" + serverURL
         }
-
         let config = WhisperConfig(
             serverURL: processedServerURL,
             port: effectivePort,
             whisperProtocol: selectedProtocol
         )
-
-        _whisperService = State(initialValue: WhisperService(config: config, chunkingService: AudioFileChunkingService()))
+        return WhisperService(config: config, chunkingService: AudioFileChunkingService())
     }
 
     var body: some View {
@@ -339,15 +334,6 @@ struct WhisperSettingsView: View {
                     }
                 }
             }
-            .onChange(of: serverURL) { _, _ in
-                updateWhisperService()
-            }
-            .onChange(of: port) { _, _ in
-                updateWhisperService()
-            }
-            .onChange(of: selectedProtocol) { _, _ in
-                updateWhisperService()
-            }
         }
     }
 
@@ -367,28 +353,21 @@ struct WhisperSettingsView: View {
         return "ws://\(serverURL):\(port)"
     }
 
-    private func updateWhisperService() {
-        AppLog.shared.general("WhisperSettingsView: Updating service with protocol: \(selectedProtocol.rawValue)")
-        let config = WhisperConfig(
-            serverURL: serverURL,
-            port: port,
-            whisperProtocol: selectedProtocol
-        )
-        whisperService = WhisperService(config: config, chunkingService: AudioFileChunkingService())
-    }
-
     func testConnection() {
         isTesting = true
         testResult = nil
 
+        let service = makeWhisperService()
+        whisperService = service
+
         Task {
-            let success = await whisperService.testConnection()
+            let success = await service.testConnection()
 
             await MainActor.run {
                 if success {
                     testResult = "✅ Connection successful! Your Whisper server is accessible."
                 } else {
-                    testResult = "❌ Connection failed: \(whisperService.connectionError ?? "Unknown error")"
+                    testResult = "❌ Connection failed: \(service.connectionError ?? "Unknown error")"
                 }
                 isTesting = false
             }

@@ -65,7 +65,7 @@ struct OnDeviceAIDownloadView: View {
                     .font(.title2)
                     .fontWeight(.bold)
 
-                Text("To use on-device AI, we need to download two models to your device. Downloads will continue in the background.")
+                Text("To use on-device AI, we need to download two models to your device. Keep the app open while they download.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -110,14 +110,14 @@ struct OnDeviceAIDownloadView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Image(systemName: "arrow.down.circle")
+                        Image(systemName: "exclamationmark.circle")
                             .foregroundColor(.blue)
-                        Text("Downloads will continue in the background")
+                        Text("Keep this app open while downloading")
                             .font(.subheadline)
                             .fontWeight(.medium)
                     }
 
-                    Text("You can close this screen and use the app. You'll receive a notification when both models are ready.")
+                    Text("Leaving the app or locking the screen can interrupt the download and force it to restart. Stay on this screen until both models finish, then you'll get a notification.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -205,7 +205,13 @@ struct OnDeviceAIDownloadView: View {
                 do {
                     AppLog.shared.summarization("OnDeviceAIDownload: Starting Parakeet download...", level: .debug)
                     try await fluidAudioManager.downloadAndPrepareModel()
-                    AppLog.shared.summarization("OnDeviceAIDownload: Parakeet download completed")
+                    // Only report success if the model is genuinely ready — a non-throwing
+                    // return no longer implies completion (e.g. an awaited in-flight download).
+                    if fluidAudioManager.isModelReady {
+                        AppLog.shared.summarization("OnDeviceAIDownload: Parakeet download completed")
+                    } else {
+                        AppLog.shared.summarization("OnDeviceAIDownload: Parakeet download finished but model is not ready", level: .error)
+                    }
                 } catch {
                     AppLog.shared.summarization("OnDeviceAIDownload: Parakeet download error: \(error)", level: .error)
                 }
