@@ -8,7 +8,7 @@
 import SwiftUI
 import AVFoundation
 import CoreLocation
-#if targetEnvironment(macCatalyst) || os(macOS)
+#if os(macOS)
 import CoreGraphics
 #endif
 
@@ -309,14 +309,6 @@ struct SettingsView: View {
 
     private var modernRecordingSection: some View {
         ModernSettingsCard(title: "Recording", systemImage: "mic", tint: .green) {
-            #if targetEnvironment(macCatalyst)
-            ModernInlineStatus(
-                title: "Using Mac system microphone",
-                subtitle: "BisonNotes uses the current macOS Sound input. Change it in System Settings if needed.",
-                systemImage: "mic.fill",
-                tint: .green
-            )
-            #else
             if recorderVM.availableInputs.isEmpty {
                 ModernInlineStatus(
                     title: "No microphones found",
@@ -351,9 +343,8 @@ struct SettingsView: View {
             .buttonStyle(.bordered)
 
             Divider()
-            #endif
 
-            #if targetEnvironment(macCatalyst) || os(macOS)
+            #if os(macOS)
             Toggle(isOn: Binding(
                 get: { recorderVM.isMacSystemAudioCaptureEnabled },
                 set: { handleMacSystemAudioCaptureToggle($0) }
@@ -678,18 +669,6 @@ struct SettingsView: View {
 
     private var microphoneSection: some View {
         Section {
-            #if targetEnvironment(macCatalyst)
-            HStack {
-                Image(systemName: "mic.fill")
-                    .foregroundColor(.green)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Using Mac system microphone")
-                    Text("Change the input device in macOS System Settings.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            #else
             if recorderVM.availableInputs.isEmpty {
                 HStack {
                     Image(systemName: "exclamationmark.triangle")
@@ -720,18 +699,15 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
             }
-            #endif
         } header: {
             HStack {
                 Text("Microphone Selection")
                 Spacer()
-                #if !targetEnvironment(macCatalyst)
                 Button {
                     Task { await recorderVM.fetchInputs() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                #endif
             }
         }
     }
@@ -1229,7 +1205,7 @@ struct SettingsView: View {
     #endif
 
     private func handleMacSystemAudioCaptureToggle(_ enabled: Bool) {
-        #if targetEnvironment(macCatalyst) || os(macOS)
+        #if os(macOS)
         guard enabled else {
             recorderVM.setMacSystemAudioCaptureEnabled(false)
             return
@@ -1247,7 +1223,7 @@ struct SettingsView: View {
     }
 
     private func requestMacSystemAudioCapturePermissionAndEnable() {
-        #if targetEnvironment(macCatalyst) || os(macOS)
+        #if os(macOS)
         if CGPreflightScreenCaptureAccess() {
             recorderVM.setMacSystemAudioCaptureEnabled(true)
             return
@@ -1260,7 +1236,7 @@ struct SettingsView: View {
     }
 
     private func openMacScreenCapturePrivacySettings() {
-        #if targetEnvironment(macCatalyst) || os(macOS)
+        #if os(macOS)
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else {
             return
         }

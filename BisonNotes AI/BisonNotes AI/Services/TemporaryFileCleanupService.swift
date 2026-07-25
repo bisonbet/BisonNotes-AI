@@ -147,6 +147,10 @@ final class TemporaryFileCleanupService {
 
         if name.hasPrefix("fluidaudio_input_") && ext == "caf" { return true }
         if name.hasPrefix("cleaned_") && ext == "m4a" { return true }
+        if name.hasPrefix("mac_export_") && ext == "m4a" { return true }
+        if name.hasPrefix("mac_segments_") && ext == "m4a" { return true }
+        if name.hasPrefix("mac_meeting_mix_") && ext == "m4a" { return true }
+        // Retain legacy prefixes so upgrades clean temporary files left by Catalyst builds.
         if name.hasPrefix("catalyst_export_") && ext == "m4a" { return true }
         if name.hasPrefix("catalyst_mic_export_") && ext == "m4a" { return true }
         if name.hasPrefix("catalyst_meeting_mix_") && ext == "m4a" { return true }

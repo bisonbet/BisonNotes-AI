@@ -310,7 +310,7 @@ struct TranscriptsView: View {
     }
 
     private func transcriptsListView(_ filtered: [(recording: RecordingEntry, transcript: TranscriptData?)], _ filteredImported: [(recording: RecordingEntry, transcript: TranscriptData?)]) -> some View {
-        #if os(macOS) || targetEnvironment(macCatalyst)
+        #if os(macOS)
         // A NavigationLink to a List with interactive section headers can wedge the
         // responder chain on both Mac implementations. Keep the complete archive inline.
         return macTranscriptsListView(filtered, filteredImported)
@@ -915,7 +915,7 @@ struct TranscriptsView: View {
             )
 
             // Cheap attribute reads only — getAbsoluteURL would probe FileManager (and possibly
-            // save the Core Data context) per row, which stalled Mac Catalyst on long lists.
+            // save the Core Data context) per row, which stalled long Mac lists.
             if let locationData = appCoordinator.coreDataManager.getLocationData(for: recordingData.recording),
                let recordingURL = appCoordinator.getStoredURL(for: recordingData.recording) {
                 locationButtonView(locationData, recordingURL: recordingURL)
@@ -1569,7 +1569,7 @@ struct EditableTranscriptView: View {
                 .listStyle(.inset)
                 .scrollIndicators(.visible)
                 #else
-                // Form preserves the established iOS and Catalyst behavior.
+                // Form preserves the established iOS behavior.
                 Form {
                     transcriptSections
                 }
@@ -2415,7 +2415,7 @@ struct TranscriptDetailView: View {
 
     var body: some View {
         // NavigationStack { Form } is the only sheet pattern that scrolls reliably
-        // on Mac Catalyst. See feedback_mac_catalyst_scrollview.md.
+        // in the former Mac implementation. See feedback_mac_catalyst_scrollview.md.
         NavigationStack {
             Form {
                 if transcriptText.isEmpty {

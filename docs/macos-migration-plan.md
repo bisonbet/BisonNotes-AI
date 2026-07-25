@@ -1,6 +1,6 @@
 # macOS Native Migration Plan
 
-**Branch:** `native-macos` (off `v2.2`)
+**Branch:** `v2.2` (the migration branch was merged and removed)
 **Goal:** Replace the Mac Catalyst build with a native macOS SwiftUI target, without ever breaking the shipping iOS/Catalyst app, then delete Catalyst and collect the maintenance rewards (unpin aws-sdk-swift, delete the hand-built llama Catalyst slice, drop the textual fork patches).
 
 This document is written for an AI agent (or human) to execute incrementally. Every task has a verification step. Work phase by phase, task by task, committing after each green verification loop.
@@ -23,7 +23,8 @@ This document is written for an AI agent (or human) to execute incrementally. Ev
 - **Phase 4.2 ScreenCaptureKit permission repair — IMPLEMENTED, TESTFLIGHT RETEST PENDING.** Native TestFlight build 11 could show BisonNotes enabled under Screen & System Audio Recording while `SCShareableContent` still returned `userDeclined`. The native Settings path had inherited Catalyst-only permission guards, and the shared Info.plist omitted `NSScreenCaptureUsageDescription`. Native macOS and Catalyst now use the same preflight/request flow, explain the required quit/reopen after a new grant, include Apple's purpose string, and replace the raw TCC failure with a microphone-only fallback message. Signed native macOS and Catalyst Debug builds are green; a new TestFlight build must repeat first-grant, existing-grant, and revoked-grant recording cases.
 - **Native Settings polish — IMPLEMENTED, USER VISUAL QA PENDING.** Setup now opens the dedicated macOS Settings window instead of stacking a Settings sheet over the main window. Settings and its provider/model panels share one navigation hierarchy; true tasks remain modal. Acknowledgements and MLX On Device AI use bounded, top-aligned Mac card layouts, while the remaining settings forms use grouped native styling. Native macOS, iOS Simulator, and Mac Catalyst Debug builds are green; the root Settings window passed a live visual check, and each destination still needs the user walkthrough.
 - **Xcode recommended settings — APPLIED.** Project and shared-scheme upgrade metadata now match Xcode 26.6; the native macOS target enables dead-code stripping and app-group registration in Debug and Release. These settings were present for the green three-platform Phase 2.2 build loop.
-- **Next: continue Phase 4.2** — ship a new TestFlight build and repeat Screen & System Audio Recording first-grant/existing-grant/revoked-grant cases plus the signed recording matrix (including the Poly Sync 10 failure case), then continue the Mac beta soak and outstanding runtime cases: microphone changes during recording, long hidden-window processing, archive bookmark restoration, and the full Settings destination walkthrough.
+- **Phase 4.3 — IMPLEMENTED, REVIEW VALIDATION COMPLETE.** Mac Catalyst is no longer a supported destination. Its signing override, handcrafted llama slice, archive script, and conditional source branches were removed; the native target now owns the Mac-only recorder and ScreenCaptureKit implementation. AWS SDK for Swift moved from the Catalyst-workaround pin at 1.6.113 to 1.7.46. Current developer and user documentation now describe native macOS as the only Mac product. Review validation on July 25, 2026 completed clean plist/diff checks plus native macOS and generic iOS Simulator Debug builds. SwiftLint completed with 41 baseline violations (11 serious). The unsigned unit and UI test runners built but exited before bootstrapping in CloudKit container initialization, so signed-app tests and archives remain pending.
+- **Next: native-only testing and stabilization** — continue the TestFlight permission and signed recording matrix, including the Poly Sync 10 failure case, microphone changes during recording, long hidden-window processing, archive bookmark restoration, Share extension/widget checks, and the full Settings destination walkthrough.
 
 ---
 
@@ -187,15 +188,15 @@ Work through the categorized conditional inventory (appendix below) tagged MISC:
 - On a Mac with the Catalyst app installed and populated: install the native build (same bundle ID) over it. Verify recordings, transcripts, summaries, and settings all present. The container (`~/Library/Containers/<bundle-id>` / App Group) must match; if paths differ, extend `DataMigrationManager` with a one-time relocation and re-test.
 ### 4.2 Beta
 - TestFlight for Mac side-by-side soak; run the Phase-2 checklist from memory (recording, external mic swap, AI inference, long-session scrolling, quit-while-processing).
-### 4.3 Cutover & rewards (single PR, in this order)
-1. Remove Mac Catalyst from the iOS target's supported destinations.
-2. Delete `Frameworks/llama.xcframework/ios-arm64-maccatalyst/` and its `Info.plist` entry.
-3. Delete `Scripts/archive-catalyst.sh`.
-4. Unpin aws-sdk-swift (verify smithy plugin issue irrelevant for iOS + native macOS archives; bump and archive both).
-5. Simplify `textual` fork (drop Catalyst guards at next rebase — separate repo task).
-6. Purge now-dead `targetEnvironment(macCatalyst)` branches.
-7. Rewrite CLAUDE.md Catalyst sections; update memory files.
-- Verify: iOS archive + macOS archive + full test suite green.
+### 4.3 Cutover & rewards — implemented
+1. Mac Catalyst was removed from the iOS and test targets' supported destinations.
+2. `Frameworks/llama.xcframework/ios-arm64-maccatalyst/` and its `Info.plist` entry were deleted.
+3. `Scripts/archive-catalyst.sh` was deleted.
+4. AWS SDK for Swift was updated from 1.6.113 to 1.7.46. The old pin addressed a Catalyst-only archive staging collision and is no longer required.
+5. The `textual` fork cleanup remains a separate repository task for its next rebase; its historical Catalyst guards are harmless here.
+6. Dead `targetEnvironment(macCatalyst)` source branches were purged, and the Mac recorder/system-audio files were renamed for native macOS.
+7. `CLAUDE.md`, `README.md`, the WordPress user guide, the v2.2 release guide, and the testing regimen were updated.
+- Review verification: native macOS and generic iOS Simulator Debug builds succeeded. The unsigned unit and UI test runners built but exited before bootstrapping in CloudKit container initialization. iOS/macOS archives and signed-app tests remain deferred.
 
 ---
 

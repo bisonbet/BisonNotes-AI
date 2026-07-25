@@ -24,11 +24,11 @@ The page describes supported accessibility features, known limitations, and the 
 | Captions | Do not claim | Transcripts are available, but playback does not provide synchronized caption tracks for all media. |
 | Audio Descriptions | Do not claim | App does not provide audio-description tracks. |
 
-### Mac Catalyst
+### Native macOS
 
 | Feature | Label stance | Evidence |
 | --- | --- | --- |
-| VoiceOver | Supported | Same labeled SwiftUI surfaces as iPad, plus manual Catalyst pass. |
+| VoiceOver | Supported | Shared labeled SwiftUI surfaces plus native Mac windows, menus, and a manual macOS pass. |
 | Keyboard Navigation | Supported | Navigation rows and controls are standard SwiftUI buttons/toggles. Full Keyboard Access manual pass required. |
 | Larger Text and Contrast | Supported | Same system text/color strategy as iPad. Manual pass required. |
 | Captions and Audio Descriptions | Do not claim | Same limitation as iPhone/iPad. |

@@ -142,11 +142,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     /// Restore audio session to previous configuration (useful after interruptions)
     func restoreAudioSession() async throws {
-        #if targetEnvironment(macCatalyst)
-        // No AVAudioSession to restore on Mac Catalyst — applyConfiguration is a no-op
-        // and there is no interruption model. Recording is driven by CoreAudio directly.
-        return
-        #else
         guard let config = currentConfiguration else {
             AppLog.shared.audioSession("No audio session configuration to restore; leaving session inactive", level: .debug)
             return
@@ -160,9 +155,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
         for attempt in 1...maxAttempts {
             do {
-                #if !targetEnvironment(macCatalyst)
                 try? session.setActive(false, options: .notifyOthersOnDeactivation)
-                #endif
 
                 // Wait with exponential backoff, capped at 2 seconds per attempt
                 // Attempt 1: 0.5s, 2: 1s, 3: 1.5s, 4: 2s, 5-10: 2s each
@@ -187,7 +180,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         let audioError = AudioProcessingError.audioSessionConfigurationFailed("Session restoration failed after \(maxAttempts) attempts: \(lastAttemptError?.localizedDescription ?? "unknown error")")
         lastError = audioError
         throw audioError
-        #endif
     }
 
     /// Configure standard recording session (fallback for compatibility)
@@ -214,7 +206,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Do not mix with other apps here: recording playback should take over,
     /// then `deactivateSession()` notifies interrupted audio apps to resume.
     func configurePlaybackSession() async throws {
-        #if !targetEnvironment(macCatalyst)
         do {
             try session.setCategory(.playback, mode: .default, options: [])
             try session.setActive(true)
@@ -223,7 +214,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             lastError = audioError
             throw audioError
         }
-        #endif
         isMixedAudioEnabled = false
         isBackgroundRecordingEnabled = false
         currentConfiguration = nil
@@ -235,7 +225,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Uses playback instead of playAndRecord so background jobs do not force
     /// microphone/HFP routing that degrades music from other apps.
     func configureBackgroundProcessingSession() async throws {
-        #if !targetEnvironment(macCatalyst)
         guard await checkBackgroundAudioPermission() else {
             let error = AudioProcessingError.backgroundRecordingNotPermitted
             lastError = error
@@ -250,7 +239,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             lastError = audioError
             throw audioError
         }
-        #endif
         isMixedAudioEnabled = true
         isBackgroundRecordingEnabled = false
         currentConfiguration = nil
@@ -260,11 +248,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     /// Set preferred audio input device
     func setPreferredInput(_ input: AVAudioSessionPortDescription) async throws {
-        #if targetEnvironment(macCatalyst)
-        // AVAudioSession input selection isn't supported on Mac — input device is
-        // managed by macOS Sound preferences. Calling this would spam Mach port errors.
-        return
-        #else
         do {
             try session.setPreferredInput(input)
             AppLog.shared.audioSession("Preferred input set to: \(input.portName) (\(input.portType.rawValue))")
@@ -273,14 +256,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             lastError = audioError
             throw audioError
         }
-        #endif
     }
 
     /// Clear the preferred input to let iOS use its default microphone
     func clearPreferredInput() async throws {
-        #if targetEnvironment(macCatalyst)
-        return
-        #else
         do {
             try session.setPreferredInput(nil)
             AppLog.shared.audioSession("Preferred input cleared, iOS will use default microphone")
@@ -289,45 +268,30 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             lastError = audioError
             throw audioError
         }
-        #endif
     }
 
     /// Get available audio inputs
     func getAvailableInputs() -> [AVAudioSessionPortDescription] {
-        #if targetEnvironment(macCatalyst)
-        return []
-        #else
         return session.availableInputs ?? []
-        #endif
     }
 
     /// Get the currently active or preferred input
     func getActiveInput() -> AVAudioSessionPortDescription? {
-        #if targetEnvironment(macCatalyst)
-        return nil
-        #else
         if let preferredInput = session.preferredInput {
             return preferredInput
         }
 
         return session.currentRoute.inputs.first
-        #endif
     }
 
     /// Check if mixed audio recording is currently supported
     func isMixedAudioSupported() -> Bool {
-        #if targetEnvironment(macCatalyst)
-        // No AVAudioSession on Mac — assume default macOS behavior is fine.
-        return true
-        #else
         return session.category == .playAndRecord &&
                session.categoryOptions.contains(.mixWithOthers)
-        #endif
     }
 
     /// Deactivate audio session
     func deactivateSession() async throws {
-        #if !targetEnvironment(macCatalyst)
         do {
             try session.setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
@@ -335,7 +299,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             lastError = audioError
             throw audioError
         }
-        #endif
         isConfigured = false
         isMixedAudioEnabled = false
         isBackgroundRecordingEnabled = false
@@ -346,10 +309,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     // MARK: - Private Methods
 
     private func applyConfiguration(_ config: AudioSessionConfig) async throws {
-        #if !targetEnvironment(macCatalyst)
-        // On Mac Catalyst, setCategory/setActive talk to mediaserverd via Mach ports
-        // that don't exist on macOS, flooding the log with "cannot add handler" errors.
-        // CoreAudio handles input/output directly on Mac without AVAudioSession setup.
         try session.setCategory(config.category, mode: config.mode, options: config.options)
 
         if config.category == .playAndRecord {
@@ -358,7 +317,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
 
         try session.setActive(true, options: [])
-        #endif
 
         if config.backgroundRecording {
             try await requestBackgroundAudioCapability()
@@ -377,21 +335,14 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     }
 
     private func requestBackgroundAudioCapability() async throws {
-        #if targetEnvironment(macCatalyst)
-        // Mac apps don't have iOS background modes — Catalyst recording stays alive
-        // while the app is running, regardless of UIBackgroundModes config.
-        return
-        #else
         // This would typically involve requesting background app refresh permission
         // For now, we'll just verify the configuration is correct
         guard session.category == .playAndRecord else {
             throw AudioProcessingError.backgroundRecordingNotPermitted
         }
-        #endif
     }
 
     private func setupNotificationObservers() {
-        #if !targetEnvironment(macCatalyst)
         // AVAudioSession Mach port handlers don't exist on Mac — skip to avoid
         // flooding the log with "cannot add handler" messages.
         // Audio interruption observer
@@ -439,7 +390,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                 }
             }
         }
-        #endif
     }
 
     // MARK: - Notification Handlers
@@ -503,10 +453,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Selects Bluetooth HFP input if available, otherwise falls back to built-in mic
     @MainActor
     private func autoSelectBestInput() async {
-        #if targetEnvironment(macCatalyst)
-        // Input device selection on Mac is handled by macOS Sound preferences.
-        return
-        #else
         guard let inputs = session.availableInputs else { return }
         if let bluetoothHFP = inputs.first(where: { $0.portType == .bluetoothHFP }) {
             do { try session.setPreferredInput(bluetoothHFP) } catch { /* best-effort */ }
@@ -515,7 +461,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         if let builtInMic = inputs.first(where: { $0.portType == .builtInMic }) {
             do { try session.setPreferredInput(builtInMic) } catch { /* best-effort */ }
         }
-        #endif
     }
 }
 

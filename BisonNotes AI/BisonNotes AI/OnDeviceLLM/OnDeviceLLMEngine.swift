@@ -97,7 +97,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             self?.service?.setAppBackgrounded(false)
         }
 
-        // On Mac Catalyst, quitting via the menu calls NSApplication.terminate: → exit().
+        // On macOS, quitting via the menu calls NSApplication.terminate: → exit().
         // Static C++ destructors for ggml_metal_device then run before Swift deinits, which
         // triggers GGML_ASSERT([rsets->data count] == 0) if any Metal command buffers are
         // still in flight. Explicitly unloading the model here forces llama_free /

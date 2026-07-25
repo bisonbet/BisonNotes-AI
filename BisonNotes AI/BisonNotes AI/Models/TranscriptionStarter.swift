@@ -37,7 +37,7 @@ final class TranscriptionStarter: ObservableObject {
 
     /// True when the recording has a queued or processing transcription job in the background manager.
     /// Resolves the filename directly from the stored URL string — no disk I/O — so it is safe to
-    /// call per row at list scale (List previously stalled on Mac Catalyst when this routed through
+    /// call per row at list scale (List previously stalled on Mac when this routed through
     /// AppDataCoordinator.getAbsoluteURL, which probes FileManager and may save the Core Data context).
     func hasActiveTranscriptionJob(for recording: RecordingEntry, appCoordinator: AppDataCoordinator) -> Bool {
         guard let filename = filename(for: recording) else { return false }

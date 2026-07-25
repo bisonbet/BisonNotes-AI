@@ -312,7 +312,7 @@ class BackgroundProcessingManager: ObservableObject {
 
     // Mac doesn't expose battery state — UIDevice.batteryLevel returns -1
     // and accessing .batteryState spams "Error retrieving battery status" to the log.
-    // Applies to both Mac Catalyst and "Designed for iPad" on Apple Silicon.
+    // Applies to "Designed for iPad" on Apple Silicon.
     fileprivate static var batteryLevelString: String {
         if PlatformDevice.isRunningOnMac {
             return "n/a (Mac)"
@@ -1816,7 +1816,7 @@ class BackgroundProcessingManager: ObservableObject {
 
     /// Schedule background processing task for queued jobs
     private func scheduleBackgroundProcessingIfNeeded() async {
-        #if os(iOS) && !targetEnvironment(macCatalyst)
+        #if os(iOS)
         guard !activeJobs.filter({ $0.status == .queued }).isEmpty else { return }
 
         let request = BGProcessingTaskRequest(identifier: "com.bisonai.audio-processing")
@@ -2195,7 +2195,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     private func enableBackgroundAudioKeepAliveIfNeeded() async {
-        #if targetEnvironment(macCatalyst) || os(macOS)
+        #if os(macOS)
         return
         #else
         guard !PlatformApp.isActive else {
@@ -2229,7 +2229,7 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     private func disableBackgroundAudioKeepAliveIfNeeded() async {
-        #if targetEnvironment(macCatalyst) || os(macOS)
+        #if os(macOS)
         return
         #else
         guard backgroundAudioKeepAliveActive || keepAlivePlayer != nil else { return }
@@ -2251,12 +2251,6 @@ class BackgroundProcessingManager: ObservableObject {
     private func beginBackgroundTask() async {
         #if os(macOS)
         beginMacProcessingActivity()
-        #elseif targetEnvironment(macCatalyst)
-        // Mac apps don't get suspended by the OS, so the iOS background-task
-        // machinery (UIApplication.beginBackgroundTask, AVAudioSession-backed
-        // keep-alive audio) is unnecessary here and just spams the log with
-        // Mach port errors and "task created over 30 seconds ago" warnings.
-        return
         #else
         // Don't start a new background task if one is already running
         guard backgroundTaskID == .invalid else {
@@ -2347,9 +2341,6 @@ class BackgroundProcessingManager: ObservableObject {
         PlatformBackgroundTask.end(backgroundTaskID)
         backgroundTaskID = .invalid
         backgroundTaskStartTime = nil
-        #elseif targetEnvironment(macCatalyst)
-        // beginBackgroundTask is a no-op on Catalyst; nothing to tear down.
-        return
         #else
         await disableBackgroundAudioKeepAliveIfNeeded()
 
@@ -2427,7 +2418,7 @@ class BackgroundProcessingManager: ObservableObject {
     /// Refresh the background task to avoid iOS warnings about long-running tasks
     /// This ends the current task and immediately starts a new one
     private func refreshBackgroundTask() async {
-        #if os(macOS) || targetEnvironment(macCatalyst)
+        #if os(macOS)
         // Mac activities cover the whole queue and do not expire on a timer.
         return
         #else
@@ -2477,7 +2468,7 @@ class BackgroundProcessingManager: ObservableObject {
                     return
                 }
             } catch {
-                // On Mac Catalyst this commonly fails until the user enables
+                // On macOS this commonly fails until the user enables
                 // notifications in System Settings — not a real error.
                 AppLog.shared.backgroundProcessing("Notification permission request failed: \(error.localizedDescription)", level: .debug)
                 return

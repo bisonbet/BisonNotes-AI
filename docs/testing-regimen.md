@@ -1,6 +1,6 @@
 # BisonNotes Regression Testing Regimen
 
-This regimen protects the release-critical paths that are expensive to rediscover manually: recording file validity, transcription flow, iCloud exclusions, watch transfer state, share import, Catalyst and native Mac behavior, and launch/navigation smoke coverage.
+This regimen protects the release-critical paths that are expensive to rediscover manually: recording file validity, transcription flow, iCloud exclusions, watch transfer state, share import, native Mac behavior, and launch/navigation smoke coverage.
 
 ## Local Pre-Merge Gate
 
@@ -35,11 +35,10 @@ Run the local pre-merge gate, then run:
 
 ```bash
 xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI Watch App" -destination 'platform=watchOS Simulator,name=Apple Watch Series 11 (46mm)' -derivedDataPath /private/tmp/bisonnotes-watch-test-derived
-xcodebuild -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=macOS,variant=Mac Catalyst' -configuration Debug -derivedDataPath /private/tmp/bisonnotes-catalyst-derived build
 xcodebuild -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI macOS" -destination 'platform=macOS' -configuration Debug -derivedDataPath /private/tmp/bisonnotes-native-mac-derived build
 ```
 
-Expected result: watch metadata tests pass, the watch scheme builds, and both Mac targets compile with the current SwiftPM package graph.
+Expected result: watch metadata tests pass, the watch scheme builds, and the native Mac target compiles with the current SwiftPM package graph.
 
 Before a native Mac beta or cutover candidate, also archive the native app:
 
@@ -54,7 +53,7 @@ Use a signed native build. The Phase 3 gate is complete only when the automated 
 ### Automated and product inspection
 
 - Run `git diff --check` and normal SwiftLint from `BisonNotes AI/BisonNotes AI` using the committed baseline.
-- Build native macOS, iOS Simulator, and Mac Catalyst; run the iOS unit-test target.
+- Build native macOS and iOS Simulator; run the iOS unit-test target.
 - Inspect the native product's `Metadata.appintents/extract.actionsdata` for `StartRecordingIntent` and its App Shortcut phrases.
 - Inspect the compiled asset catalog for every Mac AppIcon rendition from 16×16 through 512×512 points at 1x/2x.
 - Confirm the main window is resizable, honors its minimum size, and reopens after its last window is closed.
@@ -78,7 +77,6 @@ Phase 2 hardware/runtime cases such as external-microphone hot swap, ScreenCaptu
 Simulator tests are not enough for these capabilities. Capture evidence for every release candidate:
 
 - iPhone/iPad: record with the real microphone, stop, verify playback duration is non-zero, and generate a transcript.
-- Mac Catalyst: record microphone-only audio, then record a real meeting/system-audio source with meeting-audio capture enabled; verify the final audio plays and has non-zero duration.
 - Native macOS: repeat the microphone-only and meeting/system-audio recordings; change the selected microphone, hot-plug an external input during recording, and verify the final audio has no clicks, clipping, gaps beyond the device transition, or duplicated system audio.
 - Native macOS capture integrity: start with the built-in input and each USB/Bluetooth input, including Poly Sync 10 when available. Confirm the UI does not enter the recording state until a real input buffer is committed. Mute or otherwise stall the active input and verify the app reports reconnection, retries the engine, and either resumes on confirmed audio or stops and saves the audio captured before the stall.
 - Native macOS salvage: with meeting-audio capture enabled, make one track unavailable at a time and confirm the usable microphone-only or system-only track is saved. Force a finalization failure in a development build and confirm the source media remains under Application Support/Recording Recovery and appears in the exported diagnostic inventory.
@@ -87,7 +85,7 @@ Simulator tests are not enough for these capabilities. Capture evidence for ever
 - iCloud: verify eligible content syncs across two devices or matching TestFlight builds, and verify a recording marked Keep on This Device does not sync.
 - Share extension: import audio from Voice Memos or Files, then verify the app creates a recording without scanning unrelated shared-container files.
 - System integrations: smoke-test Control Center recording and Action Button launch on supported devices.
-- Accessibility: complete common tasks with VoiceOver and Voice Control on iPhone/iPad; sample Switch Control; verify Full Keyboard Access on iPad keyboard, Mac Catalyst, and native macOS; test largest Dynamic Type sizes; test light/dark, Increase Contrast, Reduce Transparency, Bold Text, Grayscale, and Differentiate Without Color; enable Reduce Motion and verify recording indicators remain understandable; test Apple Watch VoiceOver for start, mute, stop, transfer progress, low battery, and error recovery.
+- Accessibility: complete common tasks with VoiceOver and Voice Control on iPhone/iPad; sample Switch Control; verify Full Keyboard Access on iPad keyboard and native macOS; test largest Dynamic Type sizes; test light/dark, Increase Contrast, Reduce Transparency, Bold Text, Grayscale, and Differentiate Without Color; enable Reduce Motion and verify recording indicators remain understandable; test Apple Watch VoiceOver for start, mute, stop, transfer progress, low battery, and error recovery.
 
 For every Mac recording case, capture the first-buffer log line, frame counts at stop, finalization-plan log line, resulting audio duration, and playback of each expected source. Also record screenshots, transcript text, sync/import status, and other relevant log excerpts for the release notes or PR.
 

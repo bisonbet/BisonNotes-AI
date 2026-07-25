@@ -2,7 +2,7 @@
 //  AdaptiveNavigationView.swift
 //  BisonNotes AI
 //
-//  Sidebar-based navigation for iPad and Mac Catalyst.
+//  Sidebar-based navigation for iPad and native macOS.
 //  On iPhone, ContentView continues to use the existing TabView.
 //
 

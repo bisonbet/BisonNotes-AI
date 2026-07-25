@@ -8,7 +8,7 @@
 import Foundation
 import UserNotifications
 
-#if os(iOS) && !targetEnvironment(macCatalyst)
+#if os(iOS)
 #if canImport(CallKit) && os(iOS)
 import CallKit
 #endif

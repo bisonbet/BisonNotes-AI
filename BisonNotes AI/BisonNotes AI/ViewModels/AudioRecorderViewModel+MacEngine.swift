@@ -1,5 +1,5 @@
 //
-//  AudioRecorderViewModel+CatalystEngine.swift
+//  AudioRecorderViewModel+MacEngine.swift
 //  BisonNotes AI
 //
 //  Mac recording uses AVAudioEngine + AVAudioFile because
@@ -8,7 +8,7 @@
 //  CAF file, then exports that file to the app's normal M4A recording URL.
 //
 
-#if targetEnvironment(macCatalyst) || os(macOS)
+#if os(macOS)
 
 import Foundation
 @preconcurrency import AVFoundation
@@ -32,29 +32,29 @@ extension AudioRecorderViewModel {
 	private static let systemMeetingMixGain: Float = 0.4
 
 	@MainActor
-	func setupCatalystRecording(at url: URL) async {
+	func setupMacRecording(at url: URL) async {
 		var systemAudioError: Error?
-		stopCatalystCaptureHealthMonitoring()
-		catalystScratchSegmentURLs = []
-		catalystAutomaticRecoveryAttempts = 0
-		catalystAwaitingRecoveryBuffer = false
-		catalystCaptureHealth.resetSession()
-		catalystSystemAudioCapture = nil
-		catalystSystemAudioURL = nil
+		stopMacCaptureHealthMonitoring()
+		macScratchSegmentURLs = []
+		macAutomaticRecoveryAttempts = 0
+		macAwaitingRecoveryBuffer = false
+		macCaptureHealth.resetSession()
+		macSystemAudioCapture = nil
+		macSystemAudioURL = nil
 
 		if isMacSystemAudioCaptureEnabled {
 			if CGPreflightScreenCaptureAccess() {
-				let systemAudioURL = Self.catalystSystemAudioURL(for: url)
-				let capture = CatalystSystemAudioCapture(outputURL: systemAudioURL)
+				let systemAudioURL = Self.macSystemAudioURL(for: url)
+				let capture = MacSystemAudioCapture(outputURL: systemAudioURL)
 				do {
 					try await capture.start()
-					catalystSystemAudioCapture = capture
-					catalystSystemAudioURL = systemAudioURL
+					macSystemAudioCapture = capture
+					macSystemAudioURL = systemAudioURL
 				} catch {
 					systemAudioError = error
-					catalystSystemAudioCapture = nil
-					catalystSystemAudioURL = nil
-					AppLog.shared.recording("Catalyst system audio capture unavailable: \(error.localizedDescription)", level: .error)
+					macSystemAudioCapture = nil
+					macSystemAudioURL = nil
+					AppLog.shared.recording("Mac system audio capture unavailable: \(error.localizedDescription)", level: .error)
 				}
 			} else {
 				systemAudioError = MacMeetingAudioCaptureError.permissionUnavailable
@@ -67,59 +67,41 @@ extension AudioRecorderViewModel {
 		}
 
 		do {
-			// Catalyst: drive microphone recording with AVAudioEngine + AVAudioFile
+			// Mac: drive microphone recording with AVAudioEngine + AVAudioFile
 			// so we bypass AVAudioRecorder's broken converter setup. The scratch
 			// file is exported to M4A when recording stops.
-			try startCatalystEngineRecording(at: url)
+			try startMacEngineRecording(at: url)
 
 			if let systemAudioError {
 				errorMessage = "Meeting audio could not be captured: \(systemAudioError.localizedDescription). Recording microphone audio only."
 			}
 		} catch {
-			if let capture = catalystSystemAudioCapture {
+			if let capture = macSystemAudioCapture {
 				if let abandonedSystemAudioURL = try? await capture.stop() {
 					try? FileManager.default.removeItem(at: abandonedSystemAudioURL)
 				}
 			}
-			catalystSystemAudioCapture = nil
-			catalystSystemAudioURL = nil
+			macSystemAudioCapture = nil
+			macSystemAudioURL = nil
 			finishRecordingStartup()
 			errorMessage = "Failed to start recording: \(error.localizedDescription)"
-			AppLog.shared.recording("Catalyst recording start failed: \(error.localizedDescription)", level: .error)
+			AppLog.shared.recording("Mac recording start failed: \(error.localizedDescription)", level: .error)
 		}
 	}
 
-	/// Start recording on Mac Catalyst using AVAudioEngine. Writes native PCM
+	/// Start recording on Mac using AVAudioEngine. Writes native PCM
 	/// into a temporary CAF file, which is exported to the caller's M4A URL in
-	/// `finalizeCatalystRecording(at:)`.
-	func startCatalystEngineRecording(at url: URL) throws {
+	/// `finalizeMacRecording(at:)`.
+	func startMacEngineRecording(at url: URL) throws {
 		// Tear down any leftover engine state from a previous run.
-		stopCatalystEngineRecording(closingFile: false)
+		stopMacEngineRecording(closingFile: false)
 
-		#if targetEnvironment(macCatalyst)
-		do {
-			try startCatalystEnginePipeline(at: url)
-		} catch {
-			AppLog.shared.recording("Catalyst engine start failed without AVAudioSession, retrying with fallback: \(error.localizedDescription)", level: .debug)
-			stopCatalystEngineRecording(closingFile: true)
-			try activateCatalystAudioSessionFallback()
-
-			do {
-				try startCatalystEnginePipeline(at: url)
-			} catch {
-				try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-				catalystAudioSessionActivated = false
-				throw error
-			}
-		}
-		#else
 		// Native macOS uses Core Audio directly. AVAudioSession is an iOS API
-		// and the Catalyst-only fallback must never run here.
-		try startCatalystEnginePipeline(at: url)
-		#endif
+		// and the Mac-only fallback must never run here.
+		try startMacEnginePipeline(at: url)
 	}
 
-	private func startCatalystEnginePipeline(
+	private func startMacEnginePipeline(
 		at url: URL,
 		scratchURL suppliedScratchURL: URL? = nil,
 		removingFinalOutput: Bool = true
@@ -133,13 +115,13 @@ extension AudioRecorderViewModel {
 
 		guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -1,
 				userInfo: [NSLocalizedDescriptionKey: "Microphone not available — check macOS Sound input settings."]
 			)
 		}
 
-		let scratchURL = suppliedScratchURL ?? Self.catalystScratchURL(for: url)
+		let scratchURL = suppliedScratchURL ?? Self.macScratchURL(for: url)
 		let fileManager = FileManager.default
 		if fileManager.fileExists(atPath: scratchURL.path) {
 			try fileManager.removeItem(at: scratchURL)
@@ -151,17 +133,17 @@ extension AudioRecorderViewModel {
 		let audioFile = try AVAudioFile(forWriting: scratchURL, settings: inputFormat.settings)
 		AppFileProtection.apply(to: scratchURL)
 
-		catalystAudioEngine = engine
-		catalystAudioFile = audioFile
-		catalystEngineFormat = inputFormat
-		catalystScratchRecordingURL = scratchURL
-		catalystCaptureHealth.beginSegment()
+		macAudioEngine = engine
+		macAudioFile = audioFile
+		macEngineFormat = inputFormat
+		macScratchRecordingURL = scratchURL
+		macCaptureHealth.beginSegment()
 
-		installCatalystInputTap()
+		installMacInputTap()
 
 		engine.prepare()
 		try engine.start()
-		startCatalystCaptureHealthMonitoring()
+		startMacCaptureHealthMonitoring()
 		AppLog.shared.recording(
 			"Mac microphone engine started; awaiting first buffer " +
 			"(sampleRate=\(inputFormat.sampleRate), channels=\(inputFormat.channelCount), " +
@@ -169,94 +151,79 @@ extension AudioRecorderViewModel {
 		)
 	}
 
-	#if targetEnvironment(macCatalyst)
-	private func activateCatalystAudioSessionFallback() throws {
-		let session = AVAudioSession.sharedInstance()
-		try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers])
-		try session.setActive(true)
-		catalystAudioSessionActivated = true
-	}
-	#endif
-
-	/// Pause Catalyst recording: remove the input tap so the file stops
+	/// Pause Mac recording: remove the input tap so the file stops
 	/// receiving samples. The engine and file stay alive so resume can
 	/// continue writing to the same file.
-	func pauseCatalystEngineRecording() {
-		guard let engine = catalystAudioEngine else { return }
+	func pauseMacEngineRecording() {
+		guard let engine = macAudioEngine else { return }
 		engine.inputNode.removeTap(onBus: 0)
-		catalystSystemAudioCapture?.setPaused(true)
-		stopCatalystCaptureHealthMonitoring()
-		catalystCaptureHealth.suspend()
+		macSystemAudioCapture?.setPaused(true)
+		stopMacCaptureHealthMonitoring()
+		macCaptureHealth.suspend()
 	}
 
-	/// Resume Catalyst recording: re-install the tap on the same input node,
+	/// Resume Mac recording: re-install the tap on the same input node,
 	/// writing into the same AVAudioFile that was opened in `start...`.
-	func resumeCatalystEngineRecording() throws {
-		guard catalystAudioEngine != nil, catalystAudioFile != nil else {
+	func resumeMacEngineRecording() throws {
+		guard macAudioEngine != nil, macAudioFile != nil else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -2,
 				userInfo: [NSLocalizedDescriptionKey: "Engine state was lost; cannot resume."]
 			)
 		}
-		catalystCaptureHealth.beginSegment()
-		installCatalystInputTap()
-		catalystSystemAudioCapture?.setPaused(false)
-		startCatalystCaptureHealthMonitoring()
+		macCaptureHealth.beginSegment()
+		installMacInputTap()
+		macSystemAudioCapture?.setPaused(false)
+		startMacCaptureHealthMonitoring()
 	}
 
-	/// Fully stop Catalyst recording. Closes the scratch file (via deinit) and
+	/// Fully stop Mac recording. Closes the scratch file (via deinit) and
 	/// tears down the engine. The final M4A is produced later in
-	/// `finalizeCatalystRecording(at:)`.
-	func stopCatalystEngineRecording(closingFile: Bool = true) {
-		stopCatalystCaptureHealthMonitoring()
-		let health = catalystCaptureHealth.snapshot()
+	/// `finalizeMacRecording(at:)`.
+	func stopMacEngineRecording(closingFile: Bool = true) {
+		stopMacCaptureHealthMonitoring()
+		let health = macCaptureHealth.snapshot()
 		AppLog.shared.recording(
 			"Mac microphone engine stopping " +
 			"(segmentFrames=\(health.segmentFramesWritten), totalFrames=\(health.totalFramesWritten))",
 			level: health.totalFramesWritten > 0 ? .info : .error
 		)
-		if let engine = catalystAudioEngine {
+		if let engine = macAudioEngine {
 			engine.inputNode.removeTap(onBus: 0)
 			if engine.isRunning {
 				engine.stop()
 			}
 		}
-		catalystAudioEngine = nil
-		catalystEngineFormat = nil
+		macAudioEngine = nil
+		macEngineFormat = nil
 		#if os(macOS)
 		enhancedAudioSessionManager.clearConfiguredInputDevice()
 		#endif
 		if closingFile {
-			catalystAudioFile = nil
-			#if targetEnvironment(macCatalyst)
-			if catalystAudioSessionActivated {
-				try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-				catalystAudioSessionActivated = false
-			}
-			#endif
+			macAudioFile = nil
 		}
 	}
 
 	/// Closes the current PCM segment without discarding it. A replacement input
 	/// may expose a different native format, so recovery always starts a new CAF.
-	func sealCatalystScratchSegment() {
-		let currentScratchURL = catalystScratchRecordingURL
-		stopCatalystEngineRecording()
+	func sealMacScratchSegment() {
+		let currentScratchURL = macScratchRecordingURL
+		stopMacEngineRecording()
 		if let currentScratchURL,
 		   FileManager.default.fileExists(atPath: currentScratchURL.path),
-		   !catalystScratchSegmentURLs.contains(currentScratchURL) {
-			catalystScratchSegmentURLs.append(currentScratchURL)
+		   !macScratchSegmentURLs.contains(currentScratchURL) {
+			macScratchSegmentURLs.append(currentScratchURL)
 		}
-		catalystScratchRecordingURL = nil
+		macScratchRecordingURL = nil
 	}
 
 	/// Starts the next PCM segment on the currently resolved Core Audio input.
 	/// The original final URL is retained for the normal stop/finalize flow.
-	func startCatalystContinuation(at finalURL: URL) throws {
-		let segmentIndex = catalystScratchSegmentURLs.count + 1
-		let scratchURL = Self.catalystScratchURL(for: finalURL, segmentIndex: segmentIndex)
-		try startCatalystEnginePipeline(
+	func startMacContinuation(at finalURL: URL) throws {
+		let segmentIndex = macScratchSegmentURLs.count + 1
+		let scratchURL = Self.macScratchURL(for: finalURL, segmentIndex: segmentIndex)
+		try startMacEnginePipeline(
 			at: finalURL,
 			scratchURL: scratchURL,
 			removingFinalOutput: false
@@ -265,38 +232,38 @@ extension AudioRecorderViewModel {
 
 	#if os(macOS)
 	func sealNativeMacScratchSegment() {
-		sealCatalystScratchSegment()
+		sealMacScratchSegment()
 	}
 
 	func startNativeMacContinuation(at finalURL: URL) throws {
-		try startCatalystContinuation(at: finalURL)
+		try startMacContinuation(at: finalURL)
 	}
 	#endif
 
-	func stopCatalystSystemAudioCapture() async -> URL? {
-		guard let capture = catalystSystemAudioCapture else {
-			return catalystSystemAudioURL
+	func stopMacSystemAudioCapture() async -> URL? {
+		guard let capture = macSystemAudioCapture else {
+			return macSystemAudioURL
 		}
 
 		do {
 			let capturedURL = try await capture.stop()
-			catalystSystemAudioCapture = nil
-			catalystSystemAudioURL = capturedURL
+			macSystemAudioCapture = nil
+			macSystemAudioURL = capturedURL
 			return capturedURL
 		} catch {
-			AppLog.shared.recording("Catalyst system audio capture finalize failed: \(error.localizedDescription)", level: .error)
-			catalystSystemAudioCapture = nil
-			let partialURL = catalystSystemAudioURL.flatMap { url in
+			AppLog.shared.recording("Mac system audio capture finalize failed: \(error.localizedDescription)", level: .error)
+			macSystemAudioCapture = nil
+			let partialURL = macSystemAudioURL.flatMap { url in
 				FileManager.default.fileExists(atPath: url.path) ? url : nil
 			}
-			catalystSystemAudioURL = partialURL
+			macSystemAudioURL = partialURL
 			return partialURL
 		}
 	}
 
-	private func installCatalystInputTap() {
-		guard let engine = catalystAudioEngine,
-		      let format = catalystEngineFormat else { return }
+	private func installMacInputTap() {
+		guard let engine = macAudioEngine,
+		      let format = macEngineFormat else { return }
 
 		// The scratch file uses the input node's native PCM format, so the tap
 		// can write each buffer directly without invoking a compressed encoder
@@ -306,19 +273,19 @@ extension AudioRecorderViewModel {
 			bufferSize: 4096,
 			format: format
 		) { [weak self] buffer, _ in
-			guard let self, let file = self.catalystAudioFile else { return }
+			guard let self, let file = self.macAudioFile else { return }
 			do {
 				try file.write(from: buffer)
-				let isFirstWrite = self.catalystCaptureHealth.recordSuccessfulWrite(
+				let isFirstWrite = self.macCaptureHealth.recordSuccessfulWrite(
 					frameCount: Int64(buffer.frameLength)
 				)
 				if isFirstWrite {
 					DispatchQueue.main.async { [weak self] in
-						self?.handleCatalystFirstSuccessfulWrite()
+						self?.handleMacFirstSuccessfulWrite()
 					}
 				}
 			} catch {
-				if self.catalystCaptureHealth.recordWriteFailure(error.localizedDescription) {
+				if self.macCaptureHealth.recordWriteFailure(error.localizedDescription) {
 					AppLog.shared.recording(
 						"Mac microphone file write failed: \(error.localizedDescription)",
 						level: .error
@@ -328,7 +295,7 @@ extension AudioRecorderViewModel {
 		}
 	}
 
-	private static func catalystScratchURL(for finalURL: URL, segmentIndex: Int? = nil) -> URL {
+	private static func macScratchURL(for finalURL: URL, segmentIndex: Int? = nil) -> URL {
 		// Stage in the temp directory, not next to the recording: an orphaned
 		// scratch file left by a crash between stop and finalize would otherwise
 		// sit in the recordings directory. The name is derived from the final
@@ -340,17 +307,17 @@ extension AudioRecorderViewModel {
 			.appendingPathExtension("caf")
 	}
 
-	private static func catalystSystemAudioURL(for finalURL: URL) -> URL {
+	private static func macSystemAudioURL(for finalURL: URL) -> URL {
 		FileManager.default.temporaryDirectory
 			.appendingPathComponent("\(finalURL.deletingPathExtension().lastPathComponent)-system")
 			.appendingPathExtension("m4a")
 	}
 
-	func exportCatalystScratchRecording(from scratchURL: URL, to finalURL: URL) async throws {
+	func exportMacScratchRecording(from scratchURL: URL, to finalURL: URL) async throws {
 		let fileManager = FileManager.default
 		guard fileManager.fileExists(atPath: scratchURL.path) else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -3,
 				userInfo: [NSLocalizedDescriptionKey: "Temporary recording file does not exist."]
 			)
@@ -360,7 +327,7 @@ extension AudioRecorderViewModel {
 		let sourceDuration = try await sourceAsset.load(.duration).seconds
 		guard sourceDuration.isFinite, sourceDuration > 0 else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -4,
 				userInfo: [NSLocalizedDescriptionKey: "Temporary recording has no audio duration."]
 			)
@@ -368,7 +335,7 @@ extension AudioRecorderViewModel {
 
 		guard !(try await sourceAsset.loadTracks(withMediaType: .audio)).isEmpty else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -5,
 				userInfo: [NSLocalizedDescriptionKey: "Temporary recording has no audio track."]
 			)
@@ -376,7 +343,7 @@ extension AudioRecorderViewModel {
 
 		guard let exportSession = AVAssetExportSession(asset: sourceAsset, presetName: AVAssetExportPresetAppleM4A) else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -6,
 				userInfo: [NSLocalizedDescriptionKey: "Could not create audio export session."]
 			)
@@ -386,7 +353,7 @@ extension AudioRecorderViewModel {
 		// `.m4a` left there by a failed/killed export would be misread as an
 		// orphaned recording by EnhancedFileManager's documents-directory scan.
 		let tempURL = fileManager.temporaryDirectory
-			.appendingPathComponent("catalyst_export_\(UUID().uuidString).m4a")
+			.appendingPathComponent("mac_export_\(UUID().uuidString).m4a")
 
 		if fileManager.fileExists(atPath: tempURL.path) {
 			try fileManager.removeItem(at: tempURL)
@@ -399,7 +366,7 @@ extension AudioRecorderViewModel {
 		let exportedSize = attributes[.size] as? Int64 ?? 0
 		guard exportedSize > 0 else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -7,
 				userInfo: [NSLocalizedDescriptionKey: "Exported recording file is empty."]
 			)
@@ -409,7 +376,7 @@ extension AudioRecorderViewModel {
 		let exportedDuration = try await exportedAsset.load(.duration).seconds
 		guard exportedDuration.isFinite, exportedDuration > 0 else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -8,
 				userInfo: [NSLocalizedDescriptionKey: "Exported recording has no audio duration."]
 			)
@@ -421,19 +388,22 @@ extension AudioRecorderViewModel {
 		try fileManager.moveItem(at: tempURL, to: finalURL)
 		AppFileProtection.apply(to: finalURL)
 
-		AppLog.shared.recording("Catalyst recording exported to M4A: \(finalURL.lastPathComponent), duration: \(exportedDuration)s, size: \(exportedSize) bytes")
+		AppLog.shared.recording(
+			"Mac recording exported to M4A: \(finalURL.lastPathComponent), " +
+				"duration: \(exportedDuration)s, size: \(exportedSize) bytes"
+		)
 	}
 
-	func exportCatalystScratchRecordings(from scratchURLs: [URL], to finalURL: URL) async throws {
+	func exportMacScratchRecordings(from scratchURLs: [URL], to finalURL: URL) async throws {
 		guard scratchURLs.count > 1 else {
 			guard let scratchURL = scratchURLs.first else {
 				throw NSError(
-					domain: "AudioRecorderViewModel.Catalyst",
+					domain: "AudioRecorderViewModel.Mac",
 					code: -13,
 					userInfo: [NSLocalizedDescriptionKey: "No temporary recording segments were available."]
 				)
 			}
-			try await exportCatalystScratchRecording(from: scratchURL, to: finalURL)
+			try await exportMacScratchRecording(from: scratchURL, to: finalURL)
 			return
 		}
 
@@ -441,7 +411,7 @@ extension AudioRecorderViewModel {
 		guard insertionTime.isValid, insertionTime.seconds > 0,
 		      let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -15,
 				userInfo: [NSLocalizedDescriptionKey: "Recovered microphone segments contained no audio."]
 			)
@@ -449,7 +419,7 @@ extension AudioRecorderViewModel {
 
 		let fileManager = FileManager.default
 		let tempURL = fileManager.temporaryDirectory
-			.appendingPathComponent("catalyst_segments_\(UUID().uuidString).m4a")
+			.appendingPathComponent("mac_segments_\(UUID().uuidString).m4a")
 		try await exportSession.export(to: tempURL, as: .m4a)
 		let attributes = try fileManager.attributesOfItem(atPath: tempURL.path)
 		let exportedSize = attributes[.size] as? Int64 ?? 0
@@ -457,7 +427,7 @@ extension AudioRecorderViewModel {
 		guard exportedSize > 0, exportedDuration.isFinite, exportedDuration > 0 else {
 			try? fileManager.removeItem(at: tempURL)
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -16,
 				userInfo: [NSLocalizedDescriptionKey: "Recovered microphone export was empty."]
 			)
@@ -482,7 +452,7 @@ extension AudioRecorderViewModel {
 			preferredTrackID: kCMPersistentTrackID_Invalid
 		) else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -14,
 				userInfo: [NSLocalizedDescriptionKey: "Could not create a track for recovered microphone audio."]
 			)
@@ -504,13 +474,13 @@ extension AudioRecorderViewModel {
 		return (composition, insertionTime)
 	}
 
-	func exportAndMixCatalystRecording(
+	func exportAndMixMacRecording(
 		microphoneScratchURLs: [URL],
 		systemAudioURL: URL,
 		finalURL: URL
 	) async throws {
 		do {
-			try await mixCatalystAudioTracks(
+			try await mixMacAudioTracks(
 				microphoneScratchURLs: microphoneScratchURLs,
 				systemAudioURL: systemAudioURL,
 				finalURL: finalURL
@@ -522,7 +492,7 @@ extension AudioRecorderViewModel {
 				level: .error
 			)
 			do {
-				try await exportCatalystScratchRecordings(from: microphoneScratchURLs, to: finalURL)
+				try await exportMacScratchRecordings(from: microphoneScratchURLs, to: finalURL)
 				errorMessage = "Meeting audio could not be mixed. Saved microphone audio only."
 			} catch let microphoneError {
 				AppLog.shared.recording(
@@ -530,13 +500,13 @@ extension AudioRecorderViewModel {
 					"\(microphoneError.localizedDescription)",
 					level: .error
 				)
-				try await exportCatalystScratchRecording(from: systemAudioURL, to: finalURL)
+				try await exportMacScratchRecording(from: systemAudioURL, to: finalURL)
 				errorMessage = "The microphone track could not be saved. Saved meeting/system audio only."
 			}
 		}
 	}
 
-	private func mixCatalystAudioTracks(
+	private func mixMacAudioTracks(
 		microphoneScratchURLs: [URL],
 		systemAudioURL: URL,
 		finalURL: URL
@@ -548,7 +518,7 @@ extension AudioRecorderViewModel {
 		)
 		guard microphoneDuration.isValid, microphoneDuration.seconds > 0 else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -12,
 				userInfo: [NSLocalizedDescriptionKey: "Microphone recording has no audio duration."]
 			)
@@ -569,7 +539,7 @@ extension AudioRecorderViewModel {
 
 		guard !composition.tracks(withMediaType: .audio).isEmpty else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -9,
 				userInfo: [NSLocalizedDescriptionKey: "No audio tracks were available to mix."]
 			)
@@ -580,7 +550,7 @@ extension AudioRecorderViewModel {
 
 		guard let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -10,
 				userInfo: [NSLocalizedDescriptionKey: "Could not create meeting audio export session."]
 			)
@@ -589,7 +559,7 @@ extension AudioRecorderViewModel {
 		exportSession.timeRange = CMTimeRange(start: .zero, duration: microphoneDuration)
 
 		let tempURL = fileManager.temporaryDirectory
-			.appendingPathComponent("catalyst_meeting_mix_\(UUID().uuidString).m4a")
+			.appendingPathComponent("mac_meeting_mix_\(UUID().uuidString).m4a")
 		if fileManager.fileExists(atPath: tempURL.path) {
 			try fileManager.removeItem(at: tempURL)
 		}
@@ -601,7 +571,7 @@ extension AudioRecorderViewModel {
 		let exportedDuration = try await exportedAsset.load(.duration).seconds
 		guard exportedDuration.isFinite, exportedDuration > 0 else {
 			throw NSError(
-				domain: "AudioRecorderViewModel.Catalyst",
+				domain: "AudioRecorderViewModel.Mac",
 				code: -11,
 				userInfo: [NSLocalizedDescriptionKey: "Mixed meeting recording has no audio duration."]
 			)
@@ -612,7 +582,10 @@ extension AudioRecorderViewModel {
 		}
 		try fileManager.moveItem(at: tempURL, to: finalURL)
 		AppFileProtection.apply(to: finalURL)
-		AppLog.shared.recording("Catalyst meeting recording mixed to M4A: \(finalURL.lastPathComponent), duration: \(exportedDuration)s")
+		AppLog.shared.recording(
+			"Mac meeting recording mixed to M4A: \(finalURL.lastPathComponent), " +
+				"duration: \(exportedDuration)s"
+		)
 	}
 
 	private func addAudioTracks(

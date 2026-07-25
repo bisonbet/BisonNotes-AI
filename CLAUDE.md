@@ -111,59 +111,13 @@ The app includes comprehensive AWS Bedrock integration (`AWS/AWSBedrockModels.sw
   - **Cross-Region Inference Profiles**: Claude and Llama models use `us.*`, `global.*`, `eu.*` prefixes for cross-region routing
   - Cross-region profiles provide ~10% cost savings and higher throughput by routing requests to available regions
 
-### Mac Catalyst Build Notes
+### Native macOS Build Notes
 
-The `MacOS-Catalyst` branch adds Mac Catalyst support. Several manual steps were required for the vendored `llama.xcframework` and must be repeated any time the framework is rebuilt or updated:
+Mac Catalyst was removed in Phase 4.3 of the native migration. The iOS target supports only iPhone and iPad destinations; the `BisonNotes AI macOS` scheme is the sole Mac product.
 
-#### Archive-only failures (do not regress these)
-
-- **aws-sdk-swift is pinned to exact 1.6.113 — do not bump past it until the smithy plugin issue is resolved.** smithy-swift ≥ 0.206 (pulled in by aws-sdk-swift ≥ 1.7.0) ships a `SmithyCodeGeneratorPlugin` build-tool plugin. Xcode builds plugin host tools (`SmithyCodegenCLI` + its deps: `Logging`, `Smithy`, `SmithySerialization`, `ArgumentParser`) for native macOS even though the plugin is only applied to smithy's internal test targets. In a Mac Catalyst archive, the native-macOS (`SDK_VARIANT:macos`) and Catalyst (`SDK_VARIANT:iosmac`) builds of those targets both stage to the same `ArchiveIntermediates/.../UninstalledProducts/macosx/<Target>.o` path → `error: Multiple commands produce`. This is an Xcode staging-path bug (SDK_VARIANT is not part of the path); it only manifests in archives, never in regular builds, and not in iOS archives (host=macosx vs app=iphoneos don't collide). Verified via the XCBuildData manifest of a failed archive. Before bumping aws-sdk-swift, check whether smithy-swift's `Package.swift` still declares the plugin, or whether Xcode has fixed the staging collision.
-- **Keep `EXCLUDED_ARCHS = x86_64` at the project level.** The app is Apple Silicon-only by design: the hand-built llama Catalyst slice is arm64-only and MLX-Swift requires Apple Silicon. Archives build Release without `ONLY_ACTIVE_ARCH`, so Catalyst would otherwise build x86_64 too. Note this setting does NOT propagate to SPM packages (verified in the build manifest — packages still compile x86_64 in GUI archives); only an xcodebuild command-line override reaches packages, which is what `Scripts/archive-catalyst.sh` does. Prefer that script over Product > Archive for Catalyst archives. arm64-only Catalyst apps are accepted by the Mac App Store ("Requires Apple silicon").
-- `ALLOW_TARGET_PLATFORM_SPECIALIZATION` was removed from the app target (2026-06-10). It was a hack to borrow the native macOS llama slice before the Catalyst slice existed and is obsolete now. It was NOT the cause of the "Multiple commands produce" archive failure (initially suspected, disproven via build manifest).
-
-#### llama.xcframework Catalyst Slice
-
-The upstream llama.cpp xcframework does not ship a Mac Catalyst slice. The `ios-arm64-maccatalyst` slice in `Frameworks/llama.xcframework/` was created manually:
-
-```bash
-# 1. Extract the arm64 slice from the macOS fat binary
-lipo -thin arm64 \
-  Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/llama \
-  -output /tmp/llama-arm64
-
-# 2. Create versioned macOS-style framework layout (required — Catalyst does not use shallow bundles)
-CATALYST=Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework
-mkdir -p $CATALYST/Versions/A/Resources
-mkdir -p $CATALYST/Versions/A/Headers
-mkdir -p $CATALYST/Versions/A/Modules
-
-# 3. Copy headers, modules, and Info.plist from the macOS framework
-cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Headers/* \
-   $CATALYST/Versions/A/Headers/
-cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Modules/* \
-   $CATALYST/Versions/A/Modules/
-cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Resources/Info.plist \
-   $CATALYST/Versions/A/Resources/Info.plist
-
-# 4. Place the thin binary
-cp /tmp/llama-arm64 $CATALYST/Versions/A/llama
-
-# 5. Patch the Mach-O platform header from MACOS to MACCATALYST
-vtool -set-build-version maccatalyst 14.0 15.5 -replace \
-  -output $CATALYST/Versions/A/llama \
-          $CATALYST/Versions/A/llama
-
-# 6. Create Versions/Current symlink and top-level symlinks
-ln -s A                        $CATALYST/Versions/Current
-ln -s Versions/Current/llama    $CATALYST/llama
-ln -s Versions/Current/Headers  $CATALYST/Headers
-ln -s Versions/Current/Modules  $CATALYST/Modules
-ln -s Versions/Current/Resources $CATALYST/Resources
-```
-
-Then add the `ios-arm64-maccatalyst` entry to `Frameworks/llama.xcframework/Info.plist` (see existing entry in that file for the format).
-
-Step 5 is critical — without the `vtool` patch, the linker warns "built for macOS" and may fail codesigning.
+- **AWS SDK for Swift accepts compatible 1.x releases from 1.7.46.** `Package.resolved` locks the reviewed checkout. The former exact 1.6.113 pin worked around an Xcode archive collision between native-macOS Smithy plugin host tools and Catalyst products staged into the same `UninstalledProducts/macosx` paths. With no Catalyst destination, that dual-variant collision cannot occur, so the project can consume current AWS service fixes and model updates without automatically crossing into a breaking 2.x release.
+- **Keep `EXCLUDED_ARCHS = x86_64` at the project level.** BisonNotes remains Apple Silicon-only because MLX Swift requires Apple Silicon. The vendored llama xcframework still contains its upstream universal macOS slice, but the app does not ship an Intel product.
+- The native target consumes `Frameworks/llama.xcframework/macos-arm64_x86_64` directly. Do not recreate or restore the deleted `ios-arm64-maccatalyst` slice.
 
 #### Remove `link "c++"` from llama modulemaps
 
@@ -171,13 +125,7 @@ Each slice's `Modules/module.modulemap` (e.g. `ios-arm64/llama.framework/Modules
 
 If the xcframework is rebuilt or updated from upstream, reapply this removal across all slices.
 
-#### textual (MarkdownUI) Catalyst Fix
-
-The `bisonbet/textual` fork has Mac Catalyst guards applied (commit `0c2c3b5`). On Mac Catalyst `canImport(AppKit)` is true, which caused the package to take the AppKit path and fail. The fix adds `&& !targetEnvironment(macCatalyst)` to AppKit checks in:
-- `Sources/Textual/Internal/Font/PlatformFont.swift`
-- `Sources/Textual/Internal/Helpers/PlatformImage.swift`
-
-If textual is rebased from upstream, reapply these guards.
+The historical Catalyst guards in the `bisonbet/textual` fork are no longer required by this app and can be dropped when that separate repository is next rebased.
 
 ### Background Processing
 For long-running operations, use `BackgroundProcessingManager` to queue jobs and track progress.

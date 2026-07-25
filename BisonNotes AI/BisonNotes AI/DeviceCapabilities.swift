@@ -40,9 +40,9 @@ struct DeviceCapabilities {
 
     /// Action Button is only available on supported iPhone hardware. Apple
     /// does not expose a direct capability API, so gate the setup guidance by
-    /// known device identifier families and keep Mac Catalyst/iPad hidden.
+    /// known device identifier families and keep Mac/iPad hidden.
     static var supportsActionButton: Bool {
-        #if targetEnvironment(macCatalyst) || os(macOS)
+        #if os(macOS)
         return false
         #else
         guard UIDevice.current.userInterfaceIdiom == .phone else {

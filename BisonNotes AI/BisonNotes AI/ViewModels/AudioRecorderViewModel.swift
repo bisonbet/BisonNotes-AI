@@ -11,10 +11,8 @@ import SwiftUI
 import Combine
 import CoreLocation
 import UserNotifications
-#if !targetEnvironment(macCatalyst)
 #if canImport(CallKit) && os(iOS)
 import CallKit
-#endif
 #endif
 
 class AudioRecorderViewModel: NSObject, ObservableObject {
@@ -88,23 +86,22 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var lastCheckpointTime: Date = Date.distantPast
 	var recordingStartedAt: (url: URL, date: Date)?
 
-	#if targetEnvironment(macCatalyst) || os(macOS)
+	#if os(macOS)
 	// On Mac, AVAudioRecorder cannot reliably encode to the app's
 	// M4A target. AVAudioEngine taps deliver PCM buffers to a scratch file that
-	// is exported to M4A when recording stops; Catalyst uses AVAudioSession only
+	// is exported to M4A when recording stops; Mac uses AVAudioSession only
 	// as a fallback if the direct engine path cannot start.
-	var catalystAudioEngine: AVAudioEngine?
-	var catalystAudioFile: AVAudioFile?
-	var catalystEngineFormat: AVAudioFormat?
-	var catalystScratchRecordingURL: URL?
-	var catalystScratchSegmentURLs: [URL] = []
-	var catalystSystemAudioCapture: CatalystSystemAudioCapture?
-	var catalystSystemAudioURL: URL?
-	var catalystAudioSessionActivated = false
-	let catalystCaptureHealth = RecordingCaptureHealth()
-	var catalystCaptureHealthTimer: Timer?
-	var catalystAutomaticRecoveryAttempts = 0
-	var catalystAwaitingRecoveryBuffer = false
+	var macAudioEngine: AVAudioEngine?
+	var macAudioFile: AVAudioFile?
+	var macEngineFormat: AVAudioFormat?
+	var macScratchRecordingURL: URL?
+	var macScratchSegmentURLs: [URL] = []
+	var macSystemAudioCapture: MacSystemAudioCapture?
+	var macSystemAudioURL: URL?
+	let macCaptureHealth = RecordingCaptureHealth()
+	var macCaptureHealthTimer: Timer?
+	var macAutomaticRecoveryAttempts = 0
+	var macAwaitingRecoveryBuffer = false
 	#if os(macOS)
 	var macInputDeviceChangeTask: Task<Void, Never>?
 	var isRecoveringMacInput = false
@@ -123,7 +120,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var currentSegmentIndex: Int = 0 // Track which segment we're on
 
 	// Call interruption intelligence (Phase 1)
-	#if os(iOS) && !targetEnvironment(macCatalyst)
+	#if os(iOS)
 	var callObserver: CXCallObserver?
 	#endif
 	var callInterruptionStartTime: Date?
@@ -213,7 +210,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		#endif
 
 		// Setup CallKit observer for intelligent call interruption handling (Phase 1)
-		#if os(iOS) && !targetEnvironment(macCatalyst)
+		#if os(iOS)
 		setupCallObserver()
 		#endif
 	}
@@ -227,9 +224,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			self.workflowManager = workflowManager
 
 			// Set up watch sync handler now that we have app coordinator
-			#if !targetEnvironment(macCatalyst)
 			setupWatchSyncHandler()
-			#endif
 		}
 	}
 
@@ -261,8 +256,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	deinit {
-		#if targetEnvironment(macCatalyst) || os(macOS)
-		catalystCaptureHealthTimer?.invalidate()
+		#if os(macOS)
+		macCaptureHealthTimer?.invalidate()
 		#endif
 		#if os(macOS)
 		macInputDeviceChangeTask?.cancel()
@@ -284,7 +279,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// MARK: - Notification Observers
 
 	func setupNotificationObservers() {
-		#if os(iOS) && !targetEnvironment(macCatalyst)
+		#if os(iOS)
 		// AVAudioSession interruption/route notifications use Mach ports that don't
 		// exist on Mac — registering for them floods the log with "cannot add handler".
 		// Phone-call interruptions and Bluetooth routing don't apply on Mac anyway.
@@ -451,7 +446,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	// MARK: - Call Observer Setup (Phase 1)
 
-	#if os(iOS) && !targetEnvironment(macCatalyst)
+	#if os(iOS)
 	/// Setup CallKit observer for intelligent call interruption handling
 	func setupCallObserver() {
 		callObserver = CXCallObserver()
@@ -479,7 +474,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	func startRecording() {
 		guard beginRecordingStartup() else { return }
 		AppLog.shared.recording("startRecording: requesting microphone permission")
-		#if targetEnvironment(macCatalyst) || os(macOS)
+		#if os(macOS)
 		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
@@ -514,7 +509,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		#endif
 	}
 
-	#if targetEnvironment(macCatalyst) || os(macOS)
+	#if os(macOS)
 	@MainActor
 	private func requestMicPermissionAndRecord() {
 		#if os(macOS)
@@ -576,7 +571,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 		AppLog.shared.recording("startRecording: microphone permission granted")
 		// Skip AVAudioSession.setCategory/setActive on Mac. Native macOS applies
-		// the selected Core Audio input directly to AVAudioEngine; Catalyst uses
+		// the selected Core Audio input directly to AVAudioEngine; Mac uses
 		// its existing engine/default-input behavior.
 		#if os(macOS)
 		Task { @MainActor [weak self] in
@@ -593,7 +588,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	func startBackgroundRecording() {
 		guard beginRecordingStartup() else { return }
 		AppLog.shared.recording("startBackgroundRecording: requesting microphone permission")
-		#if targetEnvironment(macCatalyst) || os(macOS)
+		#if os(macOS)
 		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
@@ -643,11 +638,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		// Capture current location before starting recording
 		captureCurrentLocation()
 
-		// Check if live transcription mode is enabled. Catalyst meeting audio
+		// Check if live transcription mode is enabled. Mac meeting audio
 		// capture records system output first, so live mic-only transcription is
 		// disabled for that mode and transcription runs from the saved file.
 		var useLiveTranscription = UserDefaults.standard.bool(forKey: "enableLiveTranscription")
-		#if targetEnvironment(macCatalyst) || os(macOS)
+		#if os(macOS)
 		if isMacSystemAudioCaptureEnabled {
 			useLiveTranscription = false
 		}
@@ -659,9 +654,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 
 		do {
-			#if targetEnvironment(macCatalyst) || os(macOS)
+			#if os(macOS)
 			Task { @MainActor in
-				await self.setupCatalystRecording(at: audioFilename)
+				await self.setupMacRecording(at: audioFilename)
 			}
 			return
 			#else
@@ -726,7 +721,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	/// Pause an active recording. On iOS the AVAudioRecorder is paused
-	/// (file stays open). On Mac Catalyst the AVAudioEngine input tap is
+	/// (file stays open). On Mac the AVAudioEngine input tap is
 	/// removed so no more samples reach the file. In both cases
 	/// `resumeRecording()` continues writing to the same file.
 	/// No-op if not recording, already paused, or in live transcription mode.
@@ -737,9 +732,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			return
 		}
 
-		#if targetEnvironment(macCatalyst) || os(macOS)
-		guard catalystAudioEngine != nil else { return }
-		pauseCatalystEngineRecording()
+		#if os(macOS)
+		guard macAudioEngine != nil else { return }
+		pauseMacEngineRecording()
 		#else
 		guard let recorder = audioRecorder else { return }
 		recorder.pause()
@@ -751,16 +746,16 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	/// Resume a paused recording. Continues writing to the same file on both
-	/// iOS (AVAudioRecorder.record()) and Mac Catalyst (re-installing the
+	/// iOS (AVAudioRecorder.record()) and Mac (re-installing the
 	/// AVAudioEngine tap).
 	func resumeRecording() {
 		guard isPaused else { return }
 
-		#if targetEnvironment(macCatalyst) || os(macOS)
+		#if os(macOS)
 		do {
-			try resumeCatalystEngineRecording()
+			try resumeMacEngineRecording()
 		} catch {
-			AppLog.shared.recording("Catalyst resume failed: \(error.localizedDescription)", level: .error)
+			AppLog.shared.recording("Mac resume failed: \(error.localizedDescription)", level: .error)
 			errorMessage = "Could not resume recording: \(error.localizedDescription)"
 			return
 		}
@@ -802,12 +797,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			return
 		}
 
-		#if targetEnvironment(macCatalyst) || os(macOS)
-		// On Catalyst, recording is driven by AVAudioEngine + AVAudioFile.
+		#if os(macOS)
+		// On Mac, recording is driven by AVAudioEngine + AVAudioFile.
 		// Tear it down here, then run the save flow manually since there's
 		// no AVAudioRecorder delegate to fire it.
-		let catalystFinalURL = recordingURL
-		stopCatalystEngineRecording()
+		let macFinalURL = recordingURL
+		stopMacEngineRecording()
 		#endif
 
 		audioRecorder?.stop()
@@ -834,15 +829,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				await mergeRecordingSegments()
 			}
 		} else {
-			#if targetEnvironment(macCatalyst) || os(macOS)
-			if let url = catalystFinalURL {
-				AppLog.shared.recording("Recording finished successfully (Catalyst engine)")
+			#if os(macOS)
+			if let url = macFinalURL {
+				AppLog.shared.recording("Recording finished successfully (Mac engine)")
 				Task { @MainActor in
-					_ = await self.stopCatalystSystemAudioCapture()
-					await self.finalizeCatalystRecording(at: url)
+					_ = await self.stopMacSystemAudioCapture()
+					await self.finalizeMacRecording(at: url)
 				}
 			} else {
-				AppLog.shared.recording("Catalyst stop: no recording URL — nothing to save", level: .error)
+				AppLog.shared.recording("Mac stop: no recording URL — nothing to save", level: .error)
 			}
 			#else
 			AppLog.shared.recording("Recording has single segment, no merge needed", level: .debug)
@@ -957,8 +952,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				// while the app is in the background, and we need to detect that.
 				// NOTE: In live transcription mode, audioRecorder is nil so this block is
 				// safely skipped — LiveTranscriptionService manages its own AVAudioEngine.
-				#if targetEnvironment(macCatalyst) || os(macOS)
-				// On Mac Catalyst there is no AVAudioSession interruption model and
+				#if os(macOS)
+				// On Mac there is no AVAudioSession interruption model and
 				// AVAudioRecorder.isRecording is unreliable; the recovery flow that
 				// reactivates the session and rebuilds the recorder is a no-op here
 				// and surfaces a misleading "Microphone became unavailable" error.

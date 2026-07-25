@@ -544,9 +544,7 @@ struct BisonNotesAIApp: App {
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didFinishLaunchingNotification)) { _ in
                     requestBackgroundAppRefreshPermission()
-                    #if !targetEnvironment(macCatalyst)
                     setupWatchConnectivity()
-                    #endif
                     // Note: Notification permission is now requested when first needed (in BackgroundProcessingManager)
                     // Initialize download monitor for on-device AI models
                     _ = OnDeviceAIDownloadMonitor.shared
@@ -982,7 +980,7 @@ struct BisonNotesAIApp: App {
     }
 
     private func setupBackgroundTasks() {
-        #if os(iOS) && !targetEnvironment(macCatalyst)
+        #if os(iOS)
         // Register background task identifiers
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.bisonai.audio-processing", using: nil) { task in
             handleBackgroundProcessing(task: task as! BGProcessingTask)
@@ -996,7 +994,7 @@ struct BisonNotesAIApp: App {
     }
 
     private func requestBackgroundAppRefreshPermission() {
-        #if os(iOS) && !targetEnvironment(macCatalyst)
+        #if os(iOS)
         // Background app refresh is now handled via BGTaskScheduler in setupBackgroundTasks()
         // No need for the deprecated setMinimumBackgroundFetchInterval
         AppLog.shared.general("Background app refresh configured via BGTaskScheduler")
@@ -1005,7 +1003,7 @@ struct BisonNotesAIApp: App {
         #endif
     }
 
-    #if os(iOS) && !targetEnvironment(macCatalyst)
+    #if os(iOS)
     private func handleBackgroundProcessing(task: BGProcessingTask) {
         AppLog.shared.general("Background processing task started: \(task.identifier)")
 
@@ -1101,7 +1099,7 @@ struct BisonNotesAIApp: App {
             AppShortcuts.updateAppShortcutParameters()
         }
 
-        #if os(iOS) && !targetEnvironment(macCatalyst)
+        #if os(iOS)
         if #available(iOS 18.0, *) {
             if let plugInsURL = Bundle.main.builtInPlugInsURL,
                let _ = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {

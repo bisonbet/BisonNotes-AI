@@ -14,9 +14,9 @@ public enum AudioQuality: String, CaseIterable, Codable {
     var settings: [String: Any] {
         switch self {
         case .whisperOptimized:
-            // Used by AVAudioRecorder on iOS. Mac Catalyst recording is
+            // Used by AVAudioRecorder on iOS. Native Mac recording is
             // driven by AVAudioEngine + AVAudioFile (see
-            // AudioRecorderViewModel+CatalystEngine.swift) which configures
+            // AudioRecorderViewModel+MacEngine.swift) which configures
             // its own AAC settings using the input node's native sample rate.
             return [
                 AVFormatIDKey: Int(kAudioFormatMPEG4AAC),

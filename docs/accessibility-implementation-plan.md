@@ -2,7 +2,7 @@
 
 ## Summary
 
-Make BisonNotes accessible across iPhone/iPad, Mac Catalyst, Apple Watch, and Control Center/Action Button flows, using Apple's current guidance as the baseline:
+Make BisonNotes accessible across iPhone/iPad, native macOS, Apple Watch, and Control Center/Action Button flows, using Apple's current guidance as the baseline:
 
 - [HIG Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility)
 - [VoiceOver](https://developer.apple.com/design/human-interface-guidelines/voiceover)
@@ -32,7 +32,7 @@ Target App Store label readiness for common tasks, not just "no missing labels."
 ## Test Plan
 
 - Add `BisonNotesAIAccessibilityTests.swift` using existing deterministic launch args and `XCUIApplication.performAccessibilityAudit` for Record, Recordings list, Audio Player, Transcripts, Summaries, Summary detail, Setup, and Settings.
-- Add manual validation to `docs/testing-regimen.md`: VoiceOver, Voice Control, Switch Control sampling, Full Keyboard Access on Catalyst/iPad keyboard, largest Dynamic Type, contrast modes, Reduce Motion, Apple Watch VoiceOver, and real-device Action Button/Control Center smoke tests.
+- Add manual validation to `docs/testing-regimen.md`: VoiceOver, Voice Control, Switch Control sampling, Full Keyboard Access on native macOS/iPad keyboard, largest Dynamic Type, contrast modes, Reduce Motion, Apple Watch VoiceOver, and real-device Action Button/Control Center smoke tests.
 - Acceptance: automated audits pass or have documented justified exceptions; every matrix common task can be completed with VoiceOver and Voice Control where the platform supports it; no unreadable overlap/truncation at max Dynamic Type; App Store labels match the evidence.
 
 ## Assumptions

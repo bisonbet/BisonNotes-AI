@@ -77,9 +77,7 @@ struct AITextView: View {
             baseURL: nil,
             syntaxExtensions: []
         )
-        #if !targetEnvironment(macCatalyst)
         .textual.textSelection(.enabled)
-        #endif
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 

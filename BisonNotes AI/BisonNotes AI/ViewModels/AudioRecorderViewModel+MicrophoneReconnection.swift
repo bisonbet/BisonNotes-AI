@@ -81,7 +81,7 @@ extension AudioRecorderViewModel {
 
 		if !wasAlreadyWaiting {
 			AppLog.shared.audioSession("Mac recording input changed; sealing the current audio segment")
-			catalystSystemAudioCapture?.setPaused(true)
+			macSystemAudioCapture?.setPaused(true)
 			stopRecordingTimer()
 			sealNativeMacScratchSegment()
 		}
@@ -93,14 +93,14 @@ extension AudioRecorderViewModel {
 
 		do {
 			try startNativeMacContinuation(at: finalURL)
-			catalystAwaitingRecoveryBuffer = true
+			macAwaitingRecoveryBuffer = true
 			pendingMacInputRecovery = (keepPaused: keepPaused, notify: wasAlreadyWaiting)
 			recordingState = .waitingForMicrophone(disconnectedAt: disconnectedAt)
 			errorMessage = "Microphone connected. Confirming that audio is being received…"
 		} catch {
 			discardFailedNativeMacContinuation()
 			pendingMacInputRecovery = nil
-			catalystAwaitingRecoveryBuffer = false
+			macAwaitingRecoveryBuffer = false
 			AppLog.shared.audioSession("Mac input recovery failed: \(error.localizedDescription)", level: .error)
 			recordingState = .waitingForMicrophone(disconnectedAt: disconnectedAt)
 			errorMessage = "Could not use the available microphone: \(error.localizedDescription)"
@@ -127,12 +127,12 @@ extension AudioRecorderViewModel {
 		microphoneReconnectionTimer?.invalidate()
 		microphoneReconnectionTimer = nil
 		pendingMacInputRecovery = nil
-		catalystAwaitingRecoveryBuffer = false
+		macAwaitingRecoveryBuffer = false
 		if keepPaused {
-			pauseCatalystEngineRecording()
+			pauseMacEngineRecording()
 			recordingState = .paused
 		} else {
-			catalystSystemAudioCapture?.setPaused(false)
+			macSystemAudioCapture?.setPaused(false)
 			recordingState = .recording
 			startRecordingTimer()
 		}
@@ -148,12 +148,12 @@ extension AudioRecorderViewModel {
 	}
 
 	private func discardFailedNativeMacContinuation() {
-		let failedScratchURL = catalystScratchRecordingURL
-		stopCatalystEngineRecording()
+		let failedScratchURL = macScratchRecordingURL
+		stopMacEngineRecording()
 		if let failedScratchURL {
 			try? FileManager.default.removeItem(at: failedScratchURL)
 		}
-		catalystScratchRecordingURL = nil
+		macScratchRecordingURL = nil
 	}
 
 	func startNativeMacInputRecoveryMonitoring() {

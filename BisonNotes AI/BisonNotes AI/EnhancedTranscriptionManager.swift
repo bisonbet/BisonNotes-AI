@@ -300,7 +300,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             backgroundTaskStartTime = Date()
             AppLog.shared.transcription("Started background task for Whisper: \(backgroundTaskID.rawValue)", level: .debug)
 
-            #if os(iOS) && !targetEnvironment(macCatalyst)
+            #if os(iOS)
             // Only iOS background tasks expire. Mac uses one ProcessInfo activity
             // for the full transcription instead of refreshing every 25 seconds.
             startBackgroundTaskRefreshTimer()

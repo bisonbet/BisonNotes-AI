@@ -2,10 +2,9 @@
 //  PlatformApp.swift
 //  BisonNotes AI
 //
-//  Cross-platform facade over the UIApplication capabilities the app uses.
-//  iOS/Catalyst are UIKit-backed today; native macOS implementations arrive in
-//  Phase 2 of docs/macos-migration-plan.md (NSWorkspace, ProcessInfo activities,
-//  NSApplication lifecycle notifications).
+//  Cross-platform facade over the platform application capabilities the app uses.
+//  iOS is UIKit-backed; native macOS uses NSWorkspace, ProcessInfo activities,
+//  and NSApplication lifecycle notifications.
 //
 //  Views should prefer @Environment(\.openURL) over PlatformApp.open.
 //
@@ -203,10 +202,10 @@ final class PlatformSharingPresenter: NSObject, @preconcurrency NSSharingService
 // MARK: - Device
 
 enum PlatformDevice {
-    /// True on any Mac: native macOS, Mac Catalyst, or iOS-app-on-Mac.
-    /// Battery APIs are unreliable/absent in all three cases.
+    /// True on native macOS or when the iOS app runs on a Mac.
+    /// Battery APIs are unreliable or absent in both cases.
     static var isRunningOnMac: Bool {
-        #if os(macOS) || targetEnvironment(macCatalyst)
+        #if os(macOS)
         return true
         #else
         return ProcessInfo.processInfo.isiOSAppOnMac
@@ -262,7 +261,7 @@ enum PlatformLifecycle {
 /// is not frontmost. iOS uses a finite UIKit background task. Mac uses a
 /// ProcessInfo activity to prevent App Nap while still allowing idle system sleep.
 enum PlatformBackgroundTask {
-    #if canImport(UIKit) && !targetEnvironment(macCatalyst)
+    #if canImport(UIKit)
     typealias ID = UIBackgroundTaskIdentifier
     static let invalidID: ID = .invalid
 

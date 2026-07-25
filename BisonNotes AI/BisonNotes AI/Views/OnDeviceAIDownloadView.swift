@@ -39,9 +39,7 @@ struct OnDeviceAIDownloadView: View {
             .navigationTitle("Download Models")
             .navigationBarTitleDisplayMode(.inline)
         }
-        #if targetEnvironment(macCatalyst)
-        .frame(minWidth: 520, minHeight: 640)
-        #elseif os(macOS)
+        #if os(macOS)
         .frame(minWidth: 520, minHeight: 480)
         .presentationSizing(.page)
         #endif

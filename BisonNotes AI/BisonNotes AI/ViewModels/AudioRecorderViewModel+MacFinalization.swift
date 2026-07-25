@@ -6,7 +6,7 @@
 //  finalization path, and preserves source media if finalization fails.
 //
 
-#if targetEnvironment(macCatalyst) || os(macOS)
+#if os(macOS)
 
 import Foundation
 @preconcurrency import AVFoundation
@@ -14,8 +14,8 @@ import Foundation
 extension AudioRecorderViewModel {
     /// Persist a Mac recording to Core Data after the capture engines stop.
     @MainActor
-    func finalizeCatalystRecording(at url: URL) async {
-        let scratchURLs = allCatalystScratchURLs()
+    func finalizeMacRecording(at url: URL) async {
+        let scratchURLs = allMacScratchURLs()
         let usableMicrophoneURLs = await usableAudioURLs(from: scratchURLs)
         let usableSystemAudioURL = await usableSystemAudioURL()
         let plan = MacRecordingFinalizationPlan.choose(
@@ -37,25 +37,25 @@ extension AudioRecorderViewModel {
             )
             guard await audioAssetHasUsableAudio(at: url) else {
                 throw NSError(
-                    domain: "AudioRecorderViewModel.Catalyst",
+                    domain: "AudioRecorderViewModel.Mac",
                     code: -18,
                     userInfo: [NSLocalizedDescriptionKey: "The finalized recording did not contain usable audio."]
                 )
             }
         } catch {
-            handleCatalystFinalizationFailure(error, scratchURLs: scratchURLs, finalURL: url)
+            handleMacFinalizationFailure(error, scratchURLs: scratchURLs, finalURL: url)
             return
         }
 
-        removeCatalystScratchFiles(scratchURLs)
-        if let systemAudioURL = catalystSystemAudioURL {
+        removeMacScratchFiles(scratchURLs)
+        if let systemAudioURL = macSystemAudioURL {
             try? FileManager.default.removeItem(at: systemAudioURL)
         }
-        saveFinalizedCatalystRecording(at: url)
+        saveFinalizedMacRecording(at: url)
     }
 
     private func usableSystemAudioURL() async -> URL? {
-        guard let systemAudioURL = catalystSystemAudioURL,
+        guard let systemAudioURL = macSystemAudioURL,
               await audioAssetHasUsableAudio(at: systemAudioURL) else { return nil }
         return systemAudioURL
     }
@@ -69,20 +69,20 @@ extension AudioRecorderViewModel {
         switch plan {
         case .mixMicrophoneAndSystem:
             guard let systemAudioURL else { throw CocoaError(.fileNoSuchFile) }
-            try await exportAndMixCatalystRecording(
+            try await exportAndMixMacRecording(
                 microphoneScratchURLs: microphoneURLs,
                 systemAudioURL: systemAudioURL,
                 finalURL: finalURL
             )
         case .microphoneOnly:
-            try await exportCatalystScratchRecordings(from: microphoneURLs, to: finalURL)
+            try await exportMacScratchRecordings(from: microphoneURLs, to: finalURL)
         case .systemOnly:
             guard let systemAudioURL else { throw CocoaError(.fileNoSuchFile) }
-            try await exportCatalystScratchRecording(from: systemAudioURL, to: finalURL)
+            try await exportMacScratchRecording(from: systemAudioURL, to: finalURL)
             errorMessage = "The microphone track was unavailable. Saved meeting/system audio only."
         case .unavailable:
             throw NSError(
-                domain: "AudioRecorderViewModel.Catalyst",
+                domain: "AudioRecorderViewModel.Mac",
                 code: -17,
                 userInfo: [NSLocalizedDescriptionKey: "No captured microphone or system audio was usable."]
             )
@@ -113,31 +113,31 @@ extension AudioRecorderViewModel {
         }
     }
 
-    private func handleCatalystFinalizationFailure(
+    private func handleMacFinalizationFailure(
         _ error: Error,
         scratchURLs: [URL],
         finalURL: URL
     ) {
         AppLog.shared.recording(
-            "Catalyst finalize: failed to export recording: \(error.localizedDescription)",
+            "Mac finalize: failed to export recording: \(error.localizedDescription)",
             level: .error
         )
-        let recoveryURL = preserveCatalystRecoveryFiles(
+        let recoveryURL = preserveMacRecoveryFiles(
             scratchURLs: scratchURLs,
-            systemAudioURL: catalystSystemAudioURL,
+            systemAudioURL: macSystemAudioURL,
             finalURL: finalURL,
             reason: error.localizedDescription
         )
         errorMessage = "Recording could not be finalized: \(error.localizedDescription)" +
             (recoveryURL == nil ? "" : " Recovery files were preserved for support.")
-        resetCatalystFinalizationState()
+        resetMacFinalizationState()
     }
 
     @MainActor
-    private func saveFinalizedCatalystRecording(at url: URL) {
+    private func saveFinalizedMacRecording(at url: URL) {
         guard FileManager.default.fileExists(atPath: url.path) else {
             AppLog.shared.recording(
-                "Catalyst finalize: recording file is missing at \(url.lastPathComponent)",
+                "Mac finalize: recording file is missing at \(url.lastPathComponent)",
                 level: .error
             )
             errorMessage = "Recording was lost — file was not written."
@@ -146,7 +146,7 @@ extension AudioRecorderViewModel {
 
         saveLocationData(for: url)
         guard let workflowManager else {
-            AppLog.shared.recording("WorkflowManager not set - Catalyst recording not saved", level: .error)
+            AppLog.shared.recording("WorkflowManager not set - Mac recording not saved", level: .error)
             return
         }
 
@@ -159,36 +159,36 @@ extension AudioRecorderViewModel {
             quality: AudioRecorderViewModel.getCurrentAudioQuality(),
             locationData: recordingLocationSnapshot()
         )
-        AppLog.shared.recording("Catalyst recording created with workflow manager, ID: \(recordingId)")
-        resetCatalystFinalizationState()
+        AppLog.shared.recording("Mac recording created with workflow manager, ID: \(recordingId)")
+        resetMacFinalizationState()
     }
 
-    private func resetCatalystFinalizationState() {
+    private func resetMacFinalizationState() {
         resetRecordingLocation()
         recordingStartedAt = nil
         recordingBeingProcessed = false
-        catalystScratchRecordingURL = nil
-        catalystScratchSegmentURLs = []
-        catalystSystemAudioURL = nil
+        macScratchRecordingURL = nil
+        macScratchSegmentURLs = []
+        macSystemAudioURL = nil
     }
 
-    func allCatalystScratchURLs() -> [URL] {
-        var scratchURLs = catalystScratchSegmentURLs
-        if let currentScratchURL = catalystScratchRecordingURL,
+    func allMacScratchURLs() -> [URL] {
+        var scratchURLs = macScratchSegmentURLs
+        if let currentScratchURL = macScratchRecordingURL,
            !scratchURLs.contains(currentScratchURL) {
             scratchURLs.append(currentScratchURL)
         }
         return scratchURLs
     }
 
-    private func removeCatalystScratchFiles(_ scratchURLs: [URL]) {
+    private func removeMacScratchFiles(_ scratchURLs: [URL]) {
         for scratchURL in scratchURLs {
             try? FileManager.default.removeItem(at: scratchURL)
         }
     }
 
     @discardableResult
-    func preserveCatalystRecoveryFiles(
+    func preserveMacRecoveryFiles(
         scratchURLs: [URL],
         systemAudioURL: URL?,
         finalURL: URL?,

@@ -1,22 +1,22 @@
 //
-//  CatalystSystemAudioCapture.swift
+//  MacSystemAudioCapture.swift
 //  BisonNotes AI
 //
 //  Captures Mac system/application audio through ScreenCaptureKit while the
 //  existing Mac microphone recorder continues to capture local speech.
 //
 
-#if targetEnvironment(macCatalyst) || os(macOS)
+#if os(macOS)
 
 import Foundation
 @preconcurrency import AVFoundation
 import CoreMedia
 import ScreenCaptureKit
 
-final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
+final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	private let outputURL: URL
-	private let sampleQueue = DispatchQueue(label: "com.bisonnotesai.catalyst-system-audio")
-	private let discardedVideoQueue = DispatchQueue(label: "com.bisonnotesai.catalyst-system-video-discard")
+	private let sampleQueue = DispatchQueue(label: "com.bisonnotesai.mac-system-audio")
+	private let discardedVideoQueue = DispatchQueue(label: "com.bisonnotesai.mac-system-video-discard")
 
 	private var stream: SCStream?
 	private var assetWriter: AVAssetWriter?
@@ -59,7 +59,7 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 
 		guard writer.canAdd(input) else {
 			throw NSError(
-				domain: "CatalystSystemAudioCapture",
+				domain: "MacSystemAudioCapture",
 				code: -1,
 				userInfo: [NSLocalizedDescriptionKey: "System audio writer could not accept an audio input."]
 			)
@@ -67,7 +67,7 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 		writer.add(input)
 		guard writer.startWriting() else {
 			throw writer.error ?? NSError(
-				domain: "CatalystSystemAudioCapture",
+				domain: "MacSystemAudioCapture",
 				code: -2,
 				userInfo: [NSLocalizedDescriptionKey: "System audio writer could not start."]
 			)
@@ -76,7 +76,7 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 		let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 		guard let display = content.displays.first else {
 			throw NSError(
-				domain: "CatalystSystemAudioCapture",
+				domain: "MacSystemAudioCapture",
 				code: -3,
 				userInfo: [NSLocalizedDescriptionKey: "No Mac display is available for system audio capture."]
 			)
@@ -94,7 +94,7 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 		self.stream = stream
 
 		try await stream.startCapture()
-		AppLog.shared.recording("Catalyst system audio capture started")
+		AppLog.shared.recording("Mac system audio capture started")
 	}
 
 	private static func makeSystemAudioConfiguration() -> SCStreamConfiguration {
@@ -129,7 +129,7 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 			do {
 				try await stream.stopCapture()
 			} catch {
-				AppLog.shared.recording("Catalyst system audio capture stop failed: \(error.localizedDescription)", level: .error)
+				AppLog.shared.recording("Mac system audio capture stop failed: \(error.localizedDescription)", level: .error)
 			}
 		}
 
@@ -156,7 +156,7 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 		      (try? fileManager.attributesOfItem(atPath: outputURL.path)[.size] as? Int64) ?? 0 > 0 else {
 			try? fileManager.removeItem(at: outputURL)
 			AppLog.shared.recording(
-				"Catalyst system audio capture contained no sustained audible signal; " +
+				"Mac system audio capture contained no sustained audible signal; " +
 				"continuing with microphone recording only",
 				level: .debug
 			)
@@ -228,7 +228,7 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 			}
 		} else if let error = writer.error {
 			stopError = error
-			AppLog.shared.recording("Catalyst system audio append failed: \(error.localizedDescription)", level: .error)
+			AppLog.shared.recording("Mac system audio append failed: \(error.localizedDescription)", level: .error)
 		}
 	}
 
@@ -313,7 +313,7 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 
 	func stream(_ stream: SCStream, didStopWithError error: Error) {
 		stopError = error
-		AppLog.shared.recording("Catalyst system audio stream stopped with error: \(error.localizedDescription)", level: .error)
+		AppLog.shared.recording("Mac system audio stream stopped with error: \(error.localizedDescription)", level: .error)
 	}
 
 	private func copy(_ sampleBuffer: CMSampleBuffer, withPresentationTime presentationTime: CMTime) -> CMSampleBuffer? {
@@ -340,7 +340,7 @@ final class CatalystSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
 			sampleBufferOut: &copiedBuffer
 		)
 		if status != noErr {
-			AppLog.shared.recording("Catalyst system audio retiming failed: \(status)", level: .error)
+			AppLog.shared.recording("Mac system audio retiming failed: \(status)", level: .error)
 			return nil
 		}
 		return copiedBuffer

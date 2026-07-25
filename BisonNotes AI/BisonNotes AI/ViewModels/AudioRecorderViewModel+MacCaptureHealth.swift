@@ -6,7 +6,7 @@
 //  the input engine when a present-but-silent device stalls.
 //
 
-#if targetEnvironment(macCatalyst) || os(macOS)
+#if os(macOS)
 
 import Foundation
 
@@ -15,9 +15,9 @@ extension AudioRecorderViewModel {
     private static let microphoneStallTimeout: TimeInterval = 5
     private static let maximumAutomaticCaptureRecoveryAttempts = 2
 
-    func startCatalystCaptureHealthMonitoring() {
-        stopCatalystCaptureHealthMonitoring()
-        catalystCaptureHealthTimer = Timer.scheduledTimer(
+    func startMacCaptureHealthMonitoring() {
+        stopMacCaptureHealthMonitoring()
+        macCaptureHealthTimer = Timer.scheduledTimer(
             withTimeInterval: 1,
             repeats: true
         ) { [weak self] timer in
@@ -28,16 +28,16 @@ extension AudioRecorderViewModel {
             let isCapturing = self.isStartingRecording || self.isRecording
             guard isCapturing, !self.isPaused else { return }
 
-            let assessment = self.catalystCaptureHealth.assessment(
+            let assessment = self.macCaptureHealth.assessment(
                 firstBufferTimeout: Self.firstMicrophoneBufferTimeout,
                 stallTimeout: Self.microphoneStallTimeout
             )
             switch assessment {
             case .noInitialAudio, .stalled, .writeFailed:
                 timer.invalidate()
-                self.catalystCaptureHealthTimer = nil
+                self.macCaptureHealthTimer = nil
                 Task { @MainActor [weak self] in
-                    await self?.handleCatalystCaptureHealthFailure(assessment)
+                    await self?.handleMacCaptureHealthFailure(assessment)
                 }
             case .inactive, .starting, .healthy:
                 break
@@ -45,20 +45,20 @@ extension AudioRecorderViewModel {
         }
     }
 
-    func stopCatalystCaptureHealthMonitoring() {
-        catalystCaptureHealthTimer?.invalidate()
-        catalystCaptureHealthTimer = nil
+    func stopMacCaptureHealthMonitoring() {
+        macCaptureHealthTimer?.invalidate()
+        macCaptureHealthTimer = nil
     }
 
-    func handleCatalystFirstSuccessfulWrite() {
-        let health = catalystCaptureHealth.snapshot()
+    func handleMacFirstSuccessfulWrite() {
+        let health = macCaptureHealth.snapshot()
         let inputName = enhancedAudioSessionManager.getActiveInput()?.portName ?? "system default"
         AppLog.shared.recording(
             "Mac microphone first buffer committed from \(inputName) " +
             "(segmentFrames=\(health.segmentFramesWritten), totalFrames=\(health.totalFramesWritten))"
         )
         if isStartingRecording {
-            catalystSystemAudioCapture?.setPaused(false)
+            macSystemAudioCapture?.setPaused(false)
             markRecordingStarted()
             return
         }
@@ -66,7 +66,7 @@ extension AudioRecorderViewModel {
         #if os(macOS)
         if let pendingRecovery = pendingMacInputRecovery {
             pendingMacInputRecovery = nil
-            catalystAwaitingRecoveryBuffer = false
+            macAwaitingRecoveryBuffer = false
             Task { @MainActor [weak self] in
                 await self?.finishNativeMacInputRecovery(
                     keepPaused: pendingRecovery.keepPaused,
@@ -77,9 +77,9 @@ extension AudioRecorderViewModel {
         }
         #endif
 
-        if catalystAwaitingRecoveryBuffer {
-            catalystAwaitingRecoveryBuffer = false
-            catalystSystemAudioCapture?.setPaused(false)
+        if macAwaitingRecoveryBuffer {
+            macAwaitingRecoveryBuffer = false
+            macSystemAudioCapture?.setPaused(false)
             recordingState = .recording
             startRecordingTimer()
             errorMessage = "Recording continued after reconnecting the microphone."
@@ -87,11 +87,11 @@ extension AudioRecorderViewModel {
     }
 
     @MainActor
-    private func handleCatalystCaptureHealthFailure(
+    private func handleMacCaptureHealthFailure(
         _ assessment: RecordingCaptureHealthAssessment
     ) async {
         guard isStartingRecording || isRecording else { return }
-        let health = catalystCaptureHealth.snapshot()
+        let health = macCaptureHealth.snapshot()
         let inputName = enhancedAudioSessionManager.getActiveInput()?.portName ?? "system default"
         AppLog.shared.recording(
             "Mac microphone capture unhealthy on \(inputName): \(assessment) " +
@@ -99,29 +99,29 @@ extension AudioRecorderViewModel {
             level: .error
         )
 
-        guard catalystAutomaticRecoveryAttempts < Self.maximumAutomaticCaptureRecoveryAttempts else {
+        guard macAutomaticRecoveryAttempts < Self.maximumAutomaticCaptureRecoveryAttempts else {
             await stopAfterExhaustingCaptureRecovery(inputName: inputName)
             return
         }
 
-        catalystAutomaticRecoveryAttempts += 1
-        let attempt = catalystAutomaticRecoveryAttempts
+        macAutomaticRecoveryAttempts += 1
+        let attempt = macAutomaticRecoveryAttempts
         errorMessage = "\(inputName) stopped providing audio. Reconnecting (attempt \(attempt) of " +
             "\(Self.maximumAutomaticCaptureRecoveryAttempts))…"
-        catalystSystemAudioCapture?.setPaused(true)
+        macSystemAudioCapture?.setPaused(true)
         stopRecordingTimer()
 
         if isStartingRecording {
-            await restartCatalystCaptureDuringStartup()
+            await restartMacCaptureDuringStartup()
             return
         }
-        await restartActiveCatalystCapture()
+        await restartActiveMacCapture()
     }
 
     @MainActor
     private func stopAfterExhaustingCaptureRecovery(inputName: String) async {
         if isStartingRecording {
-            await abortCatalystRecordingStartup(
+            await abortMacRecordingStartup(
                 reason: "The selected microphone did not provide any audio after automatic recovery."
             )
         } else {
@@ -132,29 +132,29 @@ extension AudioRecorderViewModel {
     }
 
     @MainActor
-    private func restartCatalystCaptureDuringStartup() async {
-        sealCatalystScratchSegment()
+    private func restartMacCaptureDuringStartup() async {
+        sealMacScratchSegment()
         do {
             guard let finalURL = recordingURL else { throw CocoaError(.fileNoSuchFile) }
-            try startCatalystContinuation(at: finalURL)
+            try startMacContinuation(at: finalURL)
         } catch {
-            await abortCatalystRecordingStartup(
+            await abortMacRecordingStartup(
                 reason: "The microphone could not be restarted: \(error.localizedDescription)"
             )
         }
     }
 
     @MainActor
-    private func restartActiveCatalystCapture() async {
-        catalystAwaitingRecoveryBuffer = true
+    private func restartActiveMacCapture() async {
+        macAwaitingRecoveryBuffer = true
         recordingState = .waitingForMicrophone(disconnectedAt: Date())
         #if os(macOS)
         await recoverNativeMacInput(keepPaused: false, forceRestart: true)
         #else
-        sealCatalystScratchSegment()
+        sealMacScratchSegment()
         do {
             guard let finalURL = recordingURL else { throw CocoaError(.fileNoSuchFile) }
-            try startCatalystContinuation(at: finalURL)
+            try startMacContinuation(at: finalURL)
         } catch {
             errorMessage = "Recording stopped because the microphone could not be restarted: " +
                 "\(error.localizedDescription)"
@@ -164,13 +164,13 @@ extension AudioRecorderViewModel {
     }
 
     @MainActor
-    private func abortCatalystRecordingStartup(reason: String) async {
-        sealCatalystScratchSegment()
-        _ = await stopCatalystSystemAudioCapture()
-        let scratchURLs = allCatalystScratchURLs()
-        let recoveryURL = preserveCatalystRecoveryFiles(
+    private func abortMacRecordingStartup(reason: String) async {
+        sealMacScratchSegment()
+        _ = await stopMacSystemAudioCapture()
+        let scratchURLs = allMacScratchURLs()
+        let recoveryURL = preserveMacRecoveryFiles(
             scratchURLs: scratchURLs,
-            systemAudioURL: catalystSystemAudioURL,
+            systemAudioURL: macSystemAudioURL,
             finalURL: recordingURL,
             reason: reason
         )
@@ -178,10 +178,10 @@ extension AudioRecorderViewModel {
         finishRecordingStartup()
         isRecording = false
         recordingState = .idle
-        catalystScratchRecordingURL = nil
-        catalystScratchSegmentURLs = []
-        catalystSystemAudioURL = nil
-        catalystAwaitingRecoveryBuffer = false
+        macScratchRecordingURL = nil
+        macScratchSegmentURLs = []
+        macSystemAudioURL = nil
+        macAwaitingRecoveryBuffer = false
         resetRecordingLocation()
         recordingStartedAt = nil
         errorMessage = reason + (recoveryURL == nil ? "" : " Diagnostic recovery files were preserved.")

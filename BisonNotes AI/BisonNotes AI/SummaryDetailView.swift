@@ -122,7 +122,7 @@ struct SummaryDetailView: View {
                 .listStyle(.inset)
                 #else
                 // NavigationStack { Form } is the only sheet pattern that
-                // scrolls reliably on Mac Catalyst.
+                // scrolls reliably on Mac.
                 Form {
                     summarySections
                 }
