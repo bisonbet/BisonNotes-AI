@@ -428,13 +428,14 @@ struct BisonNotesAIApp: App {
         migrateLegacyOnDeviceUsersOffSubSixGB()
         migrateiCloudSensitiveBackupDefault()
         setupDarwinNotificationObserver()
+        ActionButtonLaunchManager.startObservingRecordingRequests()
     }
 
     /// Registers a Darwin notification observer so the Share Extension can signal
     /// the main app to scan the shared container immediately (works when the app
     /// is suspended or backgrounded).
     private func setupDarwinNotificationObserver() {
-        let name = "com.bisonnotesai.shareExtensionDidSaveFile" as CFString
+        let name = ShareExtensionContract.darwinNotificationName as CFString
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             nil,
@@ -798,8 +799,8 @@ struct BisonNotesAIApp: App {
 
     // MARK: - Share Extension Import (App Group Container)
 
-    private let appGroupID = "group.bisonnotesai.shared"
-    private let shareInboxFolder = "ShareInbox"
+    private let appGroupID = ShareExtensionContract.appGroupIdentifier
+    private let shareInboxFolder = ShareExtensionContract.inboxFolderName
 
     private enum SharedContainerImportTrigger {
         case url(URL)
@@ -847,7 +848,8 @@ struct BisonNotesAIApp: App {
             var textFiles: [URL] = []
 
             let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
-            let textExtensions: Set<String> = ["txt", "text", "md", "markdown", "pdf", "doc", "docx"]
+            let textExtensions = ShareExtensionContract.supportedExtensions
+                .subtracting(audioExtensions)
 
             for file in files {
                 // Strip UUID prefix to get the original extension

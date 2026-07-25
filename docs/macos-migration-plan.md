@@ -170,9 +170,9 @@ Work through the categorized conditional inventory (appendix below) tagged MISC:
 ### 3.2 Mac app conventions
 - `Settings` scene (⌘,) wrapping the existing settings views; menu-bar `Commands` (New Recording ⌘N, Import…, Export…); `defaultSize` + `minWidth/minHeight` on the main `WindowGroup`; standard Edit-menu behaviors in text views.
 - Implemented: the native Settings scene shares the app-level recorder/coordinator objects with the main window; the main window defaults to 1100×720 with an 860×560 content minimum; File commands navigate before dispatching New Recording/import actions; and focused scene values route Export only to the active summary window. The asset catalog now includes all native Mac icon renditions from 16×16 through 512×512 points at 1x/2x.
-### 3.3 Deferred items (create follow-up issues, do not block cutover)
+### 3.3 Extension parity
 - macOS Share extension port; macOS widgets; Shortcuts/App Intents parity check (App Intents work on macOS — verify `StartRecordingIntent`).
-- Completed: `docs/macos-phase-3.3-deferred-parity-audit.md` records the target, source, embedding, entitlement, and generated-metadata evidence. The Share extension port is tracked by GitHub issue #102; the native WidgetKit target is tracked by issue #101. Native `StartRecordingIntent` registration and its signed-app Shortcuts runtime check are complete.
+- Implemented: `docs/macos-phase-3.3-deferred-parity-audit.md` records the target, source, embedding, entitlement, generated-metadata, and July 25 widget runtime evidence. GitHub issue #102 is implemented by the AppKit `BisonNotes Share macOS` target and the cross-platform authenticated Share Inbox processor. GitHub issue #101 is implemented by the small/medium `BisonNotes Mac Widget`, which reuses `StartRecordingIntent`; its app-activation race is covered by a persisted request plus Darwin notification, and its control now uses explicit high-contrast colors. Both extensions are dependencies of and embedded only in the native macOS app. The signed Release archive, strict code-signature checks, focused handoff tests, and signed Debug build are green; Finder/source-app sharing and rebuilt add/remove/widget-action runtime checks remain in the manual QA list.
 
 ### Phase 3 exit criteria
 - Full manual pass of `docs/testing-regimen.md` on native macOS.

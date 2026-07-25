@@ -7,22 +7,40 @@
 //
 
 import Foundation
-import SwiftUI
 
 enum ActionButtonLaunchManager {
     static let appGroupIdentifier = "group.bisonnotesai.shared"
+    static let darwinNotificationName = "com.bisonnotesai.startRecordingRequested"
+    static let localNotificationName = Notification.Name("ActionButtonRecordingRequested")
 
     private static let shouldStartRecordingKey = "actionButtonShouldStartRecording"
+
     static func requestRecordingStart() {
         guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else { return }
+        requestRecordingStart(defaults: defaults, postNotification: postDarwinNotification)
+    }
+
+    static func requestRecordingStart(
+        defaults: UserDefaults,
+        postNotification: () -> Void
+    ) {
         defaults.set(true, forKey: shouldStartRecordingKey)
-        defaults.synchronize()
+        _ = defaults.synchronize()
+
+        // AppIntent can activate the host app before perform() finishes. Notify
+        // after persisting the request so an already-active app gets a second,
+        // race-free opportunity to consume it.
+        postNotification()
     }
 
     static func consumeRecordingRequest() -> Bool {
         guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
             return false
         }
+        return consumeRecordingRequest(defaults: defaults)
+    }
+
+    static func consumeRecordingRequest(defaults: UserDefaults) -> Bool {
         let shouldStartRecording = defaults.bool(forKey: shouldStartRecordingKey)
 
         if shouldStartRecording {
@@ -31,5 +49,37 @@ enum ActionButtonLaunchManager {
         }
 
         return shouldStartRecording
+    }
+
+    /// Covers the AppIntent ordering where the system activates the app before
+    /// the widget process has persisted its recording request.
+    static func startObservingRecordingRequests() {
+        let name = darwinNotificationName as CFString
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            nil,
+            { _, _, _, _, _ in
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: ActionButtonLaunchManager.localNotificationName,
+                        object: nil
+                    )
+                }
+            },
+            name,
+            nil,
+            .deliverImmediately
+        )
+    }
+
+    private static func postDarwinNotification() {
+        let name = darwinNotificationName as CFString
+        CFNotificationCenterPostNotification(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName(name),
+            nil,
+            nil,
+            true
+        )
     }
 }

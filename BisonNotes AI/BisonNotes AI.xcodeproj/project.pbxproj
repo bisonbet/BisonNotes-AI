@@ -47,6 +47,10 @@
 		AC000000000000000000003B /* llama.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 143196D02F128D16003BA61E /* llama.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		AC000000000000000000003C /* WatchRecordingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */; };
 		AC000000000000000000003D /* WatchRecordingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */; };
+		BD1000000000000000000001 /* BisonNotes Mac Widget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = BD1000000000000000000030 /* BisonNotes Mac Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		BD1000000000000000000002 /* BisonNotes Share macOS.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = BD1000000000000000000031 /* BisonNotes Share macOS.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		BD1000000000000000000003 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428C2E7F5ECA0059271B /* WidgetKit.framework */; };
+		BD1000000000000000000004 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428E2E7F5ECA0059271B /* SwiftUI.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -98,6 +102,20 @@
 			proxyType = 1;
 			remoteGlobalIDString = 14DBC83C2E34F7B500DAD442;
 			remoteInfo = "BisonNotes AI";
+		};
+		BD1000000000000000000010 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BD1000000000000000000070;
+			remoteInfo = "BisonNotes Mac Widget";
+		};
+		BD1000000000000000000011 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 14DBC8352E34F7B500DAD442 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BD1000000000000000000071;
+			remoteInfo = "BisonNotes Share macOS";
 		};
 /* End PBXContainerItemProxy section */
 
@@ -158,6 +176,18 @@
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BD1000000000000000000020 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				BD1000000000000000000001 /* BisonNotes Mac Widget.appex in Embed App Extensions */,
+				BD1000000000000000000002 /* BisonNotes Share macOS.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -179,6 +209,8 @@
 		14EA428E2E7F5ECA0059271B /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		14EA47E72E7F7C1E0059271B /* BisonNotes AI ControlsExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "BisonNotes AI ControlsExtension.entitlements"; sourceTree = "<group>"; };
 		AC0000000000000000000001 /* BisonNotes AI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BisonNotes AI.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		BD1000000000000000000030 /* BisonNotes Mac Widget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "BisonNotes Mac Widget.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		BD1000000000000000000031 /* BisonNotes Share macOS.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "BisonNotes Share macOS.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -226,6 +258,28 @@
 			);
 			target = AC0000000000000000000010 /* BisonNotes AI macOS */;
 		};
+		BD1000000000000000000040 /* Exceptions for "BisonNotes Mac Widget" folder in "BisonNotes Mac Widget" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = BD1000000000000000000070 /* BisonNotes Mac Widget */;
+		};
+		BD1000000000000000000041 /* Exceptions for "BisonNotes Share macOS" folder in "BisonNotes Share macOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = BD1000000000000000000071 /* BisonNotes Share macOS */;
+		};
+		BD1000000000000000000042 /* Exceptions for "BisonNotes AI" folder in "BisonNotes Mac Widget" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				ActionButtonLaunchManager.swift,
+				StartRecordingIntent.swift,
+			);
+			target = BD1000000000000000000070 /* BisonNotes Mac Widget */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -266,6 +320,7 @@
 				14DBC8812E34FE1800DAD442 /* Exceptions for "BisonNotes AI" folder in "BisonNotes AI" target */,
 				AC0000000000000000000006 /* Exceptions for "BisonNotes AI" folder in "BisonNotes AI macOS" target */,
 				14EA42A52E7F60650059271B /* Exceptions for "BisonNotes AI" folder in "BisonNotes AI ControlsExtension" target */,
+				BD1000000000000000000042 /* Exceptions for "BisonNotes AI" folder in "BisonNotes Mac Widget" target */,
 			);
 			path = "BisonNotes AI";
 			sourceTree = "<group>";
@@ -286,6 +341,27 @@
 				14EA42A02E7F5ECB0059271B /* Exceptions for "BisonNotes AI Controls" folder in "BisonNotes AI ControlsExtension" target */,
 			);
 			path = "BisonNotes AI Controls";
+			sourceTree = "<group>";
+		};
+		BD1000000000000000000050 /* BisonNotes Mac Widget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BD1000000000000000000040 /* Exceptions for "BisonNotes Mac Widget" folder in "BisonNotes Mac Widget" target */,
+			);
+			path = "BisonNotes Mac Widget";
+			sourceTree = "<group>";
+		};
+		BD1000000000000000000051 /* BisonNotes Share macOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BD1000000000000000000041 /* Exceptions for "BisonNotes Share macOS" folder in "BisonNotes Share macOS" target */,
+			);
+			path = "BisonNotes Share macOS";
+			sourceTree = "<group>";
+		};
+		BD1000000000000000000052 /* Shared Share Support */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Shared Share Support";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -389,6 +465,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BD1000000000000000000060 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BD1000000000000000000004 /* SwiftUI.framework in Frameworks */,
+				BD1000000000000000000003 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BD1000000000000000000061 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -426,6 +518,9 @@
 				1485FEBE2E526FB30044121F /* BisonNotes AI Watch AppUITests */,
 				14EA42902E7F5ECA0059271B /* BisonNotes AI Controls */,
 				143573532F2E92A500E93954 /* BisonNotes Share */,
+				BD1000000000000000000051 /* BisonNotes Share macOS */,
+				BD1000000000000000000052 /* Shared Share Support */,
+				BD1000000000000000000050 /* BisonNotes Mac Widget */,
 				1433F5472F7C9E44002AB9D6 /* BisonNotes Watch Widget */,
 				1485FED32E5271970044121F /* Frameworks */,
 				14DBC83E2E34F7B500DAD442 /* Products */,
@@ -444,6 +539,8 @@
 				1485FEBB2E526FB30044121F /* BisonNotes AI Watch AppUITests.xctest */,
 				14EA428B2E7F5ECA0059271B /* BisonNotes AI ControlsExtension.appex */,
 				143573522F2E92A500E93954 /* BisonNotes Share.appex */,
+				BD1000000000000000000030 /* BisonNotes Mac Widget.appex */,
+				BD1000000000000000000031 /* BisonNotes Share macOS.appex */,
 				1433F5442F7C9E44002AB9D6 /* BisonNotes Watch WidgetExtension.appex */,
 			);
 			name = Products;
@@ -488,6 +585,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				143573532F2E92A500E93954 /* BisonNotes Share */,
+				BD1000000000000000000052 /* Shared Share Support */,
 			);
 			name = "BisonNotes Share";
 			packageProductDependencies = (
@@ -585,6 +683,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				14DBC83F2E34F7B500DAD442 /* BisonNotes AI */,
+				BD1000000000000000000052 /* Shared Share Support */,
 			);
 			name = "BisonNotes AI";
 			packageProductDependencies = (
@@ -679,13 +778,17 @@
 				AC0000000000000000000003 /* Frameworks */,
 				AC0000000000000000000004 /* Resources */,
 				AC0000000000000000000005 /* Embed Frameworks */,
+				BD1000000000000000000020 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				BD10000000000000000000A0 /* PBXTargetDependency */,
+				BD10000000000000000000A1 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				14DBC83F2E34F7B500DAD442 /* BisonNotes AI */,
+				BD1000000000000000000052 /* Shared Share Support */,
 			);
 			name = "BisonNotes AI macOS";
 			packageProductDependencies = (
@@ -703,6 +806,51 @@
 			productName = "BisonNotes AI macOS";
 			productReference = AC0000000000000000000001 /* BisonNotes AI.app */;
 			productType = "com.apple.product-type.application";
+		};
+		BD1000000000000000000070 /* BisonNotes Mac Widget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BD10000000000000000000C0 /* Build configuration list for PBXNativeTarget "BisonNotes Mac Widget" */;
+			buildPhases = (
+				BD1000000000000000000090 /* Sources */,
+				BD1000000000000000000060 /* Frameworks */,
+				BD1000000000000000000080 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BD1000000000000000000050 /* BisonNotes Mac Widget */,
+			);
+			name = "BisonNotes Mac Widget";
+			packageProductDependencies = (
+			);
+			productName = "BisonNotes Mac Widget";
+			productReference = BD1000000000000000000030 /* BisonNotes Mac Widget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		BD1000000000000000000071 /* BisonNotes Share macOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BD10000000000000000000C1 /* Build configuration list for PBXNativeTarget "BisonNotes Share macOS" */;
+			buildPhases = (
+				BD1000000000000000000091 /* Sources */,
+				BD1000000000000000000061 /* Frameworks */,
+				BD1000000000000000000081 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BD1000000000000000000051 /* BisonNotes Share macOS */,
+				BD1000000000000000000052 /* Shared Share Support */,
+			);
+			name = "BisonNotes Share macOS";
+			packageProductDependencies = (
+			);
+			productName = "BisonNotes Share macOS";
+			productReference = BD1000000000000000000031 /* BisonNotes Share macOS.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -745,6 +893,12 @@
 					14EA428A2E7F5ECA0059271B = {
 						CreatedOnToolsVersion = 26.0;
 					};
+					BD1000000000000000000070 = {
+						CreatedOnToolsVersion = 26.4;
+					};
+					BD1000000000000000000071 = {
+						CreatedOnToolsVersion = 26.4;
+					};
 				};
 			};
 			buildConfigurationList = 14DBC8382E34F7B500DAD442 /* Build configuration list for PBXProject "BisonNotes AI" */;
@@ -776,6 +930,8 @@
 				1485FEBA2E526FB30044121F /* BisonNotes AI Watch AppUITests */,
 				14EA428A2E7F5ECA0059271B /* BisonNotes AI ControlsExtension */,
 				143573512F2E92A500E93954 /* BisonNotes Share */,
+				BD1000000000000000000070 /* BisonNotes Mac Widget */,
+				BD1000000000000000000071 /* BisonNotes Share macOS */,
 				1433F5432F7C9E44002AB9D6 /* BisonNotes Watch WidgetExtension */,
 			);
 		};
@@ -846,6 +1002,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		AC0000000000000000000004 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BD1000000000000000000080 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BD1000000000000000000081 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -931,6 +1101,20 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BD1000000000000000000090 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BD1000000000000000000091 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -968,6 +1152,16 @@
 			isa = PBXTargetDependency;
 			target = 14DBC83C2E34F7B500DAD442 /* BisonNotes AI */;
 			targetProxy = 14DBC85A2E34F7B600DAD442 /* PBXContainerItemProxy */;
+		};
+		BD10000000000000000000A0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BD1000000000000000000070 /* BisonNotes Mac Widget */;
+			targetProxy = BD1000000000000000000010 /* PBXContainerItemProxy */;
+		};
+		BD10000000000000000000A1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BD1000000000000000000071 /* BisonNotes Share macOS */;
+			targetProxy = BD1000000000000000000011 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -1699,6 +1893,134 @@
 			};
 			name = Release;
 		};
+		BD10000000000000000000B0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes Mac Widget/BisonNotes Mac Widget.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BisonNotes Mac Widget/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 2.2;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.mac-widget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		BD10000000000000000000B1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes Mac Widget/BisonNotes Mac Widget.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BisonNotes Mac Widget/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 2.2;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.mac-widget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		BD10000000000000000000B2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes Share macOS/BisonNotes Share macOS.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BisonNotes Share macOS/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 2.2;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.mac-share";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		BD10000000000000000000B3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = "BisonNotes Share macOS/BisonNotes Share macOS.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = 4W55VW7UXX;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "BisonNotes Share macOS/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "BisonNotes AI";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 2.2;
+				PRODUCT_BUNDLE_IDENTIFIER = "Bison-Networking.BisonNotes-AI.mac-share";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1797,6 +2119,24 @@
 			buildConfigurations = (
 				AC0000000000000000000012 /* Debug */,
 				AC0000000000000000000013 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BD10000000000000000000C0 /* Build configuration list for PBXNativeTarget "BisonNotes Mac Widget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BD10000000000000000000B0 /* Debug */,
+				BD10000000000000000000B1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BD10000000000000000000C1 /* Build configuration list for PBXNativeTarget "BisonNotes Share macOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BD10000000000000000000B2 /* Debug */,
+				BD10000000000000000000B3 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

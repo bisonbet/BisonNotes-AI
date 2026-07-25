@@ -84,6 +84,9 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("UnsupportedFileTypeFromShare"))) { _ in
             showingUnsupportedFileAlert = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: ActionButtonLaunchManager.localNotificationName)) { _ in
+            handleActionButtonLaunchIfNeeded()
+        }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
             handleActionButtonLaunchIfNeeded()
