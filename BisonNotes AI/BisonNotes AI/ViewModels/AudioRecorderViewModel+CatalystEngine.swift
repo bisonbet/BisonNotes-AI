@@ -12,6 +12,19 @@
 
 import Foundation
 @preconcurrency import AVFoundation
+import CoreGraphics
+
+private enum MacMeetingAudioCaptureError: LocalizedError {
+	case permissionUnavailable
+
+	var errorDescription: String? {
+		switch self {
+		case .permissionUnavailable:
+			return "Screen & System Audio Recording permission is not active. " +
+				"Enable BisonNotes in System Settings, then quit and reopen the app"
+		}
+	}
+}
 
 extension AudioRecorderViewModel {
 	// Keep the worst-case summed level below full scale while favoring nearby speech.
@@ -30,17 +43,26 @@ extension AudioRecorderViewModel {
 		catalystSystemAudioURL = nil
 
 		if isMacSystemAudioCaptureEnabled {
-			let systemAudioURL = Self.catalystSystemAudioURL(for: url)
-			let capture = CatalystSystemAudioCapture(outputURL: systemAudioURL)
-			do {
-				try await capture.start()
-				catalystSystemAudioCapture = capture
-				catalystSystemAudioURL = systemAudioURL
-			} catch {
-				systemAudioError = error
-				catalystSystemAudioCapture = nil
-				catalystSystemAudioURL = nil
-				AppLog.shared.recording("Catalyst system audio capture unavailable: \(error.localizedDescription)", level: .error)
+			if CGPreflightScreenCaptureAccess() {
+				let systemAudioURL = Self.catalystSystemAudioURL(for: url)
+				let capture = CatalystSystemAudioCapture(outputURL: systemAudioURL)
+				do {
+					try await capture.start()
+					catalystSystemAudioCapture = capture
+					catalystSystemAudioURL = systemAudioURL
+				} catch {
+					systemAudioError = error
+					catalystSystemAudioCapture = nil
+					catalystSystemAudioURL = nil
+					AppLog.shared.recording("Catalyst system audio capture unavailable: \(error.localizedDescription)", level: .error)
+				}
+			} else {
+				systemAudioError = MacMeetingAudioCaptureError.permissionUnavailable
+				AppLog.shared.recording(
+					"Mac system audio capture skipped because Screen & System Audio Recording " +
+						"permission is not active",
+					level: .error
+				)
 			}
 		}
 

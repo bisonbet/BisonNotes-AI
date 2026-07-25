@@ -8,7 +8,7 @@
 import SwiftUI
 import AVFoundation
 import CoreLocation
-#if targetEnvironment(macCatalyst)
+#if targetEnvironment(macCatalyst) || os(macOS)
 import CoreGraphics
 #endif
 
@@ -121,13 +121,27 @@ struct SettingsView: View {
             case .denied:
                 Alert(
                     title: Text("Screen Recording Permission Needed"),
-                    message: Text("macOS did not grant Screen Recording permission, so BisonNotes will keep recording microphone audio only. Enable BisonNotes in System Settings > Privacy & Security > Screen & System Audio Recording, then return to BisonNotes. You may need to restart the app after changing this setting."),
+                    message: Text(
+                        "macOS did not grant Screen & System Audio Recording permission, " +
+                            "so BisonNotes will keep recording microphone audio only. " +
+                            "Enable BisonNotes in System Settings > Privacy & Security > " +
+                            "Screen & System Audio Recording, then quit and reopen BisonNotes."
+                    ),
                     primaryButton: .default(Text("Open System Settings")) {
                         openMacScreenCapturePrivacySettings()
                     },
                     secondaryButton: .cancel(Text("OK")) {
                         recorderVM.setMacSystemAudioCaptureEnabled(false)
                     }
+                )
+            case .restartRequired:
+                Alert(
+                    title: Text("Restart BisonNotes to Finish"),
+                    message: Text(
+                        "macOS granted Screen & System Audio Recording permission. " +
+                            "Quit BisonNotes completely and reopen it before recording meeting audio."
+                    ),
+                    dismissButton: .default(Text("OK"))
                 )
             }
         }
@@ -1215,7 +1229,7 @@ struct SettingsView: View {
     #endif
 
     private func handleMacSystemAudioCaptureToggle(_ enabled: Bool) {
-        #if targetEnvironment(macCatalyst)
+        #if targetEnvironment(macCatalyst) || os(macOS)
         guard enabled else {
             recorderVM.setMacSystemAudioCaptureEnabled(false)
             return
@@ -1233,17 +1247,20 @@ struct SettingsView: View {
     }
 
     private func requestMacSystemAudioCapturePermissionAndEnable() {
-        #if targetEnvironment(macCatalyst)
-        let granted = CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()
-        recorderVM.setMacSystemAudioCaptureEnabled(granted)
-        if !granted {
-            macSystemAudioPermissionAlert = .denied
+        #if targetEnvironment(macCatalyst) || os(macOS)
+        if CGPreflightScreenCaptureAccess() {
+            recorderVM.setMacSystemAudioCaptureEnabled(true)
+            return
         }
+
+        let granted = CGRequestScreenCaptureAccess()
+        recorderVM.setMacSystemAudioCaptureEnabled(granted)
+        macSystemAudioPermissionAlert = granted ? .restartRequired : .denied
         #endif
     }
 
     private func openMacScreenCapturePrivacySettings() {
-        #if targetEnvironment(macCatalyst)
+        #if targetEnvironment(macCatalyst) || os(macOS)
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else {
             return
         }
@@ -1475,6 +1492,7 @@ struct SettingsView: View {
 private enum MacSystemAudioPermissionAlert: Identifiable {
     case rationale
     case denied
+    case restartRequired
 
     var id: String {
         switch self {
@@ -1482,6 +1500,8 @@ private enum MacSystemAudioPermissionAlert: Identifiable {
             return "rationale"
         case .denied:
             return "denied"
+        case .restartRequired:
+            return "restartRequired"
         }
     }
 }
