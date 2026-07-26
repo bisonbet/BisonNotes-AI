@@ -98,6 +98,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var macScratchSegmentURLs: [URL] = []
 	var macSystemAudioCapture: MacSystemAudioCapture?
 	var macSystemAudioURL: URL?
+	var isFinalizingMacRecording = false
 	let macCaptureHealth = RecordingCaptureHealth()
 	var macCaptureHealthTimer: Timer?
 	var macAutomaticRecoveryAttempts = 0
@@ -459,8 +460,16 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	@discardableResult
 	private func beginRecordingStartup() -> Bool {
-		guard !isRecording, !isStartingRecording else {
-			AppLog.shared.recording("Recording start ignored because a recording is already active or starting", level: .debug)
+		#if os(macOS)
+		let canStartRecording = !isRecording && !isStartingRecording && !isFinalizingMacRecording
+		#else
+		let canStartRecording = !isRecording && !isStartingRecording
+		#endif
+		guard canStartRecording else {
+			AppLog.shared.recording(
+				"Recording start ignored because a recording is already active, starting, or finalizing",
+				level: .debug
+			)
 			return false
 		}
 		isStartingRecording = true
@@ -832,7 +841,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			#if os(macOS)
 			if let url = macFinalURL {
 				AppLog.shared.recording("Recording finished successfully (Mac engine)")
+				isFinalizingMacRecording = true
 				Task { @MainActor in
+					defer { self.isFinalizingMacRecording = false }
 					_ = await self.stopMacSystemAudioCapture()
 					await self.finalizeMacRecording(at: url)
 				}
