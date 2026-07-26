@@ -353,7 +353,7 @@ struct WhisperSettingsView: View {
         return "ws://\(serverURL):\(port)"
     }
 
-    func testConnection() {
+    private func testConnection() {
         isTesting = true
         testResult = nil
 

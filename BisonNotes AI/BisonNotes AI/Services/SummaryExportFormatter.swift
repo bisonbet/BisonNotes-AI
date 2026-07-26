@@ -251,7 +251,15 @@ enum SummaryExportFormatter {
             let s = String(line[runStart..<i])
             if s.isEmpty { return }
             let font: UIFont
-            if bold && italic { font = boldItalicFont } else if bold { font = boldFont } else if italic { font = italicFont } else { font = baseFont }
+            if bold && italic {
+                font = boldItalicFont
+            } else if bold {
+                font = boldFont
+            } else if italic {
+                font = italicFont
+            } else {
+                font = baseFont
+            }
             result.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: textColor]))
             runStart = i
         }

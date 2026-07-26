@@ -201,7 +201,7 @@ struct OpenAISettingsView: View {
         }
     }
 
-    func testConnection() {
+    private func testConnection() {
         guard !apiKey.isEmpty else { return }
 
         isTestingConnection = true

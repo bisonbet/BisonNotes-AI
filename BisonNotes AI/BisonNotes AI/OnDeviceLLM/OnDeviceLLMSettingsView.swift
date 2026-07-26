@@ -470,7 +470,7 @@ struct OnDeviceLLMSettingsView: View {
 
     // MARK: - Helper Methods
 
-    func testConnection() {
+    private func testConnection() {
         isTestingConnection = true
         connectionTestResult = nil
 
