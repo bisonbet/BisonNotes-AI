@@ -25,8 +25,8 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
-    static let supportedTextExtensions = ["txt", "text", "md", "markdown", "vtt", "srt"]
-    static let supportedDocumentExtensions = ["pdf", "doc", "docx"]
+    nonisolated static let supportedTextExtensions = ["txt", "text", "md", "markdown", "vtt", "srt"]
+    nonisolated static let supportedDocumentExtensions = ["pdf", "doc", "docx"]
 
     // MARK: - Constants
 

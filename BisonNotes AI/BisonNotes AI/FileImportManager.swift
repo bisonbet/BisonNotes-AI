@@ -24,8 +24,8 @@ class FileImportManager: NSObject, ObservableObject {
     @Published var importResults: ImportResults?
     @Published var showingImportAlert = false
 
-    static let supportedExtensions = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
-    static let supportedVideoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
+    nonisolated static let supportedExtensions = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
+    nonisolated static let supportedVideoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
 

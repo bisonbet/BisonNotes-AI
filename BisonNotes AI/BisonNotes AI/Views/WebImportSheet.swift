@@ -164,7 +164,7 @@ struct WebImportSheet: View {
         let transcriptText = cleanedText.isEmpty ? rawText : cleanedText
 
         guard !transcriptImportManager.isImporting else {
-            webImportManager.importMessage = WebImportError.importInProgress.localizedDescription ?? ""
+            webImportManager.importMessage = WebImportError.importInProgress.localizedDescription
             webImportManager.showingImportAlert = true
             return
         }
