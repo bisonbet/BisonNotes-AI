@@ -628,7 +628,9 @@ class RecordingArchiveService: ObservableObject {
     func prepareAudioExportURLs(for recordings: [RecordingFile]) -> [URL] {
         guard let stagingDir = Self.audioExportStagingDirectory else {
             AppLog.shared.recording("Audio export: no Library dir available for staging", level: .error)
-            return recordings.map(\.url).filter { FileManager.default.fileExists(atPath: $0.path) }
+            // Never fall back to live recording URLs: they feed .fileMover, which moves
+            // the file out of the app and orphans its Core Data entry. Fail the export.
+            return []
         }
 
         try? FileManager.default.removeItem(at: stagingDir)
@@ -636,7 +638,8 @@ class RecordingArchiveService: ObservableObject {
             try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
         } catch {
             AppLog.shared.recording("Audio export: failed to create staging dir: \(error.localizedDescription)", level: .error)
-            return recordings.map(\.url).filter { FileManager.default.fileExists(atPath: $0.path) }
+            // See above: staging failure must not expose live recording files to the mover.
+            return []
         }
 
         var stagedURLs: [URL] = []
@@ -720,7 +723,9 @@ class RecordingArchiveService: ObservableObject {
     func prepareArchiveExportURLs(for recordings: [RecordingEntry]) -> [URL] {
         guard let stagingDir = Self.archiveStagingDirectory else {
             AppLog.shared.recording("Archive: no Library dir available for staging", level: .error)
-            return audioURLs(for: recordings)
+            // Never fall back to live recording URLs: they feed .fileMover, which moves
+            // the file out of the app and orphans its Core Data entry. Fail the export.
+            return []
         }
         // Clear any leftovers from a prior crashed run before staging.
         try? FileManager.default.removeItem(at: stagingDir)
@@ -728,7 +733,8 @@ class RecordingArchiveService: ObservableObject {
             try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
         } catch {
             AppLog.shared.recording("Archive: failed to create staging dir: \(error.localizedDescription)", level: .error)
-            return audioURLs(for: recordings)
+            // See above: staging failure must not expose live recording files to the mover.
+            return []
         }
 
         var stagedURLs: [URL] = []
