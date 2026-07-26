@@ -43,9 +43,12 @@ extension AudioRecorderViewModel {
 			if let preferredInput = availableInputs.first(where: { $0.uid == storedUID }) {
 				selectedInput = preferredInput
 			} else {
-				AppLog.shared.audioSession("Preferred Mac microphone disconnected; falling back to the system default")
+				// Keep the persisted preference so the chosen mic is re-selected
+				// automatically when it reconnects. Only drop the active selection and
+				// fall back to the system default while the device is absent — do NOT
+				// erase the stored UID, or a transient unplug would forget the setting.
+				AppLog.shared.audioSession("Preferred Mac microphone unavailable; using the system default until it reconnects")
 				try? await enhancedAudioSessionManager.clearPreferredInput()
-				UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
 				selectedInput = nil
 			}
 		}
