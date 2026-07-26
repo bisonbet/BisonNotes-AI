@@ -160,6 +160,24 @@ extension AudioRecorderViewModel {
             locationData: recordingLocationSnapshot()
         )
         AppLog.shared.recording("Mac recording created with workflow manager, ID: \(recordingId)")
+
+        // A meeting recording (system-audio capture) suppresses the live mic-only
+        // transcription path at start. If Live Transcription is enabled, honor that
+        // intent by queuing a file-based transcription so the recording still gets a
+        // transcript. Reaching this path with enableLiveTranscription == true implies a
+        // meeting recording — non-meeting recordings with the setting on take the live
+        // path and never finalize here.
+        if UserDefaults.standard.bool(forKey: "enableLiveTranscription"),
+           let coordinator = appCoordinator,
+           let entry = coordinator.getRecording(id: recordingId) {
+            TranscriptionStarter.shared.startTranscription(
+                for: entry,
+                cleanFirst: false,
+                appCoordinator: coordinator
+            )
+            AppLog.shared.recording("Mac meeting recording queued for file-based transcription")
+        }
+
         resetMacFinalizationState()
     }
 

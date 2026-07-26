@@ -553,9 +553,16 @@ struct BisonNotesAIApp: App {
                     appCoordinator.reconcileiCloudIfEnabled(reason: "app launch", force: true)
                 }
                 .onOpenURL(perform: handleOpenURL)
+                #if os(iOS)
+                // iOS can kill a backgrounded app without ever sending willTerminate, so
+                // entering the background is the last reliable clean-shutdown checkpoint.
+                // On macOS this notification maps to NSApplication.didHideNotification (Cmd-H),
+                // which is NOT a shutdown — a crash while hidden must still be detected — so
+                // macOS relies on willTerminate below instead.
                 .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didEnterBackgroundNotification)) { _ in
                     AppLog.shared.markCleanShutdown()
                 }
+                #endif
                 .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.willTerminateNotification)) { _ in
                     AppLog.shared.markCleanShutdown()
                 }
