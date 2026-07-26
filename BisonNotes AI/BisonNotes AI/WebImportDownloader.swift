@@ -43,6 +43,7 @@ struct WebImportDownloader {
             "audio/mp3": "mp3",
             "audio/mp4": "m4a",
             "audio/x-m4a": "m4a",
+            "audio/aac": "m4a",
             "audio/wav": "wav",
             "audio/x-wav": "wav",
             "audio/vnd.wave": "wav",

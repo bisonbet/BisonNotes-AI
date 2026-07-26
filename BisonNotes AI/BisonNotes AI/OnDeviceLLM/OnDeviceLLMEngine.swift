@@ -79,6 +79,12 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     /// iOS kills Metal command buffers submitted from background apps, causing
     /// a fatal crash in llama.cpp's Metal backend (ggml_abort).
     private func setupBackgroundObservers() {
+        // The background/foreground GPU pause is an iOS-only safeguard. On native
+        // macOS, PlatformLifecycle.didEnterBackgroundNotification maps to
+        // NSApplication.didHideNotification (Cmd-H); a hidden Mac app can still run
+        // Metal, so treating a hide as backgrounding would needlessly abort an
+        // in-flight summarization. Only observe these on iOS.
+        #if os(iOS)
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: PlatformLifecycle.didEnterBackgroundNotification,
             object: nil,
@@ -96,6 +102,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             AppLog.shared.summarization("[OnDeviceLLMEngine] App entering foreground - resuming GPU inference")
             self?.service?.setAppBackgrounded(false)
         }
+        #endif
 
         // On macOS, quitting via the menu calls NSApplication.terminate: → exit().
         // Static C++ destructors for ggml_metal_device then run before Swift deinits, which

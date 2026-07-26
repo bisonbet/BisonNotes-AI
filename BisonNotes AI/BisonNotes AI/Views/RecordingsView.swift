@@ -395,7 +395,6 @@ struct RecordingsView: View {
         }
         .sheet(isPresented: $showingRecordingsList) {
             RecordingsListView()
-                .environment(\.isEmbeddedInSplitView, false)
                 .environmentObject(recorderVM)
                 .nativeMacModalSizing(width: 900, height: 720)
         }
