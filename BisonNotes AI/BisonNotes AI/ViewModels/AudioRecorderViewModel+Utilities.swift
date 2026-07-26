@@ -326,10 +326,14 @@ extension AudioRecorderViewModel {
 
 extension AudioRecorderViewModel {
 
-	/// Generates a standardized filename for app-created recordings
+	/// Generates a standardized filename for app-created recordings.
+	/// Includes a UUID so two recordings started within the same second cannot
+	/// collide on the same URL (which would let a later start delete an earlier
+	/// recording's finalized file). The `apprecording-` prefix is preserved for
+	/// the various `hasPrefix("apprecording-")` checks across the app.
 	func generateAppRecordingFilename() -> String {
-		let timestamp = Date().timeIntervalSince1970
-		return "apprecording-\(Int(timestamp)).m4a"
+		let timestamp = Int(Date().timeIntervalSince1970)
+		return "apprecording-\(timestamp)-\(UUID().uuidString).m4a"
 	}
 
 	/// Generates a standardized display name for app-created recordings

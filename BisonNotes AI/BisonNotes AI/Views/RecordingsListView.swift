@@ -623,7 +623,10 @@ struct RecordingsListView: View {
     }
 
     private func recordingRow(for recording: AudioRecordingFile) -> some View {
-        let entry = appCoordinator.getRecording(url: recording.url)
+        // Prefer the indexed id lookup; getRecording(url:) fetches and scans the whole
+        // recordings table, which is O(N) per row (O(N^2) for the list) on every render.
+        let entry = recording.recordingId.flatMap { appCoordinator.getRecording(id: $0) }
+            ?? appCoordinator.getRecording(url: recording.url)
         let hasTranscript = entry?.transcript != nil || entry?.transcriptId != nil
         let hasSummary = entry?.summary != nil
             || entry?.summaryId != nil
@@ -866,7 +869,8 @@ struct RecordingsListView: View {
                 clearLocalArchiveState(recording)
             }
         } else {
-            #if os(macOS)
+            // Open the player the same way tapping the row does (a sheet via
+            // selectedRecordingForPlayer), so both entry points present it consistently.
             Button {
                 openOrSelectRecording(recording)
             } label: {
@@ -875,18 +879,6 @@ struct RecordingsListView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Play Audio for \(recording.name)")
             .accessibilityIdentifier("bisonnotes.recording.action.play-audio")
-            #else
-            NavigationLink {
-                AudioPlayerView(recording: recording)
-                    .environmentObject(recorderVM)
-                    .environmentObject(appCoordinator)
-            } label: {
-                playRecordingIcon
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Play Audio for \(recording.name)")
-            .accessibilityIdentifier("bisonnotes.recording.action.play-audio")
-            #endif
         }
 
         cloudSyncPreferenceButton(for: recording)
@@ -954,7 +946,8 @@ struct RecordingsListView: View {
     @ViewBuilder
     private func transcriptActionButton(for recording: AudioRecordingFile) -> some View {
         if recording.hasLocalAudio,
-           let entry = appCoordinator.getRecording(url: recording.url),
+           let entry = recording.recordingId.flatMap({ appCoordinator.getRecording(id: $0) })
+               ?? appCoordinator.getRecording(url: recording.url),
            entry.transcript == nil {
             let recordingId = entry.id ?? UUID()
             let isCleaning = transcriptionStarter.isCleaning(recordingId)

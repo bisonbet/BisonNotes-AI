@@ -253,6 +253,10 @@ open class OnDeviceLLM: ObservableObject {
         self.sampler = llama_sampler_chain_init(sparams)
 
         guard let sampler = self.sampler else {
+            // A throwing initializer does not run deinit, so free the already-allocated
+            // native resources here to avoid leaking the loaded model (potentially GBs).
+            llama_batch_free(batch)
+            llama_model_free(model)
             throw OnDeviceLLMError.configurationError(
                 "The token sampler could not be initialized. Free memory and try again."
             )
