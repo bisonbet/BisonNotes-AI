@@ -24,15 +24,33 @@ struct TranscriptCaptionTextCleaner {
         return plainTextFromCueLines(captionText.components(separatedBy: .newlines))
     }
 
+    /// Whether `text` looks like caption-formatted content (WEBVTT/SRT cues or the YouTube
+    /// `<transcript>` XML), regardless of the file extension it arrived under.
+    static func looksLikeCaptionFormat(_ text: String) -> Bool {
+        if text.contains("<transcript") {
+            return true
+        }
+        if text.hasPrefix("WEBVTT") {
+            return true
+        }
+        return text.range(
+            of: #"\d{1,2}:\d{2}:\d{2}[.,]\d{3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[.,]\d{3}"#,
+            options: .regularExpression
+        ) != nil
+    }
+
     static func decodeHTMLEntities(in text: String) -> String {
+        // Decode &amp; last: a source that's double-escaped a literal "&lt;" as "&amp;lt;"
+        // must round-trip to "&lt;", not "<" — decoding &amp; first would expose a fresh
+        // "&lt;" that the earlier replacements in this chain would then re-decode.
         var decoded = text
-            .replacingOccurrences(of: "&amp;", with: "&")
             .replacingOccurrences(of: "&lt;", with: "<")
             .replacingOccurrences(of: "&gt;", with: ">")
             .replacingOccurrences(of: "&quot;", with: "\"")
             .replacingOccurrences(of: "&#39;", with: "'")
             .replacingOccurrences(of: "&apos;", with: "'")
             .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
 
         decodeNumericEntities(in: &decoded)
         return decoded

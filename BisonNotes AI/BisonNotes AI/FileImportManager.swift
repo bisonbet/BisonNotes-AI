@@ -24,8 +24,8 @@ class FileImportManager: NSObject, ObservableObject {
     @Published var importResults: ImportResults?
     @Published var showingImportAlert = false
 
-    private let supportedExtensions = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
-    private let supportedVideoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
+    static let supportedExtensions = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
+    static let supportedVideoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
 
@@ -93,13 +93,13 @@ class FileImportManager: NSObject, ObservableObject {
         let fileExtension = sourceURL.pathExtension.lowercased()
 
         // Route video files through audio extraction
-        if supportedVideoExtensions.contains(fileExtension) {
+        if Self.supportedVideoExtensions.contains(fileExtension) {
             try await importVideoFile(from: sourceURL)
             return
         }
 
         // Validate audio file extension
-        guard supportedExtensions.contains(fileExtension) else {
+        guard Self.supportedExtensions.contains(fileExtension) else {
             throw ImportError.unsupportedFormat(fileExtension)
         }
 

@@ -35,6 +35,14 @@ extension TranscriptImportManager {
             importProgress = Double(index) / Double(totalCount)
 
             do {
+                // Text items (pasted transcripts, YouTube captions) skip the file-size check
+                // file-based import gets from `validateFileSize`; enforce the same cap here.
+                guard item.text.utf8.count <= TranscriptImportManager.FileSizeLimits.maxTextFileSize else {
+                    let maxMB = Double(TranscriptImportManager.FileSizeLimits.maxTextFileSize) / (1024 * 1024)
+                    throw TranscriptImportError.readFailed(
+                        "Transcript text is too large (maximum \(String(format: "%.0f", maxMB)) MB)"
+                    )
+                }
                 _ = try await importTranscript(text: item.text, name: item.name)
                 successful += 1
             } catch {

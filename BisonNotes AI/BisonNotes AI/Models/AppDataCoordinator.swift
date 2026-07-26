@@ -175,17 +175,15 @@ class AppDataCoordinator: ObservableObject {
 
     func deleteSummary(id: UUID) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
-        iCloudManager.enqueueSummaryRemovalFromiCloud(summaryId: id)
 
         // Clean up supplemental data (notes + attachment files) before removing the Core Data entry.
         try? SummaryAttachmentStore.shared.deleteAll(for: id)
 
-        do {
-            try coreDataManager.deleteSummary(id: id)
-        } catch {
-            iCloudManager.clearPendingSummaryRemoval(summaryId: id)
-            throw error
-        }
+        // Delete locally first so a crash/kill before this point never leaves a durable
+        // iCloud-removal marker for a summary that's still present on disk.
+        try coreDataManager.deleteSummary(id: id)
+
+        iCloudManager.enqueueSummaryRemovalFromiCloud(summaryId: id)
 
         do {
             try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)

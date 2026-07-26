@@ -99,6 +99,13 @@ final class WebImportManager: ObservableObject {
 
         switch downloaded.route {
         case .audioOrVideo:
+            // fileImportManager/transcriptImportManager are shared app-wide managers (also
+            // driven by the document-picker import flow and, on macOS, an unblockable File-menu
+            // command). If one is already busy, its import call silently no-ops without touching
+            // importResults, so check immediately before the call rather than trust its result.
+            guard !fileImportManager.isImporting else {
+                throw WebImportError.importInProgress
+            }
             currentlyImporting = "Importing audio..."
             await fileImportManager.importAudioFiles(from: [downloaded.localURL])
             let results = fileImportManager.importResults
@@ -110,6 +117,9 @@ final class WebImportManager: ObservableObject {
             }
             lastImportSucceeded = true
         case .transcript:
+            guard !transcriptImportManager.isImporting else {
+                throw WebImportError.importInProgress
+            }
             currentlyImporting = "Importing transcript..."
             await transcriptImportManager.importTranscriptFiles(from: [downloaded.localURL])
             let results = transcriptImportManager.importResults
@@ -140,6 +150,10 @@ final class WebImportManager: ObservableObject {
 
         currentlyImporting = "Importing YouTube captions..."
         let item = try await youtubeService.transcriptItem(from: url)
+
+        guard !transcriptImportManager.isImporting else {
+            throw WebImportError.importInProgress
+        }
         await transcriptImportManager.importTranscriptTextItems([item])
 
         guard (transcriptImportManager.importResults?.successful ?? 0) > 0 else {

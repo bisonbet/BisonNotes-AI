@@ -58,6 +58,7 @@ enum WebImportError: LocalizedError {
     case transcriptImportFailed
     case importedFileRejected(String)
     case youtubeRateLimited
+    case importInProgress
 
     var errorDescription: String? {
         switch self {
@@ -73,7 +74,7 @@ enum WebImportError: LocalizedError {
             return "This link does not look like a supported audio, video, or transcript file."
         case .fileTooLarge(let size, let limit):
             return """
-            The file is too large (\(Self.formatBytes(size)); maximum is \(Self.formatBytes(limit)).
+            The file is too large (\(Self.formatBytes(size))); maximum is \(Self.formatBytes(limit)).
             """
         case .invalidYouTubeURL:
             return "This YouTube link could not be recognized."
@@ -95,6 +96,8 @@ enum WebImportError: LocalizedError {
             YouTube blocked the caption request from this network. Try again later, or import a VTT, \
             SRT, or TXT transcript file for this video.
             """
+        case .importInProgress:
+            return "Another import is already in progress. Please wait for it to finish and try again."
         }
     }
 

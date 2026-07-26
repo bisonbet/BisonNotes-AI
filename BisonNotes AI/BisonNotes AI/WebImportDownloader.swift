@@ -8,11 +8,13 @@
 import Foundation
 
 struct WebImportDownloader {
-    private let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
-    private let videoExtensions: Set<String> = ["mp4", "mov", "m4v", "avi", "mkv"]
-    private let transcriptExtensions: Set<String> = [
-        "txt", "text", "md", "markdown", "vtt", "srt", "pdf", "doc", "docx"
-    ]
+    // Reuse the canonical extension lists owned by FileImportManager/TranscriptImportManager
+    // rather than maintaining separate copies that can silently drift out of sync.
+    private let audioExtensions: Set<String> = Set(FileImportManager.supportedExtensions)
+    private let videoExtensions: Set<String> = Set(FileImportManager.supportedVideoExtensions)
+    private let transcriptExtensions: Set<String> = Set(
+        TranscriptImportManager.supportedTextExtensions + TranscriptImportManager.supportedDocumentExtensions
+    )
     private let sessionConfiguration: URLSessionConfiguration
     private let maxMediaDownloadSize: Int64
     private let maxTranscriptDownloadSize: Int64
@@ -311,10 +313,11 @@ struct WebImportDownloader {
     }
 
     private func sanitizeFilename(_ filename: String) -> String {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -_()"))
-        return filename.unicodeScalars
-            .map { allowed.contains($0) ? String($0) : "-" }
-            .joined()
-            .trimmingCharacters(in: CharacterSet(charactersIn: " -_"))
+        // Matches the blocklist convention used elsewhere for filesystem-safe names
+        // (SummaryAttachmentStore.sanitizeFileName, RecordingArchiveService.sanitizeForFilename)
+        // rather than a divergent allowlist that strips a different set of characters.
+        let invalid = CharacterSet(charactersIn: "/\\:*?\"<>|")
+        let stripped = filename.components(separatedBy: invalid).joined(separator: "_")
+        return stripped.trimmingCharacters(in: CharacterSet(charactersIn: " -_"))
     }
 }
