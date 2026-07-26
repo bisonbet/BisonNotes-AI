@@ -146,6 +146,12 @@ final class TemporaryFileCleanupService {
         let ext = url.pathExtension.lowercased()
 
         if name.hasPrefix("fluidaudio_input_") && ext == "caf" { return true }
+        // Mac scratch recordings (raw PCM) staged in temp during native macOS capture.
+        // Normally removed on finalize/retry, but a crash or kill mid-capture orphans
+        // large .caf files named after the final recording, e.g.
+        // apprecording-<ts>-<uuid>.caf and apprecording-<ts>-<uuid>-input-<N>.caf.
+        // The age gate protects an in-progress recording's live scratch file.
+        if name.hasPrefix("apprecording-") && ext == "caf" { return true }
         if name.hasPrefix("cleaned_") && ext == "m4a" { return true }
         if name.hasPrefix("mac_export_") && ext == "m4a" { return true }
         if name.hasPrefix("mac_segments_") && ext == "m4a" { return true }
