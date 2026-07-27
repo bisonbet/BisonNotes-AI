@@ -765,7 +765,9 @@ struct RecordingsListView: View {
         } else {
             #if os(macOS)
             guard let recordingID = recording.recordingId else { return }
-            openWindow(id: NativeWindowID.recording, value: recordingID)
+            // Route the single player window to this recording, then open/focus it.
+            appCoordinator.macPlayerRecordingID = recordingID
+            openWindow(id: NativeWindowID.recording)
             #else
             selectedRecordingForPlayer = recording
             #endif

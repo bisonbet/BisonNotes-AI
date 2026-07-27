@@ -12,6 +12,12 @@ class AppDataCoordinator: ObservableObject {
     @Published var workflowManager: RecordingWorkflowManager
 
     @Published var isInitialized = false
+
+    /// The recording shown in the single native-macOS player window. The app
+    /// deliberately supports only one player window at a time, so this drives a
+    /// singleton Window scene rather than a per-recording WindowGroup.
+    @Published var macPlayerRecordingID: UUID?
+
     private var lastAutomaticiCloudReconcileDate: Date?
     private let automaticiCloudReconcileMinInterval: TimeInterval = 300
 

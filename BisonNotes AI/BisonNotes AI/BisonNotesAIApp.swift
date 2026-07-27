@@ -685,12 +685,22 @@ struct BisonNotesAIApp: App {
         .defaultSize(width: 820, height: 720)
         .windowResizability(.contentMinSize)
 
-        WindowGroup("Recording", id: NativeWindowID.recording, for: UUID.self) { $recordingID in
-            if let recordingID {
+        // Single player window by design — the app supports only one open
+        // recording player at a time. A singleton Window (driven by
+        // appCoordinator.macPlayerRecordingID) prevents multiple player windows
+        // from fighting over the shared AudioRecorderViewModel playback state.
+        Window("Recording", id: NativeWindowID.recording) {
+            if let recordingID = appCoordinator.macPlayerRecordingID {
                 NativeRecordingWindowView(recordingID: recordingID)
                     .environmentObject(recorderVM)
                     .environmentObject(appCoordinator)
                     .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            } else {
+                ContentUnavailableView(
+                    "No Recording Selected",
+                    systemImage: "waveform",
+                    description: Text("Choose a recording from the library to play it here.")
+                )
             }
         }
         .defaultSize(width: 720, height: 680)
