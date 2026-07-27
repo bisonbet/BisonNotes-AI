@@ -40,9 +40,11 @@ struct TranscriptCaptionTextCleaner {
     }
 
     static func decodeHTMLEntities(in text: String) -> String {
-        // Decode &amp; last: a source that's double-escaped a literal "&lt;" as "&amp;lt;"
-        // must round-trip to "&lt;", not "<" — decoding &amp; first would expose a fresh
-        // "&lt;" that the earlier replacements in this chain would then re-decode.
+        // Decode &amp; LAST — after both the named and the numeric entities. A source
+        // that double-escaped a literal entity as "&amp;lt;" or "&amp;#39;" must
+        // round-trip to "&lt;" / "&#39;", not "<" / "'". Decoding &amp; first would
+        // expose a fresh "&lt;"/"&#39;" that the named or numeric passes would then
+        // wrongly decode a second time.
         var decoded = text
             .replacingOccurrences(of: "&lt;", with: "<")
             .replacingOccurrences(of: "&gt;", with: ">")
@@ -50,9 +52,10 @@ struct TranscriptCaptionTextCleaner {
             .replacingOccurrences(of: "&#39;", with: "'")
             .replacingOccurrences(of: "&apos;", with: "'")
             .replacingOccurrences(of: "&nbsp;", with: " ")
-            .replacingOccurrences(of: "&amp;", with: "&")
 
         decodeNumericEntities(in: &decoded)
+
+        decoded = decoded.replacingOccurrences(of: "&amp;", with: "&")
         return decoded
     }
 

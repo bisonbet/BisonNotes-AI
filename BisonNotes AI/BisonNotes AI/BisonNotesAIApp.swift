@@ -859,6 +859,16 @@ struct BisonNotesAIApp: App {
         NotificationCenter.default.post(name: Notification.Name("SwitchToRecordTabForImport"), object: nil)
 
         Task { @MainActor in
+            // If an import is already running, importAudioFiles/importTranscriptFiles
+            // would silently no-op and the cleanup below would still delete every staged
+            // file — discarding the share. Re-arm the token and leave the inbox intact so
+            // a later activation scan retries once the importer is free.
+            if fileImportManager.isImporting || transcriptImportManager.isImporting {
+                NSLog("📎 Shared container scan deferred: an import is already in progress")
+                ShareImportAuthorization.rearmToken(in: containerURL)
+                return
+            }
+
             var audioFiles: [URL] = []
             var textFiles: [URL] = []
 
@@ -922,6 +932,15 @@ struct BisonNotesAIApp: App {
         NotificationCenter.default.post(name: Notification.Name("SwitchToRecordTabForImport"), object: nil)
 
         Task { @MainActor in
+            // If an import is already running, importAudioFiles/importTranscriptFiles
+            // would silently no-op and the cleanup below would still delete every Inbox
+            // file — discarding the share. Leave the files so the next activation scan
+            // retries (this Inbox scan runs unconditionally, so no token is needed).
+            if fileImportManager.isImporting || transcriptImportManager.isImporting {
+                NSLog("📎 Inbox scan deferred: an import is already in progress")
+                return
+            }
+
             var audioFiles: [URL] = []
             var textFiles: [URL] = []
             var unsupported: [URL] = []

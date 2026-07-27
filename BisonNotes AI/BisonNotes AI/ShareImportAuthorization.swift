@@ -47,6 +47,14 @@ enum ShareImportAuthorization {
         try? FileManager.default.removeItem(at: tokenFileURL(in: inboxURL))
     }
 
+    /// Re-arms a pending-import token after a scan consumed one but deferred the
+    /// import (e.g. an importer was busy). Lets a later activation scan retry the
+    /// staged files instead of leaving them orphaned once the original token is gone.
+    static func rearmToken(in inboxURL: URL) {
+        let token = UUID().uuidString
+        try? Data(token.utf8).write(to: tokenFileURL(in: inboxURL), options: .atomic)
+    }
+
     static func tokenFileURL(in inboxURL: URL) -> URL {
         inboxURL.appendingPathComponent(tokenFileName, isDirectory: false)
     }

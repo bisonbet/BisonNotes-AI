@@ -330,6 +330,15 @@ final class FluidAudioManager: ObservableObject {
             if let existing = downloadTask {
                 _ = try await existing.value
             }
+            // downloadTask covers only the transfer; the first caller creates the
+            // AsrManager and sets isModelReady synchronously afterward. Continuation
+            // ordering across two awaiters of the same task isn't guaranteed, so wait
+            // for preparation to actually finish (isModelReady set, or isDownloading
+            // cleared on failure) before reporting readiness — otherwise this caller
+            // could throw a false fluidAudioNotReady while the download succeeded.
+            while isDownloading && !isModelReady {
+                await Task.yield()
+            }
             guard isModelReady else {
                 throw TranscriptionError.fluidAudioNotReady
             }
