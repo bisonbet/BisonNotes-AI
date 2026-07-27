@@ -8,10 +8,14 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.2 Release 
 
 ## v2.2 Highlights
 - The Mac app is now a native macOS app while retaining the same bundle identity, app container, Core Data store, and iCloud container used by the previous Catalyst build. It adds native windows, a dedicated Settings window, standard File/Edit commands, keyboard shortcuts, persistent archive bookmarks, AppKit sharing, and native RTF/PDF export.
-- Native Mac recording uses selectable Core Audio inputs plus ScreenCaptureKit meeting-audio capture. It monitors input-device changes, preserves microphone segments across a device recovery, validates microphone and system tracks independently, saves whichever usable track remains, and retains failed source media in Application Support for recovery.
+- Native macOS now includes a Share extension for importing supported audio and transcript files from the Mac Share menu, plus small and medium desktop widgets that open BisonNotes and start a new recording.
+- Native Mac recording uses selectable Core Audio inputs plus ScreenCaptureKit meeting-audio capture. It remembers the preferred microphone through temporary disconnects, monitors input-device changes, preserves microphone segments across a device recovery, validates microphone and system tracks independently, saves whichever usable track remains, and retains failed source media in Application Support for recovery.
+- Enabling Record Meeting Audio now provides a guided Screen & System Audio Recording permission flow, including the required quit-and-reopen step. If Live Transcription is enabled, the finalized meeting recording is queued for file-based transcription so the combined audio is transcribed.
 - Native macOS can run the Ternary Bonsai 27B MLX model on Macs with at least 16 GB RAM; the approximately 8.5 GB model remains excluded from iPhone and iPad.
+- On-device Parakeet setup now recovers valid cached models more reliably, reports missing model assets accurately, and waits for model preparation to finish before starting transcription.
 - Import from web links can now bring in direct audio/video files, transcript documents, and public YouTube captions, with a guided pasted-transcript recovery flow when YouTube blocks automated caption downloads.
 - Web downloads are bounded by content type and size, use isolated sessions, validate redirects and final media before persistence, preserve server-provided filenames, and clean up temporary files when downstream import fails.
+- Share imports now wait safely when another import is already running instead of deleting staged files, and caption cleanup removes one layer of HTML encoding without changing intentionally escaped text.
 - Summary-only deletions now queue removal of both live and backup CloudKit records, including content-index cleanup, so an offline deletion can be completed when iCloud becomes available instead of restoring the deleted summary later.
 - Thinking-capable MLX models keep their reasoning internal. Reasoning tags, partial traces, and prose preambles are stripped before summaries, tasks, reminders, and suggested titles are parsed or displayed.
 - Common iPhone, iPad, Mac, and Apple Watch tasks now have explicit VoiceOver labels, values, hints, and non-color state cues across setup, recording, imports, recordings, playback, transcripts, summaries, settings, and watch recording.
@@ -389,16 +393,17 @@ Date range filtering helps you find content from specific time periods:
 
 ## Share Extension
 
-Import audio and transcript files from other apps directly into BisonNotes AI using the iOS share sheet:
+Import audio and transcript files from other apps directly into BisonNotes AI using the iPhone, iPad, or Mac Share menu:
 
 - **Supported audio formats**: M4A, MP3, WAV, CAF, AIFF, AIF
 - **Supported document formats**: TXT, MD, VTT, SRT, PDF, DOC, DOCX
 - **How it works**:
-  1. Open Voice Memos, Files, or any app with audio or transcript files
-  2. Tap the share button and select "BisonNotes AI"
-  3. The file is saved to the shared container
-  4. BisonNotes AI opens automatically and imports the file
+  1. Open Voice Memos, Files, Finder, or another app with an audio or transcript file
+  2. Tap or click the share button and select "BisonNotes AI"
+  3. The file is saved to the protected shared container
+  4. BisonNotes AI opens or is notified and imports the file
 - **Background import**: If the main app is already running, a Darwin notification wakes it to scan for new files immediately
+- **Busy import handling**: If another import is active, the new file remains staged and is retried on a later app activation instead of being discarded
 - **File naming**: Imported files are prefixed with a UUID to prevent name collisions
 
 ## Import From Link
